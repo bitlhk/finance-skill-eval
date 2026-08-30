@@ -1,0 +1,57 @@
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  evalPackFileSchema,
+  fingerprint,
+  loadEvalPack,
+} from "../src/index.js";
+
+const packFile = path.resolve("packs/finance/investment-research/eval.yaml");
+
+describe("Eval Pack contracts", () => {
+  it("loads the investment research pack with independent model roles", async () => {
+    const pack = await loadEvalPack(packFile);
+
+    expect(pack.cases.map(item => item.caseId)).toEqual([
+      "IR-VALUE-001",
+      "IR-VALUE-002",
+    ]);
+    expect(pack.models.analyzer.modelId).toBe("glm-5.2");
+    expect(pack.models.execution.left.modelId).toBe("glm-5.2");
+    expect(pack.models.judge.modelId).toBe("glm-5.2");
+    expect(pack.packFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("rejects unknown frozen contract fields", () => {
+    const valid = {
+      schemaVersion: "finance.skill-eval.pack.v1",
+      packId: "test",
+      version: "1.0.0",
+      domain: "finance",
+      targetSkillId: "target",
+      targetSkillVersion: "1.0.0",
+      description: "test pack",
+      models: {
+        analyzer: { providerId: "host", modelId: "analyzer" },
+        execution: {
+          left: { providerId: "host", modelId: "left" },
+          right: { providerId: "host", modelId: "right" },
+        },
+        judge: { providerId: "host", modelId: "judge" },
+      },
+      variants: {
+        left: { mode: "without_target_skill", skillId: "target" },
+        right: { mode: "skill_version", skillId: "target", version: "1.0.0" },
+      },
+      judgeProfileFile: "judge.yaml",
+      caseFiles: ["case.yaml"],
+      unsupportedExecutionOverride: true,
+    };
+
+    expect(() => evalPackFileSchema.parse(valid)).toThrow(/Unrecognized key/);
+  });
+
+  it("produces stable fingerprints independent of object key order", () => {
+    expect(fingerprint({ a: 1, b: 2 })).toBe(fingerprint({ b: 2, a: 1 }));
+  });
+});

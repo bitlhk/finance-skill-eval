@@ -1,0 +1,88 @@
+caseId: IR-VALUE-001
+name: 公司研究从驱动而非百科出发
+taskMode: single_turn
+prompt: >-
+  请对贵州茅台（600519.SH）做一页内部研究简报。不要写公司百科，重点说明当前盈利和估值由什么驱动、
+  最值得跟踪的两个变量、主要反证和什么情况会推翻判断。所有动态数字必须来自本轮 Wind 数据。
+evaluationGoal: >-
+  先给研究判断，再以当前数据解释量价、结构、盈利质量和估值变量；同时列出反证、
+  失效条件、催化或验证窗口和具体跟踪项，不堆砌公司资料。
+requiredTools:
+  - get_stock_price_indicators
+  - get_stock_fundamentals
+  - get_stock_technicals
+  - get_stock_events
+  - get_risk_metrics
+rubric:
+  - criterionId: research-judgment
+    label: 明确研究判断
+    description: 开篇给出可被后文验证的核心研究判断。
+    dimension: professional_fit
+    weight: 1
+    required: true
+    anyOf:
+      - 一句话判断
+      - 核心判断
+      - 当前隐含判断
+  - criterionId: profit-valuation-drivers
+    label: 盈利和估值驱动
+    description: 解释业务量价、结构或提价如何传导到盈利和估值。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    anyOf:
+      - 盈利.*驱动
+      - 估值.*驱动
+      - 提价.*量
+  - criterionId: evidence-and-counterevidence
+    label: 证据与反证
+    description: 同时给出支持判断的证据和主要反向情形。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    anyOf:
+      - 反证
+      - 反向情形
+  - criterionId: source-and-date
+    label: 来源与数据日期
+    description: 明确动态数据来源、报告期或数据截止日期。
+    dimension: clarity
+    weight: 1
+    required: true
+    anyOf:
+      - 数据截止
+      - 数据日期
+      - 来源.*报告期
+  - criterionId: catalyst-window
+    label: 催化或验证窗口
+    description: 指出什么事件或时间窗口能够验证研究判断。
+    dimension: actionability
+    weight: 2
+    required: true
+    anyOf:
+      - 催化剂
+      - 潜在催化
+      - 验证窗口
+    improvementHint: 增加与结论直接相关的季报、旺季、价格或渠道验证窗口。
+  - criterionId: falsification
+    label: 判断失效条件
+    description: 明确什么事实会推翻或迫使研究者重新评估当前判断。
+    dimension: actionability
+    weight: 2
+    required: true
+    anyOf:
+      - 失效条件
+      - 推翻.*判断
+      - 重新评估
+  - criterionId: executable-tracking
+    label: 可执行跟踪项
+    description: 给出研究人员后续可以持续跟踪的变量。
+    dimension: actionability
+    weight: 1
+    required: true
+    anyOf:
+      - 跟踪
+      - 监测
+replay:
+  evidenceFile: fixtures/evidence/company-research-ab.json
+  sourcePromptId: IR-VALUE-001

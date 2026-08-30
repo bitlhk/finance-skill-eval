@@ -1,0 +1,45 @@
+{
+  "name": "finance-skill-eval",
+  "version": "0.1.0",
+  "description": "Portable financial Skill evaluation contracts, runners, judges, and reports",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "finance-skill-eval": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "packs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "eval:investment:replay": "tsx src/cli.ts replay --pack packs/finance/investment-research/eval.yaml --out reports/investment-research",
+    "pack:local": "pnpm build && pnpm pack --pack-destination artifacts"
+  },
+  "dependencies": {
+    "promptfoo": "0.122.2",
+    "yaml": "2.8.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  }
+}

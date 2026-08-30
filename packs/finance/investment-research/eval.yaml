@@ -1,0 +1,43 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: investment-research-assistant-value-v1
+version: 1.0.0
+domain: investment-research
+targetSkillId: investment-research-assistant
+targetSkillVersion: 1.1.0
+description: >-
+  比较同一模型在不装配和装配投研 Skill 时，是否能从资料罗列升级为
+  可证伪、可跟踪、可直接进入研究流程的专业分析。
+models:
+  analyzer:
+    providerId: ea
+    modelId: glm-5.2
+    label: Skill 测试设计模型
+  execution:
+    left:
+      providerId: ea-runtime
+      modelId: glm-5.2
+      label: 左侧执行模型
+    right:
+      providerId: ea-runtime
+      modelId: glm-5.2
+      label: 右侧执行模型
+  judge:
+    providerId: ea
+    modelId: glm-5.2
+    label: 金融专业 Judge
+variants:
+  left:
+    mode: without_target_skill
+    skillId: investment-research-assistant
+  right:
+    mode: skill_version
+    skillId: investment-research-assistant
+    version: 1.1.0
+judgeProfileFile: profiles/investment-research-judge.yaml
+caseFiles:
+  - cases/company-research.yaml
+  - cases/financial-quality.yaml
+metadata:
+  source: EA frozen runtime evidence
+  compatibility: skill-up-v0.9.1
+  promptfooVersion: 0.122.2

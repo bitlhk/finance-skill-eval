@@ -1,0 +1,87 @@
+caseId: IR-VALUE-002
+name: 财务质量需要三表交叉与后续验证
+taskMode: single_turn
+prompt: >-
+  复盘贵州茅台（600519.SH）当前可获得的最新财务数据，判断收入、利润和现金流变化的质量。
+  没有一致预期数据时不要写超预期，并明确报告期、口径和还缺什么证据。
+evaluationGoal: >-
+  不只复述利润表和现金流量表，还要通过合同负债、存货与应收等资产负债项交叉验证，
+  明确一致预期缺口，并给出可执行跟踪项和判断失效条件。
+requiredTools:
+  - get_stock_fundamentals
+  - get_stock_events
+rubric:
+  - criterionId: period-and-basis
+    label: 报告期和口径
+    description: 明确最新报告期、累计或单季口径和数据日期。
+    dimension: clarity
+    weight: 1
+    required: true
+    anyOf:
+      - 报告期
+      - 累计口径
+      - 口径说明
+  - criterionId: three-statement-reasoning
+    label: 收入利润现金流交叉分析
+    description: 将收入、利润和现金流变化联系起来判断盈利质量。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    anyOf:
+      - 收入.*利润
+      - 利润.*现金流
+      - 现金流质量
+  - criterionId: balance-sheet-analysis
+    label: 资产负债表分析
+    description: 使用资产负债表信号验证利润和现金流判断。
+    dimension: business_completeness
+    weight: 2
+    required: true
+    allOf:
+      - 资产负债表
+      - 合同负债
+    improvementHint: 加入合同负债等前瞻性资产负债项，验证收入能见度和现金流变化原因。
+  - criterionId: inventory-receivable-crosscheck
+    label: 存货和应收交叉验证
+    description: 结合存货与应收变化识别渠道、回款和增长质量。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf:
+      - 存货
+      - 应收
+    improvementHint: 补充存货、应收与合同负债的联动分析，而不是只看利润与经营现金流。
+  - criterionId: expectation-discipline
+    label: 不滥用一致预期
+    description: 没有一致预期数据时明确缺口，不生成超预期结论。
+    dimension: clarity
+    weight: 1
+    required: true
+    anyOf:
+      - 无一致预期
+      - 缺少一致预期
+      - 一致预期数据
+  - criterionId: executable-followup
+    label: 可执行跟踪与失效条件
+    description: 提供可验证的后续跟踪项、阈值或判断失效条件。
+    dimension: actionability
+    weight: 2
+    required: true
+    anyOf:
+      - 下一步跟踪项
+      - 判断失效条件
+      - 失效条件
+    improvementHint: 把缺失证据转成明确的下一报告期跟踪项和可证伪阈值。
+  - criterionId: missing-evidence
+    label: 明确缺失证据
+    description: 说明当前不能确定的业务原因和还需补充的数据。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    anyOf:
+      - 缺失证据
+      - 尚缺.*证据
+      - 缺少.*数据
+replay:
+  evidenceFile: fixtures/evidence/financial-quality-ab.json
+  sourcePromptId: IR-VALUE-002

@@ -1,0 +1,20 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: investment-research-quality-v1
+version: 1.0.0
+reviewerLabel: 金融投研规则复算 Judge
+domainInstructions: >-
+  以机构投研使用者视角评估答案。不要因为篇幅长、字段多或术语多而判优；
+  优先识别是否形成研究判断、证据与反证、可证伪条件、后续验证窗口和可执行跟踪项。
+dimensions:
+  - id: professional_fit
+    label: 专业匹配度
+    description: 是否体现投研判断、业务驱动与财务穿透，而非公司百科或指标堆砌。
+  - id: business_completeness
+    label: 业务完整性
+    description: 是否覆盖任务所需的证据、反证、三表或关键业务变量。
+  - id: clarity
+    label: 结构与表达清晰度
+    description: 是否先给结论并清楚区分事实、判断、缺口与数据口径。
+  - id: actionability
+    label: 可执行性
+    description: 是否给出可跟踪变量、验证窗口、阈值或判断失效条件。
