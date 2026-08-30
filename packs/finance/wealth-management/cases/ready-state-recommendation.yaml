@@ -1,0 +1,77 @@
+caseId: WM-SKILL-EVAL-006
+name: 条件充分时形成可采用的配置建议
+taskMode: single_turn
+prompt: >-
+  陈明的风险测评有效，客户、持仓、现行制度和在售产品数据均已核验。
+  请给出正式候选产品、配置理由、风险提示、排除项和客户沟通话术。
+evaluationGoal: >-
+  先守住20%高流动性底线，再形成稳健与适度增强两套组合；只映射已核验产品，
+  解释期限、波动和排除项，并把两套正确方案的差异转成客户能够作答的决策问题。
+requiredTools:
+  - get_governed_customer_profile
+  - get_governed_customer_portfolio
+  - get_wealth_policy_basis
+  - product_search
+rubric:
+  - criterionId: liquidity-floor
+    label: 高流动性底线正确承载
+    description: 75万元中至少15万元由P009承载，P001不能被当作高流动性资产。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf:
+      - P009.*15万元|15万元.*P009
+      - P001.*不计入流动性|P001.*封闭期
+  - criterionId: portfolio-before-product
+    label: 先组合取舍再映射产品
+    description: 形成稳健和适度增强两套完整组合，而不是单独罗列产品。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf:
+      - 方案A|A方案
+      - 方案B|B方案
+      - 45万元
+      - 30万元
+  - criterionId: risk-and-exclusion
+    label: 风险与排除理由完整
+    description: 说明封闭期、净值波动、不承诺收益，并排除停售P004。
+    dimension: business_completeness
+    weight: 2
+    required: true
+    allOf:
+      - 不承诺收益|不保证收益
+      - 封闭期.*不能赎回|封闭期.*不可赎回
+      - P004.*停售|停售.*P004
+      - 净值.*波动|本金亏损
+  - criterionId: decision-tradeoff-language
+    label: 把方案差异转成客户决策条件
+    description: 不只说一套稳健、一套增强，而是帮助客户基于波动感受和长期目标作出选择。
+    dimension: actionability
+    weight: 3
+    required: true
+    anyOf:
+      - 控制短期波动.*承担波动.*争取增值
+      - 更偏向控制.*波动.*愿意.*长期
+    improvementHint: 将A/B方案差异转成客户可回答的选择题：更重视短期波动控制，还是愿意承担更多长期波动争取增值。
+  - criterionId: baseline-scheme-explanation
+    label: 基本说明两套方案差异
+    description: 至少能够说明A方案更稳健、B方案适度增强的基础区别。
+    dimension: actionability
+    weight: 9
+    required: true
+    allOf:
+      - 更稳健
+      - 适度增强
+  - criterionId: usable-conversation
+    label: 话术可直接用于真实面谈
+    description: 用客户能理解的语言解释流动性、期限、波动和方案取舍。
+    dimension: clarity
+    weight: 1
+    required: true
+    anyOf:
+      - 陈先生
+      - 您看
+replay:
+  evidenceFile: fixtures/evidence/ready-state-recommendation-ab.json
+  sourcePromptId: WM-SKILL-EVAL-006

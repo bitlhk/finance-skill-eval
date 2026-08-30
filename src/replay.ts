@@ -30,6 +30,8 @@ const sourceTurnSchema = z.object({
 }).passthrough();
 
 const sourceReportSchema = z.object({
+  sourceType: z.enum(["ea_runtime", "controlled_harness"]).default("ea_runtime"),
+  sourceLabel: z.string().optional(),
   cases: z.array(z.object({
     promptId: z.string(),
     left: sourceTurnSchema,
@@ -43,7 +45,7 @@ function usageNumber(usage: Record<string, unknown> | null, key: string): number
 }
 
 export class ReplayRuntimeAdapter implements RuntimeAdapter {
-  readonly adapterId = "frozen-ea-evidence-replay-v1";
+  readonly adapterId = "frozen-evidence-replay-v1";
   private readonly cache = new Map<string, z.infer<typeof sourceReportSchema>>();
 
   constructor(private readonly pack: EvalPack) {}
@@ -101,7 +103,8 @@ export class ReplayRuntimeAdapter implements RuntimeAdapter {
       error: source.error,
       traceFingerprint: fingerprint(source),
       metadata: {
-        sourceType: "frozen_ea_report",
+        sourceType: report.sourceType,
+        sourceLabel: report.sourceLabel,
         evidenceFile: path.relative(path.dirname(this.pack.sourceFile), evidenceFile),
       },
     });

@@ -1,0 +1,84 @@
+{
+  "sourceType": "controlled_harness",
+  "sourceLabel": "EA controlled harness + AI expert blind review v3; native Runtime identity unverified",
+  "evidenceSemantics": "professional-comparison-non-certifying",
+  "calibrationDataset": "wealth-manager-assistant-2.1-expert-calibration-v3",
+  "calibrationFingerprint": "fe40f0a32df8dfd66f9298669b77e8f4c21857f333fe6d803802d5271aad30b6",
+  "cases": [
+    {
+      "promptId": "WM-SKILL-EVAL-006",
+      "left": {
+        "status": "completed",
+        "modelId": "doubao-seed-2.1-pro",
+        "skillVersion": null,
+        "assistantText": "{\"status\":\"READY\",\"title\":\"陈明75万元配置正式候选方案\",\"summary\":\"基于陈明C4风险等级、3年以上期限及20%高流动性底线，从适当性校验通过产品中形成总额75万元的A/B正式候选方案，含配置理由、风险提示、排除项及沟通话术。\",\"sections\":[{\"heading\":\"正式候选产品与配置理由\",\"items\":[\"方案A（更稳健）：P009现金管理理财C 15万元，满足20%高流动性底线；P001稳健增强理财A 45万元，期限323天；F000343长期价值基金 15万元，匹配C4风险与3年以上期限。\",\"方案B（适度增强）：P009 15万元，满足高流动性底线；P001 30万元；F000343 30万元，在满足流动性基础上提升权益类配置弹性。\",\"两方案总额均为75万元，当前无在持产品，均从eligibleProducts中选取；P001为期限受限产品，封闭期内不可赎回，不计入流动性底线。\"]},{\"heading\":\"风险提示与排除项\",\"items\":[\"风险提示：产品不承诺收益；P001封闭期内不可赎回，存在流动性限制；F000343为R4产品，净值波动较大，可能发生本金亏损。\",\"排除项：P004因当前停售、不具备在售资格，未纳入候选。\",\"匹配说明：客户风险等级C4，可覆盖R1/R2/R4产品；高流动性资产仅由P009承载，金额不低于15万元。\"]},{\"heading\":\"客户沟通话术（需人工确认后使用）\",\"items\":[\"陈先生，您的风险测评有效，结合您3年以上投资期限和至少保留20%高流动性资产的要求，我为您准备了两套总额75万元的候选方案供参考。\",\"两套方案都先配置15万元现金管理类产品满足日常流动性；A方案更稳健，B方案在风险匹配范围内适度增强长期配置弹性。\",\"需要提醒您：相关产品不保证收益，封闭期产品中途不能赎回，基金类产品净值会波动；最终配置请您自主决策，我也会在您确认前再做人工复核。\"]}],\"sourceRefs\":[\"C005\",\"wealth-policy-v2.2\",\"wealth-product-catalog-2026-08-28\"],\"referencedProductIds\":[\"P009\",\"P001\",\"F000343\"],\"formalRecommendation\":true,\"recoveryActions\":[],\"approvalCards\":[{\"title\":\"陈明正式候选配置方案确认卡\",\"payloadSummary\":\"拟向陈明提供总额75万元的A/B配置方案：均以P009配置15万元满足20%高流动性底线；A方案P001配置45万元、F000343配置15万元，更稳健；B方案P001配置30万元、F000343配置30万元，适度增强。\"}],\"executionReceipt\":null}",
+        "elapsedMs": 13875,
+        "toolCalls": [
+          {
+            "name": "get_governed_customer_profile",
+            "status": "completed"
+          },
+          {
+            "name": "get_governed_customer_portfolio",
+            "status": "completed"
+          },
+          {
+            "name": "get_wealth_policy_basis",
+            "status": "completed"
+          },
+          {
+            "name": "prepare_wealth_allocation_context",
+            "status": "completed"
+          }
+        ],
+        "loadedSkills": [],
+        "usage": {
+          "input": 1778,
+          "output": 688,
+          "total": 2466
+        },
+        "runtimeIdentityVerified": false,
+        "streamCompleted": false,
+        "error": null,
+        "sourceRunId": "without_target_skill-WM-SKILL-EVAL-006-2-7239d43f",
+        "traceFingerprint": null
+      },
+      "right": {
+        "status": "completed",
+        "modelId": "doubao-seed-2.1-pro",
+        "skillVersion": "2.1.0",
+        "assistantText": "{\"status\":\"READY\",\"title\":\"陈明正式候选产品配置建议\",\"summary\":\"陈明风险测评有效，75万元待配置且当前无持仓。按20%高流动性底线形成两套总额75万元正式候选，均以P009承载流动性，P001不计入流动性，并提示风险、排除停售产品。\",\"sections\":[{\"heading\":\"正式候选与配置理由\",\"items\":[\"方案A（更稳健）：P009现金管理理财C 15万元，满足20%高流动性底线；P001稳健增强理财A 45万元，323天封闭、R2，承担中期稳健配置；F000343长期价值基金15万元，R4，匹配3年以上期限。\",\"方案B（适度增强）：P009 15万元守住流动性底线；P001 30万元控制封闭期占比；F000343 30万元，在可承受范围内提高长期波动暴露。\",\"当前无在持产品，待配置75万元；两套方案均先保15万元高流动性，P001封闭期内不可赎回，不计入流动性。\"]},{\"heading\":\"风险提示与排除项\",\"items\":[\"风险提示：不承诺收益；P001封闭期内无法赎回；F000343为R4基金，可能出现较大净值波动，需客户自主决策。\",\"排除项：P004当前停售，不具备在售资格，不纳入正式候选。\",\"信息边界：产品风险、期限、流动性仅基于已核验在售与适当性结果；最终配置仍需财富经理人工确认。\"]},{\"heading\":\"客户沟通话术\",\"items\":[\"陈先生，您的风险测评有效，这笔75万元目前没有在持产品。我建议先把15万元放在可T+1赎回的现金管理类，确保至少20%高流动性。\",\"剩下资金有两种思路：A更稳健，45万元放323天封闭的稳健增强、15万元配长期基金；B适度增强，封闭产品降到30万元、长期基金提到30万元。\",\"两套都不承诺收益，封闭期内不能赎回，基金会有波动。您看更偏向控制短期波动，还是愿意用更多长期资金承担波动争取增值？我再帮您确认最终安排。\"]}],\"sourceRefs\":[\"C005\",\"wealth-policy-v2.2\",\"wealth-product-catalog-2026-08-28\"],\"referencedProductIds\":[\"P009\",\"P001\",\"F000343\"],\"formalRecommendation\":true,\"recoveryActions\":[],\"approvalCards\":[],\"executionReceipt\":null}",
+        "elapsedMs": 17606,
+        "toolCalls": [
+          {
+            "name": "get_governed_customer_profile",
+            "status": "completed"
+          },
+          {
+            "name": "get_governed_customer_portfolio",
+            "status": "completed"
+          },
+          {
+            "name": "get_wealth_policy_basis",
+            "status": "completed"
+          },
+          {
+            "name": "prepare_wealth_allocation_context",
+            "status": "completed"
+          }
+        ],
+        "loadedSkills": [],
+        "usage": {
+          "input": 6918,
+          "output": 590,
+          "total": 7508
+        },
+        "runtimeIdentityVerified": false,
+        "streamCompleted": false,
+        "error": null,
+        "sourceRunId": "target_skill-WM-SKILL-EVAL-006-2-4b8105b8",
+        "traceFingerprint": null
+      }
+    }
+  ]
+}

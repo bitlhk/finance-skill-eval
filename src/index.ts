@@ -7,4 +7,4 @@ export * from "./replay.js";
 export * from "./report.js";
 export * from "./runner.js";
 
-export const FINANCE_SKILL_EVAL_VERSION = "0.1.0";
+export const FINANCE_SKILL_EVAL_VERSION = "0.2.0";

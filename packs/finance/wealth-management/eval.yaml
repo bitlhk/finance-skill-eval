@@ -1,0 +1,48 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: wealth-manager-assistant-professional-value-v1
+version: 1.0.0
+domain: wealth-management
+targetSkillId: wealth-manager-assistant
+targetSkillVersion: 2.1.0
+description: >-
+  比较同一模型在不装配和装配财富经理 2.1 专业 Skill 时，能否从客户资料罗列
+  升级为聚焦决策变量的访前诊断，并在条件充分时形成组合优先、产品随后、
+  能帮助客户理解取舍的配置建议。
+models:
+  analyzer:
+    providerId: ea
+    modelId: glm-5.2
+    label: Skill 测试设计模型
+  execution:
+    left:
+      providerId: controlled-harness
+      modelId: doubao-seed-2.1-pro
+      label: 左侧执行模型
+    right:
+      providerId: controlled-harness
+      modelId: doubao-seed-2.1-pro
+      label: 右侧执行模型
+  judge:
+    providerId: hermes
+    modelId: gpt-5.6-luna
+    label: AI 财富管理专业 Judge
+variants:
+  left:
+    mode: without_target_skill
+    skillId: wealth-manager-assistant
+  right:
+    mode: skill_version
+    skillId: wealth-manager-assistant
+    version: 2.1.0
+    artifactSha256: d36ac98aa2a137ba1e22dc43b5bb21e519dcfe855193b5bfb207222400c5e59b
+judgeProfileFile: profiles/wealth-manager-judge.yaml
+caseFiles:
+  - cases/previsit-diagnosis.yaml
+  - cases/ready-state-recommendation.yaml
+metadata:
+  source: EA controlled harness and AI expert blind review v3
+  evidenceSemantics: professional-comparison-non-certifying
+  calibrationDataset: wealth-manager-assistant-2.1-expert-calibration-v3
+  calibrationFingerprint: fe40f0a32df8dfd66f9298669b77e8f4c21857f333fe6d803802d5271aad30b6
+  compatibility: skill-up-v0.9.1
+  promptfooVersion: 0.122.2

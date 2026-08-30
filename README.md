@@ -45,6 +45,19 @@ pnpm eval:investment:replay
 The command writes `report.json` and `report.html` under
 `reports/investment-research/`.
 
+The second standard pack covers the two wealth-management tasks that already
+have AI expert blind-review calibration: pre-visit diagnosis and ready-state
+portfolio recommendation. Its evidence comes from the frozen controlled
+harness, so it proves professional output differences but does not claim native
+EA Runtime identity:
+
+```bash
+pnpm eval:wealth:replay
+```
+
+The command writes `report.json` and `report.html` under
+`reports/wealth-management/`.
+
 ## Integration Shape
 
 ```text

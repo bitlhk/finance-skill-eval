@@ -1,6 +1,6 @@
 {
   "name": "finance-skill-eval",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable financial Skill evaluation contracts, runners, judges, and reports",
   "type": "module",
   "private": true,
@@ -29,6 +29,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "eval:investment:replay": "tsx src/cli.ts replay --pack packs/finance/investment-research/eval.yaml --out reports/investment-research",
+    "eval:wealth:replay": "tsx src/cli.ts replay --pack packs/finance/wealth-management/eval.yaml --out reports/wealth-management",
     "pack:local": "pnpm build && pnpm pack --pack-destination artifacts"
   },
   "dependencies": {

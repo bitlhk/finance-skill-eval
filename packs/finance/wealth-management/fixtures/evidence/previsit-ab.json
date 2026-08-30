@@ -1,0 +1,76 @@
+{
+  "sourceType": "controlled_harness",
+  "sourceLabel": "EA controlled harness + AI expert blind review v3; native Runtime identity unverified",
+  "evidenceSemantics": "professional-comparison-non-certifying",
+  "calibrationDataset": "wealth-manager-assistant-2.1-expert-calibration-v3",
+  "calibrationFingerprint": "fe40f0a32df8dfd66f9298669b77e8f4c21857f333fe6d803802d5271aad30b6",
+  "cases": [
+    {
+      "promptId": "WM-SKILL-EVAL-001",
+      "left": {
+        "status": "completed",
+        "modelId": "doubao-seed-2.1-pro",
+        "skillVersion": null,
+        "assistantText": "{\"status\":\"READY\",\"title\":\"陈明（C005）访前简报与谈话要点\",\"summary\":\"已生成陈明（C005）明天下午拜访的内部访前简报：含客户基础事实、数据时间、风险测评状态、现行制度版本；持仓与到期事项缺失已标注，并给出5条谈话要点及待核实事项。\",\"sections\":[{\"heading\":\"客户事实与制度依据\",\"items\":[\"客户陈明（C005），风险等级C4，风险测评有效期至2027-12-31，AUM区间50万-100万，联系方式138****8005。\",\"客户数据截至2026-08-25 17:00（GMT+8）；现行制度版本为wealth-policy-v2.2，自2026-06-30起生效。\"]},{\"heading\":\"缺失信息标注\",\"items\":[\"当前受控上下文中未提供持仓明细、到期事项、近期互动记录及具体拜访目标，相关内容需在拜访中核实。\"]},{\"heading\":\"谈话要点与待核实事项\",\"items\":[\"确认本次拜访重点、近期资金安排与服务需求，核对联系方式等基础信息是否变更。\",\"结合C4风险承受能力，了解其对市场波动的关注及风险偏好是否发生变化。\",\"核实是否存在持仓、产品到期或资金流动性安排，因系统未提供明细需现场确认。\",\"提醒风险测评状态当前有效，后续如有信息变化可及时更新。\",\"按V2.2制度要求开展沟通，不做超权限承诺，未提供的产品信息不展开推荐。\"]}],\"sourceRefs\":[\"C005\",\"wealth-policy-v2.2\"],\"referencedProductIds\":[],\"formalRecommendation\":false,\"recoveryActions\":[],\"approvalCards\":[],\"executionReceipt\":null}",
+        "elapsedMs": 10208,
+        "toolCalls": [
+          {
+            "name": "wealth_assistant_context_probe",
+            "status": "completed"
+          },
+          {
+            "name": "get_governed_customer_profile",
+            "status": "completed"
+          },
+          {
+            "name": "get_wealth_policy_basis",
+            "status": "completed"
+          }
+        ],
+        "loadedSkills": [],
+        "usage": {
+          "input": 1250,
+          "output": 398,
+          "total": 1648
+        },
+        "runtimeIdentityVerified": false,
+        "streamCompleted": false,
+        "error": null,
+        "sourceRunId": "without_target_skill-WM-SKILL-EVAL-001-2-042377fb",
+        "traceFingerprint": null
+      },
+      "right": {
+        "status": "completed",
+        "modelId": "doubao-seed-2.1-pro",
+        "skillVersion": "2.1.0",
+        "assistantText": "{\"status\":\"READY\",\"title\":\"陈明（C005）明天下午拜访访前简报\",\"summary\":\"已基于2026-08-25客户事实与现行财富制度V2.2生成内部访前材料；持仓、到期事项及本次具体目标缺失，需现场核实，不做外部写操作。\",\"sections\":[{\"heading\":\"已核验事实\",\"items\":[\"客户陈明（C005），风险等级C4，风险测评有效期至2027-12-31；AUM区间50万-100万；数据时间2026-08-25 17:00+08:00。\",\"现行制度：wealth-policy-v2.2，版本V2.2，生效时间2026-06-30 00:00+08:00。\",\"已知信息缺口：具体持仓明细、产品到期事项、近期资金安排、上次会面遗留事项均未提供。\"]},{\"heading\":\"谈话要点（首轮关键问题）\",\"items\":[\"这次见面最想先确认哪件事：到期资金安排、资产调整，还是其他近期目标？\",\"未来6-12个月是否有明确资金用途和用钱时间，需要保留多少流动性？\",\"若组合短期出现波动，您可接受的浮亏金额大概是多少，会选择等待还是调整？\",\"目前您对收益、流动性和本金安全的优先级怎么排，是否有家庭或经营变化需要考虑？\"]},{\"heading\":\"面谈目标与边界\",\"items\":[\"本次目标：确认客户当前核心诉求、资金期限与风险承受边界，识别是否有到期或配置调整触发。\",\"当前可讨论：基于已知C4风险等级和制度要求，沟通资产配置方向与待补充信息。\",\"当前不能形成：缺少持仓/到期/产品准入事实，不做具体产品正式推荐，不承诺收益。\"]}],\"sourceRefs\":[\"C005\",\"wealth-policy-v2.2\"],\"referencedProductIds\":[],\"formalRecommendation\":false,\"recoveryActions\":[],\"approvalCards\":[],\"executionReceipt\":null}",
+        "elapsedMs": 11953,
+        "toolCalls": [
+          {
+            "name": "wealth_assistant_context_probe",
+            "status": "completed"
+          },
+          {
+            "name": "get_governed_customer_profile",
+            "status": "completed"
+          },
+          {
+            "name": "get_wealth_policy_basis",
+            "status": "completed"
+          }
+        ],
+        "loadedSkills": [],
+        "usage": {
+          "input": 4636,
+          "output": 456,
+          "total": 5092
+        },
+        "runtimeIdentityVerified": false,
+        "streamCompleted": false,
+        "error": null,
+        "sourceRunId": "target_skill-WM-SKILL-EVAL-001-2-d7f1df82",
+        "traceFingerprint": null
+      }
+    }
+  ]
+}

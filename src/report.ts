@@ -163,6 +163,14 @@ function variantLabel(variant: EvalPack["variants"]["left"]): string {
   return variant.mode === "without_target_skill" ? "不装配目标 Skill" : `${variant.skillId}@${variant.version}`;
 }
 
+function formatOutput(value: string): string {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
 export function renderHtmlReport(report: EvaluationReport): string {
   const caseSections = report.cases.map(item => {
     const judge = item.judge;
@@ -174,8 +182,8 @@ export function renderHtmlReport(report: EvaluationReport): string {
       </header>
       <p class="goal">${escapeHtml(item.evaluationGoal)}</p>
       <div class="columns">
-        <article><h3>左侧</h3><pre>${escapeHtml(item.left.output)}</pre></article>
-        <article><h3>右侧</h3><pre>${escapeHtml(item.right.output)}</pre></article>
+        <article><h3>左侧</h3><pre>${escapeHtml(formatOutput(item.left.output))}</pre></article>
+        <article><h3>右侧</h3><pre>${escapeHtml(formatOutput(item.right.output))}</pre></article>
       </div>
       <div class="judge">
         <h3>金融专业评价</h3>
