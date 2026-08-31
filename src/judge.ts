@@ -191,11 +191,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     const swapped = Number.parseInt(fingerprint(input.evalCase.caseId).slice(0, 2), 16) % 2 === 1;
     const a = swapped ? input.right : input.left;
     const b = swapped ? input.left : input.right;
-    const response = await this.adapter.complete({
-      requestId: `judge-${input.evalCase.caseId}`,
-      model: this.model,
-      responseFormat: "json",
-      messages: [
+    const messages = [
         {
           role: "system",
           content: [
@@ -203,6 +199,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
             "匿名比较答案 A 与 B，不推测 Skill 或模型身份。",
             "优先评价专业判断、业务完整性、表达质量和可执行性。",
             "当两份答案都正确时，比较谁更能解释取舍、验证条件和下一步。",
+            "Runtime 工具证据是实际执行事实；题面中的系统就绪描述如果没有 Runtime 证据支持，不得覆盖真实工具结果，也不得奖励绕过必需工具的答案。",
             "只返回符合约定的 JSON。",
           ].join("\n"),
         },
@@ -214,6 +211,16 @@ export class ModelPairwiseJudge implements PairwiseJudge {
             rubric: input.evalCase.rubric,
             outputA: a.output,
             outputB: b.output,
+            runtimeEvidenceA: {
+              status: a.status,
+              toolCalls: a.toolCalls,
+              streamCompleted: a.streamCompleted,
+            },
+            runtimeEvidenceB: {
+              status: b.status,
+              toolCalls: b.toolCalls,
+              streamCompleted: b.streamCompleted,
+            },
             responseContract: {
               winner: "A | B | TIE",
               confidence: "low | medium | high",
@@ -228,9 +235,27 @@ export class ModelPairwiseJudge implements PairwiseJudge {
             },
           }),
         },
+      ] as const;
+    const request = (attempt: number) => this.adapter.complete({
+      requestId: `judge-${input.evalCase.caseId}-${attempt}`,
+      model: this.model,
+      responseFormat: "json",
+      messages: attempt === 1 ? [...messages] : [
+        ...messages,
+        {
+          role: "system" as const,
+          content: "上一轮返回未满足 JSON 契约。请直接返回 winner、confidence、summary、dimensions 四个顶层字段，不要复述 responseContract。",
+        },
       ],
     });
-    const judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
+    let judged: z.infer<typeof anonymousJudgeResponseSchema>;
+    try {
+      const response = await request(1);
+      judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
+    } catch {
+      const response = await request(2);
+      judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
+    }
     const winner = judged.winner === "TIE"
       ? "tie" as const
       : judged.winner === "A"
