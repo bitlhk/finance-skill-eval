@@ -158,6 +158,36 @@ export const judgeResultSchema = z.strictObject({
   reviewerLabel: z.string().min(1),
 });
 
+export const evaluationScenarioSeedSchema = z.strictObject({
+  seedId: z.string().min(1),
+  title: z.string().min(1),
+  scenarioType: z.string().min(1),
+  subject: z.strictObject({
+    ref: z.string().min(1),
+    label: z.string().min(1),
+  }).optional(),
+  promptFacts: z.array(z.string().min(1)).max(12).default([]),
+  verificationFacts: z.array(z.string().min(1)).max(20).default([]),
+  missingFacts: z.array(z.string().min(1)).max(12).default([]),
+  tags: z.array(z.string().min(1)).max(12).default([]),
+});
+
+export const evaluationContextPayloadSchema = z.strictObject({
+  sourceLabel: z.string().min(1),
+  mode: z.enum(["host_enhanced", "static_fixture"]),
+  asOf: z.string().datetime().optional(),
+  capabilities: z.array(z.string().min(1)).max(30).default([]),
+  seeds: z.array(evaluationScenarioSeedSchema).min(1).max(20),
+  redaction: z.literal("sanitized"),
+  metadata: z.record(strictRecordValueSchema).default({}),
+});
+
+export const evaluationContextSnapshotSchema = evaluationContextPayloadSchema.extend({
+  schemaVersion: z.literal("finance.skill-eval.context-snapshot.v1"),
+  providerId: z.string().min(1),
+  snapshotFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
 export type ModelRef = z.infer<typeof modelRefSchema>;
 export type SkillVariant = z.infer<typeof skillVariantSchema>;
 export type RubricCriterion = z.infer<typeof rubricCriterionSchema>;
@@ -166,6 +196,9 @@ export type JudgeProfile = z.infer<typeof judgeProfileSchema>;
 export type EvalPackFile = z.infer<typeof evalPackFileSchema>;
 export type RuntimeExecutionEvidence = z.infer<typeof runtimeExecutionEvidenceSchema>;
 export type JudgeResult = z.infer<typeof judgeResultSchema>;
+export type EvaluationScenarioSeed = z.infer<typeof evaluationScenarioSeedSchema>;
+export type EvaluationContextPayload = z.infer<typeof evaluationContextPayloadSchema>;
+export type EvaluationContextSnapshot = z.infer<typeof evaluationContextSnapshotSchema>;
 
 export type EvalPack = Omit<EvalPackFile, "caseFiles" | "judgeProfileFile"> & {
   sourceFile: string;

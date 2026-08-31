@@ -15,6 +15,7 @@
 - **金融 Eval Pack**：用版本化测试题、评分标准、专业 SOP 和校准证据表达财富管理、投资研究等领域要求。
 - **结果可视化**：输出逐题对比、胜负结论、评分理由和改进建议，生成可保存的 JSON 与 HTML 报告。
 - **平台无关接入**：通过 `RuntimeAdapter` 和 `ModelAdapter` 接入不同 Agent、模型、工具环境与运行时。
+- **可选业务上下文增强**：宿主可通过 `EvaluationContextAdapter` 提供脱敏场景种子；未提供时仍可只分析 Skill 出题。
 
 ## 评测流程
 
@@ -179,6 +180,26 @@ EA RuntimeAdapter
 ```
 
 其他 Agent 平台可以实现自己的 Adapter，复用同一套金融评测方法与 Eval Pack，无需依赖 EA 的界面或运行时。
+
+### 可选的业务场景适配
+
+评测核心不依赖 CRM、数据库或某个 MCP。宿主可以选择实现
+`EvaluationContextAdapter`，把自身业务系统中的可用场景转换为统一、脱敏的
+`EvaluationContextSnapshot`：
+
+```text
+宿主客户 / 产品 / 知识工具
+        ↓
+EvaluationContextAdapter
+        ↓
+脱敏场景种子 + 不可变快照指纹
+        ↓
+Analyzer 生成更贴近当前环境的测试题
+```
+
+场景种子将可写入题面的 `promptFacts`、仅用于评审的
+`verificationFacts` 和需要测试补齐能力的 `missingFacts` 分开。没有 Adapter
+时，Analyzer 继续使用 Skill 源码和可选的固定 Eval Pack，不影响通用接入。
 
 ## 目录结构
 

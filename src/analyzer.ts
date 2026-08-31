@@ -1,6 +1,7 @@
 import { z } from "zod";
-import type { ModelAdapter } from "./adapters.js";
+import type { EvaluationContextAdapter, ModelAdapter } from "./adapters.js";
 import { evalCaseSchema, type EvalCase, type ModelRef } from "./contracts.js";
+import { resolveEvaluationContext } from "./context.js";
 
 const generatedCasesSchema = z.strictObject({
   summary: z.string().min(1),
@@ -19,9 +20,23 @@ export async function analyzeSkillAndGenerateCases(input: {
   skillId: string;
   skillSource: string;
   domainContext?: string;
+  contextAdapter?: EvaluationContextAdapter;
+  role?: string;
   maximumCases?: number;
-}): Promise<{ summary: string; cases: EvalCase[] }> {
+}): Promise<{
+  summary: string;
+  cases: EvalCase[];
+  evaluationContext: Awaited<ReturnType<typeof resolveEvaluationContext>>;
+}> {
   const maximumCases = Math.min(Math.max(input.maximumCases ?? 4, 1), 8);
+  const evaluationContext = await resolveEvaluationContext({
+    adapter: input.contextAdapter,
+    request: {
+      skillId: input.skillId,
+      role: input.role,
+      maximumSeeds: maximumCases,
+    },
+  });
   const response = await input.modelAdapter.complete({
     requestId: `analyze-${input.skillId}`,
     model: input.model,
@@ -34,6 +49,9 @@ export async function analyzeSkillAndGenerateCases(input: {
           "先识别 Skill 真正解决的业务任务，再设计少量高区分度测试题。",
           "重点评价专业判断、业务完整性、表达质量和可执行性。",
           "安全与合规只作为必要底线，不能淹没 Skill 的专业价值。",
+          "如果提供了 evaluationContext，只能使用其中脱敏的场景种子辅助出题。",
+          "subject 可以写入题目用于稳定定位；promptFacts 可以自然写入题面；verificationFacts 只能用于 evaluationGoal 和评分标准，不能直接泄露到题面；missingFacts 用于设计信息不完整任务。",
+          "宿主上下文只是出题依据，左右 Runtime 仍必须自行调用业务工具核验当前事实。",
           `最多生成 ${maximumCases} 条案例。只返回 JSON。`,
         ].join("\n"),
       },
@@ -42,6 +60,7 @@ export async function analyzeSkillAndGenerateCases(input: {
         content: JSON.stringify({
           skillId: input.skillId,
           domainContext: input.domainContext ?? null,
+          evaluationContext,
           skillSource: input.skillSource,
           outputContract: {
             summary: "string",
@@ -52,5 +71,5 @@ export async function analyzeSkillAndGenerateCases(input: {
     ],
   });
   const generated = generatedCasesSchema.parse(parseJsonObject(response.content));
-  return generated;
+  return { ...generated, evaluationContext };
 }

@@ -1,11 +1,24 @@
 import type {
   EvalCase,
+  EvaluationContextPayload,
   ModelRef,
   RuntimeExecutionEvidence,
   SkillVariant,
 } from "./contracts.js";
 
 export type EvaluationSide = "left" | "right";
+
+export type EvaluationContextRequest = {
+  skillId: string;
+  domain?: string;
+  role?: string;
+  maximumSeeds: number;
+};
+
+export interface EvaluationContextAdapter {
+  readonly adapterId: string;
+  load(request: EvaluationContextRequest): Promise<EvaluationContextPayload | null>;
+}
 
 export type RuntimeExecutionRequest = {
   runId: string;
