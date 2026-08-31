@@ -83,6 +83,7 @@ describe("Skill analyzer", () => {
     const modelAdapter: ModelAdapter = {
       adapterId: "context-aware-analyzer",
       async complete(request) {
+        expect(request.messages[0]?.content).toContain("只能写入 subject 和该种子的 promptFacts");
         const payload = JSON.parse(request.messages[1]?.content || "{}") as Record<string, any>;
         expect(payload.evaluationContext.providerId).toBe("host-customer-context-v1");
         expect(payload.evaluationContext.seeds[0].subject.ref).toBe("C005");
