@@ -1,6 +1,6 @@
 {
   "name": "finance-skill-eval",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Portable financial Skill evaluation contracts, runners, judges, and reports",
   "type": "module",
   "private": true,
@@ -25,6 +25,7 @@
     "README.md"
   ],
   "scripts": {
+    "pretest": "pnpm build",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
