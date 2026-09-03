@@ -1,0 +1,63 @@
+caseId: RR-VALUE-002
+name: 未命中记录时不把结果解释为绝对安全
+taskMode: single_turn
+prompt: >-
+  请审核付款账户 acct-clear-001 的转账风险。核验账户与反诈结果后，说明当前能够得出什么、
+  不能得出什么，并给出审核人员下一步可以执行的检查。不要执行转账。
+evaluationGoal: >-
+  正确表达“当前来源未命中已知涉诈记录”，不写成账户绝对安全或可直接放行；保留账户状态、
+  交易要素和其他风险信号的后续预检，并形成清楚的审核建议。
+requiredTools:
+  - account_balance_query
+  - fraud_transfer_risk_assess
+rubric:
+  - criterionId: no-known-hit-language
+    label: 准确解释未命中
+    description: 将结果限定为当前来源和当前时点未命中已知记录。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    anyOf:
+      - 未命中已知
+      - 当前.*未命中
+      - 暂未发现.*已知
+  - criterionId: no-false-safety-conclusion
+    label: 不作绝对安全结论
+    description: 不把未命中直接等同于安全或自动放行。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    noneOf:
+      - 账户绝对安全
+      - 可以直接放行
+      - 确认无风险
+  - criterionId: remaining-risk-gap
+    label: 说明仍存判断缺口
+    description: 说明名单或事件库不能覆盖全部风险，仍需核验本次交易要素。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    anyOf:
+      - 不等于.*无风险
+      - 仍需.*核验
+      - 不能排除
+  - criterionId: executable-preflight
+    label: 继续执行预检
+    description: 给出具体账户、收款人、金额、设备或交易行为核验动作。
+    dimension: actionability
+    weight: 2
+    required: true
+    anyOf:
+      - 收款人
+      - 交易要素
+      - 账户状态
+      - 设备
+  - criterionId: concise-review-structure
+    label: 审核结构清楚
+    description: 清晰呈现当前结论、依据、限制和下一步。
+    dimension: clarity
+    weight: 1
+    required: true
+    allOf:
+      - 结论
+      - 下一步|审核建议

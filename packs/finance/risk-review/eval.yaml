@@ -1,0 +1,46 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: transfer-risk-review-professional-value-v1
+version: 1.0.0
+domain: risk-review
+targetSkillId: transfer-risk-review
+targetSkillVersion: 0.1.0
+description: >-
+  比较同一模型在不装配和装配转账风险审核 Domain Skill 时，能否把账户事实与反诈系统证据
+  转换成可复核的审核意见，并正确处理命中、未命中和风险服务不可用三种状态。
+models:
+  analyzer:
+    providerId: ea
+    modelId: glm-5.2
+    label: Skill 测试设计模型
+  execution:
+    left:
+      providerId: finance-harness-runtime
+      modelId: glm-5.2
+      label: 左侧执行模型
+    right:
+      providerId: finance-harness-runtime
+      modelId: glm-5.2
+      label: 右侧执行模型
+  judge:
+    providerId: ea
+    modelId: glm-5.2
+    label: 金融风险审核 Judge
+variants:
+  left:
+    mode: without_target_skill
+    skillId: transfer-risk-review
+  right:
+    mode: skill_version
+    skillId: transfer-risk-review
+    version: 0.1.0
+judgeProfileFile: profiles/risk-review-judge.yaml
+caseFiles:
+  - cases/known-fraud-hit.yaml
+  - cases/no-known-hit.yaml
+  - cases/risk-service-unavailable.yaml
+metadata:
+  source: finance-agent-harness risk-review reference solution
+  evidenceSemantics: professional-comparison-non-certifying
+  executionRequirement: same-model-same-provider-fixtures
+  compatibility: skill-up-v0.9.1
+  promptfooVersion: 0.122.2

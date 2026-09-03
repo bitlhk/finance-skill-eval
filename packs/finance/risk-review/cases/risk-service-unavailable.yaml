@@ -1,0 +1,61 @@
+caseId: RR-VALUE-003
+name: 风险服务不可用时保持业务价值
+taskMode: single_turn
+prompt: >-
+  请审核付款账户 acct-unavailable-001 的一笔转账申请。账户系统可用，但反诈风险服务本次不可用。
+  请说明当前可以确认的事实、不能完成的判断以及审核人员下一步怎么处理。不要执行转账。
+evaluationGoal: >-
+  保留可核验的账户事实，明确反诈判断当前无法完成，不自行补造风险结论；给出重试、人工审核或按银行
+  现行异常流程处理的具体建议，并保留最终处置边界。
+requiredTools:
+  - account_balance_query
+  - fraud_transfer_risk_assess
+rubric:
+  - criterionId: preserve-available-account-facts
+    label: 保留可用账户事实
+    description: 风险服务失败时仍使用账户系统返回的可核验事实。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    anyOf:
+      - 账户事实
+      - 已核验.*账户
+  - criterionId: explicit-unavailable-status
+    label: 明确风险判断不可用
+    description: 准确说明反诈系统不可用导致本轮风险判断无法完成。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf:
+      - 反诈|风险服务
+      - 无法完成|不可用|暂时失败
+  - criterionId: no-fabricated-decision
+    label: 不补造风险结论
+    description: 不在缺少反诈结果时自行判断放行、安全或命中风险。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    noneOf:
+      - 可以直接放行
+      - 确认安全
+      - 已确认涉诈
+  - criterionId: degraded-review-action
+    label: 提供降级审核动作
+    description: 给出重试、转人工或按现行异常流程处理的明确路径。
+    dimension: actionability
+    weight: 2
+    required: true
+    anyOf:
+      - 重试
+      - 人工审核
+      - 异常流程
+      - 暂缓.*处理
+  - criterionId: explain-known-and-unknown
+    label: 区分已知与未知
+    description: 让审核人员快速看清已确认事实和当前不能判断的部分。
+    dimension: clarity
+    weight: 1
+    required: true
+    allOf:
+      - 已确认|可以确认
+      - 无法判断|不能确认
