@@ -98,6 +98,19 @@ Eval Pack 应同时表达：
 
 该评测比较无 Domain Skill 与装配 `transfer-risk-review` 的同模型输出。案例当前是在线运行输入，不附带伪造的回放答案；接入实际 Runtime 和受控 Provider Fixture 后再生成 A/B 证据。
 
+连接同级目录下的 `finance-agent-harness`，运行受控 OpenJiuwen Candidate：
+
+```bash
+export FINANCE_AGENT_MODEL_API_KEY='<model-api-key>'
+export FINANCE_AGENT_MODEL_BASE_URL='<openai-compatible-base-url>'
+export FINANCE_AGENT_MODEL='glm-5.2'
+pnpm eval:risk:harness
+```
+
+左右两侧使用相同模型、Capability Pack 和 Provider Fixture，唯一变量是是否装配风险审核 Domain Skill。运行结果写入 `reports/risk-review/live`。
+
+2026-09-03 的真实 OpenJiuwen A/B 运行中，装配 Domain Skill 的一侧在三类任务中 `3/3` 获胜。控制变量、证据边界和报告指纹见 [验证记录](docs/verification/2026-09-03-risk-review-live-ab.md)。
+
 ## 快速开始
 
 环境要求：Node.js 22 或更高版本、pnpm。

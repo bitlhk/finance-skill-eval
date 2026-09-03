@@ -26,10 +26,11 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
     "eval:investment:replay": "tsx src/cli.ts replay --pack packs/finance/investment-research/eval.yaml --out reports/investment-research",
     "eval:wealth:replay": "tsx src/cli.ts replay --pack packs/finance/wealth-management/eval.yaml --out reports/wealth-management",
+    "eval:risk:harness": "tsx examples/run-harness-risk-review.ts",
     "pack:local": "pnpm build && pnpm pack --pack-destination artifacts"
   },
   "dependencies": {
