@@ -79,7 +79,7 @@ export async function preflightMcpServer(input: {
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "finance-skill-eval", version: "0.3.0" },
+        clientInfo: { name: "finance-skill-eval", version: "0.3.1" },
       },
     });
     const initializeResult = z.object({

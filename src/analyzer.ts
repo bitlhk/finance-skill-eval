@@ -2,17 +2,12 @@ import { z } from "zod";
 import type { EvaluationContextAdapter, ModelAdapter } from "./adapters.js";
 import { evalCaseSchema, type EvalCase, type ModelRef } from "./contracts.js";
 import { resolveEvaluationContext } from "./context.js";
+import { parseFirstJsonObject } from "./json-response.js";
 
 const generatedCasesSchema = z.strictObject({
   summary: z.string().min(1),
   cases: z.array(evalCaseSchema.omit({ replay: true })).min(1).max(8),
 });
-
-function parseJsonObject(raw: string): unknown {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const candidate = fenced ?? raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
-  return JSON.parse(candidate.trim());
-}
 
 export async function analyzeSkillAndGenerateCases(input: {
   modelAdapter: ModelAdapter;
@@ -72,6 +67,6 @@ export async function analyzeSkillAndGenerateCases(input: {
       },
     ],
   });
-  const generated = generatedCasesSchema.parse(parseJsonObject(response.content));
+  const generated = generatedCasesSchema.parse(parseFirstJsonObject(response.content));
   return { ...generated, evaluationContext };
 }

@@ -13,4 +13,4 @@ export * from "./report.js";
 export * from "./runner.js";
 export * from "./mcp-preflight.js";
 
-export const FINANCE_SKILL_EVAL_VERSION = "0.3.0";
+export const FINANCE_SKILL_EVAL_VERSION = "0.3.1";

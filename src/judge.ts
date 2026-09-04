@@ -10,6 +10,7 @@ import {
   type RubricCriterion,
   type RuntimeExecutionEvidence,
 } from "./contracts.js";
+import { parseFirstJsonObject } from "./json-response.js";
 
 export interface PairwiseJudge {
   readonly judgeId: string;
@@ -136,14 +137,6 @@ const anonymousJudgeResponseSchema = z.strictObject({
   })).length(4),
 });
 
-function parseJsonObject(raw: string): unknown {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  const candidate = fenced ?? (start >= 0 && end > start ? raw.slice(start, end + 1) : raw);
-  return JSON.parse(candidate.trim());
-}
-
 export function remapAnonymousSideLabels(text: string, swapped: boolean): string {
   if (!swapped) return text;
   return text
@@ -251,10 +244,10 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     let judged: z.infer<typeof anonymousJudgeResponseSchema>;
     try {
       const response = await request(1);
-      judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
+      judged = anonymousJudgeResponseSchema.parse(parseFirstJsonObject(response.content));
     } catch {
       const response = await request(2);
-      judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
+      judged = anonymousJudgeResponseSchema.parse(parseFirstJsonObject(response.content));
     }
     const winner = judged.winner === "TIE"
       ? "tie" as const

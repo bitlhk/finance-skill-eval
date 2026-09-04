@@ -14,7 +14,7 @@ describe("Skill analyzer", () => {
         expect(request.model.modelId).toBe("analysis-model");
         return {
           modelId: request.model.modelId,
-          content: JSON.stringify({
+          content: `${JSON.stringify({
             summary: "测试专业判断，而不是只检查格式。",
             cases: [{
               caseId: "CASE-001",
@@ -35,7 +35,7 @@ describe("Skill analyzer", () => {
                 noneOf: [],
               }],
             }],
-          }),
+          })}\n以上为结构化测试方案。`,
         };
       },
     };
