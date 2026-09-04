@@ -9,6 +9,34 @@ const generatedCasesSchema = z.strictObject({
   cases: z.array(evalCaseSchema.omit({ replay: true })).min(1).max(8),
 });
 
+const generatedCasesContract = {
+  summary: "string",
+  cases: [{
+    caseId: "string",
+    name: "string",
+    taskMode: "single_turn | multi_turn",
+    prompt: "string",
+    evaluationGoal: "string",
+    requiredTools: ["string"],
+    rubric: [{
+      criterionId: "string",
+      label: "string",
+      description: "string",
+      dimension: "professional_fit | business_completeness | clarity | actionability",
+      weight: "positive number",
+      required: "boolean",
+      allOf: ["string regex or literal"],
+      anyOf: ["string regex or literal"],
+      noneOf: ["string regex or literal"],
+      improvementHint: "optional string",
+    }],
+  }],
+};
+
+function parseGeneratedCases(content: string): z.infer<typeof generatedCasesSchema> {
+  return generatedCasesSchema.parse(parseFirstJsonObject(content));
+}
+
 export async function analyzeSkillAndGenerateCases(input: {
   modelAdapter: ModelAdapter;
   model: ModelRef;
@@ -49,7 +77,8 @@ export async function analyzeSkillAndGenerateCases(input: {
           "不得补写 promptFacts 之外的客户经历、偏好、金额、情绪或结论。若确需测试额外情境，必须使用不关联真实 subject 的独立‘假设场景’。",
           "输出前逐题自检：真实 subject 题面中的每一项客户事实，都必须能逐项反查到 promptFacts；无法反查的内容删除，改成要求 Runtime 先核验。",
           "宿主上下文只是出题依据，左右 Runtime 仍必须自行调用业务工具核验当前事实。",
-          `最多生成 ${maximumCases} 条案例。只返回 JSON。`,
+          "必须严格使用用户提供的 outputContract 字段，不得自行改名、增加或省略字段。",
+          `最多生成 ${maximumCases} 条案例。只返回一个 JSON 对象。`,
         ].join("\n"),
       },
       {
@@ -59,14 +88,36 @@ export async function analyzeSkillAndGenerateCases(input: {
           domainContext: input.domainContext ?? null,
           evaluationContext,
           skillSource: input.skillSource,
-          outputContract: {
-            summary: "string",
-            cases: "EvalCase[] without replay",
-          },
+          outputContract: generatedCasesContract,
         }),
       },
     ],
   });
-  const generated = generatedCasesSchema.parse(parseFirstJsonObject(response.content));
+  let generated: z.infer<typeof generatedCasesSchema>;
+  try {
+    generated = parseGeneratedCases(response.content);
+  } catch (error) {
+    const repaired = await input.modelAdapter.complete({
+      requestId: `analyze-${input.skillId}-repair`,
+      model: input.model,
+      responseFormat: "json",
+      messages: [
+        {
+          role: "system",
+          content: "将无效结果修复为指定 JSON 合同。只改结构，不扩写事实；只返回一个 JSON 对象。",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            maximumCases,
+            outputContract: generatedCasesContract,
+            validationError: error instanceof Error ? error.message.slice(0, 4_000) : String(error),
+            invalidOutput: response.content,
+          }),
+        },
+      ],
+    });
+    generated = parseGeneratedCases(repaired.content);
+  }
   return { ...generated, evaluationContext };
 }
