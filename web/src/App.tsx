@@ -120,13 +120,16 @@ export function App() {
   const selectedUploadedSkill = selectedPreparation
     ? catalog?.uploadedSkills.find(item => item.assetId === selectedPreparation.skillAssetId) ?? null
     : null;
-  const runtimeEnvironments = catalog?.environments.filter(item => item.type === "runtime_http") ?? [];
-
+  const preparationRequiresTools = selectedPreparation?.cases.some(item => item.requiredTools.length > 0) ?? false;
   useEffect(() => {
     setSelectedCases(cases.map(item => item.caseId));
     if (selectedPack) setRuntime(selectedPack.replayReady ? "replay" : "runtime_http");
     if (selectedPreparation) {
-      setRuntime(catalog?.modelRoles.execution.configured ? "direct_model" : "runtime_http");
+      setRuntime(
+        !preparationRequiresTools && catalog?.modelRoles.execution.configured
+          ? "direct_model"
+          : "runtime_http",
+      );
     }
   }, [selection]);
 
@@ -282,6 +285,7 @@ export function App() {
             setSelectedCases={setSelectedCases}
             runtime={runtime}
             setRuntime={setRuntime}
+            directModelAllowed={!preparationRequiresTools}
             runtimeEnvironmentId={runtimeEnvironmentId}
             setRuntimeEnvironmentId={setRuntimeEnvironmentId}
             judgeMode={judgeMode}
@@ -314,6 +318,7 @@ function EvaluationView(props: {
   setSelectedCases(value: string[]): void;
   runtime: "replay" | "direct_model" | "runtime_http";
   setRuntime(value: "replay" | "direct_model" | "runtime_http"): void;
+  directModelAllowed: boolean;
   runtimeEnvironmentId: string;
   setRuntimeEnvironmentId(value: string): void;
   judgeMode: "deterministic" | "model";
@@ -350,7 +355,7 @@ function EvaluationView(props: {
         </select></label>
         <label className="field"><span>执行方式</span><select value={props.runtime} onChange={event => props.setRuntime(event.target.value as typeof props.runtime)}>
           {!isPreparation ? <option value="replay">冻结证据回放</option> : null}
-          {isPreparation ? <option value="direct_model" disabled={!props.catalog.modelRoles.execution.configured}>文本 Skill 直测</option> : null}
+          {isPreparation ? <option value="direct_model" disabled={!props.catalog.modelRoles.execution.configured || !props.directModelAllowed}>文本 Skill 直测</option> : null}
           <option value="runtime_http">外部 Agent Runtime</option>
         </select></label>
         {props.runtime === "runtime_http" ? <label className="field"><span>Runtime 环境</span><select value={props.runtimeEnvironmentId} onChange={event => props.setRuntimeEnvironmentId(event.target.value)}>
