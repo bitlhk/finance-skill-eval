@@ -30,6 +30,17 @@ type WorkerTerminalMessage =
   | { type: "completed" }
   | { type: "error"; error: string };
 
+export class EvaluationCancelledError extends Error {
+  constructor(message = "Evaluation cancelled") {
+    super(message);
+    this.name = "EvaluationCancelledError";
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new EvaluationCancelledError();
+}
+
 function promptfooWorkerPath(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const sibling = join(currentDir, "promptfoo-worker.js");
@@ -55,7 +66,9 @@ async function executeRuntime(input: {
   caseId: string;
   pack: EvalPack;
   runtime: RuntimeAdapter;
+  signal?: AbortSignal;
 }): Promise<RuntimeExecutionEvidence> {
+  throwIfAborted(input.signal);
   const evalCase = input.pack.cases.find(item => item.caseId === input.caseId);
   if (!evalCase) throw new Error(`Unknown evaluation case: ${input.caseId}`);
   const model = input.pack.models.execution[input.side];
@@ -67,8 +80,10 @@ async function executeRuntime(input: {
       evalCase,
       model,
       variant,
+      signal: input.signal,
     });
   } catch (error) {
+    if (input.signal?.aborted || error instanceof EvaluationCancelledError) throw error;
     return {
       runId: input.runId,
       side: input.side,
@@ -96,7 +111,9 @@ async function runPromptfooWorker(input: {
   evidence: EvidenceByCase;
   onProgress?: (progress: EvaluationProgress) => void;
   timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<void> {
+  throwIfAborted(input.signal);
   let completedRuns = 0;
   const child = fork(promptfooWorkerPath(), [], {
     env: {
@@ -109,9 +126,11 @@ async function runPromptfooWorker(input: {
   });
   let terminal = false;
   await new Promise<void>((resolve, reject) => {
+    const onAbort = () => finish(new EvaluationCancelledError());
     const finish = (error?: Error) => {
       if (terminal) return;
       terminal = true;
+      input.signal?.removeEventListener("abort", onAbort);
       if (child.connected) child.disconnect();
       if (!child.killed) child.kill("SIGTERM");
       if (error) reject(error);
@@ -135,6 +154,7 @@ async function runPromptfooWorker(input: {
           caseId: workerMessage.caseId,
           pack: input.pack,
           runtime: input.runtime,
+          signal: input.signal,
         });
         const current = input.evidence.get(workerMessage.caseId) ?? {};
         current[workerMessage.side] = result;
@@ -164,6 +184,11 @@ async function runPromptfooWorker(input: {
         `Promptfoo worker exited before completion (code=${code ?? "null"}, signal=${signal ?? "none"})`,
       ));
     });
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    if (input.signal?.aborted) {
+      onAbort();
+      return;
+    }
     void sendWorkerMessage(child, {
       type: "start",
       description: `${input.pack.packId}@${input.pack.version}`,
@@ -183,6 +208,7 @@ export async function runEvaluation(input: {
   judge: PairwiseJudge;
   onProgress?: (progress: EvaluationProgress) => void;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<EvaluationReport> {
   const runId = `finance-skill-eval-${randomUUID()}`;
   const evidence: EvidenceByCase = new Map();
@@ -193,7 +219,9 @@ export async function runEvaluation(input: {
     totalRuns: input.pack.cases.length * 2,
   });
   try {
+    throwIfAborted(input.signal);
     await input.runtime.prepare?.();
+    throwIfAborted(input.signal);
     await runPromptfooWorker({
       runId,
       pack: input.pack,
@@ -204,7 +232,9 @@ export async function runEvaluation(input: {
         input.onProgress?.(progress);
       },
       timeoutMs: input.timeoutMs ?? 310_000,
+      signal: input.signal,
     });
+    throwIfAborted(input.signal);
     input.onProgress?.({
       stage: "judging",
       completedRuns,
@@ -212,6 +242,7 @@ export async function runEvaluation(input: {
     });
     const cases = [];
     for (const evalCase of input.pack.cases) {
+      throwIfAborted(input.signal);
       const result = evidence.get(evalCase.caseId);
       if (!result?.left || !result.right) {
         throw new Error(`Promptfoo did not produce both sides for ${evalCase.caseId}`);
@@ -225,7 +256,9 @@ export async function runEvaluation(input: {
           right: result.right,
           profile: input.pack.judgeProfile,
         });
+        throwIfAborted(input.signal);
       } catch (error) {
+        if (input.signal?.aborted || error instanceof EvaluationCancelledError) throw error;
         judgeError = error instanceof Error ? error.message : String(error);
       }
       cases.push({

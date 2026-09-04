@@ -1,6 +1,6 @@
 {
   "name": "finance-skill-eval",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Portable financial Skill evaluation contracts, runners, judges, and reports",
   "type": "module",
   "private": true,

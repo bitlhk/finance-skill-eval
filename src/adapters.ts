@@ -26,6 +26,7 @@ export type RuntimeExecutionRequest = {
   evalCase: EvalCase;
   model: ModelRef;
   variant: SkillVariant;
+  signal?: AbortSignal;
 };
 
 export interface RuntimeAdapter {
