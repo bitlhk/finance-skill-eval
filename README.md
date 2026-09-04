@@ -6,6 +6,16 @@
 
 它将可复用的评测方法与具体 Agent 产品解耦，支持 AI 辅助准备测试题、同题左右对照、Promptfoo 执行编排、匿名专业 Judge、确定性回放以及 JSON/HTML 报告。
 
+从 `0.3.0` 开始，同一内核提供三种使用形态：
+
+```text
+Library   EA 等产品内嵌使用
+CLI       本地与 CI 批量运行
+Service   独立控制台、上传 Skill、环境预检与历史报告
+```
+
+三种形态共用同一套 Eval Pack、Runner、Judge 和报告合同。独立服务是 Core 的可选托管外壳，不是第二套评测逻辑。
+
 ## 核心能力
 
 - **Skill 分析与出题**：分析 Skill 的目标、流程和依赖，辅助生成与其能力相匹配的测试任务。
@@ -121,6 +131,31 @@ pnpm check
 pnpm test
 ```
 
+启动独立评测控制台：
+
+```bash
+pnpm build
+pnpm serve
+```
+
+浏览器打开 `http://localhost:56361`。控制台默认可直接复核财富管理和投研的冻结证据；配置模型后可以上传 Skill、AI 出题并执行文本型 Skill 在线 A/B；工具型 Skill 通过外部 Agent Runtime HTTP 环境执行。
+
+使用 Docker：
+
+```bash
+docker compose up --build
+```
+
+模型角色分别通过服务端环境变量配置，密钥不进入浏览器和 Eval Pack：
+
+```text
+FINANCE_EVAL_ANALYZER_BASE_URL / API_KEY / MODEL
+FINANCE_EVAL_EXECUTION_BASE_URL / API_KEY / MODEL
+FINANCE_EVAL_JUDGE_BASE_URL / API_KEY / MODEL
+```
+
+也可以使用统一的 `FINANCE_EVAL_MODEL_BASE_URL`、`FINANCE_EVAL_MODEL_API_KEY` 和 `FINANCE_EVAL_MODEL` 作为三类角色的默认配置。
+
 回放投资研究评测：
 
 ```bash
@@ -149,7 +184,7 @@ reports/wealth-management/report.html
 
 ## 接入其他 Agent 平台
 
-`finance-skill-eval` 不负责安装 Skill、管理用户权限或连接业务系统。宿主平台通过 Adapter 提供这些能力：
+评测 Core 不负责安装 Skill、管理用户权限或连接业务系统。嵌入式宿主或独立 Service 通过 Adapter 提供这些能力：
 
 ```ts
 import {
@@ -182,6 +217,24 @@ const report = await runEvaluation({
 - Agent Session、MCP 工具和业务数据；
 - 模型凭据、岗位授权与数据权限；
 - 原生 Trace 和用户界面。
+
+### 独立 Service 负责
+
+- 保存用户上传的 Skill 候选资产，但不代替 Skill 市场发布；
+- 管理 Eval Run 队列、取消、单次重试、历史记录和报告导出；
+- 对 MCP Streamable HTTP 服务做连接与工具发现预检；
+- 通过标准 HTTP Runtime 合同调用 EA、OpenJiuwen Candidate 或其他 Agent；
+- 提供独立控制台，不提供通用 Agent 对话页。
+
+三类执行方式会在界面中明确区分：
+
+```text
+冻结证据回放       复核已有证据，不声称本轮重新调用 Agent
+文本 Skill 直测     本轮真实调用模型，但不模拟工具
+外部 Agent Runtime  本轮真实调用 Agent，由 Runtime 执行 Skill 和 MCP/业务工具
+```
+
+标准 Runtime HTTP 合同见 [独立服务与 Runtime 接入](docs/standalone-service-v1.md)。
 
 ## EA 集成方式
 
@@ -228,6 +281,8 @@ Analyzer 生成更贴近当前环境的测试题
 
 ```text
 src/                         核心合同、Runner、Judge、Adapter 与报告
+src/service/                 独立服务、资产与任务持久化
+web/                         独立评测控制台
 packs/finance/               金融领域标准 Eval Pack
 tests/                       单元测试与回放验证
 artifacts/                   本地构建包，不作为业务证据源
@@ -244,7 +299,7 @@ reports/                     本地生成报告，默认不提交真实敏感数
 
 ## 当前阶段
 
-当前版本为 `0.2.x`，已完成：
+当前版本为 `0.3.0`，已完成：
 
 - 可移植评测合同与 Runner；
 - Promptfoo 左右对照；
@@ -252,5 +307,9 @@ reports/                     本地生成报告，默认不提交真实敏感数
 - 投资研究、财富管理与转账风险审核标准 Eval Pack；
 - JSON/HTML 报告；
 - EA 岗位智能体集成。
+- 独立 Service 与可视化控制台；
+- Skill ZIP 上传、AI/手工试题准备；
+- Eval Run 排队、实时事件、取消、重试、历史与导出；
+- MCP 环境预检和通用 Agent Runtime HTTP Adapter。
 
-后续优先补充更多高价值金融 Eval Pack 和真实平台 Adapter，不急于建设复杂的评测管理平台。
+后续优先补充更多高价值金融 Eval Pack 和真实平台 Adapter，不建设通用对话产品或复杂资产管理平台。

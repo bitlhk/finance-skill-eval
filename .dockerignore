@@ -1,0 +1,9 @@
+.git
+node_modules
+dist
+web-dist
+data
+reports
+artifacts
+docs/assets
+*.log

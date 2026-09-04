@@ -3,11 +3,14 @@ export * from "./analyzer.js";
 export * from "./command-runtime.js";
 export * from "./contracts.js";
 export * from "./context.js";
+export * from "./direct-model-runtime.js";
 export * from "./eval-pack.js";
+export * from "./http-runtime.js";
 export * from "./judge.js";
 export * from "./openai-compatible-model.js";
 export * from "./replay.js";
 export * from "./report.js";
 export * from "./runner.js";
+export * from "./mcp-preflight.js";
 
-export const FINANCE_SKILL_EVAL_VERSION = "0.2.5";
+export const FINANCE_SKILL_EVAL_VERSION = "0.3.0";

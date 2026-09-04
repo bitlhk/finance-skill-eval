@@ -32,7 +32,12 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
     }
     const response = await fetch(endpoint, {
       method: "POST",
-      signal: AbortSignal.timeout(this.options.timeoutMs ?? 180_000),
+      signal: request.signal
+        ? AbortSignal.any([
+          request.signal,
+          AbortSignal.timeout(this.options.timeoutMs ?? 180_000),
+        ])
+        : AbortSignal.timeout(this.options.timeoutMs ?? 180_000),
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${this.options.apiKey}`,

@@ -46,6 +46,7 @@ export type ModelCompletionRequest = {
   model: ModelRef;
   messages: ModelMessage[];
   responseFormat?: "text" | "json";
+  signal?: AbortSignal;
 };
 
 export type ModelCompletionResponse = {
