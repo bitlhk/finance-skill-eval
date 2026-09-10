@@ -1,0 +1,18 @@
+.migration-panel { padding: 24px 0; border-top: 1px solid #dddfe4; margin: 24px 0; }
+.migration-panel header, .migration-panel h2, .migration-panel nav { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.migration-panel header { justify-content: space-between; }
+.migration-panel nav { border-bottom: 1px solid #dddfe4; padding: 14px 0; margin-bottom: 20px; }
+.migration-panel nav button { padding: 9px 12px; border: 0; background: transparent; color: #595d65; border-radius: 5px; }
+.migration-panel nav button.active { background: #fcecee; color: #b91c30; }
+.migration-panel label { display: grid; gap: 7px; margin: 16px 0; font-size: 13px; }
+.migration-panel select, .migration-panel input, .migration-panel textarea { width: 100%; min-width: 0; padding: 10px; border: 1px solid #d7d9df; border-radius: 5px; background: white; color: #30343b; font: inherit; }
+.migration-panel pre { max-height: 400px; overflow: auto; padding: 16px; background: #f6f7f8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.migration-panel .mono { overflow-wrap: anywhere; }
+.migration-panel { min-width: 0; }
+.migration-result { border-bottom: 1px solid #dddfe4; padding: 16px 0; }
+.migration-result h3 { font-size: 16px; }
+.migration-result dl { display: grid; grid-template-columns: 90px minmax(0,1fr); gap: 8px; font-size: 13px; }
+.migration-result dd { margin: 0; overflow-wrap: anywhere; }
+.migration-panel .migration-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 20px; }
+.migration-panel [role=alert] { color: #b91c30; }
+@media(max-width:700px) { .migration-panel .migration-fields { grid-template-columns: minmax(0,1fr); } }

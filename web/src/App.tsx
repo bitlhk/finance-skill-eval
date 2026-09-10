@@ -37,6 +37,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { MethodologyView } from "./MethodologyView";
 import { ResultCharts } from "./ResultCharts";
 import { OptimizationPanel } from "./OptimizationPanel";
+import { MigrationPanel } from './MigrationPanel';
 import type {
   Catalog,
   Environment,
@@ -68,7 +69,7 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let message = text;
     try { message = (JSON.parse(text) as { message?: string }).message ?? text; } catch { /* noop */ }
-    throw new Error(message || `HTTP ${response.status}`);
+    throw Object.assign(new Error(message || `HTTP ${response.status}`), { status: response.status });
   }
   return text ? JSON.parse(text) as T : {} as T;
 }
@@ -115,6 +116,8 @@ function runtimeTypeLabel(value: Environment["runtimeType"]): string {
 }
 
 export function App() {
+  const [needsAccess, setNeedsAccess] = useState(false);
+  const [accessInput, setAccessInput] = useState("");
   const [view, setView] = useState<View>("catalog");
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [selectedSkillId, setSelectedSkillId] = useState("");
@@ -155,7 +158,7 @@ export function App() {
   };
 
   useEffect(() => {
-    void refresh().catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+    void refresh().catch(cause => {setError(cause instanceof Error ? cause.message : String(cause));setNeedsAccess(cause?.status===401);});
     const reload = () => { void refresh().catch(cause => setError(String(cause))); };
     window.addEventListener("finance-eval-assets-changed", reload);
     return () => {
@@ -441,7 +444,7 @@ export function App() {
           <nav>
             <NavButton icon={<BriefcaseBusiness />} label="精选技能" active={view === "catalog"} onClick={() => setView("catalog")} />
             <NavButton icon={<FlaskConical />} label="对比评测" active={view === "evaluation"} onClick={() => setView("evaluation")} />
-            {!catalog?.publicDemo ? <NavButton icon={<Upload />} label="Skill 资产" active={view === "skills"} onClick={() => setView("skills")} /> : null}
+            {catalog?.publicDemo === false ? <NavButton icon={<Upload />} label="Skill 资产" active={view === "skills"} onClick={() => setView("skills")} /> : null}
             <NavButton icon={<Network />} label="测试环境" active={view === "environment"} onClick={() => setView("environment")} />
             <NavButton icon={<ShieldCheck />} label="评测方法" active={view === "methodology"} onClick={() => setView("methodology")} />
             <NavButton icon={<History />} label="运行记录" active={view === "history"} onClick={() => setView("history")} />
@@ -454,6 +457,10 @@ export function App() {
       </aside>
 
       <main className="main-content">
+        {needsAccess && ['127.0.0.1','localhost'].includes(window.location.hostname) ? <form className="migration-panel" onSubmit={event=>{
+          event.preventDefault();localStorage.setItem('finance-eval-token',accessInput);
+          void refresh().then(()=>{setNeedsAccess(false);setAccessInput('');setError('');}).catch(cause=>setError(cause instanceof Error?cause.message:String(cause)));
+        }}><h2>私有工作区</h2><label>访问令牌<input type="password" autoComplete="off" value={accessInput} onChange={event=>setAccessInput(event.target.value)}/></label><button className="button primary" type="submit" disabled={!accessInput.trim()}>进入工作区</button></form> : null}
         {catalog?.publicDemo ? <div className="demo-notice">灵感平台演示 · 模拟业务数据 · 每人每日 3 轮 · 运行记录为共享演示证据</div> : null}
         <div className="mobile-brand"><span className="brand-mark"><FlaskConical size={19} /></span><span><strong>Finance Skill Eval</strong><small>金融 Skill 专业价值评测</small></span></div>
         {error ? (
@@ -799,6 +806,7 @@ function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog:
   };
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL ARTIFACTS</span><h1>Skill 资产</h1><p>上传候选 ZIP，校验 SKILL.md 后由 Analyzer 生成测试方案。</p></div><button className="button primary" onClick={() => inputRef.current?.click()} disabled={uploading}><FileArchive size={17} />{uploading ? "上传中" : "上传 Skill ZIP"}</button><input hidden ref={inputRef} type="file" accept=".zip,application/zip" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></section>
     {message ? <div className="info-banner">{message}</div> : null}
+    <MigrationPanel catalog={catalog} api={api}/>
     <section className="asset-section"><div className="section-title"><div><h2>用户上传</h2><p>上传资产只用于当前评测服务，不会发布到 Skill 市场。</p></div><span>{catalog.uploadedSkills.length} 个</span></div>
       <div className="asset-table">{catalog.uploadedSkills.length ? catalog.uploadedSkills.map(skill => {
         const preps = catalog.preparations.filter(item => item.skillAssetId === skill.assetId);
