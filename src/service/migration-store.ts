@@ -8,7 +8,10 @@ import type { SkillStore, SkillAssetRecord } from './skill-store.js';
 import type { EvaluationRunManager } from './run-manager.js';
 import type { EvaluationJobStore } from './job-store.js';
 import type { EvalPackCatalog } from './catalog.js';
-import { runConfigurationSchema } from './contracts.js';
+import { runConfigurationSchema, manualPreparationSchema } from './contracts.js';
+import type { PreparationStore } from './preparation-store.js';
+import type { OptimizationManager } from './optimization-manager.js';
+import { configuredModelRole } from './config.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
@@ -24,7 +27,9 @@ const planSchema = z.strictObject({
 type Migration = {
   schemaVersion:'finance.skill-migration.v0.1'; id:string; name:string; createdAt:string;
   source:SkillAssetRecord; candidate:SkillAssetRecord|null; candidateNotes:string;
-  candidateHistory?:Array<{asset:SkillAssetRecord;notes:string;recordedAt:string}>;
+  candidateHistory?:Array<{asset:SkillAssetRecord;notes:string;recordedAt:string;kind?:'migration'|'optimization'}>;
+  suiteIds?:string[];
+  optimizations?:Array<{optimizationId:string;sourceJobId:string;baseAssetId:string;candidateDigest:string}>;
   runs:Array<{jobId:string; pair:'AB'|'BC'|'AC'; candidateDigest:string; comparisonFingerprint:string; packFingerprint:string;
     declaredPlan?:z.infer<typeof planSchema>;suiteSnapshot?:EvalPack}>;
   assessment:'NOT_VALIDATED';
@@ -35,7 +40,8 @@ const conflict = (message:string):never => {throw Object.assign(new Error(messag
 export class MigrationStore {
   private chain:Promise<unknown> = Promise.resolve();
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
-    private jobs:EvaluationJobStore, private catalog:EvalPackCatalog) {}
+    private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
+    private optimizers?:OptimizationManager) {}
   private file(id:string) {
     if (!/^migration-[a-f0-9-]+$/.test(id)) throw Object.assign(new Error('Invalid migration id'),{statusCode:400});
     return path.join(this.root,'migrations',id+'.json');
@@ -86,11 +92,46 @@ export class MigrationStore {
         'READ_ONLY_TOOL_AND_DATA_MAPPING_REVIEW_REQUIRED','BUILDER_JAVA_HOST_ADAPTER_NOT_CONNECTED'],
       analysisMode:'STATIC_INVENTORY_NOT_DEPENDENCY_VALIDATION', uploadedScriptsExecuted:false};
   }
+  async createSuite(id:string,input:unknown) {return this.serial(async()=>{
+    const p=manualPreparationSchema.parse(input),value=await this.get(id);
+    if (!this.preparations) return conflict('Preparation store unavailable');
+    const suite=await this.preparations.create({skill:value.source,summary:p.summary,cases:p.cases,holdoutCases:p.holdoutCases,source:'manual'});
+    (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
+  });}
+  async optimize(id:string,input:unknown) {return this.serial(async()=>{
+    const p=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.get(id);
+    if (!this.optimizers || !value.candidate) return conflict('Optimizer or candidate unavailable');
+    const experiment=value.runs.find(r=>r.jobId===p.jobId);
+    if (!experiment || experiment.candidateDigest!==value.candidate.artifactSha256) return conflict('Select an experiment for the current candidate');
+    const job=this.jobs.get(p.jobId),variant=job?.report?.variants.right;
+    if (variant?.mode!=='skill_version' || variant.artifactSha256!==value.candidate.artifactSha256) return conflict('Completed right-side candidate evidence required');
+    const item=await this.optimizers.create(p.jobId);
+    (value.optimizations??=[]).push({optimizationId:item.optimizationId,sourceJobId:p.jobId,baseAssetId:value.candidate.assetId,candidateDigest:value.candidate.artifactSha256});
+    await writeJsonAtomic(this.file(id),value);return item;
+  });}
+  async adoptOptimization(id:string,input:unknown) {return this.serial(async()=>{
+    const p=z.strictObject({optimizationId:z.string().min(1)}).parse(input),value=await this.get(id);
+    const link=value.optimizations?.find(o=>o.optimizationId===p.optimizationId);
+    if (!link || !this.optimizers || value.candidate?.assetId!==link.baseAssetId) return conflict('Optimization is unrelated or its base candidate has changed');
+    const item=await this.optimizers.get(p.optimizationId);
+    if (!item.candidate || !['review','adopted'].includes(item.status)) return conflict('Optimization must finish reevaluation before local adoption');
+    await this.skills.readArchive(item.candidate.assetId);
+    value.candidate=item.candidate;value.candidateNotes=`Optimization ${item.optimizationId}: ${item.summary}`;
+    (value.candidateHistory??=[]).push({asset:item.candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'optimization'});
+    // Adoption is a local candidate choice, not migration or business acceptance.
+    await writeJsonAtomic(this.file(id),value);return value;
+  });}
   async validate(id:string,input:unknown) {return this.serial(async()=>{
     const p=planSchema.parse(input), value=await this.get(id), c=value.candidate;
     if (!c || !p.configuration.runtimeBindings) return conflict('Candidate and per-side bindings are required');
-    const pack=p.configuration.packId ? this.catalog.get(p.configuration.packId):null;
-    if (!pack || p.configuration.preparationId || p.configuration.includeHoldout) return conflict('Select one frozen catalog suite');
+    let pack=p.configuration.packId ? this.catalog.get(p.configuration.packId):null;
+    if (p.configuration.preparationId) {
+      if (!value.suiteIds?.includes(p.configuration.preparationId)) return conflict('Select a frozen suite owned by this migration');
+      const preparation=await this.preparations?.get(p.configuration.preparationId);
+      if (preparation) pack=this.preparations!.buildPack({preparation,analyzerModel:configuredModelRole('ANALYZER').model,
+        executionModel:p.configuration.executionModel!,judgeModel:configuredModelRole('JUDGE').model});
+    }
+    if (!pack || p.configuration.includeHoldout) return conflict('Select one frozen development suite; holdout is reserved for independent reevaluation');
     const expected=p.pair==='AB' ? [value.source,c] : p.pair==='BC' ? [c,c] : [value.source,c];
     for (const [index,side] of (['left','right'] as const).entries()) {
       const binding=p.configuration.runtimeBindings[side], variant=p.configuration[side==='left'?'leftVariant':'rightVariant'];
@@ -109,25 +150,33 @@ export class MigrationStore {
   });}
   async report(id:string) {
     const value=await this.get(id);
-    return {project:value, experiments:value.runs.map(r=>{
+    return {project:value, suites:await Promise.all((value.suiteIds??[]).map(id=>this.preparations?.get(id)??null)),
+      optimizations:await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)}))),
+      experiments:value.runs.map(r=>{
       const job=this.jobs.get(r.jobId);
+      const complete=job?.status==='completed' && !!job.report?.cases.length && job.report.cases.every(c=>(['left','right'] as const).every(side=>{
+        const variant=job.configuration[side==='left'?'leftVariant':'rightVariant'];
+        return c[side].status==='completed' && variant?.mode==='skill_version' && !!variant.artifactSha256
+          && c[side].metadata.skillArtifactSha256===variant.artifactSha256;
+      }));
       return {...r,execution:job?.status??'MISSING',report:job?.report??null,
-        evidence:job?.status==='completed'?'HTTP_LOADED_DIGEST_CHECKED':'NOT_COMPLETE',
+        evidence:complete?'HTTP_LOADED_DIGEST_CHECKED':'NOT_COMPLETE',
         taskSuccess:'NOT_INDEPENDENTLY_VERIFIED',professionalAcceptance:'NOT_REVIEWED',migrationAcceptance:'NOT_VALIDATED'};
     }), attribution:'BC compares target execution stacks, including Harness; not a pure Runtime effect.'};
   }
   async exportCandidate(id:string) {
     const value=await this.get(id);
     if (!value.candidate) return conflict('Candidate required');
-    await this.skills.readArchive(value.candidate.assetId);
-    const files=await this.skills.readFiles(value.candidate.assetId);
-    if (Object.keys(files).length !== value.candidate.fileCount) return conflict('Candidate contains unsupported or out-of-root files; export must not silently drop dependencies');
+    const files=await this.skills.readArchive(value.candidate.assetId);
+    if (['migration-manifest.json','migration-report.json'].some(name=>name in files)) return conflict('Reserved export metadata path exists in candidate; no file was overwritten');
+    const report=await this.report(id);
     const manifest={schemaVersion:'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
       state:'DRAFT_NOT_VALIDATED',builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
-      fileDigestAlgorithm:'SHA-256 of UTF-8 bytes',
-      files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,createHash('sha256').update(content,'utf8').digest('hex')]))};
-    return Buffer.from(zipSync(Object.fromEntries([...Object.entries(files).map(([k,v])=>[k,strToU8(v)] as const),
-      ['migration-manifest.json',strToU8(JSON.stringify(manifest,null,2))]])));
+      executionPolicy:'INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION',dependencies:'NOT_VALIDATED',
+      fileDigestAlgorithm:'SHA-256 of original file bytes',
+      files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,createHash('sha256').update(content).digest('hex')]))};
+    return Buffer.from(zipSync({...files,'migration-manifest.json':strToU8(JSON.stringify(manifest,null,2)),
+      'migration-report.json':strToU8(JSON.stringify(report,null,2))}));
   }
   release():never {return conflict('Release blocked: native AgentScope baseline, Java Host integration, dependency validation and independent business acceptance remain unverified');}
 }

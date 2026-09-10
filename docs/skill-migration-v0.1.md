@@ -17,7 +17,7 @@ separately before upstream integration. The original worktree is not replaced.
 - The private Skill asset page contains five migration steps. It can create a
   project, inspect files, attach an independently imported candidate, edit its
   method text into a new version, initiate protocol experiments, inspect results,
-  cancel jobs through the existing manager, and download text-only draft bundles.
+  cancel jobs through the existing manager, and download complete inert draft bundles.
 - Original bytes and candidate snapshots are separate. Edits retain other files;
   stale edits are rejected. Candidate history and notes are retained.
 - HTTP/SSE execution supports side-specific environment and asset IDs. Migration
@@ -25,6 +25,8 @@ separately before upstream integration. The original worktree is not replaced.
   fail; non-migration digest behavior is unchanged.
 - Archive integrity is rechecked before migration execution/export. Unsupported
   or out-of-root files cannot silently disappear from a Runtime payload/export.
+  Export retains all bytes, including unverified dependencies; execution still
+  blocks when the current Runtime payload cannot represent the complete package.
   No uploaded script is executed, imported, or installed.
 - The selected suite, configuration and declared experiment references are saved
   with each project run. These references do not attest to remote environments.
@@ -39,8 +41,9 @@ separately before upstream integration. The original worktree is not replaced.
 | AgentScope normalized candidate B | NOT_RUN: same native project plus reviewed dependency mapping required |
 | Builder OpenJiuwen Java + Harness C | NOT_CONNECTED: a real Java Host adapter remains engineering work; existing Python worker is not a substitute |
 | Automatic migration rewrite | NOT_IMPLEMENTED: only explicit human text editing is available; existing optimizer is not silently used as a migration rewriter |
+| Post-evaluation optimization | IMPLEMENTED for complete same-Runtime evaluations with frozen holdout; produces a separate candidate and reruns it. Controlled test passed; not verified on the incomplete supplied native project |
 | Dependency equivalence | NOT_VALIDATED: static inventory is not semantic tool mapping or authorization verification |
-| Custom customer suite | Migration currently selects a fixed catalog pack; the suite must be supplied and reviewed before customer evaluation. Do not select an unrelated suite to claim acceptance |
+| Custom customer suite | IMPLEMENTED: project-owned manual preparation with disjoint development/holdout IDs. Business review of the supplied example suite remains pending |
 | Immutable remote configuration | NOT_VERIFIED: stored references/suite snapshots do not freeze the actual remote model, data, clock, permissions or environment registry |
 | Remote session/cancellation behavior | HTTP cancellation tested; native worker process termination and per-case isolation still require adapter-specific tests |
 | Business/method/task equivalence | NOT_VALIDATED: execution completion and relative Judge wins do not establish these claims |
@@ -88,13 +91,29 @@ multi-user customer deployment.
    native original-Runtime baseline.
 6. Choose AB, BC or AC, a relevant fixed suite, one execution model and the
    project/data/permission references. Inspect per-side evidence in run history.
+   Project suites can be saved through the migration suite JSON editor or
+   `POST /api/migrations/:id/suites`, using `manualPreparationSchema` from
+   `src/service/contracts.ts`: `summary`, `cases`, and optional `holdoutCases`.
+   Saving creates a new immutable preparation; it never overwrites an old suite.
+   Include business-reviewed holdout cases before attempting optimization.
 7. Inspect the migration report. A completed HTTP experiment is still not a
    migrated/validated Skill. Release remains closed until the missing acceptance
    path is implemented and independently verified.
-8. Draft export includes a manifest and UTF-8 file SHA-256 values, not an install
+8. Draft export includes a manifest, associated report and raw-file SHA-256 values, not an install
    Lock. Asset identity uses the existing canonical archive fingerprint, which
    is different from hashing the ZIP bytes. Scripts/out-of-root dependencies
-   cause export rejection instead of silent omission.
+   are retained inertly and marked unverified. They are never run during export.
+   Existing `migration-manifest.json` or `migration-report.json` paths cause
+   rejection rather than overwriting source files. This archive is for transfer
+   and review, not automatic installation.
+9. After a complete same-Runtime evaluation, open its optimization panel. The
+   existing optimizer reads development evidence only, creates another asset,
+   and reruns original/candidate in the right-hand target environment with
+   updated side bindings. Holdout does not enter the editor prompt. A cross-stack
+   comparison is not accepted as evidence of a Skill-only defect.
+10. A locally adopted optimized candidate is associated with its migration project
+    and can be edited, evaluated or exported again. If the base candidate changed
+    while optimization was running, adoption is rejected. Adoption is not release.
 
 ## Comparison semantics
 

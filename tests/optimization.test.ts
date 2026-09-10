@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { candidateFiles } from "../src/service/optimization-manager.js";
+import { candidateFiles, optimizationRerunBindings } from "../src/service/optimization-manager.js";
+import { runConfigurationSchema } from '../src/service/contracts.js';
+import type { SkillAssetRecord } from '../src/service/skill-store.js';
 import { loadEvalPack } from "../src/eval-pack.js";
 
 const files = { "SKILL.md": "---\nname: test-skill\nversion: 1.0.0\n---\n\nOriginal", "references/sop.md": "Original SOP" };
 describe("bounded candidate generation", () => {
+  it('rebinds both optimization sides to the target Runtime and exact current/candidate assets',()=>{
+    const configuration=runConfigurationSchema.parse({packId:'p',runtime:{type:'runtime_http',environmentId:'a'},
+      runtimeBindings:{left:{environmentId:'a',skillAssetId:'source'},right:{environmentId:'b',skillAssetId:'normalized'}},
+      executionModel:{providerId:'p',modelId:'m'},leftVariant:{mode:'skill_version',skillId:'s',version:'1'},rightVariant:{mode:'skill_version',skillId:'s',version:'2'}});
+    const result=optimizationRerunBindings(configuration,{assetId:'normalized'} as SkillAssetRecord,{assetId:'optimized'} as SkillAssetRecord);
+    expect(result.runtimeBindings).toEqual({left:{environmentId:'b',skillAssetId:'normalized'},right:{environmentId:'b',skillAssetId:'optimized'}});
+    expect(configuration.runtimeBindings!.right.skillAssetId).toBe('normalized');
+  });
   it("preserves original files and locks a distinct candidate version", () => {
     const next = candidateFiles(files, [{ path: "references/sop.md", content: "Improved SOP" }], "1.0.0-candidate.abc");
     expect(next["SKILL.md"]).toContain("version: 1.0.0-candidate.abc");

@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { accessToken, apiPath, basePath, tokenKey, downloadApi } from './api-path';
 import {
   Activity,
   Archive,
@@ -56,8 +57,8 @@ const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const PublicDemoContext = createContext(false);
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("finance-eval-token");
-  const response = await fetch(url, {
+  const token = accessToken();
+  const response = await fetch(apiPath(url), {
     ...init,
     headers: {
       ...(!init?.body || init.body instanceof Blob ? {} : { "content-type": "application/json" }),
@@ -338,11 +339,11 @@ export function App() {
 
     // EventSource cannot attach a bearer header. Authenticated deployments use
     // the regular API polling path so access tokens never appear in URLs.
-    if (localStorage.getItem("finance-eval-token")) {
+    if (accessToken()) {
       poll();
       return;
     }
-    const source = new EventSource(`/api/runs/${jobId}/events`);
+    const source = new EventSource(apiPath(`/api/runs/${jobId}/events`));
     streamRef.current = source;
     source.addEventListener("job", event => {
       const job = JSON.parse((event as MessageEvent).data) as EvaluationJob;
@@ -457,8 +458,8 @@ export function App() {
       </aside>
 
       <main className="main-content">
-        {needsAccess && ['127.0.0.1','localhost'].includes(window.location.hostname) ? <form className="migration-panel" onSubmit={event=>{
-          event.preventDefault();localStorage.setItem('finance-eval-token',accessInput);
+        {needsAccess && (basePath!=='/' || ['127.0.0.1','localhost'].includes(window.location.hostname)) ? <form className="migration-panel" onSubmit={event=>{
+          event.preventDefault();localStorage.setItem(tokenKey,accessInput);
           void refresh().then(()=>{setNeedsAccess(false);setAccessInput('');setError('');}).catch(cause=>setError(cause instanceof Error?cause.message:String(cause)));
         }}><h2>私有工作区</h2><label>访问令牌<input type="password" autoComplete="off" value={accessInput} onChange={event=>setAccessInput(event.target.value)}/></label><button className="button primary" type="submit" disabled={!accessInput.trim()}>进入工作区</button></form> : null}
         {catalog?.publicDemo ? <div className="demo-notice">灵感平台演示 · 模拟业务数据 · 每人每日 3 轮 · 运行记录为共享演示证据</div> : null}
@@ -770,7 +771,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
     {report.cases.some(c => c.right.metadata?.dataMode?.includes("synthetic")) ? <div className="evidence-notice">数据来源：只读模拟业务快照；模型与 MCP 工具本轮实际执行，不代表真实客户业务验收。</div> : null}
     <div className="score-strip">
       <div><span>A 胜</span><strong>{report.summary.leftWins}</strong></div><div className="winner-metric"><span>B 胜</span><strong>{report.summary.rightWins}</strong></div><div><span>持平</span><strong>{report.summary.ties}</strong></div><div><span>平均耗时</span><strong>{Math.round((report.summary.meanElapsedMs.left + report.summary.meanElapsedMs.right) / 2000)}s</strong></div>
-      <div className="report-downloads"><a href={`/api/runs/${job.jobId}/export?format=html`} target="_blank" rel="noreferrer"><Download size={15} />HTML</a><a href={`/api/runs/${job.jobId}/export?format=json`}><Download size={15} />JSON</a></div>
+      <div className="report-downloads">{(['html','json'] as const).map(format=><button className="button secondary" key={format} onClick={()=>void downloadApi(`/api/runs/${job.jobId}/export?format=${format}`,`${job.jobId}.${format}`).catch(error=>window.alert(error.message))}><Download size={15}/>{format.toUpperCase()}</button>)}</div>
     </div>
     <ResultCharts report={report} />
     {report.cases.map(item => <section className="result-case" key={item.caseId}>

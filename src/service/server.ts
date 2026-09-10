@@ -63,6 +63,10 @@ export async function createEvaluationService(
   const config = { ...loadServiceConfig(), ...overrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
+  app.addHook('onSend',async(request,reply,payload)=>{
+    if(request.url.startsWith('/api/')) reply.header('cache-control','no-store');
+    return payload;
+  });
   const catalog = new EvalPackCatalog(config.rootDirectory);
   const skills = new SkillStore(config.dataDirectory);
   const environments = new EnvironmentStore(config.dataDirectory);
@@ -83,9 +87,9 @@ export async function createEvaluationService(
     jobs,
     maxConcurrentRuns: config.maxConcurrentRuns,
   });
-  const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog });
+  const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
-  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog);
+  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations);
   // Private workspace only. A public demo must not expose customer migration snapshots.
   app.addHook('preValidation',async(request,reply)=>{
     if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
@@ -97,6 +101,9 @@ export async function createEvaluationService(
   app.post<{Params:{id:string}}>('/api/migrations/:id/candidates',request=>migrations.candidate(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/drafts',request=>migrations.draft(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/validate',request=>migrations.validate(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/suites',request=>migrations.createSuite(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/optimize',request=>migrations.optimize(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/optimized-candidate',request=>migrations.adoptOptimization(request.params.id,request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id/report',request=>migrations.report(request.params.id));
   app.post('/api/migrations/:id/releases',()=>migrations.release());
   app.get<{Params:{id:string}}>('/api/migrations/:id/export',async(request,reply)=>reply.type('application/zip')
@@ -262,6 +269,7 @@ export async function createEvaluationService(
       skill,
       summary: input.summary,
       cases: input.cases,
+      holdoutCases: input.holdoutCases,
       source: "manual",
     });
   });

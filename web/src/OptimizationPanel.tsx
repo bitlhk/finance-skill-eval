@@ -3,6 +3,7 @@ import { Check, GitCompareArrows, LoaderCircle, RotateCw, Sparkles, X } from "lu
 import type { EvaluationJob, SkillAsset } from "./types";
 import { ResultCharts } from "./ResultCharts";
 import { MarkdownContent } from "./MarkdownContent";
+import { accessToken, apiPath } from './api-path';
 
 type Optimization = {
   optimizationId: string; sourceJobId: string; status: string; modelId: string;
@@ -12,11 +13,11 @@ type Optimization = {
 };
 const STAGES = [{ id: "diagnosing", label: "专业诊断与修改" }, { id: "validating", label: "生成候选" }, { id: "reevaluating", label: "同条件复测与留出验证" }, { id: "review", label: "人工选择" }];
 async function request<T>(url: string, body?: unknown): Promise<T> {
-  const token = localStorage.getItem("finance-eval-token");
-  const r = await fetch(url, { method: body ? "POST" : "GET", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const token = accessToken();
+  const r = await fetch(apiPath(url), { method: body ? "POST" : "GET", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const data = await r.json(); if (!r.ok) throw new Error(data.message || "请求失败"); return data;
 }
-export function OptimizationPanel({ job }: { job: EvaluationJob }) {
+export function OptimizationPanel({ job, migrationId, onCandidate }: { job: EvaluationJob; migrationId?:string; onCandidate?:()=>void }) {
   const [item, setItem] = useState<Optimization | null>(null);
   const [rerun, setRerun] = useState<EvaluationJob | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,12 +49,18 @@ export function OptimizationPanel({ job }: { job: EvaluationJob }) {
   }, [item?.optimizationId, item?.status]);
   const start = async () => {
     setBusy(true); setError("");
-    try { const next = await request<Optimization>(`/api/runs/${job.jobId}/optimize`, {}); setItem(next); localStorage.setItem(`finance-optimization:${job.jobId}`, next.optimizationId); }
+    try { const next = await request<Optimization>(migrationId?`/api/migrations/${migrationId}/optimize`:`/api/runs/${job.jobId}/optimize`, migrationId?{jobId:job.jobId}:{}); setItem(next); localStorage.setItem(`finance-optimization:${job.jobId}`, next.optimizationId); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const decide = async (decision: string) => {
     setBusy(true);
-    try { setItem(await request<Optimization>(`/api/optimizations/${item!.optimizationId}/decision`, { decision })); window.dispatchEvent(new Event("finance-eval-assets-changed")); }
+    try {
+      if (migrationId && decision==='adopt') {
+        await request(`/api/migrations/${migrationId}/optimized-candidate`,{optimizationId:item!.optimizationId});
+        onCandidate?.();
+      }
+      setItem(await request<Optimization>(`/api/optimizations/${item!.optimizationId}/decision`, { decision })); window.dispatchEvent(new Event("finance-eval-assets-changed"));
+    }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const active = item && ["diagnosing", "validating", "reevaluating"].includes(item.status);

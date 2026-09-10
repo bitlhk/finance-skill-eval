@@ -13,6 +13,7 @@ export type PreparedEvaluation = {
   skillVersion: string;
   summary: string;
   cases: EvalCase[];
+  holdoutCases?: EvalCase[];
   source: "ai_generated" | "manual";
   evaluationContext: EvaluationContextSnapshot | null;
   createdAt: string;
@@ -50,6 +51,7 @@ export class PreparationStore {
     skill: SkillAssetRecord;
     summary: string;
     cases: EvalCase[];
+    holdoutCases?: EvalCase[];
     source: PreparedEvaluation["source"];
     evaluationContext?: EvaluationContextSnapshot | null;
   }): Promise<PreparedEvaluation> {
@@ -61,6 +63,7 @@ export class PreparationStore {
       skillVersion: input.skill.version,
       summary: input.summary,
       cases: input.cases,
+      holdoutCases: input.holdoutCases ?? [],
       source: input.source,
       evaluationContext: input.evaluationContext ?? null,
       createdAt: new Date().toISOString(),
@@ -127,8 +130,9 @@ export class PreparationStore {
       ...packFile,
       sourceFile: path.join(this.directory, `${input.preparation.preparationId}.json`),
       cases: input.preparation.cases,
+      holdoutCases: input.preparation.holdoutCases ?? [],
       judgeProfile,
-      packFingerprint: fingerprint({ pack: packFile, cases: input.preparation.cases, judgeProfile }),
+      packFingerprint: fingerprint({ pack: packFile, cases: input.preparation.cases, holdoutCases: input.preparation.holdoutCases??[], judgeProfile }),
     };
   }
 }

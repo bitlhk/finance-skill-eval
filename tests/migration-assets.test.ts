@@ -2,7 +2,7 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, zipSync, unzipSync } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
 import { createEvaluationService } from '../src/service/server.js';
 
@@ -24,7 +24,7 @@ it('detects changed on-disk snapshots instead of trusting metadata',async()=>{
   await writeFile(path.join(dir,'skills/assets',record.assetId,'SKILL.md'),'changed');
   await expect(store.readArchive(record.assetId)).rejects.toThrow('integrity');
 });
-it('edits a separate version, retains unsupported files, rejects stale edits and blocks incomplete export',async()=>{
+it('edits a separate version, retains unsupported files and exports them inertly without claiming release',async()=>{
   const dir=await directory();
   const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'private-test',publicDemo:false});
   const headers={authorization:'Bearer private-test'};
@@ -44,7 +44,13 @@ it('edits a separate version, retains unsupported files, rejects stale edits and
     expect((await edit(source.replace('1.0.0','1.0.2'))).statusCode).toBe(409);
     const analyze=await app.inject({method:'POST',url:`/api/migrations/${id}/analyze`,headers});
     expect(analyze.json().fileInventory.find((f:{name:string})=>f.name==='helper.py').executableReviewRequired).toBe(true);
-    expect((await app.inject({url:`/api/migrations/${id}/export`,headers})).statusCode).toBe(409);
+    const exported=await app.inject({url:`/api/migrations/${id}/export`,headers});expect(exported.statusCode).toBe(200);
+    const archive=unzipSync(exported.rawPayload);
+    expect(Buffer.from(archive['helper.py']!).toString()).toBe('raise Exception("not executed")');
+    const manifest=JSON.parse(Buffer.from(archive['migration-manifest.json']!).toString());
+    expect(manifest.executionPolicy).toBe('INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION');
+    expect(manifest.dependencies).toBe('NOT_VALIDATED');
+    expect(JSON.parse(Buffer.from(archive['migration-report.json']!).toString()).project.assessment).toBe('NOT_VALIDATED');
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/releases`,headers})).statusCode).toBe(409);
   } finally {await app.close();}
 });
