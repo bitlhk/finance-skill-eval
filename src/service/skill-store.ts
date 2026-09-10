@@ -28,7 +28,9 @@ function safeArchivePath(name: string): string {
   return normalized;
 }
 function parseFrontmatter(source: string): Record<string, unknown> {
-  const match = source.match(/^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/u);
+  // Import legacy metadata without rewriting the immutable source bytes.
+  const match = source.match(/^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/u)
+    ?? source.match(/^(name:[^\n]*\n[\s\S]{0,8000}?)\n---\s*(?:\n|$)/u);
   if (!match?.[1]) return {};
   const parsed = parseYaml(match[1]);
   return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
@@ -90,6 +92,23 @@ export class SkillStore {
     return files;
   }
 
+  async readArchive(assetId: string): Promise<Record<string, Uint8Array>> {
+    const record = await this.get(assetId);
+    if (!record) throw new Error(`Unknown Skill asset: ${assetId}`);
+    const root = path.join(this.assetsDirectory, assetId);
+    const files: Record<string, Uint8Array> = {};
+    for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error('Skill assets cannot contain symbolic links');
+      if (!entry.isFile()) continue;
+      const file = path.join(entry.parentPath, entry.name);
+      files[path.relative(root, file).replaceAll(path.sep, '/')]=await readFile(file);
+    }
+    const entries=Object.entries(files).sort(([a],[b])=>a.localeCompare(b));
+    const digest=fingerprint(entries.map(([name,content])=>({name,content:Buffer.from(content).toString('base64')})));
+    if (entries.length!==record.fileCount || digest!==record.artifactSha256) throw new Error('Skill snapshot integrity mismatch');
+    return files;
+  }
+
   async uploadZip(buffer: Buffer): Promise<SkillAssetRecord> {
     if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
       throw new Error("Skill ZIP must be between 1 byte and 8 MB");
@@ -116,10 +135,11 @@ export class SkillStore {
     }
     const skillCandidates = normalizedFiles
       .map(([name]) => name)
-      .filter(name => name === "SKILL.md" || name.endsWith("/SKILL.md"))
+      .filter(name => /(^|\/)skill\.md$/iu.test(name))
       .sort((left, right) => left.split("/").length - right.split("/").length);
     const skillFile = skillCandidates[0];
     if (!skillFile) throw new Error("Skill ZIP does not contain SKILL.md");
+    if (skillCandidates.filter(name=>name.split('/').length===skillFile.split('/').length).length > 1) throw new Error('Skill ZIP has ambiguous root Skill files');
     const sourceBytes = normalizedFiles.find(([name]) => name === skillFile)?.[1];
     if (!sourceBytes) throw new Error("Unable to read SKILL.md from archive");
     const source = Buffer.from(sourceBytes).toString("utf8");

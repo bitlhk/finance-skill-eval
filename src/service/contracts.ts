@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { evalCaseSchema, modelRefSchema, skillVariantSchema } from "../contracts.js";
+import { evalCaseSchema, fingerprint, modelRefSchema, skillVariantSchema } from "../contracts.js";
+
+const runtimeSideSchema = z.strictObject({environmentId:z.string().min(1), skillAssetId:z.string().min(1)});
 
 export const environmentRecordSchema = z.strictObject({
   environmentId: z.string().min(1),
@@ -23,6 +25,7 @@ export const createEnvironmentSchema = z.strictObject({
 });
 
 export const runConfigurationSchema = z.strictObject({
+  runtimeBindings: z.strictObject({left:runtimeSideSchema, right:runtimeSideSchema}).optional(),
   packId: z.string().min(1).optional(),
   preparationId: z.string().min(1).optional(),
   runtime: z.discriminatedUnion("type", [
@@ -47,6 +50,12 @@ export const runConfigurationSchema = z.strictObject({
   judgeModel: modelRefSchema.optional(),
   timeoutMs: z.number().int().min(10_000).max(900_000).default(310_000),
 }).superRefine((value, context) => {
+  if (value.runtimeBindings && (value.runtime.type !== 'runtime_http' || value.caseSource !== 'fixed'
+      || !value.leftVariant || !value.rightVariant || value.leftVariant.mode !== 'skill_version' || value.rightVariant.mode !== 'skill_version'
+      || !value.executionModel || (value.leftExecutionModel && fingerprint(value.leftExecutionModel) !== fingerprint(value.executionModel))
+      || (value.rightExecutionModel && fingerprint(value.rightExecutionModel) !== fingerprint(value.executionModel)))) {
+    context.addIssue({code:z.ZodIssueCode.custom,message:'Paired migration requires HTTP runtimes, explicit Skill versions, fixed cases and the same execution model.'});
+  }
   if (value.caseSource === "ai_generated" && (value.runtime.type === "replay" || value.preparationId || value.includeHoldout || value.selectedCaseIds.length || value.judgeMode !== "model")) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "动态出题需要在线执行与模型 Judge，不能混用回放、已准备题集、固定题选择或留出集。" });
   }

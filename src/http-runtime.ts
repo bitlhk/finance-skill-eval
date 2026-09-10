@@ -24,6 +24,7 @@ export type HttpRuntimeAdapterOptions = {
   endpoint: string;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  requireLoadedDigest?: boolean;
   environment?: RuntimeEnvironmentDescriptor;
   resolveSkill?(variant: RuntimeExecutionRequest["variant"]): Promise<ResolvedSkillSource | null>;
 };
@@ -119,6 +120,9 @@ export class HttpRuntimeAdapter implements RuntimeAdapter {
       throw new Error("Runtime evidence does not match the requested case and side");
     }
     if (evidence.modelId !== request.model.modelId) throw new Error("Runtime used a different model than requested");
+    if (this.options.requireLoadedDigest && (!skill || !evidence.metadata.skillArtifactSha256)) {
+      throw new Error('Migration requires an observed loaded Skill digest');
+    }
     if (skill && evidence.metadata.skillArtifactSha256 && evidence.metadata.skillArtifactSha256 !== skill.artifactSha256) throw new Error("Runtime loaded a different Skill digest");
     if (skill && !evidence.loadedSkills.some(item => item.skillId === skill.skillId && item.version === skill.version)) {
       throw new Error("Runtime did not load the requested Skill artifact");

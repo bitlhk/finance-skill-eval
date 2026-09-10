@@ -16,6 +16,7 @@ import { EvaluationRunManager } from "./run-manager.js";
 import { SkillStore } from "./skill-store.js";
 import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
+import { MigrationStore } from './migration-store.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
 
@@ -84,6 +85,22 @@ export async function createEvaluationService(
   });
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog });
   const demo = new DemoAccess(config.dataDirectory);
+  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog);
+  // Private workspace only. A public demo must not expose customer migration snapshots.
+  app.addHook('preValidation',async(request,reply)=>{
+    if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
+  });
+  app.get('/api/migrations',()=>migrations.list());
+  app.post('/api/migrations',request=>migrations.create(request.body));
+  app.get<{Params:{id:string}}>('/api/migrations/:id',request=>migrations.get(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/analyze',request=>migrations.analyze(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/candidates',request=>migrations.candidate(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/drafts',request=>migrations.draft(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/validate',request=>migrations.validate(request.params.id,request.body));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/report',request=>migrations.report(request.params.id));
+  app.post('/api/migrations/:id/releases',()=>migrations.release());
+  app.get<{Params:{id:string}}>('/api/migrations/:id/export',async(request,reply)=>reply.type('application/zip')
+    .header('content-disposition','attachment; filename="migration-candidate.zip"').send(await migrations.exportCandidate(request.params.id)));
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
@@ -272,6 +289,7 @@ export async function createEvaluationService(
   app.post("/api/runs", async (request, reply) => {
     if(!config.publicDemo) return reply.code(202).send(await manager.create(request.body));
     const input=runConfigurationSchema.parse(request.body);
+    if (input.runtimeBindings) return reply.code(403).send({message:'逐侧 Runtime 迁移仅限私有工作区。'});
     const pack=catalog.list().find(p=>p.packId===input.packId);
     const runtime=input.runtime.type==='runtime_http' ? await environments.get(input.runtime.environmentId) : null;
     if(!pack || !pack.packId.endsWith('-online-v1') || !runtime || runtime.type!=='runtime_http' || input.preparationId || input.skillAssetId || input.includeHoldout) {

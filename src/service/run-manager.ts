@@ -7,6 +7,7 @@ import { DirectModelRuntimeAdapter } from "../direct-model-runtime.js";
 import { HttpRuntimeAdapter, type RuntimeEnvironmentDescriptor } from "../http-runtime.js";
 import { DeterministicRubricJudge, ModelPairwiseJudge, type PairwiseJudge } from "../judge.js";
 import { ReplayRuntimeAdapter } from "../replay.js";
+import { SideRuntimeAdapter } from '../side-runtime.js';
 import { EvaluationCancelledError, runEvaluation } from "../runner.js";
 import { configuredModelRole } from "./config.js";
 import { defaultOnlineExecutionModel } from "./execution-models.js";
@@ -186,14 +187,19 @@ export class EvaluationRunManager {
     };
   }
 
-  private async skillResolver(assetId: string | undefined) {
+  private async skillResolver(assetId: string | undefined, strict = false) {
     const assets = await this.options.skills.list();
     return async (variant: EvalPack["variants"]["left"]) => {
       if (variant.mode !== "skill_version") return null;
       const matches = assets.filter(item => item.skillId === variant.skillId && item.version === variant.version
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
-      const asset = matches.find(item => item.assetId === assetId) ?? (matches.length === 1 ? matches[0] : null);
+      const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
+      if (strict) {
+        await this.options.skills.readArchive(asset.assetId);
+        const readable=await this.options.skills.readFiles(asset.assetId);
+        if (Object.keys(readable).length!==asset.fileCount) throw new Error('Migration dependency mapping required: Runtime payload cannot silently omit uploaded files');
+      }
       return {
         skillId: asset.skillId,
         version: asset.version,
@@ -205,6 +211,20 @@ export class EvaluationRunManager {
   }
 
   private async runtimeFor(configuration: RunConfiguration, pack: EvalPack): Promise<RuntimeAdapter> {
+    if (configuration.runtimeBindings) {
+      const makeSide = async (side: 'left' | 'right') => {
+        const binding = configuration.runtimeBindings![side];
+        const environment = await this.options.environments.get(binding.environmentId);
+        if (!environment || environment.type !== 'runtime_http') throw new Error('Migration Runtime environment unavailable');
+        const resolveSkill = await this.skillResolver(binding.skillAssetId, true);
+        await resolveSkill(pack.variants[side]);
+        return new HttpRuntimeAdapter({adapterId:`http-runtime:${environment.environmentId}`, endpoint:environment.endpoint,
+          headers:this.options.environments.headers(environment), resolveSkill, requireLoadedDigest:true,
+          timeoutMs:configuration.timeoutMs,
+          environment:await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))])});
+      };
+      return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
+    }
     if (configuration.runtime.type === "replay") {
       if (!pack.cases.every(evalCase => Boolean(evalCase.replay))) {
         throw new Error("Selected cases do not provide frozen replay evidence");
