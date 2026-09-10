@@ -22,7 +22,12 @@ try {
     assert(/^\/[a-z-]+\/$/.test(prefix));const target=address;
     proxy=http.createServer((req,res)=>{
       if(!req.url.startsWith(prefix)){res.statusCode=404;res.end();return;}
-      const upstream=http.request(new URL(req.url.slice(prefix.length-1),target),{method:req.method,headers:req.headers},response=>{
+      const forwarded={...req.headers};
+      if(process.env.MIGRATION_TEST_PRIVATE_GATEWAY==='true'){
+        forwarded.authorization=String(req.headers['x-migration-authorization']||'');
+        delete forwarded['x-migration-authorization'];
+      }
+      const upstream=http.request(new URL(req.url.slice(prefix.length-1),target),{method:req.method,headers:forwarded},response=>{
         res.writeHead(response.statusCode,response.headers);response.pipe(res);
       });upstream.on('error',()=>{res.statusCode=502;res.end();});req.pipe(upstream);
     });

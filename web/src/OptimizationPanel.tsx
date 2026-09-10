@@ -3,7 +3,7 @@ import { Check, GitCompareArrows, LoaderCircle, RotateCw, Sparkles, X } from "lu
 import type { EvaluationJob, SkillAsset } from "./types";
 import { ResultCharts } from "./ResultCharts";
 import { MarkdownContent } from "./MarkdownContent";
-import { accessToken, apiPath } from './api-path';
+import { authHeaders, apiPath } from './api-path';
 
 type Optimization = {
   optimizationId: string; sourceJobId: string; status: string; modelId: string;
@@ -13,8 +13,7 @@ type Optimization = {
 };
 const STAGES = [{ id: "diagnosing", label: "专业诊断与修改" }, { id: "validating", label: "生成候选" }, { id: "reevaluating", label: "同条件复测与留出验证" }, { id: "review", label: "人工选择" }];
 async function request<T>(url: string, body?: unknown): Promise<T> {
-  const token = accessToken();
-  const r = await fetch(apiPath(url), { method: body ? "POST" : "GET", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const r = await fetch(apiPath(url), { method: body ? "POST" : "GET", headers: { "content-type": "application/json", ...authHeaders() }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const data = await r.json(); if (!r.ok) throw new Error(data.message || "请求失败"); return data;
 }
 export function OptimizationPanel({ job, migrationId, onCandidate }: { job: EvaluationJob; migrationId?:string; onCandidate?:()=>void }) {

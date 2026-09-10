@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { accessToken, apiPath, basePath, tokenKey, downloadApi } from './api-path';
+import { accessToken, authHeaders, apiPath, basePath, tokenKey, downloadApi } from './api-path';
 import {
   Activity,
   Archive,
@@ -57,12 +57,11 @@ const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const PublicDemoContext = createContext(false);
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const token = accessToken();
   const response = await fetch(apiPath(url), {
     ...init,
     headers: {
       ...(!init?.body || init.body instanceof Blob ? {} : { "content-type": "application/json" }),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...authHeaders(),
       ...init?.headers,
     },
   });

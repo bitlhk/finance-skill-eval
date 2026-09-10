@@ -11,7 +11,7 @@ let token;
 try {token=(await readFile(accessFile,'utf8')).trim();}
 catch(error){if(error.code!=='ENOENT')throw error;token=randomBytes(32).toString('hex');await writeFile(accessFile,token,{mode:0o600,flag:'wx'});}
 const port=Number(process.env.MIGRATION_PREVIEW_PORT || 56401);
-const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:data,publicDirectory:path.resolve('web-dist'),
+const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:data,publicDirectory:path.resolve(process.env.MIGRATION_WEB_DIRECTORY || 'web-dist'),
   accessToken:token,publicDemo:false,host:'127.0.0.1',port});
 await app.listen({host:'127.0.0.1',port});
 console.log(`Private preview: http://127.0.0.1:${port}; access token file: ${accessFile}`);
