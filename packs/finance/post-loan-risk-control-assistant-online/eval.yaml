@@ -1,0 +1,40 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: post-loan-risk-control-assistant-online-v1
+version: 1.0.0
+domain: post-loan-risk
+targetSkillId: post-loan-risk-control-assistant
+targetSkillVersion: 1.2.1
+description: 真实模型与只读工具执行；post-loan-risk 固定模拟业务快照，非生产验收。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: post-loan-risk-control-assistant
+  right:
+    mode: skill_version
+    skillId: post-loan-risk-control-assistant
+    version: 1.2.1
+    artifactSha256: 19296a337ba8f8200577f1c4d3a03472e8040d0de277fea60881f444b739c139
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/1.yaml
+  - cases/2.yaml
+metadata:
+  generationContext: '{"querySubjectRefs":["DEMO-ENTERPRISE-001"],"enterpriseRef":"DEMO-ENTERPRISE-001","name":"海岳制造","scope":"模拟贷后快照与升级建议，经营和贷款事实、机构口径需查工具；不虚构其他公司或执行催收。"}'
+  dataMode: synthetic-snapshot
+  snapshotVersion: roles-demo-v1
+  sourceSkill: skill-store/marketplace/approved/post-loan-risk-control-assistant
+  evidenceSemantics: live-model-live-tools-synthetic-business-data
+holdoutCaseFiles:
+  - cases/3.yaml

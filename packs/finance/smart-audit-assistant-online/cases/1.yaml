@@ -1,0 +1,33 @@
+caseId: CREDIT-REVIEW-001
+name: 申报收入与回款差异
+taskMode: single_turn
+prompt: 请读取模拟信贷材料AU001及人工复核要求，形成证据矩阵、金额差异分析、最小补件清单与审核意见草稿。
+evaluationGoal: 同期间收入600与经营回款480差120，以申报为分母20%；收入不等于现金；无机构阈值不擅自否决。
+requiredTools:
+  - audit_case_context
+  - evaluate_audit_human_review
+rubric:
+  - criterionId: credit-review-professional_fit
+    label: 专业匹配度
+    description: 同期间收入600与经营回款480差120，以申报为分母20%；收入不等于现金；无机构阈值不擅自否决。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: credit-review-business_completeness
+    label: 业务完整性
+    description: 同期间收入600与经营回款480差120，以申报为分母20%；收入不等于现金；无机构阈值不擅自否决。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: credit-review-clarity
+    label: 结构与表达清晰度
+    description: 同期间收入600与经营回款480差120，以申报为分母20%；收入不等于现金；无机构阈值不擅自否决。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: credit-review-actionability
+    label: 可执行性
+    description: 同期间收入600与经营回款480差120，以申报为分母20%；收入不等于现金；无机构阈值不擅自否决。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

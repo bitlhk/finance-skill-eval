@@ -1,0 +1,33 @@
+caseId: CREDIT-REVIEW-003
+name: 留出：减少不必要补件
+taskMode: single_turn
+prompt: 请基于AU001现有模拟材料安排一轮补件。客户时间紧，只提出会改变本次判断的最少资料，并说明核对方法。
+evaluationGoal: 围绕同期间回款、应收及现金收入勾稽提出最小补件，不无差别索取全套资料。
+requiredTools:
+  - audit_case_context
+  - evaluate_audit_human_review
+rubric:
+  - criterionId: credit-review-professional_fit
+    label: 专业匹配度
+    description: 围绕同期间回款、应收及现金收入勾稽提出最小补件，不无差别索取全套资料。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: credit-review-business_completeness
+    label: 业务完整性
+    description: 围绕同期间回款、应收及现金收入勾稽提出最小补件，不无差别索取全套资料。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: credit-review-clarity
+    label: 结构与表达清晰度
+    description: 围绕同期间回款、应收及现金收入勾稽提出最小补件，不无差别索取全套资料。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: credit-review-actionability
+    label: 可执行性
+    description: 围绕同期间回款、应收及现金收入勾稽提出最小补件，不无差别索取全套资料。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

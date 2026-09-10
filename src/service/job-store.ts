@@ -1,6 +1,8 @@
 import path from "node:path";
 import type { EvaluationProgress } from "../runner.js";
 import type { EvaluationReport } from "../report.js";
+import type { FrozenQuestionSet } from "../contracts.js";
+export type { FrozenQuestionSet } from "../contracts.js";
 import type { RunConfiguration } from "./contracts.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
 
@@ -20,6 +22,7 @@ export type EvaluationJob = {
   status: EvaluationJobStatus;
   stageLabel: string;
   configuration: RunConfiguration;
+  questionSet?: FrozenQuestionSet;
   pack: {
     packId: string;
     version: string;
@@ -29,6 +32,7 @@ export type EvaluationJob = {
   } | null;
   progress: Pick<EvaluationProgress, "completedRuns" | "totalRuns" | "caseId" | "side">;
   evidence: EvaluationProgress["evidence"][];
+  live?: Record<string, { caseId: string; side: "left" | "right"; output: string; status: string; toolCalls: Array<{ name: string; status: string }> }>;
   report: EvaluationReport | null;
   error: {
     code: string;
@@ -78,6 +82,10 @@ export class EvaluationJobStore {
 
   get(jobId: string): EvaluationJob | null {
     return this.cache.get(jobId) ?? null;
+  }
+  updateLive(job: EvaluationJob): void {
+    if (this.cache.get(job.jobId)?.status === "cancelled") return;
+    this.cache.set(job.jobId, structuredClone(job));
   }
 
   async save(job: EvaluationJob): Promise<EvaluationJob> {

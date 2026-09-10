@@ -12,6 +12,22 @@ afterEach(async () => {
 });
 
 describe("standalone evaluation service", () => {
+  it('keeps public demo administration and model consumption behind authenticated curated routes',async()=>{
+    const dataDirectory=await mkdtemp(path.join(tmpdir(),'finance-eval-public-')); directories.push(dataDirectory);
+    await expect(createEvaluationService({publicDemo:true,accessToken:null,dataDirectory})).rejects.toThrow(/ingress/);
+    const app=await createEvaluationService({publicDemo:true,accessToken:'test-token',dataDirectory,rootDirectory:path.resolve('.'),publicDirectory:path.resolve('web-dist')});
+    try{
+      expect((await app.inject({url:'/api/catalog'})).statusCode).toBe(401);
+      const headers={authorization:'Bearer test-token','x-demo-user':'studio_1'};
+      expect((await app.inject({url:'/api/catalog',headers})).json().publicDemo).toBe(true);
+      for(const url of ['/api/environments','/api/skills/upload','/api/runs/run-one/optimize','/api/runs/run-one/retry']){
+        expect((await app.inject({method:'POST',url,headers,payload:{}})).statusCode).toBe(403);
+      }
+      expect((await app.inject({method:'POST',url:'/api/runs',headers:{authorization:'Bearer test-token'},payload:{}})).statusCode).toBe(401);
+      expect((await app.inject({method:'POST',url:'/api/runs',headers:{...headers,origin:'https://other.example'},payload:{}})).statusCode).toBe(403);
+      expect((await app.inject({method:'POST',url:'/api/runs',headers,payload:{packId:'wealth-manager-online-v1',runtime:{type:'replay'}}})).statusCode).toBe(400);
+    }finally{await app.close();}
+  });
   it("lists preset packs, accepts a Skill ZIP and completes a persisted replay run", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "finance-eval-service-"));
     directories.push(dataDirectory);
@@ -27,6 +43,48 @@ describe("standalone evaluation service", () => {
       expect(catalog.json().evalPacks).toEqual(expect.arrayContaining([
         expect.objectContaining({ targetSkillId: "wealth-manager-assistant", replayReady: true }),
       ]));
+      expect(catalog.json().featuredSkills).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          skillId: "wealth-manager-assistant",
+          displayName: "财富经理助手",
+          evaluationStatus: "environment_required",
+        }),
+        expect.objectContaining({
+          skillId: "auto-insurance-advisor",
+          evaluationStatus: "environment_required",
+        }),
+      ]));
+      expect(catalog.json().models).toEqual(expect.arrayContaining([
+        expect.objectContaining({ modelId: "glm-5.2" }),
+      ]));
+
+      const mcpEnvironment = await app.inject({
+        method: "POST",
+        url: "/api/environments",
+        payload: {
+          name: "Wealth MCP",
+          type: "mcp_streamable_http",
+          endpoint: "https://mcp.example/mcp",
+          mcpEnvironmentIds: [],
+        },
+      });
+      expect(mcpEnvironment.statusCode).toBe(200);
+      const runtimeEnvironment = await app.inject({
+        method: "POST",
+        url: "/api/environments",
+        payload: {
+          name: "OpenJiuwen Eval Runtime",
+          type: "runtime_http",
+          runtimeType: "openjiuwen",
+          endpoint: "https://runtime.example/eval/execute",
+          mcpEnvironmentIds: [mcpEnvironment.json().environmentId],
+        },
+      });
+      expect(runtimeEnvironment.statusCode).toBe(200);
+      expect(runtimeEnvironment.json()).toMatchObject({
+        runtimeType: "openjiuwen",
+        mcpEnvironmentIds: [mcpEnvironment.json().environmentId],
+      });
 
       const skillSource = Buffer.from(`---
 name: transfer-risk-review

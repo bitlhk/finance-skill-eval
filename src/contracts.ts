@@ -101,6 +101,7 @@ export const evalPackFileSchema = z.strictObject({
   }),
   judgeProfileFile: z.string().min(1),
   caseFiles: z.array(z.string().min(1)).min(1),
+  holdoutCaseFiles: z.array(z.string().min(1)).max(8).optional(),
   metadata: z.record(z.string()).default({}),
 });
 
@@ -201,6 +202,7 @@ export type EvaluationContextPayload = z.infer<typeof evaluationContextPayloadSc
 export type EvaluationContextSnapshot = z.infer<typeof evaluationContextSnapshotSchema>;
 
 export type EvalPack = Omit<EvalPackFile, "caseFiles" | "judgeProfileFile"> & {
+  holdoutCases?: EvalCase[];
   sourceFile: string;
   cases: EvalCase[];
   judgeProfile: JudgeProfile;
@@ -228,3 +230,15 @@ export function stableJson(value: unknown): string {
 export function fingerprint(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
 }
+
+export type FrozenQuestionSet = {
+  source: "ai_generated";
+  summary: string;
+  cases: EvalCase[];
+  fingerprint: string;
+  generatedAt: string;
+  generationId: string;
+  model: ModelRef;
+  skillArtifactSha256: string;
+  sourceFiles: string[];
+};

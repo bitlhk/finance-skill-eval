@@ -1,0 +1,89 @@
+caseId: WM-SKILL-EVAL-001
+name: 访前准备从资料罗列升级为决策诊断
+taskMode: single_turn
+prompt: 模拟客户王建国（C006）有300万元理财5天后到期，企业未来几个月可能支付设备款，想找收益更高的承接产品。请核验客户信息，准备访前简报和首轮关键问题。
+evaluationGoal: 使用已核验客户与制度事实，明确缺口；重点发现拜访触发点、未来资金用途、 可接受浮亏金额和目标优先级等会改变后续配置判断的信息，并形成清晰的面谈目标。
+requiredTools:
+  - get_customer_profile
+  - get_customer_portfolio
+  - get_wealth_policy_basis
+rubric:
+  - criterionId: fact-based-professional-boundary
+    label: 基于事实保持专业边界
+    description: 使用风险与客户事实组织访前材料，信息不足时不提前进入产品推荐。
+    dimension: professional_fit
+    weight: 8
+    required: true
+    allOf:
+      - 风险
+      - 不做具体产品.*推荐|不展开推荐
+  - criterionId: verified-facts-and-gaps
+    label: 事实与缺口分开
+    description: 明确已核验客户事实、数据时间、制度依据和当前缺失信息。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    allOf:
+      - 已核验事实|客户事实
+      - 数据时间|数据截至
+      - 缺失|未提供
+  - criterionId: decision-changing-questions
+    label: 聚焦会改变配置判断的问题
+    description: 优先确认资金期限、真实回撤感受和目标优先级，而不是泛泛核对资料。
+    dimension: professional_fit
+    weight: 3
+    required: true
+    allOf:
+      - 6-12个月|未来.*个月
+      - 浮亏金额|可接受.*金额|金额回撤
+      - 优先级|优先顺序
+    improvementHint: 把一般客户维护问题收敛为资金用途、可接受浮亏金额和目标优先级等决策变量。
+  - criterionId: meeting-trigger
+    label: 识别本次拜访触发点
+    description: 询问到期资金、资产调整或客户近期变化中的真实触发事件。
+    dimension: professional_fit
+    weight: 1
+    required: true
+    anyOf:
+      - 到期资金
+      - 产品到期
+      - 资产调整
+      - 核心诉求
+  - criterionId: usable-previsit-structure
+    label: 访前材料结构可直接使用
+    description: 输出有明确标题、摘要和分节内容，便于财富经理快速阅读。
+    dimension: clarity
+    weight: 1
+    required: true
+    allOf:
+      - title
+      - summary
+      - sections
+  - criterionId: actionable-question-list
+    label: 给出可执行的谈话问题
+    description: 至少形成可在本次拜访中直接使用的谈话或核实问题。
+    dimension: actionability
+    weight: 6
+    required: true
+    anyOf:
+      - 谈话要点
+      - 现场确认
+      - 需.*核实
+  - criterionId: meeting-objective
+    label: 定义可交付的面谈目标
+    description: 说明本次需要确认什么、推进到哪一步，而不是直接销售产品。
+    dimension: actionability
+    weight: 2
+    required: true
+    allOf:
+      - 本次目标|面谈目标
+      - 资金期限|风险承受边界
+  - criterionId: no-premature-recommendation
+    label: 信息不足时不提前推荐
+    description: 缺少持仓、到期和产品准入事实时，不生成具体产品正式推荐。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    anyOf:
+      - 不做具体产品.*推荐
+      - 不展开推荐

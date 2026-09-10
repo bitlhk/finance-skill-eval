@@ -42,6 +42,7 @@ async function rpc(input: {
   params: Record<string, unknown>;
   id: number;
   sessionId?: string | null;
+  protocolVersion?: string;
 }): Promise<{ payload: z.infer<typeof jsonRpcResponseSchema>; sessionId: string | null }> {
   const response = await fetch(input.endpoint, {
     method: "POST",
@@ -50,6 +51,7 @@ async function rpc(input: {
       accept: "application/json, text/event-stream",
       "content-type": "application/json",
       ...(input.sessionId ? { "mcp-session-id": input.sessionId } : {}),
+      ...(input.protocolVersion ? { "mcp-protocol-version": input.protocolVersion } : {}),
       ...input.headers,
     },
     body: JSON.stringify({
@@ -71,6 +73,8 @@ export async function preflightMcpServer(input: {
   headers?: Record<string, string>;
 }): Promise<McpPreflightResult> {
   const startedAt = Date.now();
+  let sessionId: string | null = null;
+  let protocolVersion = "2025-06-18";
   try {
     const initialized = await rpc({
       ...input,
@@ -79,19 +83,28 @@ export async function preflightMcpServer(input: {
       params: {
         protocolVersion: "2025-06-18",
         capabilities: {},
-        clientInfo: { name: "finance-skill-eval", version: "0.3.1" },
+        clientInfo: { name: "finance-skill-eval", version: "0.4.0" },
       },
     });
     const initializeResult = z.object({
       protocolVersion: z.string().optional(),
       serverInfo: z.object({ name: z.string().optional() }).optional(),
     }).passthrough().parse(initialized.payload.result ?? {});
+    sessionId = initialized.sessionId;
+    protocolVersion = initializeResult.protocolVersion ?? protocolVersion;
+    const notification = await fetch(input.endpoint, { method: "POST", signal: AbortSignal.timeout(12000),
+      headers: { accept: "application/json, text/event-stream", "content-type": "application/json", "mcp-protocol-version": protocolVersion,
+        ...(sessionId ? { "mcp-session-id": sessionId } : {}), ...input.headers },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
+    if (!notification.ok) throw new Error(`MCP initialization notification failed: HTTP ${notification.status}`);
+    await notification.body?.cancel();
     const listed = await rpc({
       ...input,
       id: 2,
       method: "tools/list",
       params: {},
       sessionId: initialized.sessionId,
+      protocolVersion,
     });
     const tools = toolListSchema.parse(listed.payload.result ?? {}).tools.map(tool => ({
       name: tool.name,
@@ -114,5 +127,11 @@ export async function preflightMcpServer(input: {
       elapsedMs: Date.now() - startedAt,
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    if (sessionId) {
+      await fetch(input.endpoint, { method: "DELETE", signal: AbortSignal.timeout(3000), headers: {
+        "mcp-session-id": sessionId, "mcp-protocol-version": protocolVersion, ...input.headers,
+      } }).then(response => response.body?.cancel()).catch(() => undefined);
+    }
   }
 }

@@ -1,0 +1,174 @@
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { zipSync, strToU8 } from "fflate";
+import { parse, stringify } from "yaml";
+import { z } from "zod";
+import { configuredModelRole } from "./config.js";
+import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
+import type { EvaluationJobStore } from "./job-store.js";
+import type { EvaluationRunManager } from "./run-manager.js";
+import type { SkillStore, SkillAssetRecord } from "./skill-store.js";
+import type { EvalPackCatalog } from "./catalog.js";
+
+const proposalSchema = z.strictObject({
+  summary: z.string().min(1).max(4000),
+  findings: z.array(z.string().max(1500)).min(1).max(8),
+  changes: z.array(z.strictObject({ path: z.string(), content: z.string().min(1).max(80000), reason: z.string().max(2000) })).min(1).max(6),
+});
+export type Optimization = {
+  optimizationId: string; sourceJobId: string; sourceAssetId: string; createdAt: string; updatedAt: string;
+  status: "diagnosing" | "validating" | "reevaluating" | "review" | "adopted" | "retained" | "failed" | "cancelled";
+  modelId: string; summary: string; findings: string[];
+  changes: Array<{ path: string; before: string; after: string; reason: string }>;
+  candidate: SkillAssetRecord | null; rerunJobId: string | null; error: string | null;
+  previousRerunJobIds?: string[];
+  stages: Array<{ stage: string; at: string }>;
+};
+
+export function candidateFiles(files: Record<string, string>, changes: Array<{ path: string; content: string }>, version: string): Record<string, string> {
+  const next = { ...files };
+  const seen = new Set<string>();
+  for (const change of changes) {
+    if (!(change.path === "SKILL.md" || /^references\/[a-zA-Z0-9_/-]+\.md$/u.test(change.path)) || change.path.includes("..") || seen.has(change.path)) {
+      throw new Error("Candidate edits may only change SKILL.md and reference Markdown files");
+    }
+    seen.add(change.path); next[change.path] = change.content;
+  }
+  const match = next["SKILL.md"]?.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/u);
+  if (!match) throw new Error("Candidate requires valid Skill frontmatter");
+  const original = files["SKILL.md"]?.match(/^---\s*\n([\s\S]*?)\n---/u);
+  const identity = original ? parse(original[1]!) : null;
+  const metadata = parse(match[1]!);
+  if (!identity?.name || metadata?.name !== identity.name) throw new Error("Optimizer cannot change Skill identity");
+  next["SKILL.md"] = `---\n${stringify({ ...metadata, name: identity.name, version })}---\n\n${match[2]}`;
+  if (Object.values(next).reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 240000) throw new Error("Candidate package exceeds text budget");
+  return next;
+}
+
+export class OptimizationManager {
+  private readonly directory: string;
+  private readonly active = new Map<string, AbortController>();
+  constructor(private readonly options: { dataDirectory: string; skills: SkillStore; jobs: EvaluationJobStore; runs: EvaluationRunManager; catalog: EvalPackCatalog }) {
+    this.directory = path.join(options.dataDirectory, "optimizations");
+  }
+  async get(id: string): Promise<Optimization> {
+    if (!/^opt-[a-f0-9-]+$/u.test(id)) throw new Error("Invalid optimization id");
+    const item = await readJson<Optimization>(path.join(this.directory, `${id}.json`));
+    if (["diagnosing", "validating", "reevaluating"].includes(item.status) && !this.active.has(id)) {
+      item.status = "failed"; item.error = "Service restarted; candidate was not adopted"; await this.save(item);
+    }
+    return item;
+  }
+  async forSource(sourceJobId: string): Promise<Optimization | null> {
+    const items: Optimization[] = [];
+    for (const file of await listJsonFiles(this.directory)) {
+      const item = await readJson<Optimization>(file);
+      if (item.sourceJobId === sourceJobId) items.push(item);
+    }
+    const latest = items.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    return latest ? this.get(latest.optimizationId) : null;
+  }
+  private async save(item: Optimization) {
+    item.updatedAt = new Date().toISOString();
+    await ensureDirectory(this.directory);
+    await writeJsonAtomic(path.join(this.directory, `${item.optimizationId}.json`), item);
+  }
+  private async stage(item: Optimization, status: Optimization["status"]) {
+    item.status = status; item.stages.push({ stage: status, at: new Date().toISOString() }); await this.save(item);
+  }
+  async create(sourceJobId: string): Promise<Optimization> {
+    if (this.active.size) throw new Error("已有一轮 Skill 优化正在进行");
+    const source = this.options.jobs.get(sourceJobId);
+    if (!source?.report || source.status !== "completed" || source.configuration.runtime.type !== "runtime_http") throw new Error("请先完成一轮在线评测");
+    if (source.report.cases.some(c => c.left.status !== "completed" || c.right.status !== "completed" || !c.judge)) throw new Error("运行或阅卷不完整，应修复环境后重测，不能据此修改 Skill");
+    if (source.report.cases.some(c => [...c.left.toolCalls, ...c.right.toolCalls].some(t => t.status === "failed"))) throw new Error("存在工具失败，应先排查环境，不能将运行故障当作 Skill 缺陷");
+    const variant = source.report.variants.right;
+    if (variant.mode !== "skill_version") throw new Error("右侧必须为已装配 Skill");
+    const assets = await this.options.skills.list();
+    const asset = assets.find(a => a.skillId === variant.skillId && a.version === variant.version && (!variant.artifactSha256 || a.artifactSha256 === variant.artifactSha256));
+    if (!asset) throw new Error("原始 Skill 文件不可用");
+    const models = source.report.models.execution;
+    if (models.left.modelId !== models.right.modelId || models.left.providerId !== models.right.providerId) throw new Error("请先用相同执行模型评测，再判断 Skill 增益");
+    const pack = source.configuration.packId ? this.options.catalog.get(source.configuration.packId) : null;
+    if (!pack?.holdoutCases?.length) throw new Error("此试卷尚未配置冻结留出题，不启动候选复测");
+    const optimizer = configuredModelRole("OPTIMIZER");
+    if (!optimizer.adapter) throw new Error("优化模型未配置");
+    const now = new Date().toISOString();
+    const item: Optimization = { optimizationId: `opt-${randomUUID()}`, sourceJobId, sourceAssetId: asset.assetId, createdAt: now, updatedAt: now,
+      status: "diagnosing", modelId: optimizer.model.modelId, summary: "", findings: [], changes: [], candidate: null, rerunJobId: null, error: null, stages: [{ stage: "diagnosing", at: now }] };
+    const controller = new AbortController(); this.active.set(item.optimizationId, controller);
+    await this.save(item);
+    void this.run(item, controller).finally(() => this.active.delete(item.optimizationId));
+    return item;
+  }
+  async reevaluate(id: string): Promise<Optimization> {
+    if (this.active.size) throw new Error("已有一轮 Skill 优化正在进行");
+    const item = await this.get(id);
+    if (!["review", "failed"].includes(item.status) || !item.candidate) throw new Error("当前没有可重新复测的候选");
+    if (item.rerunJobId) item.previousRerunJobIds = [...(item.previousRerunJobIds ?? []), item.rerunJobId];
+    item.rerunJobId = null; item.error = null;
+    const controller = new AbortController(); this.active.set(id, controller);
+    await this.stage(item, "reevaluating");
+    void this.evaluate(item, controller).catch(async error => {
+      if (item.rerunJobId && controller.signal.aborted) await this.options.runs.cancel(item.rerunJobId);
+      item.error = error instanceof Error ? error.message : String(error);
+      await this.stage(item, controller.signal.aborted ? "cancelled" : "failed");
+    }).finally(() => this.active.delete(id));
+    return item;
+  }
+  private async run(item: Optimization, controller: AbortController) {
+    try {
+      const source = this.options.jobs.get(item.sourceJobId)!;
+      const files = await this.options.skills.readFiles(item.sourceAssetId);
+      const optimizer = configuredModelRole("OPTIMIZER");
+      const developmentIds = new Set((source.questionSet?.cases ?? this.options.catalog.get(source.configuration.packId!)!.cases).map(c => c.caseId));
+      const completion = await optimizer.adapter!.complete({ requestId: item.optimizationId, model: optimizer.model, responseFormat: "json", signal: controller.signal,
+        messages: [{ role: "system", content: "你是金融岗位 Skill 编辑专家，不是本轮 Judge。只针对真实业务质量缺口进行小范围修改，保留工具名称、权限边界和事实约束。不要添加题目答案、客户编号、固定产品比例、评分关键词或评测特例，不修复环境故障，不保证改进。返回JSON: {summary, findings: string[], changes:[{path,content,reason}]}。content是修改后的完整文件，最多修改3个文件，只允许SKILL.md或references/*.md。不得访问文件和工具。" },
+          { role: "user", content: JSON.stringify({ files, developmentEvidence: source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => ({ task: c.prompt, answer: c.right.output, review: c.judge?.summary, dimensions: c.judge?.dimensions })) }) }] });
+      controller.signal.throwIfAborted();
+      const proposal = proposalSchema.parse(JSON.parse(completion.content.replace(/^```(?:json)?\s*|\s*```$/gu, "")));
+      item.summary = proposal.summary; item.findings = proposal.findings;
+      await this.stage(item, "validating");
+      const original = await this.options.skills.get(item.sourceAssetId);
+      const version = `${original!.version}-candidate.${item.optimizationId.slice(4, 12)}`;
+      const next = candidateFiles(files, proposal.changes, version);
+      item.changes = proposal.changes.map(c => ({ path: c.path, before: files[c.path] ?? "", after: next[c.path]!, reason: c.reason }));
+      item.candidate = await this.options.skills.uploadZip(Buffer.from(zipSync(Object.fromEntries(Object.entries(next).map(([name, content]) => [name, strToU8(content)])))));
+      controller.signal.throwIfAborted();
+      await this.evaluate(item, controller);
+    } catch (error) {
+      if (item.rerunJobId && controller.signal.aborted) await this.options.runs.cancel(item.rerunJobId);
+      item.error = error instanceof Error ? error.message : String(error);
+      await this.stage(item, controller.signal.aborted ? "cancelled" : "failed");
+    }
+  }
+  private async evaluate(item: Optimization, controller: AbortController) {
+      const source = this.options.jobs.get(item.sourceJobId)!;
+      const original = await this.options.skills.get(item.sourceAssetId);
+      const developmentIds = new Set((source.questionSet?.cases ?? this.options.catalog.get(source.configuration.packId!)!.cases).map(c => c.caseId));
+      const variant = (a: SkillAssetRecord) => ({ mode: "skill_version", skillId: a.skillId, version: a.version, artifactSha256: a.artifactSha256 });
+      const rerun = await this.options.runs.create({ ...source.configuration, caseSource: "fixed", selectedCaseIds: source.questionSet ? [] : source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => c.caseId),
+        includeHoldout: true, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model" }, source.questionSet);
+      item.rerunJobId = rerun.jobId;
+      await this.stage(item, "reevaluating");
+      while (true) {
+        controller.signal.throwIfAborted();
+        const current = this.options.jobs.get(rerun.jobId)!;
+        if (["failed", "cancelled", "interrupted"].includes(current.status)) throw new Error(current.error?.message ?? "Candidate evaluation did not complete");
+        if (current.status === "completed") {
+          if (current.report?.cases.some(c => !c.judge || c.left.status !== "completed" || c.right.status !== "completed")) throw new Error("候选复测存在未完成任务，不能确认专业增益");
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      await this.stage(item, "review");
+  }
+  async decide(id: string, decision: "adopt" | "retain" | "cancel") {
+    const item = await this.get(id);
+    if (decision === "cancel") { this.active.get(id)?.abort(); return item; }
+    if (item.status !== "review") throw new Error("候选尚未完成复测");
+    await this.stage(item, decision === "adopt" ? "adopted" : "retained");
+    // Adoption records a local decision only; originals and deployed Skills are immutable.
+    return item;
+  }
+}

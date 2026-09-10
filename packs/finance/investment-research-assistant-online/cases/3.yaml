@@ -1,0 +1,33 @@
+caseId: INVESTMENT-RESEARCH-003
+name: 留出：回款压力验证
+taskMode: single_turn
+prompt: 针对DEMO001，请给下一次调研设计三个最能验证利润质量的问题，并说明不同回答会怎样改变研究判断。
+evaluationGoal: 问题绑定应收账龄、期后回款、库存与产能，而不是通用行业展望。
+requiredTools:
+  - wind_stock_data
+  - wind_financial_docs
+rubric:
+  - criterionId: investment-research-professional_fit
+    label: 专业匹配度
+    description: 问题绑定应收账龄、期后回款、库存与产能，而不是通用行业展望。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: investment-research-business_completeness
+    label: 业务完整性
+    description: 问题绑定应收账龄、期后回款、库存与产能，而不是通用行业展望。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: investment-research-clarity
+    label: 结构与表达清晰度
+    description: 问题绑定应收账龄、期后回款、库存与产能，而不是通用行业展望。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: investment-research-actionability
+    label: 可执行性
+    description: 问题绑定应收账龄、期后回款、库存与产能，而不是通用行业展望。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

@@ -9,11 +9,13 @@ import type { ResolvedSkillSource } from "./direct-model-runtime.js";
 
 export type RuntimeEnvironmentDescriptor = {
   environmentId: string;
+  requiredToolNames?: string[];
   mcpServers?: Array<{
     serverId: string;
     endpoint: string;
     transport: "streamable_http";
     toolNames: string[];
+    credentialEnv?: string | null;
   }>;
 };
 
@@ -72,26 +74,61 @@ export class HttpRuntimeAdapter implements RuntimeAdapter {
         schemaVersion: "finance.skill-eval.runtime-request.v1",
         runId: request.runId,
         side: request.side,
-        case: request.evalCase,
+        case: { caseId: request.evalCase.caseId, prompt: request.evalCase.prompt,
+          taskMode: request.evalCase.taskMode, requiredTools: request.evalCase.requiredTools },
         model: request.model,
         variant: request.variant,
         skill,
         environment: this.options.environment ?? null,
       }),
     });
-    const raw = await response.text();
     if (!response.ok) {
+      const raw = await response.text();
       throw new Error(`Runtime execution failed with HTTP ${response.status}: ${raw.slice(0, 600)}`);
     }
-    const parsed = wrappedResponseSchema.parse(JSON.parse(raw));
+    let value: unknown;
+    if (response.headers.get("content-type")?.includes("text/event-stream")) {
+      if (!response.body) throw new Error("Runtime stream is empty");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          buffer = (buffer + decoder.decode(chunk.value, { stream: !chunk.done })).replaceAll("\r\n", "\n");
+          let end: number;
+          while ((end = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
+            if (!data) continue;
+            const event = JSON.parse(data);
+            if (event.evidence) value = event.evidence;
+            else if (["status", "text_delta", "tool_start", "tool_end"].includes(event.type)) {
+              request.onEvent?.({ ...event, caseId: request.evalCase.caseId, side: request.side });
+            }
+          }
+          if (chunk.done) break;
+        }
+      } finally { await reader.cancel().catch(() => undefined); }
+      if (!value) throw new Error("Runtime stream ended without execution evidence");
+    } else value = await response.json();
+    const parsed = wrappedResponseSchema.parse(value);
     const evidence = "evidence" in parsed ? parsed.evidence : parsed;
     if (evidence.caseId !== request.evalCase.caseId || evidence.side !== request.side) {
       throw new Error("Runtime evidence does not match the requested case and side");
     }
+    if (evidence.modelId !== request.model.modelId) throw new Error("Runtime used a different model than requested");
+    if (skill && evidence.metadata.skillArtifactSha256 && evidence.metadata.skillArtifactSha256 !== skill.artifactSha256) throw new Error("Runtime loaded a different Skill digest");
+    if (skill && !evidence.loadedSkills.some(item => item.skillId === skill.skillId && item.version === skill.version)) {
+      throw new Error("Runtime did not load the requested Skill artifact");
+    }
+    if (request.variant.mode === "without_target_skill" && evidence.loadedSkills.some(item => item.skillId === request.variant.skillId)) {
+      throw new Error("Baseline unexpectedly loaded the target Skill");
+    }
     return {
       ...evidence,
       runId: request.runId,
-      skillVersion: request.variant.mode === "skill_version" ? request.variant.version : null,
       traceFingerprint: evidence.traceFingerprint ?? fingerprint(evidence),
       metadata: {
         ...evidence.metadata,

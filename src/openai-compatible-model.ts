@@ -10,6 +10,7 @@ export type OpenAiCompatibleModelOptions = {
   baseUrl: string;
   timeoutMs?: number;
   headers?: Record<string, string>;
+  requestDefaults?: Record<string, unknown>;
 };
 
 /** Minimal OpenAI-compatible adapter for Analyzer or Judge roles. */
@@ -23,6 +24,7 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
   async complete(request: ModelCompletionRequest): Promise<ModelCompletionResponse> {
     const endpoint = completionEndpoint(this.options.baseUrl);
     const body: Record<string, unknown> = {
+      ...this.options.requestDefaults,
       model: request.model.modelId,
       messages: request.messages,
       ...request.model.parameters,

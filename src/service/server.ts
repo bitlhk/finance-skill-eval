@@ -14,6 +14,10 @@ import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
 import { EvaluationRunManager } from "./run-manager.js";
 import { SkillStore } from "./skill-store.js";
+import { OptimizationManager } from "./optimization-manager.js";
+import { DemoAccess } from "./demo-access.js";
+import { runConfigurationSchema } from "./contracts.js";
+import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -40,6 +44,7 @@ function markdownReport(report: EvaluationReport): string {
     `- Eval Pack：${report.pack.packId}@${report.pack.version}`,
     `- Runtime：${report.runtimeAdapterId}`,
     `- Judge：${report.judgeId}`,
+    ...(report.questionSet ? [`- 题目来源：本轮 AI 生成，${report.questionSet.model.modelId}`, `- 冻结题集：${report.questionSet.fingerprint}`] : []),
     `- 报告指纹：${report.reportFingerprint}`,
     "",
     cases,
@@ -55,6 +60,7 @@ export async function createEvaluationService(
   overrides: Partial<ServiceConfig> = {},
 ): Promise<FastifyInstance> {
   const config = { ...loadServiceConfig(), ...overrides };
+  if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   const catalog = new EvalPackCatalog(config.rootDirectory);
   const skills = new SkillStore(config.dataDirectory);
@@ -76,6 +82,18 @@ export async function createEvaluationService(
     jobs,
     maxConcurrentRuns: config.maxConcurrentRuns,
   });
+  const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog });
+  const demo = new DemoAccess(config.dataDirectory);
+
+  app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
+  app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
+  app.get<{ Params: { id: string } }>("/api/optimizations/:id", async request => optimizations.get(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/optimizations/:id/reevaluate", async (request, reply) => reply.code(202).send(await optimizations.reevaluate(request.params.id)));
+  app.post<{ Params: { id: string }; Body: { decision: string } }>("/api/optimizations/:id/decision", async request => {
+    const decision = request.body?.decision;
+    if (decision !== "adopt" && decision !== "retain" && decision !== "cancel") throw Object.assign(new Error("Invalid decision"), { statusCode: 400 });
+    return optimizations.decide(request.params.id, decision);
+  });
 
   app.addContentTypeParser(
     ["application/zip", "application/x-zip-compressed", "application/octet-stream"],
@@ -86,6 +104,16 @@ export async function createEvaluationService(
     if (!config.accessToken || !request.url.startsWith("/api/") || request.url === "/api/health") return;
     if (bearerToken(request.headers.authorization) !== config.accessToken) {
       return reply.code(401).send({ error: "UNAUTHORIZED", message: "访问令牌无效" });
+    }
+  });
+  app.addHook("preValidation", async (request, reply) => {
+    if(!config.publicDemo || !request.url.startsWith('/api/') || request.method==='GET') return;
+    demo.identity(request.headers['x-demo-user']);
+    const origin = request.headers.origin;
+    if(origin && origin !== process.env.FINANCE_EVAL_PUBLIC_ORIGIN) return reply.code(403).send({message:'跨站请求不受支持。'});
+    const route=request.url.split('?')[0] ?? '';
+    if(request.method!=='POST' || !(route==='/api/runs' || /^\/api\/runs\/run-[a-z0-9-]+\/cancel$/.test(route) || /^\/api\/environments\/env-[a-z0-9-]+\/preflight$/.test(route))) {
+      return reply.code(403).send({message:'公开演示仅开放精选技能对比；资产与环境由维护者管理。'});
     }
   });
   app.setErrorHandler((error, request, reply) => {
@@ -102,6 +130,7 @@ export async function createEvaluationService(
   app.get("/api/health", async () => ({
     status: "ready",
     service: "finance-skill-eval",
+    deploymentMode: config.publicDemo ? 'curated-public-demo' : 'local-workspace',
     version: FINANCE_SKILL_EVAL_VERSION,
     time: new Date().toISOString(),
   }));
@@ -114,14 +143,35 @@ export async function createEvaluationService(
     ]);
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");
+    const executionCatalog = await executionModelCatalog();
+    const executionDefault = executionCatalog?.models.find(m => m.modelId === executionCatalog.defaultModelId);
     const judge = configuredModelRole("JUDGE");
+    const optimizer = configuredModelRole("OPTIMIZER");
+    const evalPacks = catalog.list();
+    const modelMap = new Map<string, { providerId: string; modelId: string; label?: string }>();
+    for (const pack of evalPacks) {
+      for (const model of [pack.models.execution.left, pack.models.execution.right]) {
+        const key = `${model.providerId}:${model.modelId}`;
+        if (!modelMap.has(key)) modelMap.set(key, { ...model, label: model.modelId });
+      }
+    }
+    const executionKey = `${execution.model.providerId}:${execution.model.modelId}`;
+    if (!modelMap.has(executionKey)) {
+      modelMap.set(executionKey, { ...execution.model, label: execution.model.modelId });
+    }
+    const onlineRuntimeReady = savedEnvironments.some(item => item.type === "runtime_http");
     return {
       schemaVersion: "finance.skill-eval.catalog.v1",
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
-      evalPacks: catalog.list(),
+      publicDemo: Boolean(config.publicDemo),
+      featuredSkills: catalog.listFeaturedSkills(onlineRuntimeReady).map(skill => ({ ...skill,
+        evaluationStatus: skill.evaluationStatus === "pack_required" ? "pack_required" :
+          onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),
+      evalPacks,
       uploadedSkills,
       preparations: savedPreparations,
       environments: savedEnvironments,
+      models: executionCatalog?.models ?? (execution.configured ? [{ ...execution.model, label: execution.model.modelId }] : [...modelMap.values()]),
       runtimes: [
         {
           id: "replay",
@@ -148,8 +198,10 @@ export async function createEvaluationService(
       ],
       modelRoles: {
         analyzer: { configured: analyzer.configured, model: analyzer.model },
-        execution: { configured: execution.configured, model: execution.model },
+        execution: { configured: execution.configured || Boolean(executionDefault), model: executionDefault ? modelReference(executionDefault) : execution.model },
+        directExecution: { configured: execution.configured, model: execution.model },
         judge: { configured: judge.configured, model: judge.model },
+        optimizer: { configured: optimizer.configured, model: optimizer.model },
       },
     };
   });
@@ -205,7 +257,7 @@ export async function createEvaluationService(
     async request => {
       const environment = await environments.get(request.params.environmentId);
       if (!environment) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
-      return environments.preflight(environment);
+      return environments.inspect(environment);
     },
   );
 
@@ -217,12 +269,30 @@ export async function createEvaluationService(
     if (!job) throw Object.assign(new Error("Evaluation run not found"), { statusCode: 404 });
     return job;
   });
-  app.post("/api/runs", async (_request, reply) => reply.code(202).send(
-    await manager.create(_request.body),
-  ));
-  app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/cancel", async request => (
-    manager.cancel(request.params.jobId)
-  ));
+  app.post("/api/runs", async (request, reply) => {
+    if(!config.publicDemo) return reply.code(202).send(await manager.create(request.body));
+    const input=runConfigurationSchema.parse(request.body);
+    const pack=catalog.list().find(p=>p.packId===input.packId);
+    const runtime=input.runtime.type==='runtime_http' ? await environments.get(input.runtime.environmentId) : null;
+    if(!pack || !pack.packId.endsWith('-online-v1') || !runtime || runtime.type!=='runtime_http' || input.preparationId || input.skillAssetId || input.includeHoldout) {
+      return reply.code(400).send({message:'请选择预制在线评测包与已配置环境。'});
+    }
+    const execution=await resolvePublicExecutionModels(input);
+    const assets=await skills.list();
+    for(const variant of [input.leftVariant,input.rightVariant]) {
+      if(!variant) continue;
+      if(variant.skillId!==pack.targetSkillId || (variant.mode==='skill_version' && !assets.some(a=>a.skillId===variant.skillId&&a.version===variant.version&&(!variant.artifactSha256||a.artifactSha256===variant.artifactSha256)))) {
+        return reply.code(400).send({message:'只能比较当前精选技能的已装配版本。'});
+      }
+    }
+    const normalized={...input,judgeMode:'model',timeoutMs:310000,executionModel:undefined,...execution,judgeModel:configuredModelRole('JUDGE').model};
+    const job=await demo.create(demo.identity(request.headers['x-demo-user']),()=>jobs.list(100).filter(j=>['queued','preparing','running','judging'].includes(j.status)).length,()=>manager.create(normalized));
+    return reply.code(202).send(job);
+  });
+  app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/cancel", async request => {
+    if(config.publicDemo) await demo.assertOwner(demo.identity(request.headers['x-demo-user']),request.params.jobId);
+    return manager.cancel(request.params.jobId);
+  });
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/retry", async (request, reply) => (
     reply.code(202).send(await manager.retry(request.params.jobId))
   ));
@@ -262,12 +332,13 @@ export async function createEvaluationService(
     await app.register(fastifyStatic, {
       root: config.publicDirectory,
       prefix: "/",
-      wildcard: false,
+      wildcard: true,
     });
     app.setNotFoundHandler((request, reply) => {
       if (request.url.startsWith("/api/")) {
         return reply.code(404).send({ error: "NOT_FOUND", message: "API route not found" });
       }
+      if (request.url.startsWith("/assets/")) return reply.code(404).send({ error: "NOT_FOUND", message: "Asset not found; reload the page" });
       return reply.sendFile("index.html");
     });
   } catch {

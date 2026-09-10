@@ -7,6 +7,7 @@ export default defineConfig({
   build: {
     outDir: "../web-dist",
     emptyOutDir: true,
+    rollupOptions: { output: { manualChunks: { charts: ["recharts"], markdown: ["react-markdown", "remark-gfm", "remend"] } } },
   },
   server: {
     port: 5174,

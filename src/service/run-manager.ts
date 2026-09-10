@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { evalCaseSchema, fingerprint } from "../contracts.js";
 import type { RuntimeAdapter } from "../adapters.js";
 import type { EvalPack } from "../contracts.js";
 import { DirectModelRuntimeAdapter } from "../direct-model-runtime.js";
@@ -8,10 +9,12 @@ import { DeterministicRubricJudge, ModelPairwiseJudge, type PairwiseJudge } from
 import { ReplayRuntimeAdapter } from "../replay.js";
 import { EvaluationCancelledError, runEvaluation } from "../runner.js";
 import { configuredModelRole } from "./config.js";
+import { defaultOnlineExecutionModel } from "./execution-models.js";
 import { runConfigurationSchema, type EnvironmentRecord, type RunConfiguration } from "./contracts.js";
 import type { EvalPackCatalog } from "./catalog.js";
 import type { EnvironmentStore } from "./environment-store.js";
-import { EvaluationJobStore, type EvaluationJob } from "./job-store.js";
+import { EvaluationJobStore, type EvaluationJob, type FrozenQuestionSet } from "./job-store.js";
+import { generateRunQuestions } from "./run-questions.js";
 import type { PreparationStore } from "./preparation-store.js";
 import type { SkillStore } from "./skill-store.js";
 
@@ -24,6 +27,14 @@ type RunManagerOptions = {
   maxConcurrentRuns: number;
 };
 
+export function findMissingRequiredTools(
+  requiredTools: string[],
+  mcpServers: RuntimeEnvironmentDescriptor["mcpServers"] = [],
+): string[] {
+  const availableTools = new Set(mcpServers.flatMap(server => server.toolNames));
+  return requiredTools.filter(toolName => !availableTools.has(toolName));
+}
+
 function stageLabel(stage: string): string {
   if (stage === "preparing") return "环境预检与候选准备";
   if (stage === "executing") return "左右候选同步执行";
@@ -33,6 +44,7 @@ function stageLabel(stage: string): string {
 
 function errorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (/动态出题/u.test(message)) return "QUESTION_GENERATION_FAILED";
   if (/preflight|health|environment/iu.test(message)) return "ENVIRONMENT_PREFLIGHT_FAILED";
   if (/credential|api key|model/iu.test(message)) return "MODEL_CONFIGURATION_FAILED";
   if (/tool/iu.test(message)) return "RUNTIME_TOOL_SUPPORT_REQUIRED";
@@ -54,7 +66,7 @@ export class EvaluationRunManager {
     return () => this.events.off(event, listener);
   }
 
-  async create(input: unknown): Promise<EvaluationJob> {
+  async create(input: unknown, frozenQuestions?: FrozenQuestionSet): Promise<EvaluationJob> {
     const configuration = runConfigurationSchema.parse(input);
     const now = new Date().toISOString();
     const job: EvaluationJob = {
@@ -63,6 +75,7 @@ export class EvaluationRunManager {
       status: "queued",
       stageLabel: "等待执行资源",
       configuration,
+      ...(frozenQuestions ? { questionSet: structuredClone(frozenQuestions) } : {}),
       pack: null,
       progress: { completedRuns: 0, totalRuns: 0 },
       evidence: [],
@@ -86,7 +99,7 @@ export class EvaluationRunManager {
     if (!["failed", "cancelled", "interrupted"].includes(existing.status)) {
       throw new Error("Only failed, cancelled or interrupted runs can be retried");
     }
-    return this.create(existing.configuration);
+    return this.create(existing.configuration, existing.questionSet);
   }
 
   async cancel(jobId: string): Promise<EvaluationJob> {
@@ -144,10 +157,16 @@ export class EvaluationRunManager {
     if (!pack) throw new Error("Evaluation Pack is unavailable");
     const selected = configuration.selectedCaseIds.length
       ? pack.cases.filter(evalCase => configuration.selectedCaseIds.includes(evalCase.caseId))
-      : pack.cases;
+      : [...pack.cases];
     if (selected.length === 0) throw new Error("No evaluation cases were selected");
+    if (configuration.includeHoldout) {
+      const holdout = pack.holdoutCases;
+      if (!Array.isArray(holdout) || !holdout.length) throw new Error("This Eval Pack has no frozen holdout cases");
+      selected.push(...holdout.map(item => evalCaseSchema.parse(item)));
+    }
     const executionModel = configuration.executionModel
-      ?? (configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
+      ?? (configuration.runtime.type === "runtime_http" ? await defaultOnlineExecutionModel()
+        : configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
     return {
       ...pack,
       cases: selected,
@@ -157,27 +176,32 @@ export class EvaluationRunManager {
       },
       models: {
         ...pack.models,
-        execution: executionModel
-          ? { left: executionModel, right: executionModel }
-          : pack.models.execution,
-        judge: configuration.judgeModel ?? pack.models.judge,
+        execution: {
+          left: configuration.leftExecutionModel ?? executionModel ?? pack.models.execution.left,
+          right: configuration.rightExecutionModel ?? executionModel ?? pack.models.execution.right,
+        },
+        judge: configuration.judgeModel
+          ?? (configuration.judgeMode === "model" ? configuredModelRole("JUDGE").model : pack.models.judge),
       },
     };
   }
 
   private async skillResolver(assetId: string | undefined) {
-    if (!assetId) return async () => null;
-    const asset = await this.options.skills.get(assetId);
-    if (!asset) throw new Error(`Unknown Skill asset: ${assetId}`);
-    const instructions = await this.options.skills.readSource(assetId);
-    return async (variant: EvalPack["variants"]["left"]) => variant.mode === "skill_version"
-      ? {
+    const assets = await this.options.skills.list();
+    return async (variant: EvalPack["variants"]["left"]) => {
+      if (variant.mode !== "skill_version") return null;
+      const matches = assets.filter(item => item.skillId === variant.skillId && item.version === variant.version
+        && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
+      const asset = matches.find(item => item.assetId === assetId) ?? (matches.length === 1 ? matches[0] : null);
+      if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
+      return {
         skillId: asset.skillId,
         version: asset.version,
         artifactSha256: asset.artifactSha256,
-        instructions,
-      }
-      : null;
+        instructions: await this.options.skills.readSource(asset.assetId),
+        files: await this.options.skills.readFiles(asset.assetId),
+      };
+    };
   }
 
   private async runtimeFor(configuration: RunConfiguration, pack: EvalPack): Promise<RuntimeAdapter> {
@@ -203,22 +227,26 @@ export class EvaluationRunManager {
     if (!environment || environment.type !== "runtime_http") {
       throw new Error("Selected Agent Runtime HTTP environment is unavailable");
     }
-    const descriptor = await this.environmentDescriptor(environment);
+    const descriptor = await this.environmentDescriptor(
+      environment,
+      [...new Set(pack.cases.flatMap(evalCase => evalCase.requiredTools))],
+    );
     return new HttpRuntimeAdapter({
       adapterId: `http-runtime:${environment.environmentId}`,
       endpoint: environment.endpoint,
       headers: this.options.environments.headers(environment),
       environment: descriptor,
-      resolveSkill: configuration.skillAssetId ? resolveSkill : undefined,
+      resolveSkill,
       timeoutMs: configuration.timeoutMs,
     });
   }
 
   private async environmentDescriptor(
     runtimeEnvironment: EnvironmentRecord,
+    requiredTools: string[],
   ): Promise<RuntimeEnvironmentDescriptor> {
     const mcpServers = [];
-    for (const environmentId of runtimeEnvironment.mcpEnvironmentIds) {
+    for (const environmentId of requiredTools.length ? runtimeEnvironment.mcpEnvironmentIds : []) {
       const environment = await this.options.environments.get(environmentId);
       if (!environment || environment.type !== "mcp_streamable_http") {
         throw new Error(`MCP environment is unavailable: ${environmentId}`);
@@ -227,18 +255,34 @@ export class EvaluationRunManager {
       if (preflight.status !== "ready" || !("tools" in preflight)) {
         throw new Error(`MCP preflight failed for ${environment.name}: ${preflight.error ?? "unknown"}`);
       }
+      const toolNames = preflight.tools
+        .map(tool => tool.name)
+        .filter(toolName => requiredTools.includes(toolName));
+      if (toolNames.length === 0) continue;
       mcpServers.push({
         serverId: environment.environmentId,
         endpoint: environment.endpoint,
         transport: "streamable_http" as const,
-        toolNames: preflight.tools.map(tool => tool.name),
+        toolNames,
+        credentialEnv: environment.credentialEnv,
       });
     }
-    return { environmentId: runtimeEnvironment.environmentId, mcpServers };
+    const missingTools = findMissingRequiredTools(requiredTools, mcpServers);
+    if (missingTools.length > 0) {
+      throw new Error(`Required MCP tools are unavailable: ${missingTools.join(", ")}`);
+    }
+    return {
+      environmentId: runtimeEnvironment.environmentId,
+      requiredToolNames: requiredTools,
+      mcpServers,
+    };
   }
 
   private judgeFor(configuration: RunConfiguration, pack: EvalPack): PairwiseJudge {
-    if (configuration.judgeMode === "deterministic") return new DeterministicRubricJudge();
+    if (configuration.judgeMode === "deterministic") {
+      if(pack.cases.some(c=>c.rubric.some(r=>r.allOf.length+r.anyOf.length+r.noneOf.length===0))) throw new Error('当前专业量表需使用模型 Judge，不支持空规则自动评分。');
+      return new DeterministicRubricJudge();
+    }
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("Judge model is not configured on this service");
     return new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);
@@ -251,7 +295,42 @@ export class EvaluationRunManager {
       job.startedAt = new Date().toISOString();
       await this.options.jobs.save(job);
       this.emit(job);
-      const pack = await this.resolvePack(job.configuration);
+      let pack = await this.resolvePack(job.configuration);
+      controller.signal.throwIfAborted();
+      if (job.configuration.caseSource === "ai_generated" || job.questionSet) {
+        if (!job.questionSet) {
+          job.stageLabel = "AI 正在读取 Skill 与专业参考，生成本轮试题";
+          await this.options.jobs.save(job);
+          this.emit(job);
+          const analyzer = configuredModelRole("ANALYZER");
+          if (!analyzer.adapter) throw new Error("动态出题模型未配置；可配置 Analyzer 或主动选择固定回归题。未自动回退。 ");
+          const resolveSkill = await this.skillResolver(job.configuration.skillAssetId);
+          const variant = pack.variants.right.mode === "skill_version" ? pack.variants.right
+            : pack.variants.left.mode === "skill_version" ? pack.variants.left
+            : { mode: "skill_version" as const, skillId: pack.targetSkillId, version: pack.targetSkillVersion };
+          const skill = await resolveSkill(variant);
+          if (!skill) throw new Error("动态出题缺少可读取的 Skill 资产");
+          try {
+            job.questionSet = await generateRunQuestions({
+              pack, skill, adapter: analyzer.adapter, model: analyzer.model,
+              count: job.configuration.generatedCaseCount, generationId: job.jobId,
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]),
+            });
+          } catch (error) {
+            controller.signal.throwIfAborted();
+            throw new Error(`AI 动态出题失败，未回退固定题：${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        controller.signal.throwIfAborted();
+        const holdout = job.configuration.includeHoldout ? (pack.holdoutCases ?? []).map(item => evalCaseSchema.parse(item)) : [];
+        const frozenCases = [...job.questionSet.cases, ...holdout];
+        if (new Set(frozenCases.map(c => c.caseId)).size !== frozenCases.length) throw new Error("动态题与留出题 caseId 冲突，请重新准备题集");
+        pack = { ...pack, cases: frozenCases, models: { ...pack.models, analyzer: job.questionSet.model } };
+        job.stageLabel = `已冻结 ${pack.cases.length} 道 AI 试题，准备同题 A/B 执行`;
+        await this.options.jobs.save(job);
+        this.emit(job);
+      }
+      pack.packFingerprint = fingerprint({ base: pack.packFingerprint, cases: pack.cases, variants: pack.variants, models: pack.models });
       job.pack = {
         packId: pack.packId,
         version: pack.version,
@@ -262,7 +341,9 @@ export class EvaluationRunManager {
       job.progress.totalRuns = pack.cases.length * 2;
       await this.options.jobs.save(job);
       const runtime = await this.runtimeFor(job.configuration, pack);
+      controller.signal.throwIfAborted();
       const judge = this.judgeFor(job.configuration, pack);
+      let lastLivePublishedAt = 0;
       const report = await runEvaluation({
         pack,
         runtime,
@@ -270,7 +351,27 @@ export class EvaluationRunManager {
         timeoutMs: job.configuration.timeoutMs,
         signal: controller.signal,
         onProgress: progress => {
-          if (job.status === "cancelled") return;
+          if (job.status === "cancelled" || controller.signal.aborted) return;
+          if (progress.event) {
+            const event = progress.event;
+            const key = `${event.caseId}:${event.side}`;
+            job.live ??= {};
+            const live = job.live[key] ??= { caseId: event.caseId, side: event.side, output: "", status: "执行中", toolCalls: [] };
+            if (event.type === "text_delta") live.output += event.text ?? "";
+            if (event.type === "status") live.status = event.text ?? "执行中";
+            if (event.type === "tool_start") live.toolCalls.push({ name: event.toolName ?? "tool", status: "running" });
+            if (event.type === "tool_end") {
+              const tool = [...live.toolCalls].reverse().find(item => item.name === event.toolName && item.status === "running");
+              if (tool) tool.status = event.status ?? "completed";
+            }
+            job.status = "running";
+            job.stageLabel = stageLabel("executing");
+            if (event.type === "text_delta" && Date.now() - lastLivePublishedAt < 150) return;
+            lastLivePublishedAt = Date.now();
+            this.options.jobs.updateLive(job);
+            this.emit(job);
+            return;
+          }
           job.status = progress.stage === "judging"
             ? "judging"
             : progress.stage === "completed" ? "running" : progress.stage === "preparing" ? "preparing" : "running";
@@ -293,6 +394,11 @@ export class EvaluationRunManager {
       job.status = "completed";
       job.stageLabel = "评测完成";
       job.report = report;
+      if (job.questionSet) {
+        report.questionSet = job.questionSet;
+        const { reportFingerprint: _previous, ...content } = report;
+        report.reportFingerprint = fingerprint(content);
+      }
       job.completedAt = new Date().toISOString();
       await this.options.jobs.save(job);
       this.emit(job);

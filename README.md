@@ -26,6 +26,10 @@ Service   独立控制台、上传 Skill、环境预检与历史报告
 - **结果可视化**：输出逐题对比、胜负结论、评分理由和改进建议，生成可保存的 JSON 与 HTML 报告。
 - **平台无关接入**：通过 `RuntimeAdapter` 和 `ModelAdapter` 接入不同 Agent、模型、工具环境与运行时。
 - **可选业务上下文增强**：宿主可通过 `EvaluationContextAdapter` 提供脱敏场景种子；未提供时仍可只分析 Skill 出题。
+- **本地在线 Runtime**：独立 OpenJiuwen Python Worker，左右会话隔离，按需 MCP，实时 Markdown，结束和取消后回收。
+- **候选改进闭环**：独立 GPT-6 Optimizer 生成文档候选，同条件复测及冻结留出验证，人工选择，不自动发布。
+
+现场演示安装和使用说明：[本地在线评测](docs/local-online-demo.md)。默认财富样例使用明确标注的模拟业务快照，模型与工具现场执行，不是历史答案回放。
 
 ## 评测流程
 
@@ -48,7 +52,7 @@ AI 分析能力并准备测试题
 
 评测重点是证明 Skill 的业务增益，不以堆叠门禁或复杂治理为目标。宿主平台已有的授权、隐私、适当性和写操作确认仍由宿主运行时负责。
 
-## 三类模型角色
+## 模型角色
 
 每个 Eval Pack 可以独立配置三类模型：
 
@@ -57,6 +61,8 @@ AI 分析能力并准备测试题
 3. **Judge**：匿名比较两侧输出，给出金融专业评价和改进建议。
 
 三类角色可以使用不同模型。例如，用高质量模型出题、被测业务模型完成任务，再由独立 Judge 模型评审。
+
+可选第四类 **Optimizer** 专门生成 Skill 改进候选。它与 Judge 使用独立会话和配置；不接触冻结留出题，不以执行故障作为专业优化依据。本机默认 Judge/Optimizer 为 Codex `gpt-6-astra`，执行/出题为独立配置的 GLM-5.2。
 
 模型密钥不写入 Eval Pack。Eval Pack 只保存 `credentialRef`，由接入平台在运行时解析。
 
@@ -155,6 +161,17 @@ FINANCE_EVAL_JUDGE_BASE_URL / API_KEY / MODEL
 ```
 
 也可以使用统一的 `FINANCE_EVAL_MODEL_BASE_URL`、`FINANCE_EVAL_MODEL_API_KEY` 和 `FINANCE_EVAL_MODEL` 作为三类角色的默认配置。
+
+在本机演示环境中，也可以让 Judge 使用当前主机已登录的 Codex 账号：
+
+```text
+FINANCE_EVAL_JUDGE_PROVIDER=codex_cli
+FINANCE_EVAL_JUDGE_MODEL=gpt-6-astra
+```
+
+也可直接运行 `pnpm serve:codex`。Codex Judge 默认使用 `gpt-6-astra`，可通过 `FINANCE_EVAL_JUDGE_MODEL` 单独覆盖；它不继承通用的 `FINANCE_EVAL_MODEL`，出题和做题模型仍分别配置。
+
+该模式通过 Codex CLI 的临时只读任务执行匿名评审，会消耗当前 ChatGPT/Codex 账号额度。它适合个人演示和校准，不建议作为多人共享服务的生产认证方式；共享部署应使用独立 API、服务账号或企业模型网关。
 
 回放投资研究评测：
 
@@ -299,7 +316,7 @@ reports/                     本地生成报告，默认不提交真实敏感数
 
 ## 当前阶段
 
-当前版本为 `0.3.1`，已完成：
+当前版本为 `0.4.0`，已完成：
 
 - 可移植评测合同与 Runner；
 - Promptfoo 左右对照；
@@ -311,5 +328,11 @@ reports/                     本地生成报告，默认不提交真实敏感数
 - Skill ZIP 上传、AI/手工试题准备；
 - Eval Run 排队、实时事件、取消、重试、历史与导出；
 - MCP 环境预检和通用 Agent Runtime HTTP Adapter。
+- “灵感金融精选”岗位 Skill 目录与 Skill-first 评测入口；
+- 与 EA 一致的左右 Skill 版本/模型对比配置；
+- OpenJiuwen、EA 和通用 HTTP Runtime 类型配置；
+- Runtime 到 MCP 的绑定、联合预检和按任务工具清单下发。
 
-后续优先补充更多高价值金融 Eval Pack 和真实平台 Adapter，不建设通用对话产品或复杂资产管理平台。
+本地 OpenJiuwen Worker、按题加载的模拟 MCP 和六类精选岗位在线 Eval Pack 已就绪；已发布到灵感平台的独立演示入口。公开模式只开放登录后的精选在线对比，完整上传与优化能力保留在本地工作区。不建设通用对话产品或复杂资产管理平台。
+
+部署、覆盖范围、真实评测结果与回退说明见 [精选岗位演示发布记录](docs/curated-demo-release-2026-09-05.md)，总体设计见 [独立服务设计](docs/standalone-service-v2.md)。

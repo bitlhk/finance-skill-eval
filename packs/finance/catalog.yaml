@@ -1,0 +1,74 @@
+schemaVersion: finance.skill-catalog.v1
+skills:
+  - skillId: goldencoach-stage-evaluation
+    displayName: 金牌教练
+    author: 赵印伟
+    roleName: 销售教练
+    category: 销售陪练
+    iconKey: coach
+    featuredOrder: 15
+    summary: 根据真实对话片段识别销售断点，形成有原句依据的阶段点评、优先问题与可直接采用的衔接话术。
+    capabilities: [阶段点评, 完整训练复盘, 异议处理与下一步]
+  - skillId: wealth-manager-assistant
+    displayName: 财富经理助手
+    roleName: 财富经理
+    category: 财富管理
+    iconKey: wealth
+    featuredOrder: 10
+    summary: 从客户事实中识别关键矛盾，形成访前诊断、配置建议和可直接采用的沟通表达。
+    capabilities:
+      - 客户访前诊断
+      - 流动性与风险约束
+      - 组合优先的产品推荐
+  - skillId: auto-insurance-advisor
+    displayName: 车险顾问
+    roleName: 保险顾问
+    category: 保险保障
+    iconKey: insurance
+    featuredOrder: 20
+    summary: 从车辆用途、续保时间和当前保障识别需求，形成差异化候选与价格、赔付异议沟通。
+    capabilities:
+      - 续保需求分析
+      - 车辆保障缺口
+      - 客户异议沟通
+  - skillId: investment-research-assistant
+    displayName: 投研助手
+    roleName: 投研分析师
+    category: 投资研究
+    iconKey: research
+    featuredOrder: 30
+    summary: 把市场与公司资料转化为可证伪、可跟踪并能进入研究流程的专业判断。
+    capabilities:
+      - 公司研究
+      - 财务质量分析
+      - 催化剂与反证跟踪
+  - skillId: transfer-risk-review
+    displayName: 风险审核助手
+    roleName: 风险审核员
+    category: 风险管理
+    iconKey: risk
+    featuredOrder: 40
+    summary: 结合账户事实与反诈证据形成可复核的风险解释、待核实事项和审核建议。
+    capabilities:
+      - 反诈风险解释
+      - 审核建议
+      - 降级处置
+  - skillId: smart-audit-assistant
+    displayName: 智能审核助手
+    roleName: 信贷审核员
+    category: 信贷审核
+    iconKey: audit
+    featuredOrder: 50
+    summary: 对齐信贷材料中的主体、期间和金额口径，形成证据矩阵、最小补件与审核意见草稿。
+    capabilities:
+      - 材料一致性
+      - 证据核验
+      - 审核意见
+  - skillId: post-loan-risk-control-assistant
+    displayName: 贷后风控助手
+    roleName: 贷后经理
+    category: 贷后管理
+    iconKey: risk
+    featuredOrder: 60
+    summary: 从贷款、现金流、押品和外部事件识别风险传导，形成分优先级的核查与人工处置建议。
+    capabilities: [综合风险诊断, 还款来源核验, 风险跟踪]

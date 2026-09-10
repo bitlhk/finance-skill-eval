@@ -50,6 +50,9 @@ export class EnvironmentStore {
     const now = new Date().toISOString();
     const record = environmentRecordSchema.parse({
       ...parsed,
+      runtimeType: parsed.type === "runtime_http"
+        ? parsed.runtimeType ?? "generic_http"
+        : null,
       credentialEnv: parsed.credentialEnv ?? null,
       environmentId: `env-${randomUUID().slice(0, 12)}`,
       createdAt: now,
@@ -88,5 +91,69 @@ export class EnvironmentStore {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  async inspect(record: EnvironmentRecord): Promise<{
+    status: "ready" | "failed";
+    elapsedMs: number;
+    error: string | null;
+    toolCount: number;
+    tools: Array<{ name: string }>;
+    mcpServers: Array<{
+      environmentId: string;
+      name: string;
+      status: "ready" | "failed";
+      toolNames: string[];
+      error: string | null;
+    }>;
+  }> {
+    const startedAt = Date.now();
+    const primary = await this.preflight(record);
+    if (record.type === "mcp_streamable_http") {
+      const tools = primary.status === "ready" && "tools" in primary ? primary.tools : [];
+      return {
+        status: primary.status,
+        elapsedMs: Date.now() - startedAt,
+        error: primary.error,
+        toolCount: tools.length,
+        tools: tools.map(tool => ({ name: tool.name })),
+        mcpServers: [{ environmentId: record.environmentId, name: record.name, status: primary.status, toolNames: tools.map(tool => tool.name), error: primary.error }],
+      };
+    }
+
+    const mcpServers = [];
+    const allTools: Array<{ name: string }> = [];
+    for (const environmentId of record.mcpEnvironmentIds) {
+      const environment = await this.get(environmentId);
+      if (!environment || environment.type !== "mcp_streamable_http") {
+        mcpServers.push({
+          environmentId,
+          name: environmentId,
+          status: "failed" as const,
+          toolNames: [],
+          error: "MCP 环境不存在",
+        });
+        continue;
+      }
+      const result = await this.preflight(environment);
+      const tools = result.status === "ready" && "tools" in result ? result.tools : [];
+      allTools.push(...tools.map(tool => ({ name: tool.name })));
+      mcpServers.push({
+        environmentId,
+        name: environment.name,
+        status: result.status,
+        toolNames: tools.map(tool => tool.name),
+        error: result.error,
+      });
+    }
+    const failedMcp = mcpServers.find(item => item.status === "failed");
+    return {
+      status: primary.status === "ready" && !failedMcp ? "ready" : "failed",
+      elapsedMs: Date.now() - startedAt,
+      error: primary.error ?? failedMcp?.error ?? null,
+      toolCount: allTools.length,
+      tools: allTools,
+      mcpServers,
+    };
   }
 }

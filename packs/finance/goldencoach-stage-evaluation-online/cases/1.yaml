@@ -1,0 +1,31 @@
+caseId: SALES-COACHING-001
+name: 续保异议的阶段点评
+taskMode: single_turn
+prompt: 以下为虚构陪练对话：顾问：您的车险快到期了，今年建议增加保障。客户：去年也没出险，怎么还要多花钱？顾问：保障更全总是好事，今天可以定下来吗？客户：我再看看。请简短点评这轮沟通，并给我下一轮最值得问的两个问题和一句衔接话术。
+evaluationGoal: 基于客户原句解释过早推方案与推进成交的问题；两个问题应核实保费顾虑与保障或用车变化；不能推断客户收入、性格或臆测涨价原因。
+requiredTools: []
+rubric:
+  - criterionId: sales-coaching-professional_fit
+    label: 专业匹配度
+    description: 基于客户原句解释过早推方案与推进成交的问题；两个问题应核实保费顾虑与保障或用车变化；不能推断客户收入、性格或臆测涨价原因。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-business_completeness
+    label: 业务完整性
+    description: 基于客户原句解释过早推方案与推进成交的问题；两个问题应核实保费顾虑与保障或用车变化；不能推断客户收入、性格或臆测涨价原因。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-clarity
+    label: 结构与表达清晰度
+    description: 基于客户原句解释过早推方案与推进成交的问题；两个问题应核实保费顾虑与保障或用车变化；不能推断客户收入、性格或臆测涨价原因。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-actionability
+    label: 可执行性
+    description: 基于客户原句解释过早推方案与推进成交的问题；两个问题应核实保费顾虑与保障或用车变化；不能推断客户收入、性格或臆测涨价原因。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

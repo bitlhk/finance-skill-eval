@@ -3,7 +3,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { EvaluationSide, RuntimeAdapter } from "./adapters.js";
+import type { EvaluationSide, RuntimeAdapter, RuntimeEvent } from "./adapters.js";
 import type { EvalPack, RuntimeExecutionEvidence } from "./contracts.js";
 import type { PairwiseJudge } from "./judge.js";
 import { buildReport, type EvaluationReport } from "./report.js";
@@ -15,6 +15,7 @@ export type EvaluationProgress = {
   caseId?: string;
   side?: EvaluationSide;
   evidence?: RuntimeExecutionEvidence;
+  event?: RuntimeEvent;
 };
 
 type EvidenceByCase = Map<string, Partial<Record<EvaluationSide, RuntimeExecutionEvidence>>>;
@@ -61,6 +62,7 @@ function sendWorkerMessage(child: ChildProcess, message: Record<string, unknown>
 }
 
 async function executeRuntime(input: {
+  onEvent?: (event: RuntimeEvent) => void;
   runId: string;
   side: EvaluationSide;
   caseId: string;
@@ -73,6 +75,7 @@ async function executeRuntime(input: {
   if (!evalCase) throw new Error(`Unknown evaluation case: ${input.caseId}`);
   const model = input.pack.models.execution[input.side];
   const variant = input.pack.variants[input.side];
+  const startedAt = Date.now();
   try {
     return await input.runtime.execute({
       runId: input.runId,
@@ -81,6 +84,7 @@ async function executeRuntime(input: {
       model,
       variant,
       signal: input.signal,
+      onEvent: input.onEvent,
     });
   } catch (error) {
     if (input.signal?.aborted || error instanceof EvaluationCancelledError) throw error;
@@ -92,7 +96,7 @@ async function executeRuntime(input: {
       modelId: model.modelId,
       skillVersion: variant.mode === "skill_version" ? variant.version : null,
       output: "",
-      elapsedMs: 0,
+      elapsedMs: Date.now() - startedAt,
       toolCalls: [],
       loadedSkills: [],
       usage: null,
@@ -155,6 +159,8 @@ async function runPromptfooWorker(input: {
           pack: input.pack,
           runtime: input.runtime,
           signal: input.signal,
+          onEvent: event => input.onProgress?.({ stage: "executing", completedRuns,
+            totalRuns: input.pack.cases.length * 2, caseId: event.caseId, side: event.side, event }),
         });
         const current = input.evidence.get(workerMessage.caseId) ?? {};
         current[workerMessage.side] = result;
@@ -250,7 +256,11 @@ export async function runEvaluation(input: {
       let judge = null;
       let judgeError = null;
       try {
+        if (result.left.status !== "completed" || result.right.status !== "completed") {
+          throw new Error("执行未完成，不计入专业质量评分；请修复运行环境后重测。");
+        }
         judge = await input.judge.compare({
+          signal: input.signal,
           evalCase,
           left: result.left,
           right: result.right,

@@ -1,0 +1,18 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: sales-coaching-quality-v1
+version: 1.0.0
+reviewerLabel: AI 金融岗位专业评阅
+domainInstructions: 评价教练建议能否改善下一轮沟通：根据用户需求决定点评深度，引用对话证据，识别真正销售断点，提出少而关键的可回答问题和自然衔接。不要因为有更多模块、总分或术语而判优；不推断没有证据的客户性格、收入和风险偏好。完整复盘中区分观察不到与表现不佳。
+dimensions:
+  - id: professional_fit
+    label: 专业匹配度
+    description: 专业判断是否由实际证据推导，而非标签复述。
+  - id: business_completeness
+    label: 业务完整性
+    description: 是否覆盖关键事实、业务约束、缺口及取舍。
+  - id: clarity
+    label: 结构与表达清晰度
+    description: 核心判断、依据和不确定性是否清晰自然。
+  - id: actionability
+    label: 可执行性
+    description: 是否能支持真实工作决策，且有明确下一步。

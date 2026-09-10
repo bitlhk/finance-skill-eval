@@ -1,4 +1,4 @@
-import { fingerprint, type EvalPack, type JudgeResult, type RuntimeExecutionEvidence } from "./contracts.js";
+import { fingerprint, type EvalPack, type JudgeResult, type RuntimeExecutionEvidence, type FrozenQuestionSet } from "./contracts.js";
 
 export type EvaluationCaseReport = {
   caseId: string;
@@ -23,6 +23,7 @@ export type EvaluationReport = {
   schemaVersion: "finance.skill-eval.report.v1";
   reportId: string;
   generatedAt: string;
+  questionSet?: FrozenQuestionSet;
   pack: {
     packId: string;
     version: string;
@@ -181,6 +182,7 @@ export function renderHtmlReport(report: EvaluationReport): string {
         <strong class="winner">${judge?.winner === "right" ? "右侧更优" : judge?.winner === "left" ? "左侧更优" : judge ? "表现持平" : "Judge 暂不可用"}</strong>
       </header>
       <p class="goal">${escapeHtml(item.evaluationGoal)}</p>
+      <details><summary>本轮题目</summary><pre>${escapeHtml(item.prompt)}</pre></details>
       <div class="columns">
         <article><h3>左侧</h3><pre>${escapeHtml(formatOutput(item.left.output))}</pre></article>
         <article><h3>右侧</h3><pre>${escapeHtml(formatOutput(item.right.output))}</pre></article>
@@ -202,6 +204,7 @@ export function renderHtmlReport(report: EvaluationReport): string {
 </style></head><body><main>
   <section class="hero"><div class="eyebrow">Finance Skill Eval</div><h1>${escapeHtml(report.pack.targetSkillId)} 专业能力对比</h1><p>${escapeHtml(report.summary.headline)}</p><div class="meta">左：${escapeHtml(variantLabel(report.variants.left))} · 右：${escapeHtml(variantLabel(report.variants.right))} · Pack ${escapeHtml(report.pack.packId)}@${escapeHtml(report.pack.version)}</div></section>
   <section class="summary"><div class="metric">右侧胜出<b>${report.summary.rightWins}</b></div><div class="metric">左侧胜出<b>${report.summary.leftWins}</b></div><div class="metric">持平<b>${report.summary.ties}</b></div><div class="metric">案例数<b>${report.cases.length}</b></div></section>
+  ${report.questionSet ? `<p class="meta">AI 题集 · ${escapeHtml(report.questionSet.model.modelId)} · ${escapeHtml(report.questionSet.fingerprint)}</p>` : ""}
   ${caseSections}
   <p class="meta">Report fingerprint: ${report.reportFingerprint}</p>
 </main></body></html>`;

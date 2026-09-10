@@ -1,0 +1,17 @@
+[Unit]
+Description=Finance Eval private HTTPS origin for Linggan gateway
+After=network-online.target finance-skill-eval-public.service
+Requires=finance-skill-eval-public.service
+PartOf=finance-skill-eval-public.service
+
+[Service]
+ExecStartPre=/usr/sbin/nginx -t -p %h/finance-skill-eval/.public-demo/origin/ -c %h/finance-skill-eval/deploy/finance-eval-origin.nginx.conf
+ExecStart=/usr/sbin/nginx -p %h/finance-skill-eval/.public-demo/origin/ -c %h/finance-skill-eval/deploy/finance-eval-origin.nginx.conf -g "daemon off;"
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGQUIT
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

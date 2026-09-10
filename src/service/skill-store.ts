@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { unzipSync } from "fflate";
 import { parse as parseYaml } from "yaml";
@@ -77,11 +77,31 @@ export class SkillStore {
     return readFile(path.join(this.assetsDirectory, record.assetId, record.skillFile), "utf8");
   }
 
+  async readFiles(assetId: string): Promise<Record<string, string>> {
+    const record = await this.get(assetId);
+    if (!record) throw new Error(`Unknown Skill asset: ${assetId}`);
+    const root = path.join(this.assetsDirectory, assetId, path.dirname(record.skillFile));
+    const files: Record<string, string> = {};
+    for (const relative of await readdir(root, { recursive: true })) {
+      if (/\.(md|txt|yaml|yml|json)$/iu.test(relative)) {
+        files[relative.replaceAll(path.sep, "/")] = await readFile(path.join(root, relative), "utf8");
+      }
+    }
+    return files;
+  }
+
   async uploadZip(buffer: Buffer): Promise<SkillAssetRecord> {
     if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
       throw new Error("Skill ZIP must be between 1 byte and 8 MB");
     }
-    const archive = unzipSync(buffer, { filter: file => !file.name.endsWith("/") });
+    let declaredBytes = 0, declaredCount = 0;
+    const archive = unzipSync(buffer, { filter: file => {
+      if (file.name.endsWith("/")) return false;
+      safeArchivePath(file.name);
+      declaredBytes += file.originalSize; declaredCount += 1;
+      if (declaredBytes > 16 * 1024 * 1024 || declaredCount > 200) throw new Error("Skill ZIP exceeds extraction limits");
+      return true;
+    } });
     const files = Object.entries(archive);
     if (files.length === 0 || files.length > 200) {
       throw new Error("Skill ZIP must contain between 1 and 200 files");
@@ -107,13 +127,16 @@ export class SkillStore {
     const metadata = parseFrontmatter(source);
     const skillId = asText(metadata.name) ?? `uploaded-skill-${randomUUID().slice(0, 8)}`;
     const version = asText(metadata.version) ?? "0.0.0-upload";
+    normalizedFiles.sort(([a], [b]) => a.localeCompare(b));
+    if (new Set(normalizedFiles.map(([name]) => name)).size !== normalizedFiles.length) throw new Error("Duplicate archive paths");
     const digest = fingerprint(normalizedFiles.map(([name, content]) => ({
       name,
       content: Buffer.from(content).toString("base64"),
     })));
     const assetId = `${skillId.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 48) || "skill"}-${digest.slice(0, 12)}`;
     const target = path.join(this.assetsDirectory, assetId);
-    await rm(target, { recursive: true, force: true });
+    const existing = await this.get(assetId);
+    if (existing) return existing;
     for (const [name, content] of normalizedFiles) {
       const filePath = path.join(target, name);
       await ensureDirectory(path.dirname(filePath));

@@ -5,6 +5,7 @@ export const environmentRecordSchema = z.strictObject({
   environmentId: z.string().min(1),
   name: z.string().min(1),
   type: z.enum(["mcp_streamable_http", "runtime_http"]),
+  runtimeType: z.enum(["openjiuwen", "ea", "generic_http"]).nullable().default(null),
   endpoint: z.string().url(),
   credentialEnv: z.string().min(1).nullable().default(null),
   mcpEnvironmentIds: z.array(z.string().min(1)).default([]),
@@ -15,6 +16,7 @@ export const environmentRecordSchema = z.strictObject({
 export const createEnvironmentSchema = z.strictObject({
   name: z.string().min(1).max(80),
   type: z.enum(["mcp_streamable_http", "runtime_http"]),
+  runtimeType: z.enum(["openjiuwen", "ea", "generic_http"]).nullable().optional(),
   endpoint: z.string().url(),
   credentialEnv: z.string().min(1).max(100).nullable().optional(),
   mcpEnvironmentIds: z.array(z.string().min(1)).max(12).default([]),
@@ -33,13 +35,21 @@ export const runConfigurationSchema = z.strictObject({
   ]),
   judgeMode: z.enum(["deterministic", "model"]).default("deterministic"),
   skillAssetId: z.string().min(1).optional(),
+  caseSource: z.enum(["fixed", "ai_generated"]).default("fixed"),
+  generatedCaseCount: z.number().int().min(1).max(3).default(3),
   selectedCaseIds: z.array(z.string().min(1)).max(8).default([]),
+  includeHoldout: z.boolean().default(false),
   leftVariant: skillVariantSchema.optional(),
   rightVariant: skillVariantSchema.optional(),
   executionModel: modelRefSchema.optional(),
+  leftExecutionModel: modelRefSchema.optional(),
+  rightExecutionModel: modelRefSchema.optional(),
   judgeModel: modelRefSchema.optional(),
   timeoutMs: z.number().int().min(10_000).max(900_000).default(310_000),
 }).superRefine((value, context) => {
+  if (value.caseSource === "ai_generated" && (value.runtime.type === "replay" || value.preparationId || value.includeHoldout || value.selectedCaseIds.length || value.judgeMode !== "model")) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "动态出题需要在线执行与模型 Judge，不能混用回放、已准备题集、固定题选择或留出集。" });
+  }
   if (Boolean(value.packId) === Boolean(value.preparationId)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,

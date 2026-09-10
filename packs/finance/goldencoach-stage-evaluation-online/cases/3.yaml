@@ -1,0 +1,31 @@
+caseId: SALES-COACHING-003
+name: 信息不足时仍给有效建议
+taskMode: single_turn
+prompt: 虚构练习记录只有一句：客户说‘你们的保费太贵了’，没有其他对话。请告诉我该怎么接话，以及现在能否判断我的销售水平或客户购买意愿。
+evaluationGoal: 不凭单句给销售总分或客户标签；说明需要顾问此前原话与比较基准；提供澄清同保障价格还是保障价值的自然问题，不承诺降价。
+requiredTools: []
+rubric:
+  - criterionId: sales-coaching-professional_fit
+    label: 专业匹配度
+    description: 不凭单句给销售总分或客户标签；说明需要顾问此前原话与比较基准；提供澄清同保障价格还是保障价值的自然问题，不承诺降价。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-business_completeness
+    label: 业务完整性
+    description: 不凭单句给销售总分或客户标签；说明需要顾问此前原话与比较基准；提供澄清同保障价格还是保障价值的自然问题，不承诺降价。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-clarity
+    label: 结构与表达清晰度
+    description: 不凭单句给销售总分或客户标签；说明需要顾问此前原话与比较基准；提供澄清同保障价格还是保障价值的自然问题，不承诺降价。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-actionability
+    label: 可执行性
+    description: 不凭单句给销售总分或客户标签；说明需要顾问此前原话与比较基准；提供澄清同保障价格还是保障价值的自然问题，不承诺降价。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

@@ -1,0 +1,40 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: goldencoach-stage-evaluation-online-v1
+version: 1.0.0
+domain: sales-coaching
+targetSkillId: goldencoach-stage-evaluation
+targetSkillVersion: 2.2.1
+description: 销售陪练与阶段点评；使用虚构对话材料，在线模型执行，无业务 MCP 依赖。保留三道固定回归题。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: goldencoach-stage-evaluation
+  right:
+    mode: skill_version
+    skillId: goldencoach-stage-evaluation
+    version: 2.2.1
+    artifactSha256: 7703f568021f6f6f20e564295ffea6417559c9a59545b9c9e22ccfa3f676ba44
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/1.yaml
+  - cases/2.yaml
+  - cases/3.yaml
+metadata:
+  dataMode: synthetic-snapshot
+  snapshotVersion: roles-demo-v1
+  sourceSkill: employee-agent/examples/insurance-advisor-reference-role-pack/skills/goldencoach-stage-evaluation
+  sourceAuthor: 赵印伟
+  evidenceSemantics: live-model-synthetic-business-data
+holdoutCaseFiles: []

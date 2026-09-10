@@ -28,6 +28,16 @@ describe("HttpRuntimeAdapter", () => {
     const runtime = new HttpRuntimeAdapter({
       adapterId: "test-http-runtime",
       endpoint: "https://agent.example/api/execute",
+      environment: {
+        environmentId: "openjiuwen-eval",
+        requiredToolNames: ["risk_query"],
+        mcpServers: [{
+          serverId: "risk-mcp",
+          endpoint: "https://mcp.example/mcp",
+          transport: "streamable_http",
+          toolNames: ["risk_query"],
+        }],
+      },
     });
     await runtime.prepare();
     const evidence = await runtime.execute({
@@ -59,5 +69,12 @@ describe("HttpRuntimeAdapter", () => {
     expect(evidence.runId).toBe("local-run");
     expect(evidence.toolCalls).toEqual([{ name: "risk_query", status: "completed" }]);
     expect(fetchMock.mock.calls[0]?.[0].toString()).toBe("https://agent.example/api/health");
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      environment: {
+        environmentId: "openjiuwen-eval",
+        requiredToolNames: ["risk_query"],
+        mcpServers: [{ serverId: "risk-mcp", toolNames: ["risk_query"] }],
+      },
+    });
   });
 });

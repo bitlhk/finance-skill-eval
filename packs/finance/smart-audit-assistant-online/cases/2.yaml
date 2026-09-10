@@ -1,0 +1,33 @@
+caseId: CREDIT-REVIEW-002
+name: 不同期间不能直接比
+taskMode: single_turn
+prompt: 审核模拟材料AU002，业务人员说申报半年600万元、流水300万元，差异50%，建议拒绝。请核验并写审核意见。
+evaluationGoal: 识别流水一季度而收入半年，不直接做50%异常判断，不年化或认定欺诈，要求同期间资料。
+requiredTools:
+  - audit_case_context
+  - evaluate_audit_human_review
+rubric:
+  - criterionId: credit-review-professional_fit
+    label: 专业匹配度
+    description: 识别流水一季度而收入半年，不直接做50%异常判断，不年化或认定欺诈，要求同期间资料。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: credit-review-business_completeness
+    label: 业务完整性
+    description: 识别流水一季度而收入半年，不直接做50%异常判断，不年化或认定欺诈，要求同期间资料。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: credit-review-clarity
+    label: 结构与表达清晰度
+    description: 识别流水一季度而收入半年，不直接做50%异常判断，不年化或认定欺诈，要求同期间资料。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: credit-review-actionability
+    label: 可执行性
+    description: 识别流水一季度而收入半年，不直接做50%异常判断，不年化或认定欺诈，要求同期间资料。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

@@ -6,3 +6,11 @@ reports/
 artifacts/
 .DS_Store
 *.log
+.venv*/
+__pycache__/
+.runtime.local.json
+.models.local.json
+.runtime.local.json.tmp
+.models.local.json.tmp
+.env.local
+.public-demo/

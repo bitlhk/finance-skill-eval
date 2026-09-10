@@ -1,0 +1,40 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: smart-audit-assistant-online-v1
+version: 1.0.0
+domain: credit-review
+targetSkillId: smart-audit-assistant
+targetSkillVersion: 1.1.0
+description: 真实模型与只读工具执行；credit-review 固定模拟业务快照，非生产验收。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: smart-audit-assistant
+  right:
+    mode: skill_version
+    skillId: smart-audit-assistant
+    version: 1.1.0
+    artifactSha256: 47f876c18e8c9d06daacb2040d53efae66cbccf6611ba956cfa917e7c2b75cd5
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/1.yaml
+  - cases/2.yaml
+metadata:
+  generationContext: '{"querySubjectRefs":["AU001","AU002"],"caseRefs":["AU001","AU002"],"scope":"模拟信贷材料审核，只读；材料、期间、金额与人工复核要求需调用工具查询，不自行添加审批阈值或作最终审批。"}'
+  dataMode: synthetic-snapshot
+  snapshotVersion: roles-demo-v1
+  sourceSkill: skill-store/marketplace/approved/smart-audit-assistant
+  evidenceSemantics: live-model-live-tools-synthetic-business-data
+holdoutCaseFiles:
+  - cases/3.yaml

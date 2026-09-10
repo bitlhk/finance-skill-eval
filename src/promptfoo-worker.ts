@@ -66,7 +66,7 @@ async function run(message: StartMessage): Promise<void> {
     {
       cache: false,
       generateSuggestions: false,
-      maxConcurrency: 1,
+      maxConcurrency: 2,
       showProgressBar: false,
       silent: true,
       timeoutMs: message.timeoutMs,
