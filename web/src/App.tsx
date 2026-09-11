@@ -40,6 +40,7 @@ import { ResultCharts } from "./ResultCharts";
 import { OptimizationPanel } from "./OptimizationPanel";
 import { MigrationPanel } from './MigrationPanel';
 import type {
+  SkillAsset,
   Catalog,
   Environment,
   EnvironmentInspection,
@@ -784,6 +785,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
 }
 
 function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog: Catalog; onChanged(): Promise<void>; onSelectPreparation(id: string): void }) {
+  const [uploadedAsset,setUploadedAsset]=useState<SkillAsset|null>(null);
   const [uploading, setUploading] = useState(false);
   const [preparing, setPreparing] = useState("");
   const [message, setMessage] = useState("");
@@ -791,8 +793,8 @@ function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog:
   const upload = async (file: File) => {
     setUploading(true); setMessage("");
     try {
-      await api("/api/skills/upload", { method: "POST", body: file, headers: { "content-type": "application/zip" } });
-      await onChanged(); setMessage("Skill 已上传并完成结构校验。");
+      const asset=await api<SkillAsset>("/api/skills/upload", { method: "POST", body: file, headers: { "content-type": "application/zip" } });
+      setUploadedAsset(asset);await onChanged(); setMessage("Skill 已上传，正在自动诊断依赖。");
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : String(cause)); }
     finally { setUploading(false); }
   };
@@ -806,7 +808,7 @@ function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog:
   };
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL ARTIFACTS</span><h1>Skill 资产</h1><p>上传候选 ZIP，校验 SKILL.md 后由 Analyzer 生成测试方案。</p></div><button className="button primary" onClick={() => inputRef.current?.click()} disabled={uploading}><FileArchive size={17} />{uploading ? "上传中" : "上传 Skill ZIP"}</button><input hidden ref={inputRef} type="file" accept=".zip,application/zip" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></section>
     {message ? <div className="info-banner">{message}</div> : null}
-    <MigrationPanel catalog={catalog} api={api}/>
+    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} onUpload={()=>inputRef.current?.click()}/>
     <section className="asset-section"><div className="section-title"><div><h2>用户上传</h2><p>上传资产只用于当前评测服务，不会发布到 Skill 市场。</p></div><span>{catalog.uploadedSkills.length} 个</span></div>
       <div className="asset-table">{catalog.uploadedSkills.length ? catalog.uploadedSkills.map(skill => {
         const preps = catalog.preparations.filter(item => item.skillAssetId === skill.assetId);

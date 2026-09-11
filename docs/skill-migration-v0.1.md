@@ -3,7 +3,9 @@
 ## Status and baseline
 
 This is a reviewable **partial implementation**, not a completed cross-Runtime
-migration product. It has not been deployed to the public evaluation site.
+migration product. The earlier private editor is deployed under `/migration/`;
+the six-step diagnosis/candidate revision is initially private-preview only.
+See [the revised workflow and evidence](skill-migration-diagnosis-v0.2.md).
 
 Development branch: `feat/skill-migration-v01`. Base `7055bfe` preserves the
 pre-existing local service/UI 0.4.0 working snapshot on top of `49cff0a`.
@@ -14,7 +16,8 @@ separately before upstream integration. The original worktree is not replaced.
 ## What works
 
 - Existing normal evaluation continues to use its shared Runtime configuration.
-- The private Skill asset page contains five migration steps. It can create a
+- The private Skill asset page now contains six migration steps. Uploads create/reuse
+  a project and automatically diagnose source dependencies. It can create a
   project, inspect files, attach an independently imported candidate, edit its
   method text into a new version, initiate protocol experiments, inspect results,
   cancel jobs through the existing manager, and download complete inert draft bundles.
@@ -40,7 +43,7 @@ separately before upstream integration. The original worktree is not replaced.
 | Original AgentScope baseline A | NOT_RUN: original engineering entry, locked dependencies, complete tools and isolated test data required |
 | AgentScope normalized candidate B | NOT_RUN: same native project plus reviewed dependency mapping required |
 | Builder OpenJiuwen Java + Harness C | NOT_CONNECTED: a real Java Host adapter remains engineering work; existing Python worker is not a substitute |
-| Automatic migration rewrite | NOT_IMPLEMENTED: only explicit human text editing is available; existing optimizer is not silently used as a migration rewriter |
+| Automatic migration candidate | IMPLEMENTED as deterministic versioned metadata, neutral declaration and adapter drafts with file diffs; arbitrary business-code conversion and complete decoupling remain NOT_IMPLEMENTED |
 | Post-evaluation optimization | IMPLEMENTED for complete same-Runtime evaluations with frozen holdout; produces a separate candidate and reruns it. Controlled test passed; not verified on the incomplete supplied native project |
 | Dependency equivalence | NOT_VALIDATED: static inventory is not semantic tool mapping or authorization verification |
 | Custom customer suite | IMPLEMENTED: project-owned manual preparation with disjoint development/holdout IDs. Business review of the supplied example suite remains pending |

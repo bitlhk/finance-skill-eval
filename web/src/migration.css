@@ -15,4 +15,13 @@
 .migration-result dd { margin: 0; overflow-wrap: anywhere; }
 .migration-panel .migration-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 20px; }
 .migration-panel [role=alert] { color: #b91c30; }
+.diagnostic-summary { display:flex;gap:24px;flex-wrap:wrap;padding:16px 0;border-block:1px solid #e3e5e8; }
+.diagnostic-summary span { display:flex;gap:8px;align-items:center;font-size:13px; }
+.diagnostic-finding { padding:16px 0;border-bottom:1px solid #e3e5e8; }
+.diagnostic-finding h4 { font-size:15px;margin:0 0 8px; }
+.diagnostic-finding p { font-size:13px;line-height:1.65;margin:6px 0; }
+.diagnostic-finding small { color:#68717b;overflow-wrap:anywhere; }
+.migration-panel details { margin:14px 0; }
+.migration-panel summary { cursor:pointer;font-size:13px;overflow-wrap:anywhere; }
+.migration-panel .button { margin:8px 8px 8px 0; }
 @media(max-width:700px) { .migration-panel .migration-fields { grid-template-columns: minmax(0,1fr); } }
