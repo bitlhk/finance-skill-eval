@@ -18,6 +18,7 @@ import { EvaluationJobStore, type EvaluationJob, type FrozenQuestionSet } from "
 import { generateRunQuestions } from "./run-questions.js";
 import type { PreparationStore } from "./preparation-store.js";
 import type { SkillStore } from "./skill-store.js";
+import { canonicalNeutralArchive, nativeTransportAllowed } from './neutral-archive.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -187,7 +188,7 @@ export class EvaluationRunManager {
     };
   }
 
-  private async skillResolver(assetId: string | undefined, strict = false) {
+  private async skillResolver(assetId: string | undefined, strict = false, neutral = false) {
     const assets = await this.options.skills.list();
     return async (variant: EvalPack["variants"]["left"]) => {
       if (variant.mode !== "skill_version") return null;
@@ -195,10 +196,12 @@ export class EvaluationRunManager {
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
       const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
+      let canonicalArchive:string|undefined;
       if (strict) {
-        await this.options.skills.readArchive(asset.assetId);
+        const archive=await this.options.skills.readArchive(asset.assetId);
         const readable=await this.options.skills.readFiles(asset.assetId);
-        if (Object.keys(readable).length!==asset.fileCount) throw new Error('Migration dependency mapping required: Runtime payload cannot silently omit uploaded files');
+        if(neutral)canonicalArchive=canonicalNeutralArchive(archive,asset.artifactSha256);
+        else if (Object.keys(readable).length!==asset.fileCount) throw new Error('Migration dependency mapping required: Runtime payload cannot silently omit uploaded files');
       }
       return {
         skillId: asset.skillId,
@@ -206,6 +209,7 @@ export class EvaluationRunManager {
         artifactSha256: asset.artifactSha256,
         instructions: await this.options.skills.readSource(asset.assetId),
         files: await this.options.skills.readFiles(asset.assetId),
+        ...(canonicalArchive?{canonicalArchive}:{}),
       };
     };
   }
@@ -216,7 +220,7 @@ export class EvaluationRunManager {
         const binding = configuration.runtimeBindings![side];
         const environment = await this.options.environments.get(binding.environmentId);
         if (!environment || environment.type !== 'runtime_http') throw new Error('Migration Runtime environment unavailable');
-        const resolveSkill = await this.skillResolver(binding.skillAssetId, true);
+        const resolveSkill = await this.skillResolver(binding.skillAssetId, true, nativeTransportAllowed(environment.endpoint));
         await resolveSkill(pack.variants[side]);
         return new HttpRuntimeAdapter({adapterId:`http-runtime:${environment.environmentId}`, endpoint:environment.endpoint,
           headers:this.options.environments.headers(environment), resolveSkill, requireLoadedDigest:true,

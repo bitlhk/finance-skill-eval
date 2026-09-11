@@ -4,8 +4,11 @@ import type { Catalog, SkillAsset, EvaluationJob } from './types';
 import { OptimizationPanel } from './OptimizationPanel';
 import { downloadApi } from './api-path';
 import './migration.css';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type Project={id:string;name:string;source:SkillAsset;candidate:SkillAsset|null;candidateNotes:string;
+  simulationProfile?:string;
   generation?:{candidateDigest:string;diff:Array<{path:string;operation:string;before:string;after:string}>}};
 type Diagnosis={status:string;dependencyStatus:string;digest:string;
   coverage:Array<{path:string;status:string}>;findings:Array<{id:string;path:string;line:number;snippet:string;
@@ -14,7 +17,9 @@ type Diagnosis={status:string;dependencyStatus:string;digest:string;
 type Api=<T>(url:string,init?:RequestInit)=>Promise<T>;
 type MigrationReport={verification?:{originalBaseline:string;targetExecution:string;candidateChanged:boolean;
   missingSource:Array<{path:string;line:number;reason:string}>;targetGaps:string[]};suites?:Array<{preparationId:string;summary:string}|null>;experiments:Array<{jobId:string;pair:string;execution:string;evidence:string;
-  professionalAcceptance:string;migrationAcceptance:string;candidateDigest:string}>};
+  professionalAcceptance:string;migrationAcceptance:string;candidateDigest:string}>;
+  targetRuns?:Array<{id:string;candidateDigest:string;status:string;error?:string;cases:Array<{caseId:string;label:string;passed:boolean;evidence:{output:string;status:string;error:string|null;metadata:Record<string,unknown>;toolCalls:Array<{name:string;status:string}>}}>}>};
+type TargetInfo={available:boolean;message?:string;target?:{modelId:string;version:string;profiles:Record<string,{label:string;skillId:string;schemaBasis:string;tools:Array<{name:string;inputSchema:unknown;outputSchema:unknown}>;cases:Array<{caseId:string;label:string;expect:string}>}>}};
 const steps=['上传','依赖诊断','迁移','验证','优化','发布'];
 export function MigrationPanel({catalog,api,uploadedAsset,onUpload}:{catalog:Catalog;api:Api;uploadedAsset?:SkillAsset|null;onUpload?:()=>void}) {
   const [projects,setProjects]=useState<Project[]>([]),[project,setProject]=useState<Project|null>(null);
@@ -22,6 +27,7 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload}:{catalog:Cat
   const [step,setStep]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [analysis,setAnalysis]=useState<unknown>(null),[report,setReport]=useState<MigrationReport|null>(null);
   const [diagnosis,setDiagnosis]=useState<Diagnosis|null>(null),[target,setTarget]=useState(''),[intent,setIntent]=useState('portable_method_and_adapters');
+  const [nativeTarget,setNativeTarget]=useState<TargetInfo|null>(null),[simulation,setSimulation]=useState(''),[ack,setAck]=useState(false);
   const [diagnosticRefresh,setDiagnosticRefresh]=useState(0);
   const [draft,setDraft]=useState(''),[draftBase,setDraftBase]=useState('');
   const [suiteText,setSuiteText]=useState(''),[optimizationJob,setOptimizationJob]=useState<EvaluationJob|null>(null);
@@ -30,6 +36,11 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload}:{catalog:Cat
   const [pack,setPack]=useState(''),[model,setModel]=useState('');
   const [data,setData]=useState(''),[permissions,setPermissions]=useState(''),[original,setOriginal]=useState(''),[lock,setLock]=useState('');
   useEffect(()=>{api<Project[]>('/api/migrations').then(setProjects).catch(e=>setError(String(e)));},[api]);
+  useEffect(()=>{api<TargetInfo>('/api/migrations/target').then(setNativeTarget).catch(()=>setNativeTarget({available:false,message:'目标环境暂不可用'}));},[api]);
+  useEffect(()=>{setSimulation(project?.simulationProfile??'');setAck(false);},[project?.id,project?.simulationProfile]);
+  useEffect(()=>{if(!project||step!==3)return;let stopped=false;let timer:ReturnType<typeof setTimeout>;
+    const poll=async()=>{try{const next=await api<MigrationReport>(`/api/migrations/${project.id}/report`);if(stopped)return;setReport(next);timer=setTimeout(poll,2000);}catch(e){if(!stopped)setError(String(e));}};
+    void poll();return()=>{stopped=true;clearTimeout(timer);};},[project?.id,step,api]);
   useEffect(()=>{if(!uploadedAsset)return;let disposed=false;setBusy(true);setError('');
     api<Project>('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:uploadedAsset.assetId,name:uploadedAsset.displayName+'迁移'})})
       .then(p=>{if(!disposed){update(p);setDiagnosis(null);setStep(1);}}).catch(e=>{if(!disposed)setError(String(e));}).finally(()=>{if(!disposed)setBusy(false);});
@@ -70,7 +81,7 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload}:{catalog:Cat
     await downloadApi(`/api/migrations/${project.id}/export`,`${project.id}-draft.zip`);
   }
   return <section className="migration-panel">
-    <header><h2><ArrowRightLeft size={20}/> Skill 迁移</h2><span className="state-tag">{project?.candidate?'候选待验证':project?'依赖诊断':'待上传'}</span></header>
+    <header><h2><ArrowRightLeft size={20}/> Skill 迁移</h2><span className="state-tag">{report?.verification?.targetExecution==='PASSED'?'模拟执行通过':project?.candidate?'候选待验证':project?'依赖诊断':'待上传'}</span></header>
     <label>已有项目<select value={project?.id??''} onChange={e=>select(projects.find(p=>p.id===e.target.value)??null)} disabled={busy}><option value="">新建迁移</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     <nav aria-label="迁移步骤">{steps.map((s,i)=><button key={s} className={step===i?'active':''} aria-current={step===i?'step':undefined} disabled={busy||(!project&&i>0)} onClick={()=>setStep(i)}>{i+1} {s}</button>)}</nav>
     {error&&<p role="alert">{error}</p>}
@@ -96,13 +107,22 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload}:{catalog:Cat
       <button className="button primary" disabled={busy||!diagnosis} onClick={()=>setStep(2)}>选择迁移目标<ChevronRight size={16}/></button>
     </div>}
     {step===2&&project&&<div>
+      <label>执行方式<select value={simulation} onChange={e=>{setSimulation(e.target.value);setAck(false);}} disabled={busy}><option value="">仅生成接线草稿</option>{Object.entries(nativeTarget?.target?.profiles??{}).filter(([,p])=>p.skillId===project.source.skillId).map(([id,p])=><option key={id} value={id}>{p.label} · OpenJiuwen</option>)}</select></label>
+      {!nativeTarget?.available&&<p role="status">{nativeTarget?.message??'正在检查目标环境'}</p>}
+      {simulation&&nativeTarget?.target?.profiles[simulation]&&<article className="diagnostic-finding"><h3>模拟端口与资源映射审阅</h3><p>真实 OpenJiuwen {nativeTarget.target.version} · 模型 {nativeTarget.target.modelId} · 合成财报数据</p><p>原始取数代码缺失，以下 Schema 属于本项目模拟端口，不是恢复的浦发原实现。原业务矛盾保留待确认。</p>
+        {nativeTarget.target.profiles[simulation]!.tools.map(t=><details key={t.name}><summary>{t.name} · 只读模拟端口</summary><pre>{JSON.stringify({input:t.inputSchema,output:t.outputSchema},null,2)}</pre></details>)}
+        <p>analysis-rules.md 加载到方法上下文；data-requirements.yaml 仅由工具侧读取，不发送给模型。仅当同名资源可唯一定位时修正引用。</p>
+        <label><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>确认仅验证方法结构与模拟数据，接受上述映射；不作为原生等价或专业验收。</label>
+      </article>}
+      {!simulation&&<>
       <div className="migration-fields"><label>目标运行环境<select value={target} onChange={e=>setTarget(e.target.value)} disabled={busy}><option value="">OpenJiuwen · 先生成待接线草稿</option>{environments.filter(e=>e.runtimeType==='openjiuwen').map(e=><option key={e.environmentId} value={e.environmentId}>{e.name}</option>)}</select></label>
         <label>迁移意图<select value={intent} onChange={e=>setIntent(e.target.value)} disabled={busy}><option value="portable_method_and_adapters">保留业务方法，提取中立声明与薄适配</option><option value="preserve_business_method">保留业务方法，生成接线审阅草稿</option></select></label></div>
-      <button className="button primary" disabled={busy||!diagnosis} onClick={()=>void act(async()=>{
-        const p=await post<Project>(`/${project.id}/generate`,{runtime:'openjiuwen',...(target?{environmentId:target}:{}),intent,baseAssetId:(project.candidate??project.source).assetId});
+      </>}
+      <button className="button primary" disabled={busy||!diagnosis||!!simulation&&!ack} onClick={()=>void act(async()=>{
+        const p=await post<Project>(`/${project.id}/generate`,{runtime:'openjiuwen',...(!simulation&&target?{environmentId:target}:{}),intent,baseAssetId:(project.candidate??project.source).assetId,...(simulation?{simulationProfile:simulation,acknowledgeSimulation:true}:{})});
         update(p);setNotes(p.candidateNotes);setAnalysis(null);setDraft('');setReport(null);
       })}><FileCode2 size={16}/>{project.candidate?'重新生成候选':'生成迁移候选'}</button>
-      {project.generation&&<><h3>生成时文件变更</h3><p>适配草稿尚未在本项目中编译或接入 Host，原业务语义未改写。</p>
+      {project.generation&&<><h3>生成时文件变更</h3><p>{project.simulationProfile?'候选已生成，等待目标执行验证。旧框架入口仅保留归档，不由目标 Host 执行。':'适配草稿尚未在本项目中编译或接入 Host，原业务语义未改写。'}</p>
         {project.generation.candidateDigest!==project.candidate?.artifactSha256&&<p role="status">当前候选已手工修改，以下保留生成时的差异，不代表当前全部改动。</p>}
         {project.generation.diff.map(f=><details key={f.path}><summary>{f.operation==='ADD'?'新增':'修改'} · {f.path}</summary><div className="migration-fields"><pre>{f.before||'原包无此文件'}</pre><pre>{f.after}</pre></div></details>)}</>}
       <details><summary>手工编辑与已有候选</summary><button className="button secondary" disabled={busy} onClick={()=>void act(async()=>{
@@ -119,8 +139,13 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload}:{catalog:Cat
       <details><summary>依赖盘点</summary><pre>{JSON.stringify(analysis,null,2)}</pre></details></>}</details>
       <button className="button secondary" disabled={busy||!project.candidate} onClick={()=>void act(async()=>{setReport(await api(`/api/migrations/${project.id}/report`));setStep(3);})}>检查验证条件<ChevronRight size={16}/></button></div>}
     {step===3&&project&&<div><h3>迁移前后功能检查</h3>
+      {project.simulationProfile&&<article className="diagnostic-finding"><h3>目标执行验证 · 模拟财报</h3><p>使用本次生成的完整候选包运行，不另写一份提示词。原生等价、专业优化和正式发布不属于本次验证。</p>
+        <ul>{nativeTarget?.target?.profiles[project.simulationProfile]?.cases.map(c=><li key={c.caseId}>{c.label}：{c.expect==='denied'?'应拒绝，模型与业务读取均为零':'应实际调用两个取数工具并返回结果'}</li>)}</ul>
+        <button className="button primary" disabled={busy||!project.candidate||report?.targetRuns?.some(r=>r.status==='RUNNING')} onClick={()=>void act(async()=>{await post(`/${project.id}/verify-target`,{baseAssetId:project.candidate!.assetId});setReport(await api(`/api/migrations/${project.id}/report`));})}><Play size={16}/>运行当前候选</button>
+        {report?.targetRuns?.map(r=><article key={r.id} className="migration-result"><h4>{r.candidateDigest===project.candidate?.artifactSha256?'当前候选':'旧版本（不能用于当前验收）'} · {({RUNNING:'正在运行',PASSED:'模拟目标执行通过',FAILED:'验证失败',INTERRUPTED:'运行中断'} as Record<string,string>)[r.status]??r.status}</h4>{r.error&&<p role="alert">{r.error}</p>}{r.cases.map(c=><details key={c.caseId} open={r.candidateDigest===project.candidate?.artifactSha256}><summary>{c.label} · {c.passed?'检查通过':'检查未通过'}</summary><div className="migration-answer"><ReactMarkdown remarkPlugins={[remarkGfm]}>{c.evidence.output||c.evidence.error||'无输出'}</ReactMarkdown></div><p>工具：{c.evidence.toolCalls.map(t=>`${t.name} (${t.status})`).join('、')||'未调用'}</p><details><summary>加载与执行证据</summary><pre>{JSON.stringify(c.evidence.metadata,null,2)}</pre></details></details>)}</article>)}
+      </article>}
       <button className="button secondary" disabled={busy} onClick={()=>void act(async()=>setReport(await api(`/api/migrations/${project.id}/report`)))}><RefreshCw size={16}/>检查验证条件</button>
-      {report?.verification&&<><p>原始基线：未完成原生验证 · OpenJiuwen 目标：未完成原生验证</p>{report.verification.candidateChanged&&<p role="alert">候选已修改，旧版本验证不能用于当前版本。</p>}
+      {report?.verification&&<><p>原始基线：未完成原生验证 · OpenJiuwen 目标：{({NOT_RUN:'未运行',RUNNING:'运行中',PASSED:'模拟执行通过（非原生等价）',FAILED:'验证失败',INTERRUPTED:'中断'} as Record<string,string>)[report.verification.targetExecution]??report.verification.targetExecution}</p>{report.verification.candidateChanged&&<p role="alert">候选已修改，旧版本验证不能用于当前版本。</p>}
         <h4>原工程负责人需补充</h4>{report.verification.missingSource.length?report.verification.missingSource.map((f,i)=><p key={i}>{f.path}:{f.line} · {f.reason}</p>):<p>未发现静态材料缺口；仍需原工程启动方式、运行结果和同条件测试数据。</p>}
         <h4>本项目接入开发需完成</h4>{report.verification.targetGaps.map(f=><p key={f}>{f}</p>)}</>}
       <details><summary>工程对照配置（已有兼容 Runtime）</summary><div className="migration-fields"><label>对照阶段<select value={pair} disabled={busy} onChange={e=>setPair(e.target.value)}><option>AB</option><option>BC</option><option>AC</option></select></label><label>固定题集<select value={pack} onChange={e=>setPack(e.target.value)}><option value="">选择题集</option>{suites.map(s=><option key={s.preparationId} value={'prep:'+s.preparationId}>{s.summary}</option>)}{catalog.evalPacks.filter(p=>p.targetSkillId===project.source.skillId).map(p=><option key={p.packId} value={p.packId}>{p.targetSkillId} / {p.packId}</option>)}</select></label>

@@ -15,6 +15,7 @@ import { configuredModelRole } from './config.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { generateCandidateFiles, versionedMethod } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
+import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
@@ -37,6 +38,8 @@ type Migration = {
   runs:Array<{jobId:string; pair:'AB'|'BC'|'AC'; candidateDigest:string; comparisonFingerprint:string; packFingerprint:string;
     declaredPlan?:z.infer<typeof planSchema>;suiteSnapshot?:EvalPack}>;
   assessment:'NOT_VALIDATED';
+  targetRuns?:string[];
+  simulationProfile?:string;
   generation?:{candidateDigest:string;target:{runtime:string;environmentId?:string;intent:string};
     diff:Array<{path:string;operation:string;before:string;after:string}>;generatedAt:string};
 };
@@ -48,6 +51,15 @@ export class MigrationStore {
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore) {}
+  async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
+  async verifyTarget(id:string,input:unknown){return this.serial(async()=>{
+    const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
+    if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请刷新后验证');
+    if(!value.simulationProfile||value.generation?.candidateDigest!==value.candidate.artifactSha256)return conflict('请先审阅映射并生成当前候选；修改后需重新审阅');
+    const runner=new MigrationTargetRuns(this.root,this.skills);
+    for(const runId of value.targetRuns??[])if((await runner.get(runId)).status==='RUNNING')return conflict('当前项目已有验证正在运行');
+    const run=await runner.start(value.candidate,value.simulationProfile);(value.targetRuns??=[]).push(run.id);await writeJsonAtomic(this.file(id),value);return run;
+  });}
   private file(id:string) {
     if (!/^migration-[a-f0-9-]+$/.test(id)) throw Object.assign(new Error('Invalid migration id'),{statusCode:400});
     return path.join(this.root,'migrations',id+'.json');
@@ -75,7 +87,7 @@ export class MigrationStore {
   }
   async generate(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({runtime:z.enum(['openjiuwen']),environmentId:z.string().optional(),
-      intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string()}).parse(input);
+      intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string(),simulationProfile:z.string().optional(),acknowledgeSimulation:z.literal(true).optional()}).parse(input);
     const value=await this.get(id);
     if(p.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
     if(p.environmentId){const env=await this.environments?.get(p.environmentId);
@@ -83,9 +95,12 @@ export class MigrationStore {
     const diagnosis=await this.diagnose(id),archive=await this.skills.readArchive(value.source.assetId);
     const version=`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`;
     const target={runtime:p.runtime,...(p.environmentId?{environmentId:p.environmentId}:{}),intent:p.intent};
-    const generated=generateCandidateFiles(archive,value.source,diagnosis,version,target);
+    if(p.simulationProfile&&!p.acknowledgeSimulation)return conflict('请确认模拟端口、资源映射与业务待确认边界');
+    const simulation=p.simulationProfile?{id:p.simulationProfile,target:await nativeTarget()}:undefined;
+    const generated=generateCandidateFiles(archive,value.source,diagnosis,version,target,simulation);
     const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
     value.candidate=candidate;value.candidateNotes='系统生成待审阅声明和薄适配；原业务正文保留，未验证原生执行。';
+    value.simulationProfile=p.simulationProfile;
     value.generation={candidateDigest:candidate.artifactSha256,target,diff:generated.diff,generatedAt:new Date().toISOString()};
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await writeJsonAtomic(this.file(id),value);return value;
@@ -184,11 +199,14 @@ export class MigrationStore {
   async report(id:string) {
     const value=await this.get(id);
     const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
-    return {project:value,diagnosis,verification:{originalBaseline:'NOT_RUN',targetExecution:'NOT_RUN',
+    const targetRunner=new MigrationTargetRuns(this.root,this.skills);
+    const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>targetRunner.get(runId)));
+    const current=targetRuns.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1);
+    return {project:value,diagnosis,targetRuns,verification:{originalBaseline:'NOT_RUN',targetExecution:current?.status??'NOT_RUN',
       candidateChanged:!!value.generation&&value.generation.candidateDigest!==value.candidate?.artifactSha256,
       originalOwner:'原工程负责人',targetOwner:'Harness / Host 接入开发者',
       missingSource:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>({path:f.path,line:f.line,reason:f.reason}))??[],
-      targetGaps:['目标 Host 尚未消费迁移中立声明和薄适配；需要本项目开发接线与原生回归',
+      targetGaps:value.simulationProfile?['本目标只验证方法在模拟业务端口上的执行，不证明浦发原生等价或专业结论正确。','原始取数实现、原环境对照与业务矛盾仍待负责人确认。']:['目标 Host 尚未消费迁移中立声明和薄适配；需要本项目开发接线与原生回归',
         '需冻结等价测试数据与可信身份范围；配置声明不等于授权已核验']},
       suites:await Promise.all((value.suiteIds??[]).map(id=>this.preparations?.get(id)??null)),
       optimizations:await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)}))),

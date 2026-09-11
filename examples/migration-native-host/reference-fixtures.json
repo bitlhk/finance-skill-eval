@@ -1,0 +1,18 @@
+{
+  "pf-normal": {
+    "get_financial_statement_data": {"status":"COMPLETED","source":"CONTROLLED_SYNTHETIC_BANK","currency":"CNY","unit":"元","metrics":[
+      {"name":"短期借款","data_status":"complete","values_by_period":{"2023-12-31":"8000000.00","2024-12-31":"9000000.00","2025-12-31":"10000000.00"}},
+      {"name":"总资产","data_status":"complete","values_by_period":{"2023-12-31":"50000000.00","2024-12-31":"55000000.00","2025-12-31":"60000000.00"}},
+      {"name":"有息负债合计","data_status":"complete","values_by_period":{"2023-12-31":"18000000.00","2024-12-31":"20000000.00","2025-12-31":"24000000.00"}},
+      {"name":"经营活动现金流量净额","data_status":"complete","values_by_period":{"2023-12-31":"4000000.00","2024-12-31":"4500000.00","2025-12-31":"5000000.00"}}
+    ]},
+    "get_financial_note_fragments": {"status":"COMPLETED","source":"CONTROLLED_SYNTHETIC_BANK","fragments":[
+      {"fragment_id":"synthetic-note-01","title":"财报附注：短期借款","report_date":"2025-12-31","data_type":"合并报表","content":"单位：人民币元\n|类别|2025年末|2024年末|\n|---|---:|---:|\n|信用借款|6000000.00|5000000.00|\n|保证借款|4000000.00|4000000.00|\n|合计|10000000.00|9000000.00|\n年利率3.5%-4.5%；均在一年内到期。机构为合成银行A、B。"},
+      {"fragment_id":"synthetic-note-02","title":"财报附注：财务费用、长期借款、货币资金","report_date":"2025-12-31","data_type":"合并报表","content":"人民币元：2025年利息费用880000.00；长期借款2025年末14000000.00；货币资金2025年末16000000.00。有息负债2024年末20000000.00、2025年末24000000.00。其余未披露。"}
+    ]}
+  },
+  "pf-missing": {
+    "get_financial_statement_data":{"status":"MISSING","source":"CONTROLLED_SYNTHETIC_BANK","currency":"CNY","unit":"元","metrics":[]},
+    "get_financial_note_fragments":{"status":"MISSING","source":"CONTROLLED_SYNTHETIC_BANK","fragments":[]}
+  }
+}

@@ -3,6 +3,7 @@ import { strToU8 } from 'fflate';
 import { parse as parseYaml, stringify } from 'yaml';
 import type { Diagnosis } from './migration-diagnostics.js';
 import type { SkillAssetRecord } from './skill-store.js';
+import type { NativeTarget } from './migration-target.js';
 
 export function versionedMethod(source:string,skillId:string,version:string){
   const match=source.match(/^---\s*\n([\s\S]*?)\n---[^\S\n]*(?:\n|$)/)
@@ -14,7 +15,7 @@ export function versionedMethod(source:string,skillId:string,version:string){
 }
 
 export function generateCandidateFiles(archive:Record<string,Uint8Array>,base:SkillAssetRecord,diagnosis:Diagnosis,
-  version:string,target:{runtime:string;environmentId?:string;intent:string}){
+  version:string,target:{runtime:string;environmentId?:string;intent:string},simulation?:{id:string;target:NativeTarget}){
   const original=Buffer.from(archive[base.skillFile]!).toString('utf8');
   const folder='migration-generated';
   if(Object.keys(archive).some(name=>name.startsWith(folder+'/')))throw Object.assign(new Error('已有生成目录；请从原始项目生成新的候选，避免覆盖'),{statusCode:409});
@@ -109,6 +110,24 @@ public final class OpenJiuwenMigrationTool {
     uploadedScriptsExecuted:false,adapterCompilation:'NOT_RUN',originalBaseline:'NOT_RUN',targetExecution:'NOT_RUN',
     builderImport:'NOT_VERIFIED',businessMethodChanged:false},null,2));
   write('README.md',`# Migration review draft\n\nThe original files remain in their original paths. Only method metadata/version is normalized.\n\nneutral-contract.json is a PROPOSED runtime-neutral declaration, not a Harness Capability Pack.\nThe Python and Java files are real boundary adapter drafts, NOT installed or executed.\nThe business port, schemas, resources and trusted authorization must be supplied and reviewed by the host owner.\nDo not import original uploaded Python modules to fill the business port.\nReview reference/proposedPath differences and business terminology with their owners.\nThe original SOP may still describe legacy registration. This draft does not claim complete decoupling.\nNo script, model, bank service or native runtime was executed during generation.\n`);
+  if(simulation){
+    const profile=simulation.target.profiles[simulation.id];
+    if(!profile||profile.skillId!==base.skillId||profile.tools.length!==tools.length||profile.tools.some(t=>!tools.includes(t.name)))throw new Error('源方法工具与模拟端口不匹配，不能自动补实现');
+    const mapped=resources.map(r=>{const actual=r.path??r.proposedPath;if(!actual)throw new Error('资源映射不唯一，需要先补齐源文件');return {...r,path:actual,state:'REVIEWED_SYNTHETIC_SCOPE'};});
+    let method=Buffer.from(files[base.skillFile]!).toString('utf8');
+    // Only the explicit host injection contract and verified relative paths change.
+    method=method.replace('由 Skill 注册层在本 Skill 激活时自动注入提示词','由目标 Host 按中立资源声明加载到方法上下文');
+    for(const r of mapped)method=method.split('`'+r.reference+'`').join('`'+path.posix.relative(path.posix.dirname(base.skillFile),r.path)+'`');
+    files[base.skillFile]=strToU8(method);
+    write('neutral-contract.json',JSON.stringify({schemaVersion:'migration.neutral-contract.proposal.v1',skillId:base.skillId,version,method:base.skillFile,
+      executionProfile:simulation.id,sourceKind:'CONTROLLED_SYNTHETIC_BANK',
+      capabilities:profile.tools.map(t=>({...t,operation:'QUERY',binding:'HOST_SYNTHETIC_PORT',schemaBasis:profile.schemaBasis,originalOutputSchemaResolved:false,
+        sourceEvidence:original.split('\n').map((line,index)=>({path:base.skillFile,line:index+1,text:line})).filter(e=>e.text.includes(t.name))})),
+      resources:mapped,mappingReview:{approved:true,scope:'SIMULATED_TARGET_ONLY',portsSha256:simulation.target.portsSha256,sourceDigest:base.artifactSha256},
+      unresolved:diagnosis.findings.filter(f=>f.layer==='UNKNOWN'||f.layer==='BUSINESS').map(f=>({path:f.path,line:f.line,reason:f.reason})),
+      originalNativeEquivalent:false,target},null,2));
+    write('README.md','# Simulated target candidate\n\nThe target Host loads only the neutral declaration, versioned method and explicitly listed resources. Original source files are retained for review, not executed or imported. Legacy registration/result wrappers are not the target entry. Business rules and their unresolved contradictions remain unchanged.\n\nTool schemas are project-defined synthetic ports, NOT recovered original schemas. The original business implementation is missing. Target execution on synthetic data does not establish native equivalence, professional acceptance or Harness/Builder publication.\n');
+  }
   const diff=Object.entries(files).filter(([name,bytes])=>!archive[name]||!Buffer.from(bytes).equals(Buffer.from(archive[name]!)))
     .map(([name,bytes])=>({path:name,operation:name in archive?'MODIFY':'ADD',
       before:name in archive?Buffer.from(archive[name]!).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')}));

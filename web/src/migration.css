@@ -24,4 +24,13 @@
 .migration-panel details { margin:14px 0; }
 .migration-panel summary { cursor:pointer;font-size:13px;overflow-wrap:anywhere; }
 .migration-panel .button { margin:8px 8px 8px 0; }
+.migration-panel label:has(input[type=checkbox]) { display:flex;align-items:flex-start;gap:9px;line-height:1.6; }
+.migration-panel input[type=checkbox] { width:16px;height:16px;flex:0 0 16px;margin-top:3px;accent-color:#b91c30; }
+.migration-answer { max-width:100%;overflow-x:auto;overflow-wrap:anywhere;line-height:1.7;padding:12px 0; }
+.migration-answer h1 { font-size:20px; }
+.migration-answer h2 { font-size:17px; }
+.migration-answer h3 { font-size:15px; }
+.migration-answer table { width:100%;border-collapse:collapse;font-size:13px; }
+.migration-answer th,.migration-answer td { border:1px solid #dddfe4;padding:8px;text-align:left; }
+.migration-answer th { background:#f6f7f8; }
 @media(max-width:700px) { .migration-panel .migration-fields { grid-template-columns: minmax(0,1fr); } }

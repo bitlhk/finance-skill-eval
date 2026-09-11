@@ -11,6 +11,7 @@ export type ResolvedSkillSource = {
   artifactSha256: string;
   instructions: string;
   files?: Record<string, string>;
+  canonicalArchive?: string;
 };
 
 export type DirectModelRuntimeOptions = {

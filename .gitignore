@@ -3,6 +3,8 @@ node_modules/
 /.migration-preview/
 /.migration-workspace/
 /.migration-review/
+/.migration-native-host/
+examples/migration-native-host/target/
 /web-dist-private/
 dist/
 web-dist/

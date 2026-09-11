@@ -97,6 +97,7 @@ export async function createEvaluationService(
     if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
   });
   app.get('/api/migrations',()=>migrations.list());
+  app.get('/api/migrations/target',()=>migrations.target());
   app.post('/api/migrations',request=>migrations.create(request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id',request=>migrations.get(request.params.id));
   app.post<{Params:{id:string}}>('/api/migrations/:id/analyze',request=>migrations.analyze(request.params.id));
@@ -106,6 +107,7 @@ export async function createEvaluationService(
   app.post<{Params:{id:string}}>('/api/migrations/:id/candidates',request=>migrations.candidate(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/drafts',request=>migrations.draft(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/validate',request=>migrations.validate(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/verify-target',request=>migrations.verifyTarget(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/suites',request=>migrations.createSuite(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimize',request=>migrations.optimize(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimized-candidate',request=>migrations.adoptOptimization(request.params.id,request.body));
