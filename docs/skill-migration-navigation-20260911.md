@@ -38,6 +38,12 @@ asset-to-migration entry, generation/edit/export, stale validation rejection,
 refresh persistence and desktop/mobile layouts. It uses synthetic data, not a
 live model. Earlier live-model evidence remains a separate record.
 
+The first clean CI run exposed a terminal-state read race: an old RUNNING
+snapshot could be classified as INTERRUPTED after execution completed. The
+fix retains the activity observation across the asynchronous read. A controlled
+snapshot-delay regression fails on the old condition and passes on the fix;
+actual orphaned runs still report interruption.
+
 ## Consolidated merge scope
 
 The migration branch contains the linear ancestors `feat/risk-review-eval-v1`

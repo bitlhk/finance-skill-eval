@@ -19,7 +19,13 @@ export async function nativeTarget(){const url=endpoint();url.pathname='/health'
 export class MigrationTargetRuns {
   constructor(private root:string,private skills:SkillStore){}
   private file(id:string){if(!/^target-[a-f0-9-]+$/.test(id))throw new Error('Invalid target run');return path.join(this.root,'migration-target-runs',id+'.json');}
-  async get(id:string):Promise<TargetRun>{const value=await readJson<TargetRun>(this.file(id));if(value.status==='RUNNING'&&!pending.has(id))return {...value,status:'INTERRUPTED',error:'运行已中断，请重新验证当前候选'};return value;}
+  async get(id:string):Promise<TargetRun>{
+    // A read can capture RUNNING before the terminal write removes the pending entry.
+    const activeBeforeRead=pending.has(id);
+    const value=await readJson<TargetRun>(this.file(id));
+    if(value.status==='RUNNING'&&!activeBeforeRead&&!pending.has(id))return {...value,status:'INTERRUPTED',error:'运行已中断，请重新验证当前候选'};
+    return value;
+  }
   async start(asset:SkillAssetRecord,profileId:string){
     const target=await nativeTarget(),selected=target.profiles[profileId];if(!selected||selected.skillId!==asset.skillId)throw new Error('模拟端口与当前方法不匹配');
     const files=await this.skills.readArchive(asset.assetId),canonicalArchive=canonicalNeutralArchive(files,asset.artifactSha256);
