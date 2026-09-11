@@ -1,0 +1,116 @@
+import path from 'node:path';
+import { strToU8 } from 'fflate';
+import { parse as parseYaml, stringify } from 'yaml';
+import type { Diagnosis } from './migration-diagnostics.js';
+import type { SkillAssetRecord } from './skill-store.js';
+
+export function versionedMethod(source:string,skillId:string,version:string){
+  const match=source.match(/^---\s*\n([\s\S]*?)\n---[^\S\n]*(?:\n|$)/)
+    ??source.match(/^(name:[^\n]*\n[\s\S]{0,8000}?)\n---[^\S\n]*(?:\n|$)/);
+  const metadata=match?parseYaml(match[1]!):{};
+  if(!metadata||typeof metadata!=='object'||Array.isArray(metadata))throw new Error('Invalid metadata');
+  if(metadata.name&&metadata.name!==skillId)throw Object.assign(new Error('不能在方法编辑中变更业务标识'),{statusCode:409});
+  return `---\n${stringify({...metadata,name:skillId,version})}---\n${match?source.slice(match[0].length):source}`;
+}
+
+export function generateCandidateFiles(archive:Record<string,Uint8Array>,base:SkillAssetRecord,diagnosis:Diagnosis,
+  version:string,target:{runtime:string;environmentId?:string;intent:string}){
+  const original=Buffer.from(archive[base.skillFile]!).toString('utf8');
+  const folder='migration-generated';
+  if(Object.keys(archive).some(name=>name.startsWith(folder+'/')))throw Object.assign(new Error('已有生成目录；请从原始项目生成新的候选，避免覆盖'),{statusCode:409});
+  const files={...archive};
+  files[base.skillFile]=strToU8(versionedMethod(original,base.skillId,version));
+  const tools=[...new Set([...original.matchAll(/(?:^-\s*|调用\s*)`((?:get_|query_|read_|fetch_)[a-z0-9_]+)`/gm)].map(m=>m[1]!))];
+  const resources=[...new Set([...original.matchAll(/`((?:references?|scripts)\/[^`]+)`/g)].map(m=>m[1]!))].map(ref=>{
+    const requested=path.posix.join(path.posix.dirname(base.skillFile),ref);
+    const alternative=Object.keys(archive).filter(name=>path.posix.basename(name)===path.posix.basename(ref));
+    return {reference:ref,path:requested in archive?requested:null,
+      proposedPath:!(requested in archive)&&alternative.length===1?alternative[0]:null,
+      visibility:/\.(yaml|yml|json)$/.test(ref)?'TOOL_ONLY':'METHOD_CONTEXT',
+      state:requested in archive?'PRESENT':'OWNER_REVIEW_REQUIRED'};
+  });
+  const write=(name:string,text:string)=>{files[`${folder}/${name}`]=strToU8(text);};
+  write('neutral-contract.json',JSON.stringify({schemaVersion:'migration.neutral-contract.proposal.v1',
+    skillId:base.skillId,version,method:base.skillFile,methodState:'BUSINESS_TEXT_PRESERVED_NOT_DECOUPLING_ACCEPTED',
+    capabilities:tools.map(name=>({name,operation:'UNCONFIRMED',inputSchema:null,outputSchema:null,
+      binding:'HOST_REVIEW_REQUIRED',evidence:diagnosis.declarations.filter(d=>d.name===name)})),resources,
+    resultContract:{schemaVersion:'migration.tool-result.v1',fields:['status','text','data','sources'],
+      status:['COMPLETED','MISSING','REJECTED','FAILED'],rules:['Never map missing to zero','Preserve units and source values','No implicit suitability decision']},
+    target,acceptance:'NOT_VALIDATED'},null,2));
+  write('neutral_result.py',`"""Proposed neutral result contract. No runtime imports or source execution."""
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass(frozen=True)
+class NeutralResult:
+    status: str
+    text: str
+    data: Any = None
+    sources: tuple = ()
+
+    def __post_init__(self):
+        if self.status not in ("COMPLETED", "MISSING", "REJECTED", "FAILED"):
+            raise ValueError("UNKNOWN_RESULT_STATUS")
+`);
+  write('agentscope_result_adapter.py',`"""Review-only SDK boundary. Original uploaded modules are never imported here."""
+import json
+import inspect
+from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
+
+def to_agentscope(result):
+    # Preserve the neutral envelope, including missing/rejected states, in text.
+    payload = {"status": result.status, "text": result.text,
+               "data": result.data, "sources": list(result.sources)}
+    return ToolResponse(content=[TextBlock(type="text", text=json.dumps(payload, ensure_ascii=False))])
+
+def register_checked(toolkit, name, description, schema, business_call, check_current_access):
+    async def invoke(**arguments):
+        check_current_access()
+        result = business_call(arguments)
+        if inspect.isawaitable(result):
+            result = await result
+        check_current_access()
+        return to_agentscope(result)
+    toolkit.register_tool_function(tool_func=invoke, func_name=name,
+        func_description=description, json_schema=schema)
+`);
+  write('OpenJiuwenMigrationTool.java',`import com.openjiuwen.core.foundation.tool.Tool;
+import com.openjiuwen.core.foundation.tool.ToolCard;
+import com.openjiuwen.core.foundation.tool.function.LocalFunction;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+
+/** Review-only bridge using the repository's OpenJiuwen 0.1.13 Tool API.
+ * Host supplies trusted checks, reviewed schemas and a neutral business port.
+ * No uploaded source is loaded, executed or granted permission by this adapter.
+ */
+public final class OpenJiuwenMigrationTool {
+    public static Tool create(ToolCard reviewedCard,
+            Function<Map<String, Object>, Object> neutralBusinessPort,
+            Runnable checkCurrentAccess) {
+        Objects.requireNonNull(reviewedCard);
+        Objects.requireNonNull(neutralBusinessPort);
+        Objects.requireNonNull(checkCurrentAccess);
+        return new LocalFunction(reviewedCard, arguments -> {
+            checkCurrentAccess.run();
+            Object result = neutralBusinessPort.apply(arguments);
+            checkCurrentAccess.run();
+            return result;
+        });
+    }
+}
+`);
+  write('review.json',JSON.stringify({sourceDigest:base.artifactSha256,diagnosisDigest:diagnosis.digest,target,
+    automatic:['Versioned metadata','Neutral capability/resource proposal','Separate result and registration adapter drafts'],
+    requiresEngineering:['Review schemas and business port implementation','Wire resource projection','Compile adapters against actual Runtime','Host authorization and model-boundary checks'],
+    unresolved:diagnosis.findings.filter(f=>f.layer==='UNKNOWN'||f.layer==='BUSINESS').map(f=>f.id),
+    uploadedScriptsExecuted:false,adapterCompilation:'NOT_RUN',originalBaseline:'NOT_RUN',targetExecution:'NOT_RUN',
+    builderImport:'NOT_VERIFIED',businessMethodChanged:false},null,2));
+  write('README.md',`# Migration review draft\n\nThe original files remain in their original paths. Only method metadata/version is normalized.\n\nneutral-contract.json is a PROPOSED runtime-neutral declaration, not a Harness Capability Pack.\nThe Python and Java files are real boundary adapter drafts, NOT installed or executed.\nThe business port, schemas, resources and trusted authorization must be supplied and reviewed by the host owner.\nDo not import original uploaded Python modules to fill the business port.\nReview reference/proposedPath differences and business terminology with their owners.\nThe original SOP may still describe legacy registration. This draft does not claim complete decoupling.\nNo script, model, bank service or native runtime was executed during generation.\n`);
+  const diff=Object.entries(files).filter(([name,bytes])=>!archive[name]||!Buffer.from(bytes).equals(Buffer.from(archive[name]!)))
+    .map(([name,bytes])=>({path:name,operation:name in archive?'MODIFY':'ADD',
+      before:name in archive?Buffer.from(archive[name]!).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')}));
+  return {files,diff,resources};
+}

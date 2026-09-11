@@ -17,6 +17,7 @@ import { SkillStore } from "./skill-store.js";
 import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
 import { MigrationStore } from './migration-store.js';
+import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
 
@@ -89,7 +90,8 @@ export async function createEvaluationService(
   });
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
-  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations);
+  const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
+  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments);
   // Private workspace only. A public demo must not expose customer migration snapshots.
   app.addHook('preValidation',async(request,reply)=>{
     if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
@@ -98,6 +100,9 @@ export async function createEvaluationService(
   app.post('/api/migrations',request=>migrations.create(request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id',request=>migrations.get(request.params.id));
   app.post<{Params:{id:string}}>('/api/migrations/:id/analyze',request=>migrations.analyze(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/diagnose',request=>migrations.diagnose(request.params.id,true));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/diagnosis',request=>migrations.diagnose(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/generate',request=>migrations.generate(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/candidates',request=>migrations.candidate(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/drafts',request=>migrations.draft(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/validate',request=>migrations.validate(request.params.id,request.body));

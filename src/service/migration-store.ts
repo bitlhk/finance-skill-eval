@@ -12,12 +12,16 @@ import { runConfigurationSchema, manualPreparationSchema } from './contracts.js'
 import type { PreparationStore } from './preparation-store.js';
 import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
+import { MigrationDiagnostics } from './migration-diagnostics.js';
+import { generateCandidateFiles, versionedMethod } from './migration-candidate.js';
+import type { EnvironmentStore } from './environment-store.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
 const draftSchema = z.strictObject({
   source:z.string().min(1).max(128000), notes:z.string().min(1).max(8000),
   baseAssetId:z.string().min(1),
+  autoVersion:z.boolean().optional(),
 });
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC']), configuration:runConfigurationSchema,
@@ -33,6 +37,8 @@ type Migration = {
   runs:Array<{jobId:string; pair:'AB'|'BC'|'AC'; candidateDigest:string; comparisonFingerprint:string; packFingerprint:string;
     declaredPlan?:z.infer<typeof planSchema>;suiteSnapshot?:EvalPack}>;
   assessment:'NOT_VALIDATED';
+  generation?:{candidateDigest:string;target:{runtime:string;environmentId?:string;intent:string};
+    diff:Array<{path:string;operation:string;before:string;after:string}>;generatedAt:string};
 };
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 
@@ -41,7 +47,7 @@ export class MigrationStore {
   private chain:Promise<unknown> = Promise.resolve();
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
-    private optimizers?:OptimizationManager) {}
+    private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore) {}
   private file(id:string) {
     if (!/^migration-[a-f0-9-]+$/.test(id)) throw Object.assign(new Error('Invalid migration id'),{statusCode:400});
     return path.join(this.root,'migrations',id+'.json');
@@ -52,12 +58,38 @@ export class MigrationStore {
   async list() {return Promise.all((await listJsonFiles(path.join(this.root,'migrations'))).map(f=>readJson<Migration>(f)));}
   async get(id:string):Promise<Migration> {return readJson<Migration>(this.file(id));}
   async create(input:unknown) {
+    const value=await this.serial(async()=>{
     const p=createSchema.parse(input), source=await this.skills.get(p.sourceAssetId);
     if (!source) return conflict('Source Skill unavailable');
+    const existing=(await this.list()).find(item=>item.source.artifactSha256===source.artifactSha256&&item.name===p.name);
+    if(existing)return existing;
     const value:Migration={schemaVersion:'finance.skill-migration.v0.1',id:'migration-'+randomUUID(),name:p.name,
       createdAt:new Date().toISOString(),source,candidate:null,candidateNotes:'',runs:[],assessment:'NOT_VALIDATED'};
     await writeJsonAtomic(this.file(value.id),value); return value;
+    });
+    await this.diagnostics?.diagnose(value.source);return value;
   }
+  async diagnose(id:string,retry=false){const value=await this.get(id);
+    if(!this.diagnostics)return conflict('Diagnostic service unavailable');
+    return this.diagnostics.diagnose(value.source,retry);
+  }
+  async generate(id:string,input:unknown){return this.serial(async()=>{
+    const p=z.strictObject({runtime:z.enum(['openjiuwen']),environmentId:z.string().optional(),
+      intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string()}).parse(input);
+    const value=await this.get(id);
+    if(p.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
+    if(p.environmentId){const env=await this.environments?.get(p.environmentId);
+      if(!env||env.type!=='runtime_http'||env.runtimeType!=='openjiuwen')return conflict('目标必须是已登记的 OpenJiuwen 环境');}
+    const diagnosis=await this.diagnose(id),archive=await this.skills.readArchive(value.source.assetId);
+    const version=`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`;
+    const target={runtime:p.runtime,...(p.environmentId?{environmentId:p.environmentId}:{}),intent:p.intent};
+    const generated=generateCandidateFiles(archive,value.source,diagnosis,version,target);
+    const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
+    value.candidate=candidate;value.candidateNotes='系统生成待审阅声明和薄适配；原业务正文保留，未验证原生执行。';
+    value.generation={candidateDigest:candidate.artifactSha256,target,diff:generated.diff,generatedAt:new Date().toISOString()};
+    (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
+    await writeJsonAtomic(this.file(id),value);return value;
+  });}
   async candidate(id:string,input:unknown) {return this.serial(async()=>{
     const p=candidateSchema.parse(input), value=await this.get(id), candidate=await this.skills.get(p.assetId);
     if (!candidate || candidate.artifactSha256===value.source.artifactSha256) return conflict('Import a separate versioned candidate; source remains immutable');
@@ -70,7 +102,7 @@ export class MigrationStore {
     const p=draftSchema.parse(input), value=await this.get(id), base=value.candidate??value.source;
     if (p.baseAssetId!==base.assetId) return conflict('Candidate changed; reload before editing');
     const files=await this.skills.readArchive(base.assetId);
-    files[base.skillFile]=strToU8(p.source);
+    files[base.skillFile]=strToU8(p.autoVersion?versionedMethod(p.source,base.skillId,`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`):p.source);
     const candidate=await this.skills.uploadZip(Buffer.from(zipSync(files)));
     if (candidate.version==='0.0.0-upload' || candidate.version===base.version || candidate.version===value.source.version)
       return conflict('Set an explicit new version in Skill metadata before saving');
@@ -83,13 +115,13 @@ export class MigrationStore {
     const value=await this.get(id), source=await this.skills.readSource(value.source.assetId);
     const files=await this.skills.readFiles((value.candidate??value.source).assetId);
     const archive=await this.skills.readArchive((value.candidate??value.source).assetId);
-    return {project:value, source, candidate:value.candidate ? await this.skills.readSource(value.candidate.assetId):null,
-      readableFiles:Object.keys(files), inventoryComplete:false,
+    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
+    return {project:value, source, candidate:value.candidate ? await this.skills.readSource(value.candidate.assetId):null,diagnosis,
+      readableFiles:Object.keys(files), inventoryComplete:diagnosis?.status==='COMPLETE',
       fileInventory:Object.entries(archive).map(([name,bytes])=>({name,bytes:bytes.length,
         sha256:createHash('sha256').update(bytes).digest('hex'),
         executableReviewRequired:/\.(py|sh|js|mjs|cjs|exe|jar)$/i.test(name)})),
-      unresolved:['ORIGINAL_AGENTSCOPE_PROJECT_AND_LOCK_REQUIRED','TRUSTED_NATIVE_RUNTIME_IDENTITY_REQUIRED',
-        'READ_ONLY_TOOL_AND_DATA_MAPPING_REVIEW_REQUIRED','BUILDER_JAVA_HOST_ADAPTER_NOT_CONNECTED'],
+      unresolved:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>f.dependencyType)??['DIAGNOSIS_NOT_RUN'],
       analysisMode:'STATIC_INVENTORY_NOT_DEPENDENCY_VALIDATION', uploadedScriptsExecuted:false};
   }
   async createSuite(id:string,input:unknown) {return this.serial(async()=>{
@@ -101,6 +133,7 @@ export class MigrationStore {
   async optimize(id:string,input:unknown) {return this.serial(async()=>{
     const p=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.get(id);
     if (!this.optimizers || !value.candidate) return conflict('Optimizer or candidate unavailable');
+    if(value.generation)return conflict('生成候选需先完成原生迁移验证；当前 Host 适配验收尚未完成，暂不进入表达优化');
     const experiment=value.runs.find(r=>r.jobId===p.jobId);
     if (!experiment || experiment.candidateDigest!==value.candidate.artifactSha256) return conflict('Select an experiment for the current candidate');
     const job=this.jobs.get(p.jobId),variant=job?.report?.variants.right;
@@ -150,7 +183,14 @@ export class MigrationStore {
   });}
   async report(id:string) {
     const value=await this.get(id);
-    return {project:value, suites:await Promise.all((value.suiteIds??[]).map(id=>this.preparations?.get(id)??null)),
+    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
+    return {project:value,diagnosis,verification:{originalBaseline:'NOT_RUN',targetExecution:'NOT_RUN',
+      candidateChanged:!!value.generation&&value.generation.candidateDigest!==value.candidate?.artifactSha256,
+      originalOwner:'原工程负责人',targetOwner:'Harness / Host 接入开发者',
+      missingSource:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>({path:f.path,line:f.line,reason:f.reason}))??[],
+      targetGaps:['目标 Host 尚未消费迁移中立声明和薄适配；需要本项目开发接线与原生回归',
+        '需冻结等价测试数据与可信身份范围；配置声明不等于授权已核验']},
+      suites:await Promise.all((value.suiteIds??[]).map(id=>this.preparations?.get(id)??null)),
       optimizations:await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)}))),
       experiments:value.runs.map(r=>{
       const job=this.jobs.get(r.jobId);
@@ -178,5 +218,5 @@ export class MigrationStore {
     return Buffer.from(zipSync({...files,'migration-manifest.json':strToU8(JSON.stringify(manifest,null,2)),
       'migration-report.json':strToU8(JSON.stringify(report,null,2))}));
   }
-  release():never {return conflict('Release blocked: native AgentScope baseline, Java Host integration, dependency validation and independent business acceptance remain unverified');}
+  release():never {return conflict('Release blocked: original native baseline, target Host integration, dependency validation and independent business acceptance remain unverified');}
 }

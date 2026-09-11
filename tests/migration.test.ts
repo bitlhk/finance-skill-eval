@@ -24,7 +24,9 @@ it('persists immutable source/candidate, keeps drafts unvalidated and blocks rel
     expect((await attach(a.assetId)).statusCode).toBe(409);
     const attached=await attach(b.assetId);expect(attached.statusCode).toBe(200);expect(attached.json().source).toEqual(a);
     const analysis=await app.inject({url:`/api/migrations/${id}/analyze`,method:'POST',headers});
-    expect(analysis.json().uploadedScriptsExecuted).toBe(false);expect(analysis.json().unresolved).toContain('BUILDER_JAVA_HOST_ADAPTER_NOT_CONNECTED');
+    expect(analysis.json().uploadedScriptsExecuted).toBe(false);
+    expect(analysis.json().diagnosis.dependencyStatus).toBe('NO_BINDING_IN_CHECKED_SCOPE');
+    expect(analysis.json().unresolved).toEqual([]);
     const report=await app.inject({url:`/api/migrations/${id}/report`,headers});expect(report.json().project.assessment).toBe('NOT_VALIDATED');
     expect((await app.inject({url:`/api/migrations/${id}/releases`,method:'POST',headers,payload:{validated:true}})).statusCode).toBe(409);
     const exported=await app.inject({url:`/api/migrations/${id}/export`,headers});expect(exported.statusCode).toBe(200);
