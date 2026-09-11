@@ -52,19 +52,26 @@ try {
   await page.getByRole('heading',{name:'发现框架或宿主绑定'}).waitFor();checks.push('upload_automatically_diagnosed');
   await page.getByRole('heading',{name:'相对导入模块未随包提供'}).waitFor();checks.push('missing_materials_visible');
   await page.locator('.migration-panel').screenshot({path:path.join(output,'diagnosis-desktop.png')});
-  await page.getByRole('button',{name:'选择迁移目标'}).click();
-  await page.getByRole('button',{name:'生成迁移候选',exact:true}).click();
+  await page.getByRole('button',{name:'生成迁移方案'}).click();
+  await page.getByRole('button',{name:'生成迁移版本',exact:true}).click();
   await page.getByText('新增 · migration-generated/OpenJiuwenMigrationTool.java',{exact:true}).waitFor();checks.push('real_adapter_candidate_generated');
   await page.getByText('手工编辑与已有候选',{exact:true}).click();
   await page.getByRole('button',{name:'检查文件与待补材料'}).click();
-  await expect(page.getByLabel('候选方法正文')).toHaveValue(/migration\.1/);
-  const method=await page.getByLabel('候选方法正文').inputValue();
-  await page.getByLabel('候选方法正文').fill(method+'\nAlways retain sources.');
+  await expect(page.getByLabel('迁移版本 · 可编辑')).toHaveValue(/migration\.1/);
+  const method=await page.getByLabel('迁移版本 · 可编辑').inputValue();
+  await page.getByLabel('迁移版本 · 可编辑').fill(method+'\nAlways retain sources.');
   await page.getByRole('button',{name:'保存为新版本'}).click();
   await expect(page.getByLabel('规范化候选').locator('option:checked')).toHaveText(/migration\.2/);
   checks.push('edited_candidate_is_new_version');
-  await page.getByRole('button',{name:'检查验证条件',exact:true}).click();
+  await page.getByRole('button',{name:'下一步：运行验证',exact:true}).click();
+  await page.getByText('原环境对比与工程缺口',{exact:true}).click();
   await page.getByText('候选已修改，旧版本验证不能用于当前版本。',{exact:true}).waitFor();checks.push('stale_validation_not_reused');
+  await page.getByRole('button',{name:'2 生成迁移版本',exact:true}).click();
+  await page.getByRole('button',{name:'保留修改并重新生成',exact:true}).click();
+  await page.getByText('手工编辑与已有候选',{exact:true}).click();
+  await page.getByRole('button',{name:'检查文件与待补材料'}).click();
+  await expect(page.getByLabel('迁移版本 · 可编辑')).toHaveValue(/Always retain sources/);checks.push('regeneration_preserves_manual_edit');
+  await page.getByRole('button',{name:'下一步：运行验证',exact:true}).click();
   await page.getByText('工程对照配置（已有兼容 Runtime）',{exact:true}).click();
   assert(await page.getByRole('button',{name:'运行成对实验'}).isDisabled());checks.push('missing_runtime_cannot_run');
   await page.getByLabel('对照阶段').selectOption('BC');
@@ -76,12 +83,12 @@ try {
   await page.getByRole('button',{name:'冻结新试卷'}).click();
   await expect(page.getByLabel('固定题集').locator('option:checked')).toHaveText('Synthetic private suite');checks.push('project_suite_created');
   await page.screenshot({path:path.join(output,'comparison-desktop.png'),fullPage:true});
-  await page.getByRole('button',{name:'4 导出候选'}).click();
-  await page.getByText('正式发布关闭。',{exact:false}).waitFor();
-  const download=page.waitForEvent('download');await page.getByRole('button',{name:'导出候选草稿'}).click();
+  await page.getByRole('button',{name:'4 导出'}).click();
+  await page.getByText('不是正式发布或已验证 Domain Pack。',{exact:false}).waitFor();
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'下载迁移包'}).click();
   await (await download).saveAs(path.join(output,'synthetic-draft.zip'));checks.push('draft_export_not_release');
   await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
-  await page.locator('.migration-project').filter({hasText:'synthetic-auto-diagnosis'}).click();
+  await page.locator('.migration-project').filter({hasText:"synthetic-auto-diagnosis"}).getByRole("button",{name:"继续处理"}).click();
   await expect(page.getByLabel('已有项目').locator('option')).toHaveCount(2);checks.push('project_survives_refresh');
   await page.setViewportSize({width:390,height:900});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));checks.push('mobile_no_overflow');
@@ -91,7 +98,24 @@ try {
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));checks.push('project_list_mobile_fits');
   await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(300);await page.screenshot({path:path.join(output,'project-list-desktop.png'),fullPage:true});
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();await page.getByRole('button',{name:'发起迁移',exact:true}).first().click();
-  await page.getByRole('button',{name:'选择迁移目标'}).waitFor();checks.push('asset_action_opens_migration');
+  await page.getByRole('button',{name:'生成迁移方案'}).waitFor();checks.push('asset_action_opens_migration');
+  await page.getByRole('button',{name:'返回项目列表',exact:true}).click();
+  await page.locator('input[type=file]').setInputFiles([
+    {name:'delivery.md',mimeType:'text/markdown',buffer:Buffer.from('---\nname: delivery-check\nversion: 1.0.0\n---\n- `lookup_shipment`\nReport missing delivery dates.')},
+    {name:'broken.zip',mimeType:'application/zip',buffer:Buffer.from('not a zip')},
+    {name:'plain.md',mimeType:'text/markdown',buffer:Buffer.from('---\nname: plain-method\nversion: 1.0.0\n---\nSummarize only supplied information.')}
+  ]);
+  await expect(page.locator('[aria-label="导入结果"] li')).toHaveCount(3);
+  await expect(page.locator('.migration-project')).toHaveCount(4);
+  await expect(page.locator('[aria-label="导入结果"]')).toContainText('broken.zip');checks.push('batch_mixed_success_failure_isolated');
+  await page.locator('.migration-project').filter({hasText:'delivery-check'}).getByRole('button',{name:'继续处理'}).click();
+  await page.getByRole('button',{name:'生成迁移方案',exact:true}).click();await page.getByRole('button',{name:'生成迁移版本',exact:true}).click();
+  await page.getByRole('button',{name:'4 导出',exact:true}).click();
+  const genericDownload=page.waitForEvent('download');await page.getByRole('button',{name:'下载迁移包',exact:true}).click();
+  await(await genericDownload).saveAs(path.join(output,'delivery-draft.zip'));checks.push('different_skill_generic_draft_export');
+  await page.screenshot({path:path.join(output,'customer-export-desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:900});await page.screenshot({path:path.join(output,'customer-export-mobile.png'),fullPage:true});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   assert.deepEqual(errors,[]);checks.push('no_browser_errors');
   await writeFile(path.join(output,'checks.json'),JSON.stringify({mode:'SYNTHETIC_UI_REAL_SERVICE',checks},null,2));
 } finally {await browser.close();if(proxy){proxy.closeAllConnections();await new Promise(r=>proxy.close(r));}await app.close();await rm(data,{recursive:true,force:true});}

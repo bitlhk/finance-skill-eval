@@ -108,6 +108,7 @@ export async function createEvaluationService(
   app.post<{Params:{id:string}}>('/api/migrations/:id/drafts',request=>migrations.draft(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/validate',request=>migrations.validate(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/verify-target',request=>migrations.verifyTarget(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/review',request=>migrations.review(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/suites',request=>migrations.createSuite(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimize',request=>migrations.optimize(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimized-candidate',request=>migrations.adoptOptimization(request.params.id,request.body));

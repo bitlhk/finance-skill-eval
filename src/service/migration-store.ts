@@ -13,7 +13,7 @@ import type { PreparationStore } from './preparation-store.js';
 import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
-import { generateCandidateFiles, versionedMethod } from './migration-candidate.js';
+import { generateCandidateFiles, versionedMethod, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 
@@ -40,6 +40,7 @@ type Migration = {
   assessment:'NOT_VALIDATED';
   targetRuns?:string[];
   simulationProfile?:string;
+  reviews?:Array<{candidateDigest:string;decision:'ACCEPTED'|'NEEDS_CHANGES';notes:string;recordedAt:string;source:'PRIVATE_ADMIN_RECORDED'}>;
   generation?:{candidateDigest:string;target:{runtime:string;environmentId?:string;intent:string};
     diff:Array<{path:string;operation:string;before:string;after:string}>;generatedAt:string};
 };
@@ -92,14 +93,21 @@ export class MigrationStore {
     if(p.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
     if(p.environmentId){const env=await this.environments?.get(p.environmentId);
       if(!env||env.type!=='runtime_http'||env.runtimeType!=='openjiuwen')return conflict('目标必须是已登记的 OpenJiuwen 环境');}
-    const diagnosis=await this.diagnose(id),archive=await this.skills.readArchive(value.source.assetId);
+    const base=value.candidate??value.source;
+    const originalArchive=await this.skills.readArchive(base.assetId);
+    if(value.generation)for(const [name,bytes] of Object.entries(originalArchive).filter(([name])=>name.startsWith('migration-generated/'))){
+      const expected=value.generation.diff.find(d=>d.path===name)?.after;
+      if(expected===undefined||Buffer.from(bytes).toString()!==expected)return conflict('适配生成文件已修改；为避免覆盖工程改动，请先人工处理冲突');
+    }
+    const archive=regenerationArchive(originalArchive,base);
+    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(base):await this.diagnose(id);
     const version=`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`;
     const target={runtime:p.runtime,...(p.environmentId?{environmentId:p.environmentId}:{}),intent:p.intent};
     if(p.simulationProfile&&!p.acknowledgeSimulation)return conflict('请确认模拟端口、资源映射与业务待确认边界');
     const simulation=p.simulationProfile?{id:p.simulationProfile,target:await nativeTarget()}:undefined;
-    const generated=generateCandidateFiles(archive,value.source,diagnosis,version,target,simulation);
+    const generated=generateCandidateFiles(archive,base,diagnosis,version,target,simulation);
     const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
-    value.candidate=candidate;value.candidateNotes='系统生成待审阅声明和薄适配；原业务正文保留，未验证原生执行。';
+    value.candidate=candidate;value.candidateNotes='基于当前版本生成声明与薄适配；保留方法修改和资源，等待本版本验证。';
     value.simulationProfile=p.simulationProfile;
     value.generation={candidateDigest:candidate.artifactSha256,target,diff:generated.diff,generatedAt:new Date().toISOString()};
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
@@ -130,7 +138,7 @@ export class MigrationStore {
     const value=await this.get(id), source=await this.skills.readSource(value.source.assetId);
     const files=await this.skills.readFiles((value.candidate??value.source).assetId);
     const archive=await this.skills.readArchive((value.candidate??value.source).assetId);
-    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
+    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.candidate??value.source):null;
     return {project:value, source, candidate:value.candidate ? await this.skills.readSource(value.candidate.assetId):null,diagnosis,
       readableFiles:Object.keys(files), inventoryComplete:diagnosis?.status==='COMPLETE',
       fileInventory:Object.entries(archive).map(([name,bytes])=>({name,bytes:bytes.length,
@@ -139,6 +147,13 @@ export class MigrationStore {
       unresolved:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>f.dependencyType)??['DIAGNOSIS_NOT_RUN'],
       analysisMode:'STATIC_INVENTORY_NOT_DEPENDENCY_VALIDATION', uploadedScriptsExecuted:false};
   }
+  async review(id:string,input:unknown){return this.serial(async()=>{
+    const p=z.strictObject({baseAssetId:z.string(),decision:z.enum(['ACCEPTED','NEEDS_CHANGES']),notes:z.string().min(1).max(2000)}).parse(input);
+    const value=await this.get(id);
+    if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请对当前版本重新记录专业复核');
+    (value.reviews??=[]).push({candidateDigest:value.candidate.artifactSha256,decision:p.decision,notes:p.notes,recordedAt:new Date().toISOString(),source:'PRIVATE_ADMIN_RECORDED'});
+    await writeJsonAtomic(this.file(id),value);return value;
+  });}
   async createSuite(id:string,input:unknown) {return this.serial(async()=>{
     const p=manualPreparationSchema.parse(input),value=await this.get(id);
     if (!this.preparations) return conflict('Preparation store unavailable');
@@ -202,11 +217,11 @@ export class MigrationStore {
     const targetRunner=new MigrationTargetRuns(this.root,this.skills);
     const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>targetRunner.get(runId)));
     const current=targetRuns.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1);
-    return {project:value,diagnosis,targetRuns,verification:{originalBaseline:'NOT_RUN',targetExecution:current?.status??'NOT_RUN',
+    return {project:value,diagnosis,targetRuns,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:'NOT_RUN',targetExecution:current?.status??'NOT_RUN',
       candidateChanged:!!value.generation&&value.generation.candidateDigest!==value.candidate?.artifactSha256,
       originalOwner:'原工程负责人',targetOwner:'Harness / Host 接入开发者',
       missingSource:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>({path:f.path,line:f.line,reason:f.reason}))??[],
-      targetGaps:value.simulationProfile?['本目标只验证方法在模拟业务端口上的执行，不证明浦发原生等价或专业结论正确。','原始取数实现、原环境对照与业务矛盾仍待负责人确认。']:['目标 Host 尚未消费迁移中立声明和薄适配；需要本项目开发接线与原生回归',
+      targetGaps:value.simulationProfile?['本目标只验证方法在模拟业务端口上的执行，不证明原环境等价或专业结论正确。','原工程、原环境对照与业务口径仍待负责人确认。']:['当前工具尚未接入已支持的目标 Host；请由接入开发者补齐工具实现、Schema 和资源映射',
         '需冻结等价测试数据与可信身份范围；配置声明不等于授权已核验']},
       suites:await Promise.all((value.suiteIds??[]).map(id=>this.preparations?.get(id)??null)),
       optimizations:await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)}))),
@@ -228,13 +243,26 @@ export class MigrationStore {
     const files=await this.skills.readArchive(value.candidate.assetId);
     if (['migration-manifest.json','migration-report.json'].some(name=>name in files)) return conflict('Reserved export metadata path exists in candidate; no file was overwritten');
     const report=await this.report(id);
+    for(const [name,bytes] of Object.entries(files)){
+      if(/(^|\/)(\.env(?:\..*)?|access-token|id_rsa|id_ed25519)$|\.(pem|key)$/i.test(name)||/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"'\n]{8,}["']/i.test(Buffer.from(bytes).toString()))
+        return conflict('候选可能包含凭据，请先检查并移除敏感配置；未导出任何文件');
+    }
+    const state=report.verification.targetExecution==='PASSED'?'TARGET_VERIFIED_CANDIDATE':'DRAFT_NOT_VALIDATED';
     const manifest={schemaVersion:'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
-      state:'DRAFT_NOT_VALIDATED',builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
+      state,builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
       executionPolicy:'INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION',dependencies:'NOT_VALIDATED',
       fileDigestAlgorithm:'SHA-256 of original file bytes',
       files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,createHash('sha256').update(content).digest('hex')]))};
     return Buffer.from(zipSync({...files,'migration-manifest.json':strToU8(JSON.stringify(manifest,null,2)),
-      'migration-report.json':strToU8(JSON.stringify(report,null,2))}));
+      'migration-report.json':strToU8(JSON.stringify({schemaVersion:'migration.export-scope.v1',state,
+        candidateDigest:value.candidate.artifactSha256,verification:report.verification,
+        changes:value.generation?.diff.map(d=>({path:d.path,operation:d.operation})),
+        targetRuns:report.targetRuns.map(r=>({id:r.id,candidateDigest:r.candidateDigest,status:r.status,
+          cases:r.cases.map(c=>({caseId:c.caseId,passed:c.passed}))})),
+        professionalAcceptance:report.professionalReview?'ADMIN_RECORDED_NOT_INDEPENDENTLY_VERIFIED':'NOT_REVIEWED',
+        professionalReview:report.professionalReview?{decision:report.professionalReview.decision,source:report.professionalReview.source,recordedAt:report.professionalReview.recordedAt}:null,
+        originalEquivalence:'NOT_VERIFIED',
+        excluded:'No raw model answers, test payloads, connection configuration or complete experiment reports. Review your own method/resource files for private content before sharing.'},null,2))}));
   }
   release():never {return conflict('Release blocked: original native baseline, target Host integration, dependency validation and independent business acceptance remain unverified');}
 }

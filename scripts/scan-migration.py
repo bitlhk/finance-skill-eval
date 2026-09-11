@@ -20,7 +20,8 @@ def scan(files):
 
     for path, text in files.items():
         status = "TEXT_INSPECTED"
-        if path.endswith(".py"):
+        lower_path = path.lower()
+        if lower_path.endswith(".py"):
             status = "AST_PARSED"
             try:
                 tree = ast.parse(text, filename=path)
@@ -73,6 +74,8 @@ def scan(files):
                     for keyword in node.keywords:
                         if keyword.arg in ('json_schema', 'input_schema', 'schema'):
                             add(path, keyword.value.lineno, "TOOL_SCHEMA", "注册时显式传入工具 Schema", "目标框架需保留参数展开、必填项及结果语义", "核对实际 Schema 来源与返回合同；不根据函数名猜测字段", layer="HOST", symbol=keyword.arg)
+                if isinstance(node.func, ast.Attribute) and node.func.attr in ('load_memory', 'save_memory', 'get_context', 'load_state', 'save_state'):
+                    add(path, node.lineno, "STATE_CONTEXT", "调用状态、记忆或上下文接口", "生命周期、隔离与撤权清理需要宿主对应实现", "核对当前调用主体与会话归属；不要把记忆内容当授权", layer="HOST", symbol=func)
                 if func in ('eval', 'exec', '__import__') or resolved == 'importlib.import_module':
                     add(path, node.lineno, "DYNAMIC_DEPENDENCY", "执行期动态加载或执行代码", "静态扫描不能确定最终依赖", "人工审阅加载目标；受控验证前禁止执行", layer="UNKNOWN", symbol=func)
                 if func in ('asyncio.create_subprocess_shell', 'os.system', 'subprocess.run', 'subprocess.Popen'):
@@ -83,7 +86,14 @@ def scan(files):
             for token in tokenize.generate_tokens(io.StringIO(text).readline):
                 if token.type == tokenize.COMMENT and re.search(r'省略|omitted|implementation omitted', token.string, re.I):
                     add(path, token.start[0], "OMITTED_IMPLEMENTATION", "源码明确标注省略实现", "无法执行等价业务验证", "原作者提供完整实现或明确标记受控替身", layer="UNKNOWN")
-        elif path.endswith(('.js', '.ts', '.java', '.sh', '.mjs')):
+        elif lower_path.endswith('.java'):
+            # Lexical import evidence is useful, but is deliberately not a Java semantic parser.
+            status = "LEXICAL_ONLY"
+            cleaned = re.sub(r'/\*[\s\S]*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"', lambda m: '\n' * m.group(0).count('\n'), text)
+            for match in re.finditer(r'(?m)^\s*import\s+(?:static\s+)?((?:com\.openjiuwen|io\.agentscope|dev\.langchain4j)\.[\w.*]+)\s*;', cleaned):
+                add(path, cleaned[:match.start()].count('\n') + 1, "SDK_IMPORT", "Java 导入运行框架类型", "仅确认导入绑定，未解析完整类型与调用关系", "将框架引用保留在适配区域并用实际 SDK 编译验证", symbol=match.group(1))
+            add(path, 1, "UNPARSED_CODE", "Java 仅完成词法导入检查", "方法调用、泛型、反射及依赖版本仍需工程检查", "提供可编译工程与依赖锁；不把词法检查当编译通过", layer="UNKNOWN")
+        elif lower_path.endswith(('.js', '.ts', '.tsx', '.jsx', '.sh', '.mjs', '.cjs', '.go', '.rs', '.rb', '.c', '.cpp', '.cs')):
             status = "UNSUPPORTED_LANGUAGE"
             add(path, 1, "UNPARSED_CODE", "本轮未配置此语言的语义解析器", "未发现依赖不能解释为无依赖", "人工审阅或补充对应静态解析器", layer="UNKNOWN")
         if path.lower().endswith('skill.md'):
