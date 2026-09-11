@@ -31,6 +31,7 @@ export class MigrationTargetRuns {
     const files=await this.skills.readArchive(asset.assetId),canonicalArchive=canonicalNeutralArchive(files,asset.artifactSha256);
     const contract=JSON.parse(Buffer.from(files['migration-generated/neutral-contract.json']!).toString());
     if(contract.executionProfile!==profileId||contract.mappingReview?.portsSha256!==target.portsSha256)throw new Error('端口定义已变化，请重新审阅并生成候选');
+    if(pending.size>=2)throw Object.assign(new Error('目标环境已有两个验证任务，请等待完成后再试'),{statusCode:409});
     const value:TargetRun={id:'target-'+randomUUID(),assetId:asset.assetId,candidateDigest:asset.artifactSha256,startedAt:new Date().toISOString(),status:'RUNNING',profile:profileId,target,cases:[]};
     pending.add(value.id);try{await writeJsonAtomic(this.file(value.id),value);}catch(e){pending.delete(value.id);throw e;}
     void this.execute(value,asset,canonicalArchive).finally(()=>pending.delete(value.id)).catch(()=>{});return value;

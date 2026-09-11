@@ -1,11 +1,12 @@
 import {it,expect,vi} from 'vitest';
 import * as fileStore from '../src/service/file-store.js';
+import {SkillStore} from '../src/service/skill-store.js';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
-import {zipSync,strToU8} from 'fflate';
+import {zipSync,strToU8,unzipSync} from 'fflate';
 import {createEvaluationService} from '../src/service/server.js';
 
 it('target state uses actual current-run evidence; bad digest fails, retry and refresh work, edits invalidate',async()=>{
@@ -51,5 +52,25 @@ it('target state uses actual current-run evidence; bad digest fails, retry and r
     const analysis=(await post(`/api/migrations/${project.id}/analyze`,{})).json();
     expect((await post(`/api/migrations/${project.id}/drafts`,{source:analysis.candidate+'\nNew wording.',notes:'edit',baseAssetId:generated.candidate.assetId,autoVersion:true})).statusCode).toBe(200);
     expect((await report()).verification.targetExecution).toBe('NOT_RUN');expect((await verify()).statusCode).toBe(409);
+    const edited=(await report()).project.candidate;
+    expect((await post(`/api/migrations/${project.id}/review`,{baseAssetId:edited.assetId,decision:'ACCEPTED',notes:'Controlled API test, not independent human acceptance.'})).statusCode).toBe(200);
+    expect((await report()).professionalReview.decision).toBe('ACCEPTED');
+    expect((await post(`/api/migrations/${project.id}/review`,{baseAssetId:generated.candidate.assetId,decision:'ACCEPTED',notes:'Stale'})).statusCode).toBe(409);
+    const regenerated=(await post(`/api/migrations/${project.id}/generate`,{...input,baseAssetId:edited.assetId,acknowledgeSimulation:true})).json();
+    const nextAnalysis=(await post(`/api/migrations/${project.id}/analyze`,{})).json();
+    expect(nextAnalysis.candidate).toContain('New wording.');expect(nextAnalysis.source).not.toContain('New wording.');
+    expect((await report()).professionalReview).toBeNull();
+    expect((await post(`/api/migrations/${project.id}/verify-target`,{baseAssetId:regenerated.candidate.assetId})).statusCode).toBe(200);
+    expect((await wait()).verification.targetExecution).toBe('PASSED');
+    const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});expect(exported.statusCode).toBe(200);
+    const exportedFiles=unzipSync(exported.rawPayload),manifest=JSON.parse(Buffer.from(exportedFiles['migration-manifest.json']!).toString());
+    expect(manifest.state).toBe('TARGET_VERIFIED_CANDIDATE');
+    expect(Buffer.from(exportedFiles['migration-report.json']!).toString()).not.toContain('controlled result');
+    for(const [name,digest] of Object.entries(manifest.files))expect(createHash('sha256').update(exportedFiles[name]!).digest('hex')).toBe(digest);
+    const reimport=await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:exported.rawPayload});
+    expect(reimport.statusCode).toBe(200);expect(reimport.json().skillId).toBe(regenerated.candidate.skillId);expect(reimport.json().version).toBe(regenerated.candidate.version);
+    const restored=await new SkillStore(path.join(data,'app')).readArchive(reimport.json().assetId);
+    expect(Object.keys(restored).sort()).toEqual(Object.keys(exportedFiles).sort());
+    for(const [name,bytes] of Object.entries(exportedFiles))expect(Buffer.from(restored[name]!)).toEqual(Buffer.from(bytes));
   }finally{releaseResponse();reader.mockRestore();await app.close();await new Promise<void>(r=>server.close(()=>r()));await rm(data,{recursive:true,force:true});if(oldEndpoint===undefined)delete process.env.FINANCE_MIGRATION_NATIVE_ENDPOINT;else process.env.FINANCE_MIGRATION_NATIVE_ENDPOINT=oldEndpoint;if(oldToken===undefined)delete process.env.FINANCE_MIGRATION_NATIVE_TOKEN_FILE;else process.env.FINANCE_MIGRATION_NATIVE_TOKEN_FILE=oldToken;}
 });

@@ -50,7 +50,7 @@ it('edits a separate version, retains unsupported files and exports them inertly
     const manifest=JSON.parse(Buffer.from(archive['migration-manifest.json']!).toString());
     expect(manifest.executionPolicy).toBe('INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION');
     expect(manifest.dependencies).toBe('NOT_VALIDATED');
-    expect(JSON.parse(Buffer.from(archive['migration-report.json']!).toString()).project.assessment).toBe('NOT_VALIDATED');
+    expect(JSON.parse(Buffer.from(archive['migration-report.json']!).toString()).professionalAcceptance).toBe('NOT_REVIEWED');
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/releases`,headers})).statusCode).toBe(409);
   } finally {await app.close();}
 });

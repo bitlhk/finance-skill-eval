@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { accessToken, authHeaders, apiPath, basePath, tokenKey, downloadApi } from './api-path';
+import {importMigrationFiles,type ImportResult} from './migration-import';
 import {
   Activity,
   Archive,
@@ -790,12 +791,19 @@ function ReportResult({ job }: { job: EvaluationJob }) {
 
 function MigrationWorkspace({catalog,source,onChanged}:{catalog:Catalog;source:SkillAsset|null;onChanged():Promise<void>}) {
   const [uploadedAsset,setUploadedAsset]=useState(source),[error,setError]=useState(''),[uploading,setUploading]=useState(false);
+  const [imports,setImports]=useState<ImportResult[]>([]),[refreshKey,setRefreshKey]=useState(0);
   const input=useRef<HTMLInputElement>(null);
-  async function upload(file:File){setUploading(true);setError('');try{const asset=await api<SkillAsset>('/api/skills/upload',{method:'POST',body:file,headers:{'content-type':'application/zip'}});await onChanged();setUploadedAsset(asset);}catch(e){setError(String(e));}finally{setUploading(false);}}
+  async function upload(files:File[]){if(uploading)return;setUploading(true);setError('');setImports([]);let single:SkillAsset|null=null;try{
+    const results=await importMigrationFiles(files,async(bytes)=>{
+      const asset=await api<SkillAsset>('/api/skills/upload',{method:'POST',body:new Blob([bytes as BlobPart]),headers:{'content-type':'application/zip'}});
+      await api('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:asset.assetId,name:asset.displayName+'迁移'})});single=asset;
+    });setImports(results);await onChanged();setUploadedAsset(files.length===1?single:null);setRefreshKey(n=>n+1);
+  }catch(e){setError(String(e));}finally{setUploading(false);}}
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL MIGRATION</span><h1>Skill 迁移</h1></div></section>
     {error&&<p role="alert">{error}</p>}{uploading&&<p role="status">上传中</p>}
-    <input hidden ref={input} type="file" accept=".zip,application/zip" onChange={e=>{const f=e.target.files?.[0];if(f)void upload(f);e.target.value='';}}/>
-    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} onUpload={()=>{if(!uploading)input.current?.click();}}/>
+    {imports.length>0&&<ul aria-label="导入结果">{imports.map((r,i)=><li key={i}>{r.name}：{r.status==='IMPORTED'?'已导入并诊断':r.error}</li>)}</ul>}
+    <input hidden ref={input} type="file" multiple accept=".zip,.md,application/zip,text/markdown" onChange={e=>{const files=Array.from(e.target.files??[]);if(files.length)void upload(files);e.target.value='';}}/>
+    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUpload={()=>{if(!uploading)input.current?.click();}}/>
   </div>;
 }
 

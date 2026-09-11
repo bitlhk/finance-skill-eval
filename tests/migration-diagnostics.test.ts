@@ -45,7 +45,7 @@ it('marks missing modules, omitted implementation and dynamic loads as unknown',
 });
 it('syntax errors and unsupported code do not become dependency-free',async()=>{
   const {asset,diagnostics}=await setup({'bad.py':'def bad(', 'host.java':'class Host {}'});
-  const d=await diagnostics.diagnose(asset);expect(d.dependencyStatus).toBe('UNKNOWN');expect(d.coverage.map(c=>c.status)).toEqual(expect.arrayContaining(['PARSE_FAILED','UNSUPPORTED_LANGUAGE']));
+  const d=await diagnostics.diagnose(asset);expect(d.dependencyStatus).toBe('UNKNOWN');expect(d.coverage.map(c=>c.status)).toEqual(expect.arrayContaining(['PARSE_FAILED','LEXICAL_ONLY']));
 });
 it('never executes uploaded top-level code',async()=>{
   const {asset,diagnostics}=await setup({'host.py':'raise RuntimeError("must never execute")\nprint("not executed")\n'});

@@ -139,7 +139,7 @@ export class SkillStore {
       .sort((left, right) => left.split("/").length - right.split("/").length);
     const skillFile = skillCandidates[0];
     if (!skillFile) throw new Error("Skill ZIP does not contain SKILL.md");
-    if (skillCandidates.filter(name=>name.split('/').length===skillFile.split('/').length).length > 1) throw new Error('Skill ZIP has ambiguous root Skill files');
+    if (skillCandidates.length > 1) throw new Error('Skill ZIP has ambiguous root Skill files: multiple Skills are not supported; upload each Skill separately');
     const sourceBytes = normalizedFiles.find(([name]) => name === skillFile)?.[1];
     if (!sourceBytes) throw new Error("Unable to read SKILL.md from archive");
     const source = Buffer.from(sourceBytes).toString("utf8");

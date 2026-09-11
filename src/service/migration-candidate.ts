@@ -5,6 +5,23 @@ import type { Diagnosis } from './migration-diagnostics.js';
 import type { SkillAssetRecord } from './skill-store.js';
 import type { NativeTarget } from './migration-target.js';
 
+const generatedNames=new Set(['neutral-contract.json','neutral_result.py','agentscope_result_adapter.py','OpenJiuwenMigrationTool.java','review.json','README.md']);
+
+/** Rebuild only owned generated files; preserve edited method/resources and refuse unknown overlays. */
+export function regenerationArchive(archive:Record<string,Uint8Array>,base:SkillAssetRecord){
+  const files={...archive};
+  const generated=Object.keys(files).filter(name=>name.startsWith('migration-generated/'));
+  if(generated.length){
+    const contract=JSON.parse(Buffer.from(files['migration-generated/neutral-contract.json']??[]).toString());
+    if(contract.schemaVersion!=='migration.neutral-contract.proposal.v1'||contract.skillId!==base.skillId||contract.method!==base.skillFile)
+      throw Object.assign(new Error('生成声明与当前方法不一致，请人工处理冲突'),{statusCode:409});
+    if(generated.some(name=>!generatedNames.has(name.slice('migration-generated/'.length))))
+      throw Object.assign(new Error('生成目录包含自定义文件，不能自动覆盖；请保留并人工处理冲突'),{statusCode:409});
+    for(const name of generated)delete files[name];
+  }
+  return files;
+}
+
 export function versionedMethod(source:string,skillId:string,version:string){
   const match=source.match(/^---\s*\n([\s\S]*?)\n---[^\S\n]*(?:\n|$)/)
     ??source.match(/^(name:[^\n]*\n[\s\S]{0,8000}?)\n---[^\S\n]*(?:\n|$)/);
@@ -21,7 +38,7 @@ export function generateCandidateFiles(archive:Record<string,Uint8Array>,base:Sk
   if(Object.keys(archive).some(name=>name.startsWith(folder+'/')))throw Object.assign(new Error('已有生成目录；请从原始项目生成新的候选，避免覆盖'),{statusCode:409});
   const files={...archive};
   files[base.skillFile]=strToU8(versionedMethod(original,base.skillId,version));
-  const tools=[...new Set([...original.matchAll(/(?:^-\s*|调用\s*)`((?:get_|query_|read_|fetch_)[a-z0-9_]+)`/gm)].map(m=>m[1]!))];
+  const tools=[...new Set([...original.matchAll(/(?:^-\s*|调用\s*)`([a-zA-Z_][a-zA-Z0-9_]*)`/gm)].map(m=>m[1]!))];
   const resources=[...new Set([...original.matchAll(/`((?:references?|scripts)\/[^`]+)`/g)].map(m=>m[1]!))].map(ref=>{
     const requested=path.posix.join(path.posix.dirname(base.skillFile),ref);
     const alternative=Object.keys(archive).filter(name=>path.posix.basename(name)===path.posix.basename(ref));
@@ -35,6 +52,7 @@ export function generateCandidateFiles(archive:Record<string,Uint8Array>,base:Sk
     skillId:base.skillId,version,method:base.skillFile,methodState:'BUSINESS_TEXT_PRESERVED_NOT_DECOUPLING_ACCEPTED',
     capabilities:tools.map(name=>({name,operation:'UNCONFIRMED',inputSchema:null,outputSchema:null,
       binding:'HOST_REVIEW_REQUIRED',evidence:diagnosis.declarations.filter(d=>d.name===name)})),resources,
+    unboundDeclarations:diagnosis.declarations,
     resultContract:{schemaVersion:'migration.tool-result.v1',fields:['status','text','data','sources'],
       status:['COMPLETED','MISSING','REJECTED','FAILED'],rules:['Never map missing to zero','Preserve units and source values','No implicit suitability decision']},
     target,acceptance:'NOT_VALIDATED'},null,2));

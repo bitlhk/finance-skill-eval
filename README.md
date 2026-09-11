@@ -20,6 +20,8 @@ Service   独立控制台、上传 Skill、环境预检与历史报告
 
 迁移候选工作区的实现范围、私有启动及待验收项见 [Skill 迁移 V0.1](docs/skill-migration-v0.1.md)。当前不是已完成的跨 Runtime 迁移交付，公开站点不启用客户资产上传。
 
+客户操作、批量导入、保留编辑的再验证与导出兼容说明见 [Skill 迁移客户指南 V0.2](docs/skill-migration-customer-v0.2.md)。通用草稿不需要固定 Skill ID；可执行验证仍只允许已登记并确认的工具映射。
+
 - **Skill 分析与出题**：分析 Skill 的目标、流程和依赖，辅助生成与其能力相匹配的测试任务。
 - **同题 A/B 对照**：支持比较无 Skill 与有 Skill、不同 Skill 版本，以及相同 Skill 在不同模型上的表现。
 - **Promptfoo 执行编排**：使用固定测试题和控制变量组织左右运行，记录输出、耗时、Token、工具调用与运行证据。
