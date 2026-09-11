@@ -139,7 +139,7 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}
       <div className="migration-fields"><label>目标运行环境<select value={target} onChange={e=>setTarget(e.target.value)} disabled={busy}><option value="">OpenJiuwen · 先生成待接线草稿</option>{environments.filter(e=>e.runtimeType==='openjiuwen').map(e=><option key={e.environmentId} value={e.environmentId}>{e.name}</option>)}</select></label>
         <label>迁移意图<select value={intent} onChange={e=>setIntent(e.target.value)} disabled={busy}><option value="portable_method_and_adapters">保留业务方法，提取中立声明与薄适配</option><option value="preserve_business_method">保留业务方法，生成接线审阅草稿</option></select></label></div>
       </>}
-      <button className={project.generation?.candidateDigest===project.candidate?.artifactSha256?'button secondary':'button primary'} disabled={busy||!diagnosis||!!simulation&&!ack} onClick={()=>void act(async()=>{
+      <button className={project.candidate&&project.generation?.candidateDigest===project.candidate.artifactSha256?'button secondary':'button primary'} disabled={busy||!diagnosis||!!simulation&&!ack} onClick={()=>void act(async()=>{
         const p=await post<Project>(`/${project.id}/generate`,{runtime:'openjiuwen',...(!simulation&&target?{environmentId:target}:{}),intent,baseAssetId:(project.candidate??project.source).assetId,...(simulation?{simulationProfile:simulation,acknowledgeSimulation:true}:{})});
         update(p);setNotes(p.candidateNotes);setAnalysis(null);setDraft('');setReport(null);
       })}><FileCode2 size={16}/>{project.candidate?'保留修改并重新生成':'生成迁移版本'}</button>
