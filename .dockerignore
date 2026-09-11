@@ -7,3 +7,9 @@ reports
 artifacts
 docs/assets
 *.log
+.env*
+.migration-*/
+.public-demo/
+.runtime.local.json*
+.models.local.json*
+examples/migration-native-host/target/

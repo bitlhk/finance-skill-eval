@@ -33,4 +33,8 @@
 .migration-answer table { width:100%;border-collapse:collapse;font-size:13px; }
 .migration-answer th,.migration-answer td { border:1px solid #dddfe4;padding:8px;text-align:left; }
 .migration-answer th { background:#f6f7f8; }
+.migration-project-list { display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));margin-top:20px; }
+.migration-project { display:grid;gap:9px;text-align:left;padding:18px;border:1px solid #dddfe4;border-radius:6px;background:white;color:#30343b;overflow-wrap:anywhere; }
+.migration-project:hover { border-color:#b91c30; }
+.migration-project span { font-size:13px; }
 @media(max-width:700px) { .migration-panel .migration-fields { grid-template-columns: minmax(0,1fr); } }

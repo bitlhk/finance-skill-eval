@@ -27,7 +27,7 @@ try{
   assert.equal((await app.inject({url:'/api/migrations/target'})).statusCode,401);checks.push('private_auth_required');
   const address=await app.listen({host:'127.0.0.1',port:0}),page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(address);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();
-  await page.getByRole('button',{name:'Skill 资产',exact:true}).click();await page.locator('input[type=file]').setInputFiles(zip);
+  await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'新建迁移',exact:true}).click();await page.locator('input[type=file]').setInputFiles(zip);
   await page.getByRole('button',{name:'选择迁移目标'}).waitFor({timeout:30000});await page.getByRole('button',{name:'选择迁移目标'}).click();
   await page.getByLabel('执行方式').selectOption('pf-method-synthetic-v1');await page.getByRole('checkbox').check();
   await page.getByRole('button',{name:'生成迁移候选',exact:true}).click();await page.getByText('新增 · migration-generated/neutral-contract.json',{exact:true}).waitFor();checks.push('uploaded_pf_diagnosed_generated_reviewed');
@@ -40,7 +40,7 @@ try{
   assert.equal(report.verification.targetExecution,'PASSED',JSON.stringify(report.targetRuns));checks.push('generated_asset_real_model_native_agent_passed');
   await page.getByRole('heading',{name:/当前候选 · 模拟目标执行通过/}).waitFor({timeout:10000});await page.screenshot({path:path.join(out,'target-desktop.png'),fullPage:true});checks.push('webpage_displays_current_evidence');
   const archiveResponse=await app.inject({url:`/api/migrations/${project.id}/export`,headers});assert.equal(archiveResponse.statusCode,200);await writeFile(path.join(out,'pf-simulated-candidate.zip'),archiveResponse.rawPayload,{mode:0o600});
-  await page.reload();await page.getByRole('button',{name:'Skill 资产',exact:true}).click();await page.getByLabel('已有项目').selectOption(project.id);await page.getByRole('button',{name:'4 验证',exact:true}).click();await page.getByRole('heading',{name:/当前候选 · 模拟目标执行通过/}).waitFor();checks.push('refresh_preserves_verified_result');
+  await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.locator('.migration-project').filter({hasText:project.name}).click();await page.getByRole('button',{name:'3 目标验证',exact:true}).click();await page.getByRole('heading',{name:/当前候选 · 模拟目标执行通过/}).waitFor();checks.push('refresh_preserves_verified_result');
   await page.setViewportSize({width:390,height:900});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(out,'target-mobile.png'),fullPage:true});checks.push('mobile_no_overflow');
   const analysis=(await app.inject({method:'POST',url:`/api/migrations/${project.id}/analyze`,headers})).json();
   const edited=await app.inject({method:'POST',url:`/api/migrations/${project.id}/drafts`,headers,payload:{source:analysis.candidate+'\n保留合成数据来源标识。',notes:'验证修改使旧证据失效',baseAssetId:project.candidate.assetId,autoVersion:true}});assert.equal(edited.statusCode,200);

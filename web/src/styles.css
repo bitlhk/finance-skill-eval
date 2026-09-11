@@ -331,7 +331,7 @@ button { cursor: pointer; }
   .sidebar { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; top: auto; min-height: 58px; height: 58px; padding: 5px; }
   .sidebar-brand { display: none; }
   .sidebar-toggle { display: none; }
-  .sidebar nav { grid-template-columns: repeat(6,1fr); }
+  .sidebar nav { grid-template-columns: repeat(7,minmax(0,1fr)); }
   .nav-button { height: 48px; }
   .nav-button span { display: block; font-size: 11px; }
   .nav-button { flex-direction: column; gap: 2px; }

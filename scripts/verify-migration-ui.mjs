@@ -43,6 +43,9 @@ try {
   await page.getByRole('button',{name:'进入工作区',exact:true}).click();
   checks.push('private_workspace_login');
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
+  assert.equal(await page.locator('.migration-panel').count(),0);checks.push('assets_not_migration_workspace');
+  await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+  await page.getByRole('button',{name:'新建迁移',exact:true}).click();
   await page.locator('input[type=file]').setInputFiles({name:'synthetic.zip',mimeType:'application/zip',buffer:Buffer.from(zipSync({
     'SKILL.md':strToU8('---\nname: synthetic-auto-diagnosis\nversion: 1.0.0\n---\nDescribe known facts.'),
     'helper.py':strToU8('from agentscope.tool import ToolResponse\nfrom .missing import read\n')}))});
@@ -73,15 +76,22 @@ try {
   await page.getByRole('button',{name:'冻结新试卷'}).click();
   await expect(page.getByLabel('固定题集').locator('option:checked')).toHaveText('Synthetic private suite');checks.push('project_suite_created');
   await page.screenshot({path:path.join(output,'comparison-desktop.png'),fullPage:true});
-  await page.getByRole('button',{name:'6 发布'}).click();
+  await page.getByRole('button',{name:'4 导出候选'}).click();
   await page.getByText('正式发布关闭。',{exact:false}).waitFor();
   const download=page.waitForEvent('download');await page.getByRole('button',{name:'导出候选草稿'}).click();
   await (await download).saveAs(path.join(output,'synthetic-draft.zip'));checks.push('draft_export_not_release');
-  await page.reload();await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
+  await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+  await page.locator('.migration-project').filter({hasText:'synthetic-auto-diagnosis'}).click();
   await expect(page.getByLabel('已有项目').locator('option')).toHaveCount(2);checks.push('project_survives_refresh');
   await page.setViewportSize({width:390,height:900});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));checks.push('mobile_no_overflow');
   await page.screenshot({path:path.join(output,'migration-mobile.png'),fullPage:true});
+  await page.getByRole('button',{name:'返回项目列表',exact:true}).click();
+  await page.screenshot({path:path.join(output,'project-list-mobile.png'),fullPage:true});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));checks.push('project_list_mobile_fits');
+  await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(300);await page.screenshot({path:path.join(output,'project-list-desktop.png'),fullPage:true});
+  await page.getByRole('button',{name:'Skill 资产',exact:true}).click();await page.getByRole('button',{name:'发起迁移',exact:true}).first().click();
+  await page.getByRole('button',{name:'选择迁移目标'}).waitFor();checks.push('asset_action_opens_migration');
   assert.deepEqual(errors,[]);checks.push('no_browser_errors');
   await writeFile(path.join(output,'checks.json'),JSON.stringify({mode:'SYNTHETIC_UI_REAL_SERVICE',checks},null,2));
 } finally {await browser.close();if(proxy){proxy.closeAllConnections();await new Promise(r=>proxy.close(r));}await app.close();await rm(data,{recursive:true,force:true});}

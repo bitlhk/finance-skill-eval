@@ -5,6 +5,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  ArrowRightLeft,
   BriefcaseBusiness,
   ChartNoAxesCombined,
   ChevronRight,
@@ -52,7 +53,7 @@ import type {
   SkillVariant,
 } from "./types";
 
-type View = "catalog" | "evaluation" | "skills" | "environment" | "methodology" | "history";
+type View = "catalog" | "evaluation" | "skills" | "migration" | "environment" | "methodology" | "history";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const PublicDemoContext = createContext(false);
@@ -120,6 +121,7 @@ export function App() {
   const [needsAccess, setNeedsAccess] = useState(false);
   const [accessInput, setAccessInput] = useState("");
   const [view, setView] = useState<View>("catalog");
+  const [migrationSource,setMigrationSource]=useState<SkillAsset|null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [selection, setSelection] = useState("");
@@ -446,6 +448,7 @@ export function App() {
             <NavButton icon={<BriefcaseBusiness />} label="精选技能" active={view === "catalog"} onClick={() => setView("catalog")} />
             <NavButton icon={<FlaskConical />} label="对比评测" active={view === "evaluation"} onClick={() => setView("evaluation")} />
             {catalog?.publicDemo === false ? <NavButton icon={<Upload />} label="Skill 资产" active={view === "skills"} onClick={() => setView("skills")} /> : null}
+            {catalog?.publicDemo === false ? <NavButton icon={<ArrowRightLeft />} label="Skill 迁移" active={view === "migration"} onClick={() => {setMigrationSource(null);setView("migration");}} /> : null}
             <NavButton icon={<Network />} label="测试环境" active={view === "environment"} onClick={() => setView("environment")} />
             <NavButton icon={<ShieldCheck />} label="评测方法" active={view === "methodology"} onClick={() => setView("methodology")} />
             <NavButton icon={<History />} label="运行记录" active={view === "history"} onClick={() => setView("history")} />
@@ -509,7 +512,8 @@ export function App() {
             onBack={() => setView("catalog")}
           />
         ) : null}
-        {view === "skills" && catalog ? <SkillAssetsView catalog={catalog} onChanged={refresh} onSelectPreparation={id => {
+        {view === "migration" && catalog?.publicDemo===false ? <MigrationWorkspace catalog={catalog} source={migrationSource} onChanged={refresh}/> : null}
+        {view === "skills" && catalog ? <SkillAssetsView catalog={catalog} onChanged={refresh} onMigrate={asset=>{setMigrationSource(asset);setView('migration');}} onSelectPreparation={id => {
           const preparation = catalog.preparations.find(item => item.preparationId === id);
           if (preparation) setSelectedSkillId(preparation.skillId);
           setSelection(`prep:${id}`);
@@ -784,8 +788,18 @@ function ReportResult({ job }: { job: EvaluationJob }) {
   </div>;
 }
 
-function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog: Catalog; onChanged(): Promise<void>; onSelectPreparation(id: string): void }) {
-  const [uploadedAsset,setUploadedAsset]=useState<SkillAsset|null>(null);
+function MigrationWorkspace({catalog,source,onChanged}:{catalog:Catalog;source:SkillAsset|null;onChanged():Promise<void>}) {
+  const [uploadedAsset,setUploadedAsset]=useState(source),[error,setError]=useState(''),[uploading,setUploading]=useState(false);
+  const input=useRef<HTMLInputElement>(null);
+  async function upload(file:File){setUploading(true);setError('');try{const asset=await api<SkillAsset>('/api/skills/upload',{method:'POST',body:file,headers:{'content-type':'application/zip'}});await onChanged();setUploadedAsset(asset);}catch(e){setError(String(e));}finally{setUploading(false);}}
+  return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL MIGRATION</span><h1>Skill 迁移</h1></div></section>
+    {error&&<p role="alert">{error}</p>}{uploading&&<p role="status">上传中</p>}
+    <input hidden ref={input} type="file" accept=".zip,application/zip" onChange={e=>{const f=e.target.files?.[0];if(f)void upload(f);e.target.value='';}}/>
+    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} onUpload={()=>{if(!uploading)input.current?.click();}}/>
+  </div>;
+}
+
+function SkillAssetsView({ catalog, onChanged, onSelectPreparation,onMigrate }: { catalog: Catalog; onChanged(): Promise<void>; onSelectPreparation(id: string): void;onMigrate(asset:SkillAsset):void }) {
   const [uploading, setUploading] = useState(false);
   const [preparing, setPreparing] = useState("");
   const [message, setMessage] = useState("");
@@ -794,7 +808,7 @@ function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog:
     setUploading(true); setMessage("");
     try {
       const asset=await api<SkillAsset>("/api/skills/upload", { method: "POST", body: file, headers: { "content-type": "application/zip" } });
-      setUploadedAsset(asset);await onChanged(); setMessage("Skill 已上传，正在自动诊断依赖。");
+      await onChanged(); setMessage("Skill 已上传，可发起迁移或生成评测试题。");
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : String(cause)); }
     finally { setUploading(false); }
   };
@@ -808,11 +822,10 @@ function SkillAssetsView({ catalog, onChanged, onSelectPreparation }: { catalog:
   };
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL ARTIFACTS</span><h1>Skill 资产</h1><p>上传候选 ZIP，校验 SKILL.md 后由 Analyzer 生成测试方案。</p></div><button className="button primary" onClick={() => inputRef.current?.click()} disabled={uploading}><FileArchive size={17} />{uploading ? "上传中" : "上传 Skill ZIP"}</button><input hidden ref={inputRef} type="file" accept=".zip,application/zip" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></section>
     {message ? <div className="info-banner">{message}</div> : null}
-    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} onUpload={()=>inputRef.current?.click()}/>
     <section className="asset-section"><div className="section-title"><div><h2>用户上传</h2><p>上传资产只用于当前评测服务，不会发布到 Skill 市场。</p></div><span>{catalog.uploadedSkills.length} 个</span></div>
       <div className="asset-table">{catalog.uploadedSkills.length ? catalog.uploadedSkills.map(skill => {
         const preps = catalog.preparations.filter(item => item.skillAssetId === skill.assetId);
-        return <div className="asset-row" key={skill.assetId}><div className="asset-icon"><FileArchive size={20} /></div><div><strong>{skill.displayName}</strong><small>{skill.skillId}@{skill.version} · {skill.fileCount} 个文件</small><p>{skill.description}</p><em className="mono">SHA {skill.artifactSha256.slice(0, 16)}</em></div><div className="asset-actions"><button className="button secondary" onClick={() => prepare(skill.assetId)} disabled={preparing === skill.assetId || !catalog.modelRoles.analyzer.configured}><Sparkles size={16} />{preparing === skill.assetId ? "出题中" : "AI 生成试题"}</button>{preps[0] ? <button className="icon-button" title="进入评测" onClick={() => onSelectPreparation(preps[0].preparationId)}><ChevronRight size={18} /></button> : null}</div></div>;
+        return <div className="asset-row" key={skill.assetId}><div className="asset-icon"><FileArchive size={20} /></div><div><strong>{skill.displayName}</strong><small>{skill.skillId}@{skill.version} · {skill.fileCount} 个文件</small><p>{skill.description}</p><em className="mono">SHA {skill.artifactSha256.slice(0, 16)}</em></div><div className="asset-actions"><button className="button secondary" onClick={()=>onMigrate(skill)}><ArrowRightLeft size={16}/>发起迁移</button><button className="button secondary" onClick={() => prepare(skill.assetId)} disabled={preparing === skill.assetId || !catalog.modelRoles.analyzer.configured}><Sparkles size={16} />{preparing === skill.assetId ? "出题中" : "AI 生成试题"}</button>{preps[0] ? <button className="icon-button" title="进入评测" onClick={() => onSelectPreparation(preps[0].preparationId)}><ChevronRight size={18} /></button> : null}</div></div>;
       }) : <div className="empty-table">尚未上传 Skill ZIP</div>}</div>
     </section>
     <section className="asset-section"><div className="section-title"><div><h2>预制 Eval Pack</h2><p>由金融 SOP、Golden Cases 与 Judge Rubric 共同定义。</p></div><span>{catalog.evalPacks.length} 套</span></div><div className="asset-table">{catalog.evalPacks.map(pack => <div className="asset-row" key={pack.packId}><div className="asset-icon"><Archive size={20} /></div><div><strong>{pack.targetSkillId}</strong><small>v{pack.targetSkillVersion} · {pack.caseCount} 题 · {pack.domain}</small><p>{pack.description}</p><em className="mono">PACK {pack.fingerprint.slice(0, 16)}</em></div><span className={pack.replayReady ? "state-tag ready" : "state-tag"}>{pack.replayReady ? "可回放" : "需在线 Runtime"}</span></div>)}</div></section>
