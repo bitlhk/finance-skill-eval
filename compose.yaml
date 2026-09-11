@@ -1,0 +1,13 @@
+services:
+  finance-skill-eval:
+    build: .
+    ports:
+      - "56361:56361"
+    environment:
+      FINANCE_EVAL_MAX_CONCURRENT_RUNS: "1"
+    volumes:
+      - finance-skill-eval-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  finance-skill-eval-data:

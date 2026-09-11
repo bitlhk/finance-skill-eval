@@ -7,6 +7,7 @@ import {
 } from "../src/index.js";
 
 const packFile = path.resolve("packs/finance/investment-research/eval.yaml");
+const riskReviewPackFile = path.resolve("packs/finance/risk-review/eval.yaml");
 
 describe("Eval Pack contracts", () => {
   it("loads the investment research pack with independent model roles", async () => {
@@ -49,6 +50,21 @@ describe("Eval Pack contracts", () => {
     };
 
     expect(() => evalPackFileSchema.parse(valid)).toThrow(/Unrecognized key/);
+  });
+
+  it("loads the frozen risk review comparison cases", async () => {
+    const pack = await loadEvalPack(riskReviewPackFile);
+
+    expect(pack.targetSkillId).toBe("transfer-risk-review");
+    expect(pack.variants.left.mode).toBe("without_target_skill");
+    expect(pack.variants.right.mode).toBe("skill_version");
+    expect(pack.cases.map(item => item.caseId)).toEqual([
+      "RR-VALUE-001",
+      "RR-VALUE-002",
+      "RR-VALUE-003",
+    ]);
+    expect(pack.cases.every(item => item.requiredTools.includes("fraud_transfer_risk_assess")))
+      .toBe(true);
   });
 
   it("produces stable fingerprints independent of object key order", () => {

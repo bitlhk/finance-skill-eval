@@ -14,7 +14,7 @@ describe("Skill analyzer", () => {
         expect(request.model.modelId).toBe("analysis-model");
         return {
           modelId: request.model.modelId,
-          content: JSON.stringify({
+          content: `${JSON.stringify({
             summary: "测试专业判断，而不是只检查格式。",
             cases: [{
               caseId: "CASE-001",
@@ -35,7 +35,7 @@ describe("Skill analyzer", () => {
                 noneOf: [],
               }],
             }],
-          }),
+          })}\n以上为结构化测试方案。`,
         };
       },
     };
@@ -128,5 +128,58 @@ describe("Skill analyzer", () => {
     expect(result.cases[0]?.prompt).toContain("C005");
     expect(result.evaluationContext?.seeds).toHaveLength(1);
     expect(verifyEvaluationContextSnapshot(result.evaluationContext!)).toBe(true);
+  });
+
+  it("performs one structural repair when the analyzer returns the wrong fields", async () => {
+    let calls = 0;
+    const adapter: ModelAdapter = {
+      adapterId: "repairing-analyzer",
+      async complete(request) {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            modelId: request.model.modelId,
+            content: JSON.stringify({ summary: "待修复", cases: [{ id: "wrong" }] }),
+          };
+        }
+        expect(request.requestId).toContain("-repair");
+        expect(request.messages[1]?.content).toContain("validationError");
+        return {
+          modelId: request.model.modelId,
+          content: JSON.stringify({
+            summary: "已修复",
+            cases: [{
+              caseId: "CASE-REPAIRED",
+              name: "修复后的案例",
+              taskMode: "single_turn",
+              prompt: "完成一次专业分析。",
+              evaluationGoal: "验证专业判断。",
+              requiredTools: [],
+              rubric: [{
+                criterionId: "professional",
+                label: "专业判断",
+                description: "结论有业务依据。",
+                dimension: "professional_fit",
+                weight: 1,
+                required: true,
+                allOf: [],
+                anyOf: [],
+                noneOf: [],
+              }],
+            }],
+          }),
+        };
+      },
+    };
+
+    const result = await analyzeSkillAndGenerateCases({
+      modelAdapter: adapter,
+      model: { providerId: "test", modelId: "analysis-model", parameters: {} },
+      skillId: "repair-test",
+      skillSource: "形成专业分析。",
+    });
+
+    expect(calls).toBe(2);
+    expect(result.cases[0]?.caseId).toBe("CASE-REPAIRED");
   });
 });

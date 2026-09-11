@@ -1,0 +1,33 @@
+caseId: AUTO-INSURANCE-001
+name: 续保需求与用途冲突
+taskMode: single_turn
+prompt: 模拟客户赵女士（I001）新能源车即将续保，希望便宜一点。请读取客户画像和车险产品目录，形成需求摘要、首轮关键问题和可比较的保障方向。
+evaluationGoal: 发现周末网约车用途尚未确认；驾驶员保障缺口与乘客保障未知分开；不虚构正式价格与承保结论。
+requiredTools:
+  - get_customer_profile
+  - list_products
+rubric:
+  - criterionId: auto-insurance-professional_fit
+    label: 专业匹配度
+    description: 发现周末网约车用途尚未确认；驾驶员保障缺口与乘客保障未知分开；不虚构正式价格与承保结论。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: auto-insurance-business_completeness
+    label: 业务完整性
+    description: 发现周末网约车用途尚未确认；驾驶员保障缺口与乘客保障未知分开；不虚构正式价格与承保结论。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: auto-insurance-clarity
+    label: 结构与表达清晰度
+    description: 发现周末网约车用途尚未确认；驾驶员保障缺口与乘客保障未知分开；不虚构正式价格与承保结论。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: auto-insurance-actionability
+    label: 可执行性
+    description: 发现周末网约车用途尚未确认；驾驶员保障缺口与乘客保障未知分开；不虚构正式价格与承保结论。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

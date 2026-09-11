@@ -1,0 +1,21 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: wealth-manager-professional-quality-v1
+version: 1.0.0
+reviewerLabel: AI 财富管理专业规则复算 Judge
+domainInstructions: >-
+  以优秀财富经理的真实工作采用标准评价答案。不要因为字段、产品代码、风险标签、
+  技术状态或篇幅更多而判优。优先识别答案是否发现会改变配置决策的客户事实与矛盾，
+  是否先形成组合约束再映射产品，以及是否能解释方案取舍、风险感受和客户决策条件。
+dimensions:
+  - id: professional_fit
+    label: 专业匹配度
+    description: 是否从客户目标、期限、流动性和真实风险感受形成专业判断，而非复述画像或产品标签。
+  - id: business_completeness
+    label: 业务完整性
+    description: 是否覆盖会改变业务决策的事实、约束、方案取舍、风险和下一步。
+  - id: clarity
+    label: 结构与表达清晰度
+    description: 是否让财富经理和客户容易理解核心判断、依据、缺口与方案差异。
+  - id: actionability
+    label: 可执行性
+    description: 是否提出少而关键的问题，或将正确方案转成客户能够回答和选择的决策条件。

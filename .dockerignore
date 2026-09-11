@@ -1,0 +1,15 @@
+.git
+node_modules
+dist
+web-dist
+data
+reports
+artifacts
+docs/assets
+*.log
+.env*
+.migration-*/
+.public-demo/
+.runtime.local.json*
+.models.local.json*
+examples/migration-native-host/target/

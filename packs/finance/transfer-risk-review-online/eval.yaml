@@ -1,0 +1,41 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: transfer-risk-review-online-v1
+version: 1.0.0
+domain: risk-review
+targetSkillId: transfer-risk-review
+targetSkillVersion: 0.1.0
+description: 真实模型与只读工具执行；risk-review 固定模拟业务快照，非生产验收。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: transfer-risk-review
+  right:
+    mode: skill_version
+    skillId: transfer-risk-review
+    version: 0.1.0
+    artifactSha256: 729bda4db177a44ad5e07f8d92adfec7194b23409e1113eb5b7a6867c9bbed9a
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/1.yaml
+  - cases/2.yaml
+  - cases/3.yaml
+metadata:
+  generationContext: '{"querySubjectRefs":["acct-demo-001"],"accountRef":"acct-demo-001","beneficiaryRefs":["bene-risk","bene-clear","bene-unknown"],"amount":88.5,"scope":"只读模拟转账审核，不执行交易；账户与反诈结果必须实时调用工具，不能提前写入命中结论。"}'
+  dataMode: synthetic-snapshot
+  snapshotVersion: roles-demo-v1
+  sourceSkill: finance-agent-harness/domain-packs/risk/internal-control/skills/transfer-risk-review
+  evidenceSemantics: live-model-live-tools-synthetic-business-data
+holdoutCaseFiles:
+  - cases/4.yaml

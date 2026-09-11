@@ -1,0 +1,18 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: post-loan-risk-quality-v1
+version: 1.0.0
+reviewerLabel: AI 金融岗位专业评阅
+domainInstructions: 按贷后管理可采用标准评价：基于统一快照与机构规则识别风险传导，贷款聚合不取平均掩盖最差项，区分内部预警与监管分类，形成可执行的核查计划。
+dimensions:
+  - id: professional_fit
+    label: 专业匹配度
+    description: 专业判断是否由实际证据推导，而非标签复述。
+  - id: business_completeness
+    label: 业务完整性
+    description: 是否覆盖关键事实、业务约束、缺口及取舍。
+  - id: clarity
+    label: 结构与表达清晰度
+    description: 核心判断、依据和不确定性是否清晰自然。
+  - id: actionability
+    label: 可执行性
+    description: 是否能支持真实工作决策，且有明确下一步。

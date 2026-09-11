@@ -21,11 +21,22 @@ export interface EvaluationContextAdapter {
 }
 
 export type RuntimeExecutionRequest = {
+  onEvent?: (event: RuntimeEvent) => void;
   runId: string;
   side: EvaluationSide;
   evalCase: EvalCase;
   model: ModelRef;
   variant: SkillVariant;
+  signal?: AbortSignal;
+};
+
+export type RuntimeEvent = {
+  type: "status" | "text_delta" | "tool_start" | "tool_end";
+  caseId: string;
+  side: EvaluationSide;
+  text?: string;
+  toolName?: string;
+  status?: string;
 };
 
 export interface RuntimeAdapter {
@@ -45,6 +56,7 @@ export type ModelCompletionRequest = {
   model: ModelRef;
   messages: ModelMessage[];
   responseFormat?: "text" | "json";
+  signal?: AbortSignal;
 };
 
 export type ModelCompletionResponse = {

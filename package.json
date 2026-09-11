@@ -1,8 +1,9 @@
 {
   "name": "finance-skill-eval",
-  "version": "0.2.3",
+  "version": "0.4.0",
   "description": "Portable financial Skill evaluation contracts, runners, judges, and reports",
   "type": "module",
+  "packageManager": "pnpm@10.34.4",
   "private": true,
   "license": "UNLICENSED",
   "engines": {
@@ -25,22 +26,46 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm build:core",
+    "build": "pnpm build:core && pnpm build:web",
+    "build:core": "tsc -p tsconfig.json",
+    "build:web": "vite build",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
+    "serve": "node dist/service/server.js",
+    "serve:codex": "FINANCE_EVAL_JUDGE_PROVIDER=codex_cli node dist/service/server.js",
+    "dev": "vite --host 0.0.0.0",
     "eval:investment:replay": "tsx src/cli.ts replay --pack packs/finance/investment-research/eval.yaml --out reports/investment-research",
     "eval:wealth:replay": "tsx src/cli.ts replay --pack packs/finance/wealth-management/eval.yaml --out reports/wealth-management",
+    "eval:risk:harness": "tsx examples/run-harness-risk-review.ts",
     "pack:local": "pnpm build && pnpm pack --pack-destination artifacts"
   },
   "dependencies": {
+    "@fastify/static": "8.3.0",
+    "@xyflow/react": "^12.11.6",
+    "fastify": "5.6.1",
+    "fflate": "0.8.2",
+    "lucide-react": "0.468.0",
     "promptfoo": "0.122.2",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-is": "19.1.1",
+    "react-markdown": "10.1.0",
+    "recharts": "^3.10.1",
+    "remark-gfm": "4.0.1",
+    "remend": "^1.3.1",
     "yaml": "2.8.1",
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@types/node": "24.3.0",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.2",
     "tsx": "4.20.5",
     "typescript": "5.9.2",
+    "vite": "7.1.3",
     "vitest": "3.2.4"
   }
 }

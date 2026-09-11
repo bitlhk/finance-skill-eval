@@ -1,0 +1,33 @@
+caseId: INVESTMENT-RESEARCH-001
+name: 利润增长的含金量
+taskMode: single_turn
+prompt: 请研究虚构公司海岳设备（DEMO001）的2026年半年报，判断利润增长的现金含量，给出证据、两种待验证解释和最关键的跟踪指标。
+evaluationGoal: 利润增长40%而现金流130降至70；应收与库存增长，现金转换与资本支出压力；周期扩张与回款恶化是假设而非事实。
+requiredTools:
+  - wind_stock_data
+  - wind_financial_docs
+rubric:
+  - criterionId: investment-research-professional_fit
+    label: 专业匹配度
+    description: 利润增长40%而现金流130降至70；应收与库存增长，现金转换与资本支出压力；周期扩张与回款恶化是假设而非事实。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: investment-research-business_completeness
+    label: 业务完整性
+    description: 利润增长40%而现金流130降至70；应收与库存增长，现金转换与资本支出压力；周期扩张与回款恶化是假设而非事实。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: investment-research-clarity
+    label: 结构与表达清晰度
+    description: 利润增长40%而现金流130降至70；应收与库存增长，现金转换与资本支出压力；周期扩张与回款恶化是假设而非事实。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: investment-research-actionability
+    label: 可执行性
+    description: 利润增长40%而现金流130降至70；应收与库存增长，现金转换与资本支出压力；周期扩张与回款恶化是假设而非事实。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

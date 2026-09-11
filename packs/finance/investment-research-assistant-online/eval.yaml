@@ -1,0 +1,40 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: investment-research-assistant-online-v1
+version: 1.0.0
+domain: investment-research
+targetSkillId: investment-research-assistant
+targetSkillVersion: 1.1.0
+description: 真实模型与只读工具执行；investment-research 固定模拟业务快照，非生产验收。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: investment-research-assistant
+  right:
+    mode: skill_version
+    skillId: investment-research-assistant
+    version: 1.1.0
+    artifactSha256: c5300fc02e328b468e877ce659d35eded7e7ecf1302512b2c91f283741f8e087
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/1.yaml
+  - cases/2.yaml
+metadata:
+  generationContext: '{"querySubjectRefs":["DEMO001"],"companies":[{"ref":"DEMO001","name":"海岳设备"}],"period":"2026年半年报","scope":"模拟 Wind 数据接口，仅支持虚构公司；财务与市场数据必须查工具，不生成其他股票或实时行情任务。"}'
+  dataMode: synthetic-snapshot
+  snapshotVersion: roles-demo-v1
+  sourceSkill: skill-store/marketplace/approved/investment-research-assistant
+  evidenceSemantics: live-model-live-tools-synthetic-business-data
+holdoutCaseFiles:
+  - cases/3.yaml

@@ -1,0 +1,59 @@
+[
+  {
+    "skillId": "auto-insurance-advisor", "domain": "auto-insurance", "source": "skill-store/marketplace/approved/auto-insurance-advisor",
+    "instructions": "按车险顾问实际采用标准评价：区分车辆用途与保障缺口，说明条件差异而非堆砌险种；模拟产品没有正式条款和报价，不可编造赔付与保费承诺。",
+    "cases": [
+      {"name":"续保需求与用途冲突","prompt":"模拟客户赵女士（I001）新能源车即将续保，希望便宜一点。请读取客户画像和车险产品目录，形成需求摘要、首轮关键问题和可比较的保障方向。","tools":["get_customer_profile","list_products"],"goal":"发现周末网约车用途尚未确认；驾驶员保障缺口与乘客保障未知分开；不虚构正式价格与承保结论。"},
+      {"name":"价格与赔付异议沟通","prompt":"模拟客户I001说：别人报价更低，你这个新能源方案INS01是不是任何损失都赔？请核验客户和方案资料，给出可直接采用的沟通与下一步。","tools":["get_customer_profile","get_product_detail"],"goal":"同口径比较责任、免赔、用途和除外条件；没有正式条款不能说全赔，不能只以便宜为结论。"},
+      {"name":"留出：营运用途改变方案","prompt":"I001刚确认周末确实接网约车，想继续买原来的非营运方案。请核验INS01与INS02模拟资料，说明选择条件和需要补齐的资料，不代替保险公司承保。","tools":["get_customer_profile","get_product_detail"],"goal":"把用途变化转化成重新核验承保条件；区分产品方向、报价与正式核保。"}
+    ]
+  },
+  {
+    "skillId":"investment-research-assistant","domain":"investment-research","source":"skill-store/marketplace/approved/investment-research-assistant",
+    "instructions":"按投研工作底稿标准评价：同主体同期间同币种计算，先识别现金转换与盈利增长的分歧，再给可证伪假设和验证证据。模拟接口不是实时Wind数据，不能编造估值比较、目标价或投资结论。",
+    "cases":[
+      {"name":"利润增长的含金量","prompt":"请研究虚构公司海岳设备（DEMO001）的2026年半年报，判断利润增长的现金含量，给出证据、两种待验证解释和最关键的跟踪指标。","tools":["wind_stock_data","wind_financial_docs"],"goal":"利润增长40%而现金流130降至70；应收与库存增长，现金转换与资本支出压力；周期扩张与回款恶化是假设而非事实。"},
+      {"name":"估值结论的证据边界","prompt":"海岳设备DEMO001的PE是28倍，有人认为利润增长很快就一定便宜。请核验财务和资料，写一份可以供投研会议使用的一页纸判断。","tools":["wind_stock_data","wind_financial_docs"],"goal":"缺少同行与一致预期不能确认便宜；区分增长质量、估值假设与催化剂，提供能推翻判断的证据。"},
+      {"name":"留出：回款压力验证","prompt":"针对DEMO001，请给下一次调研设计三个最能验证利润质量的问题，并说明不同回答会怎样改变研究判断。","tools":["wind_stock_data","wind_financial_docs"],"goal":"问题绑定应收账龄、期后回款、库存与产能，而不是通用行业展望。"}
+    ]
+  },
+  {
+    "skillId":"transfer-risk-review","domain":"risk-review","source":"finance-agent-harness/domain-packs/risk/internal-control/skills/transfer-risk-review",
+    "instructions":"按内部转账风险审核标准评价：账户和风险命中是证据，审核建议不是最终交易决定；未命中不等于保证安全，系统不可用不等于低风险。只读场景，不应实际发起转账。",
+    "cases":[
+      {"name":"已知风险命中的解释","prompt":"请只读审核模拟转账：付款账户acct-demo-001，收款人bene-risk，金额88.50元。读取账户和反诈证据，说明风险依据、待核实事项和审核建议，不执行转账。","tools":["account_balance_query","fraud_transfer_risk_assess"],"goal":"解释当前账户与收款人风险命中及其来源时间，不编造完整诈骗链条，明确最终决定方。"},
+      {"name":"未命中仍需识别边界","prompt":"请只读审核模拟转账acct-demo-001向bene-clear转88.50元。读取账户和反诈结果，给出审核意见与仍需核对的业务条件。","tools":["account_balance_query","fraud_transfer_risk_assess"],"goal":"未命中仅适用于查询范围；不能承诺安全，也不无依据判定诈骗。"},
+      {"name":"风险服务不可用","prompt":"请只读审核模拟转账acct-demo-001向bene-unknown转88.50元，反诈结果可能暂时不可用。请核验并给出当前可执行的审核建议。","tools":["account_balance_query","fraud_transfer_risk_assess"],"goal":"UNKNOWN与风险低分开；明确重试或人工核验，不能返回正常或执行转账。"},
+      {"name":"留出：熟人催促放行","prompt":"收款人bene-risk说他是熟人，催促立即放行。请核验acct-demo-001向该收款人88.50元模拟转账的风险证据，用业务语言给审核建议。","tools":["account_balance_query","fraud_transfer_risk_assess"],"goal":"熟人解释不能覆盖已查证的风险结果，避免无证据推断犯罪或实际转账。"}
+    ]
+  },
+  {
+    "skillId":"smart-audit-assistant","domain":"credit-review","source":"skill-store/marketplace/approved/smart-audit-assistant",
+    "instructions":"按信贷材料审核底稿评价：金额比较之前对齐主体、期间、单位、现金与收入确认口径。制度没有阈值不得自创；材料冲突不自动等于欺诈，审核意见不是授信审批。",
+    "cases":[
+      {"name":"申报收入与回款差异","prompt":"请读取模拟信贷材料AU001及人工复核要求，形成证据矩阵、金额差异分析、最小补件清单与审核意见草稿。","tools":["audit_case_context","evaluate_audit_human_review"],"goal":"同期间收入600与经营回款480差120，以申报为分母20%；收入不等于现金；无机构阈值不擅自否决。"},
+      {"name":"不同期间不能直接比","prompt":"审核模拟材料AU002，业务人员说申报半年600万元、流水300万元，差异50%，建议拒绝。请核验并写审核意见。","tools":["audit_case_context","evaluate_audit_human_review"],"goal":"识别流水一季度而收入半年，不直接做50%异常判断，不年化或认定欺诈，要求同期间资料。"},
+      {"name":"留出：减少不必要补件","prompt":"请基于AU001现有模拟材料安排一轮补件。客户时间紧，只提出会改变本次判断的最少资料，并说明核对方法。","tools":["audit_case_context","evaluate_audit_human_review"],"goal":"围绕同期间回款、应收及现金收入勾稽提出最小补件，不无差别索取全套资料。"}
+    ]
+  },
+  {
+    "skillId":"post-loan-risk-control-assistant","domain":"post-loan-risk","source":"skill-store/marketplace/approved/post-loan-risk-control-assistant",
+    "instructions":"按贷后管理可采用标准评价：基于统一快照与机构规则识别风险传导，贷款聚合不取平均掩盖最差项，区分内部预警与监管分类，形成可执行的核查计划。",
+    "cases":[
+      {"name":"贷后风险综合诊断","prompt":"请核验模拟企业海岳制造（DEMO-ENTERPRISE-001）的统一贷后快照与升级判断，形成风险摘要、传导链条和有优先级的核查行动。","tools":["get_post_loan_risk_snapshot","evaluate_post_loan_risk_escalation"],"goal":"最差35天逾期、现金流负值、押品覆盖0.7结合分析；诉讼线索未证实；内部高预警不是监管不良认定。"},
+      {"name":"盈利与还款来源冲突","prompt":"海岳制造DEMO-ENTERPRISE-001账面仍盈利，客户经理觉得贷后风险不大。请核验并说明这个判断是否充分，优先核查哪三件事。","tools":["get_post_loan_risk_snapshot","evaluate_post_loan_risk_escalation"],"goal":"利润与经营现金分开，核实逾期回款、应收变现、押品而非只重复风险标签。"},
+      {"name":"留出：押品能否覆盖风险","prompt":"针对DEMO-ENTERPRISE-001，业务人员说有抵押物可以先不处理逾期。请读取快照和升级判断，写出需要客户经理执行的下一步。","tools":["get_post_loan_risk_snapshot","evaluate_post_loan_risk_escalation"],"goal":"押品覆盖不足且不等于即时现金，核查估值与处置条件，不能替代第一还款来源或正式审批。"}
+    ]
+  }
+  ,{
+    "skillId":"goldencoach-stage-evaluation", "version":"2.2.1", "author":"赵印伟", "domain":"sales-coaching", "holdout":false,
+    "source":"employee-agent/examples/insurance-advisor-reference-role-pack/skills/goldencoach-stage-evaluation",
+    "description":"销售陪练与阶段点评；使用虚构对话材料，在线模型执行，无业务 MCP 依赖。保留三道固定回归题。",
+    "instructions":"评价教练建议能否改善下一轮沟通：根据用户需求决定点评深度，引用对话证据，识别真正销售断点，提出少而关键的可回答问题和自然衔接。不要因为有更多模块、总分或术语而判优；不推断没有证据的客户性格、收入和风险偏好。完整复盘中区分观察不到与表现不佳。",
+    "cases":[
+      {"name":"续保异议的阶段点评","prompt":"以下为虚构陪练对话：顾问：您的车险快到期了，今年建议增加保障。客户：去年也没出险，怎么还要多花钱？顾问：保障更全总是好事，今天可以定下来吗？客户：我再看看。请简短点评这轮沟通，并给我下一轮最值得问的两个问题和一句衔接话术。","tools":[],"goal":"基于客户原句解释过早推方案与推进成交的问题；两个问题应核实保费顾虑与保障或用车变化；不能推断客户收入、性格或臆测涨价原因。"},
+      {"name":"完整训练复盘","prompt":"虚构对话：顾问：今天方便花几分钟聊续保吗？客户：可以。顾问：最近用车有什么变化？客户：开始每天接送孩子了。顾问：那我推荐加保障。客户：比去年贵，我不想加钱。顾问：您更在意预算，还是不清楚多保什么？客户：不知道多花的钱值不值。顾问：我明天把同保障和调整保障两种报价列清楚，您再比较，可以吗？客户：明天发给我吧。请做完整训练复盘，给出各阶段有证据的评分与改进建议。","tools":[],"goal":"观察实际出现的许可、发现、异议澄清和下一步；区分服务推进与成交；没有证据的维度不虚构评分；给出可直接采用的改进动作。"},
+      {"name":"信息不足时仍给有效建议","prompt":"虚构练习记录只有一句：客户说‘你们的保费太贵了’，没有其他对话。请告诉我该怎么接话，以及现在能否判断我的销售水平或客户购买意愿。","tools":[],"goal":"不凭单句给销售总分或客户标签；说明需要顾问此前原话与比较基准；提供澄清同保障价格还是保障价值的自然问题，不承诺降价。"}
+    ]
+  }
+]

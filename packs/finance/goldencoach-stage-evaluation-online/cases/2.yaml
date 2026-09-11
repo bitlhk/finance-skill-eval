@@ -1,0 +1,31 @@
+caseId: SALES-COACHING-002
+name: 完整训练复盘
+taskMode: single_turn
+prompt: 虚构对话：顾问：今天方便花几分钟聊续保吗？客户：可以。顾问：最近用车有什么变化？客户：开始每天接送孩子了。顾问：那我推荐加保障。客户：比去年贵，我不想加钱。顾问：您更在意预算，还是不清楚多保什么？客户：不知道多花的钱值不值。顾问：我明天把同保障和调整保障两种报价列清楚，您再比较，可以吗？客户：明天发给我吧。请做完整训练复盘，给出各阶段有证据的评分与改进建议。
+evaluationGoal: 观察实际出现的许可、发现、异议澄清和下一步；区分服务推进与成交；没有证据的维度不虚构评分；给出可直接采用的改进动作。
+requiredTools: []
+rubric:
+  - criterionId: sales-coaching-professional_fit
+    label: 专业匹配度
+    description: 观察实际出现的许可、发现、异议澄清和下一步；区分服务推进与成交；没有证据的维度不虚构评分；给出可直接采用的改进动作。；重点看证据推理
+    dimension: professional_fit
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-business_completeness
+    label: 业务完整性
+    description: 观察实际出现的许可、发现、异议澄清和下一步；区分服务推进与成交；没有证据的维度不虚构评分；给出可直接采用的改进动作。；重点看决策条件完整性
+    dimension: business_completeness
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-clarity
+    label: 结构与表达清晰度
+    description: 观察实际出现的许可、发现、异议澄清和下一步；区分服务推进与成交；没有证据的维度不虚构评分；给出可直接采用的改进动作。；重点看业务语言与清晰度
+    dimension: clarity
+    weight: 1
+    required: true
+  - criterionId: sales-coaching-actionability
+    label: 可执行性
+    description: 观察实际出现的许可、发现、异议澄清和下一步；区分服务推进与成交；没有证据的维度不虚构评分；给出可直接采用的改进动作。；重点看可执行下一步
+    dimension: actionability
+    weight: 1
+    required: true

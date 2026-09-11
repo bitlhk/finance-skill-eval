@@ -1,0 +1,58 @@
+caseId: HOLDOUT-WM-001
+name: 留出验证：把方案取舍转化为客户决策
+taskMode: single_turn
+prompt: 陈明（C005）本次75万元、至少20%高流动性，三年以上期限。客户说：既要收益高一点，又不想看到明显波动。请核验本次配置条件，给出两套不同风险取舍的可比较方案，并用客户听得懂的话解释封闭期和流动性，以及哪一个回答会影响选择。
+evaluationGoal: 先守住20%高流动性底线，再形成稳健与适度增强两套组合；只映射已核验产品， 解释期限、波动和排除项，并把两套正确方案的差异转成客户能够作答的决策问题。
+requiredTools:
+  - prepare_wealth_allocation_context
+  - wealth_assistant_product_info
+rubric:
+  - criterionId: liquidity-floor
+    label: 高流动性底线正确承载
+    description: 75万元中至少15万元由P009承载，P001不能被当作高流动性资产。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf: []
+    anyOf: []
+  - criterionId: portfolio-before-product
+    label: 先组合取舍再映射产品
+    description: 形成稳健和适度增强两套完整组合，而不是单独罗列产品。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf: []
+    anyOf: []
+  - criterionId: risk-and-exclusion
+    label: 风险与排除理由完整
+    description: 说明封闭期、净值波动、不承诺收益，并排除停售P004。
+    dimension: business_completeness
+    weight: 2
+    required: true
+    allOf: []
+    anyOf: []
+  - criterionId: decision-tradeoff-language
+    label: 把方案差异转成客户决策条件
+    description: 不只说一套稳健、一套增强，而是帮助客户基于波动感受和长期目标作出选择。
+    dimension: actionability
+    weight: 3
+    required: true
+    anyOf: []
+    improvementHint: 将A/B方案差异转成客户可回答的选择题：更重视短期波动控制，还是愿意承担更多长期波动争取增值。
+    allOf: []
+  - criterionId: baseline-scheme-explanation
+    label: 基本说明两套方案差异
+    description: 至少能够说明A方案更稳健、B方案适度增强的基础区别。
+    dimension: actionability
+    weight: 9
+    required: true
+    allOf: []
+    anyOf: []
+  - criterionId: usable-conversation
+    label: 话术可直接用于真实面谈
+    description: 用客户能理解的语言解释流动性、期限、波动和方案取舍。
+    dimension: clarity
+    weight: 1
+    required: true
+    anyOf: []
+    allOf: []

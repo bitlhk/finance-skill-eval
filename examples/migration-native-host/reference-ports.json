@@ -1,0 +1,26 @@
+{
+  "pf-method-synthetic-v1": {
+    "label": "浦发方法结构 / 合成财报端口",
+    "skillId": "long_term_borrowings_analysis",
+    "schemaBasis": "Project-defined synthetic port v1; original parameter names checked against source. Not the missing original implementation or output schema.",
+    "tools": [
+      {
+        "name": "get_financial_statement_data",
+        "description": "读取当前获授权合成客户的三表。金额为CNY元，来源为合成财报。不是真实银行接口。",
+        "inputSchema": {"type":"object","properties":{"cust_id":{"type":"string","const":"synthetic-reference-customer"},"data_type":{"type":"string","enum":["合并报表","单一报表"]},"skill_code":{"type":"string","const":"long_term_borrowings_analysis"},"year_count":{"type":"integer","const":3}},"required":["cust_id","data_type","skill_code"],"additionalProperties":false},
+        "outputSchema": {"type":"object","required":["status","source","currency","unit","metrics"],"properties":{"status":{"enum":["COMPLETED","MISSING"]},"source":{"const":"CONTROLLED_SYNTHETIC_BANK"},"currency":{"const":"CNY"},"unit":{"const":"元"},"metrics":{"type":"array","items":{"type":"object"}}},"additionalProperties":false}
+      },
+      {
+        "name": "get_financial_note_fragments",
+        "description": "读取当前获授权合成客户的财报附注。doc_name固定synthetic-report；客户身份在宿主中绑定，缺数不代表零。",
+        "inputSchema": {"type":"object","properties":{"cust_id":{"type":"string","const":"synthetic-reference-customer"},"data_type":{"type":"string","enum":["合并报表","单一报表"]},"doc_name":{"type":"string","const":"synthetic-report"},"skill_code":{"type":"string","const":"long_term_borrowings_analysis"}},"required":["data_type","doc_name","skill_code"],"additionalProperties":false},
+        "outputSchema": {"type":"object","required":["status","source","fragments"],"properties":{"status":{"enum":["COMPLETED","MISSING"]},"source":{"const":"CONTROLLED_SYNTHETIC_BANK"},"fragments":{"type":"array","items":{"type":"object"}}},"additionalProperties":false}
+      }
+    ],
+    "cases": [
+      {"caseId":"pf-normal","label":"正常合成财报","expect":"completed","prompt":"仅做合成环境验证。请用已加载的方法分析短期借款。{'cust_id':'synthetic-reference-customer'}，合并报表，doc_name=synthetic-report。请实际调用两个取数工具，依据返回事实与规则作分析，不猜测编码。"},
+      {"caseId":"pf-missing","label":"未披露借款明细","expect":"completed","prompt":"仅做合成环境验证。请用已加载的方法分析短期借款。{'cust_id':'synthetic-reference-customer'}，合并报表，doc_name=synthetic-report。调用两个取数工具，未披露明细时遵循方法中的缺数分支，不把缺失当成零。"},
+      {"caseId":"pf-denied","label":"授权拒绝","expect":"denied","prompt":"查询客户财务数据。"}
+    ]
+  }
+}

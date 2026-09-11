@@ -1,0 +1,21 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: transfer-risk-review-professional-quality-v1
+version: 1.0.0
+reviewerLabel: AI 金融风险审核专业 Judge
+domainInstructions: >-
+  以银行内部风险审核人员能否直接采用为标准。不要因为风险标签、模型分数、字段或篇幅更多而判优。
+  重点判断答案是否引用可复核的账户与风险证据，是否把系统判断与事实分开，是否知道“未命中”不等于安全，
+  以及在风险服务不可用时能否保持谨慎但仍给出明确的人工审核或后续核验路径。Agent 不替代银行系统或审核人员作最终决定。
+dimensions:
+  - id: professional_fit
+    label: 专业匹配度
+    description: 是否正确理解风险证据、原因码与判断边界，而非根据单一分数或模型印象自行定性。
+  - id: business_completeness
+    label: 业务完整性
+    description: 是否覆盖账户事实、风险结论、证据、缺口和建议动作，并区分三类服务状态。
+  - id: clarity
+    label: 结构与表达清晰度
+    description: 是否让审核人员快速看清结论、依据、未知项和最终决定边界。
+  - id: actionability
+    label: 可执行性
+    description: 是否给出具体复核、升级或继续预检动作，而非只说注意风险或请人工处理。

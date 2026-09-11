@@ -1,0 +1,40 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: auto-insurance-advisor-online-v1
+version: 1.0.0
+domain: auto-insurance
+targetSkillId: auto-insurance-advisor
+targetSkillVersion: 1.2.5
+description: 真实模型与只读工具执行；auto-insurance 固定模拟业务快照，非生产验收。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: auto-insurance-advisor
+  right:
+    mode: skill_version
+    skillId: auto-insurance-advisor
+    version: 1.2.5
+    artifactSha256: e66311456729d45b17963ba40ad403b15cfe500e2c8b81ae6a6c139df6a742fd
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/1.yaml
+  - cases/2.yaml
+metadata:
+  generationContext: '{"querySubjectRefs":["I001","INS01","INS02"],"customers":[{"ref":"I001","name":"赵女士"}],"productRefs":["INS01","INS02"],"scope":"新能源车险续保的只读模拟环境；画像、保障方向和产品事实必须调用工具核验，无正式报价与承保能力。"}'
+  dataMode: synthetic-snapshot
+  snapshotVersion: roles-demo-v1
+  sourceSkill: skill-store/marketplace/approved/auto-insurance-advisor
+  evidenceSemantics: live-model-live-tools-synthetic-business-data
+holdoutCaseFiles:
+  - cases/3.yaml

@@ -35,7 +35,8 @@ export async function loadEvalPack(filePath: string): Promise<EvalPack> {
     )),
   );
   const caseIds = new Set<string>();
-  for (const evalCase of cases) {
+  const holdoutCases = await Promise.all((packFile.holdoutCaseFiles ?? []).map(async file => evalCaseSchema.parse(await readYaml(resolveInside(baseDir, file)))));
+  for (const evalCase of [...cases, ...holdoutCases]) {
     if (caseIds.has(evalCase.caseId)) {
       throw new Error(`Duplicate caseId in Eval Pack: ${evalCase.caseId}`);
     }
@@ -45,10 +46,12 @@ export async function loadEvalPack(filePath: string): Promise<EvalPack> {
     ...packFile,
     sourceFile,
     cases,
+    ...(holdoutCases.length ? { holdoutCases } : {}),
     judgeProfile,
     packFingerprint: fingerprint({
       pack: packFile,
       cases,
+      ...(holdoutCases.length ? { holdoutCases } : {}),
       judgeProfile,
     }),
   };

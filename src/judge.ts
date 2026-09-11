@@ -10,10 +10,12 @@ import {
   type RubricCriterion,
   type RuntimeExecutionEvidence,
 } from "./contracts.js";
+import { parseFirstJsonObject } from "./json-response.js";
 
 export interface PairwiseJudge {
   readonly judgeId: string;
   compare(input: {
+    signal?: AbortSignal;
     evalCase: EvalCase;
     left: RuntimeExecutionEvidence;
     right: RuntimeExecutionEvidence;
@@ -82,11 +84,15 @@ export class DeterministicRubricJudge implements PairwiseJudge {
   readonly judgeId = "deterministic-rubric-v1";
 
   async compare(input: {
+    signal?: AbortSignal;
     evalCase: EvalCase;
     left: RuntimeExecutionEvidence;
     right: RuntimeExecutionEvidence;
     profile: JudgeProfile;
   }): Promise<JudgeResult> {
+    if(input.evalCase.rubric.some(c=>c.allOf.length+c.anyOf.length+c.noneOf.length===0)) {
+      throw new Error('当前量表包含专业判断项，未定义可复算规则，请使用模型 Judge。');
+    }
     const leftChecks = input.evalCase.rubric.map(criterion => (
       checkCriterion(criterion, input.left.output)
     ));
@@ -136,14 +142,6 @@ const anonymousJudgeResponseSchema = z.strictObject({
   })).length(4),
 });
 
-function parseJsonObject(raw: string): unknown {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  const candidate = fenced ?? (start >= 0 && end > start ? raw.slice(start, end + 1) : raw);
-  return JSON.parse(candidate.trim());
-}
-
 export function remapAnonymousSideLabels(text: string, swapped: boolean): string {
   if (!swapped) return text;
   return text
@@ -163,6 +161,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
   }
 
   async compare(input: {
+    signal?: AbortSignal;
     evalCase: EvalCase;
     left: RuntimeExecutionEvidence;
     right: RuntimeExecutionEvidence;
@@ -191,6 +190,13 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     const swapped = Number.parseInt(fingerprint(input.evalCase.caseId).slice(0, 2), 16) % 2 === 1;
     const a = swapped ? input.right : input.left;
     const b = swapped ? input.left : input.right;
+    const businessEvidence = (evidence: RuntimeExecutionEvidence) => ({
+      sourceFacts: Array.isArray(evidence.metadata.toolEvidence)
+        ? evidence.metadata.toolEvidence.filter((item: { tool?: string }) => item.tool !== "read_file") : [],
+      status: evidence.status,
+      toolCalls: evidence.toolCalls.filter(call => call.name !== "read_file"),
+      streamCompleted: evidence.streamCompleted,
+    });
     const messages = [
         {
           role: "system",
@@ -211,25 +217,18 @@ export class ModelPairwiseJudge implements PairwiseJudge {
             rubric: input.evalCase.rubric,
             outputA: a.output,
             outputB: b.output,
-            runtimeEvidenceA: {
-              status: a.status,
-              toolCalls: a.toolCalls,
-              streamCompleted: a.streamCompleted,
-            },
-            runtimeEvidenceB: {
-              status: b.status,
-              toolCalls: b.toolCalls,
-              streamCompleted: b.streamCompleted,
-            },
+            runtimeEvidenceA: businessEvidence(a),
+            runtimeEvidenceB: businessEvidence(b),
             responseContract: {
               winner: "A | B | TIE",
               confidence: "low | medium | high",
               summary: "string",
+              scoreRule: "aScore and bScore must be JSON integers from 0 to 4, not strings",
               dimensions: input.profile.dimensions.map(dimension => ({
                 id: dimension.id,
                 label: dimension.label,
-                aScore: "0..4",
-                bScore: "0..4",
+                aScore: 0,
+                bScore: 0,
                 reason: "string",
               })),
             },
@@ -239,6 +238,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     const request = (attempt: number) => this.adapter.complete({
       requestId: `judge-${input.evalCase.caseId}-${attempt}`,
       model: this.model,
+      signal: input.signal,
       responseFormat: "json",
       messages: attempt === 1 ? [...messages] : [
         ...messages,
@@ -251,10 +251,11 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     let judged: z.infer<typeof anonymousJudgeResponseSchema>;
     try {
       const response = await request(1);
-      judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
-    } catch {
+      judged = anonymousJudgeResponseSchema.parse(parseFirstJsonObject(response.content));
+    } catch (error) {
+      if (input.signal?.aborted) throw error;
       const response = await request(2);
-      judged = anonymousJudgeResponseSchema.parse(parseJsonObject(response.content));
+      judged = anonymousJudgeResponseSchema.parse(parseFirstJsonObject(response.content));
     }
     const winner = judged.winner === "TIE"
       ? "tie" as const
@@ -272,7 +273,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
         rightScore: swapped ? dimension.aScore : dimension.bScore,
         reason: remapAnonymousSideLabels(dimension.reason, swapped),
       })),
-      reviewerLabel: input.profile.reviewerLabel,
+      reviewerLabel: `AI 专业盲评 · ${this.model.modelId}（非独立人类专家签署）`,
     });
   }
 }

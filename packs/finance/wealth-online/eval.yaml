@@ -1,0 +1,40 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: wealth-manager-online-v1
+version: 1.0.0
+domain: wealth-management
+targetSkillId: wealth-manager-assistant
+targetSkillVersion: 2.1.5
+description: 本地 OpenJiuwen 现场执行；只读模拟财富快照 MCP，非生产客户数据，非历史答案回放。
+models:
+  analyzer: &a1
+    providerId: service-execution
+    modelId: glm-5.2
+    parameters: {}
+  execution:
+    left: *a1
+    right: *a1
+  judge:
+    providerId: codex-host
+    modelId: gpt-6-astra
+    parameters: {}
+variants:
+  left:
+    mode: without_target_skill
+    skillId: wealth-manager-assistant
+  right:
+    mode: skill_version
+    skillId: wealth-manager-assistant
+    version: 2.1.5
+    artifactSha256: e74034120f956caec3859f7e148bfa0dfb93e263daf675d1c133ecb1f85dc3d4
+judgeProfileFile: profiles/wealth-manager-judge.yaml
+caseFiles:
+  - cases/previsit-diagnosis.yaml
+  - cases/ready-state-recommendation.yaml
+metadata:
+  generationContext: '{"querySubjectRefs":["C005"],"customers":[{"ref":"C005","name":"陈明"}],"taskInputs":{"availableCapital":750000,"investmentHorizon":"3年以上","minimumLiquidShare":0.2},"dataMode":"模拟业务快照，客户风险状态、持仓、政策和产品必须调用工具核验；不得编造新的客户或产品编号。"}'
+  dataMode: synthetic-snapshot
+  snapshotVersion: wealth-demo-v1
+  sourceSkill: /home/ubuntu/employee-agent/examples/skill-quality-evaluation-v1/candidates/wealth-manager-assistant/2.1.5
+  evidenceSemantics: live-model-live-tools-synthetic-business-data
+holdoutCaseFiles:
+  - cases/holdout-recommendation.yaml

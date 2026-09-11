@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DeterministicRubricJudge } from '../src/judge.js';
 import { describe, expect, it, vi } from "vitest";
 import {
   loadEvalPack,
@@ -24,11 +25,16 @@ function evidence(side: "left" | "right", caseId: string): RuntimeExecutionEvide
     streamCompleted: true,
     error: null,
     traceFingerprint: "a".repeat(64),
-    metadata: {},
+    metadata: { toolEvidence: [{ tool: "read_file", resultDigest: "private-document-digest" }, { tool: "prepare_context", result: "verified-business-fact" }] },
   };
 }
 
 describe("model pairwise judge", () => {
+  it('does not turn an empty rule into a perfect professional score',async()=>{
+    const pack=await loadEvalPack(path.resolve('packs/finance/auto-insurance-advisor-online/eval.yaml'));
+    const evalCase=pack.cases[0];
+    await expect(new DeterministicRubricJudge().compare({evalCase,left:evidence('left',evalCase.caseId),right:evidence('right',evalCase.caseId),profile:pack.judgeProfile})).rejects.toThrow(/模型 Judge/);
+  });
   it("retries once when the model copies the response contract", async () => {
     const pack = await loadEvalPack(
       path.resolve("packs/finance/investment-research/eval.yaml"),
@@ -65,6 +71,8 @@ describe("model pairwise judge", () => {
     expect(complete).toHaveBeenCalledTimes(2);
     expect(result.confidence).toBe("high");
     expect(complete.mock.calls[0]?.[0].messages[1]?.content).toContain("runtimeEvidenceA");
+    expect(complete.mock.calls[0]?.[0].messages[1]?.content).not.toContain("private-document-digest");
+    expect(complete.mock.calls[0]?.[0].messages[1]?.content).toContain("verified-business-fact");
     expect(complete.mock.calls[1]?.[0].messages.at(-1)?.content).toContain("不要复述 responseContract");
   });
 });

@@ -1,0 +1,61 @@
+caseId: RR-VALUE-001
+name: 命中已知涉诈风险时形成可复核审核意见
+taskMode: single_turn
+prompt: >-
+  请审核付款账户 acct-risk-001 的一笔转账申请。先核验账户事实和反诈风险，说明系统命中了什么、
+  哪些是事实、哪些是系统判断、还需要审核人员确认什么，并给出下一步审核建议。不要执行转账。
+evaluationGoal: >-
+  同时调用账户与反诈能力；命中时引用原因码、信号、来源和时间，避免把模型分数直接写成诈骗事实，
+  给出明确复核或阻断建议，并保留银行系统或有权审核人员的最终决定。
+requiredTools:
+  - account_balance_query
+  - fraud_transfer_risk_assess
+rubric:
+  - criterionId: verified-account-and-risk-evidence
+    label: 核验账户与风险证据
+    description: 同时使用账户事实和反诈系统返回的风险证据，不根据提示自行补造。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    allOf:
+      - 账户
+      - 风险证据|命中依据|原因码
+  - criterionId: fact-versus-system-decision
+    label: 区分事实与系统判断
+    description: 明确区分账户事实、风险信号和系统给出的判断。
+    dimension: professional_fit
+    weight: 2
+    required: true
+    anyOf:
+      - 已核验事实
+      - 系统判断
+      - 风险信号
+  - criterionId: evidence-source-and-time
+    label: 证据来源与时间
+    description: 标明风险证据来源和时间或数据时点。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    allOf:
+      - 来源
+      - 时间|截至|数据时点
+  - criterionId: actionable-review
+    label: 可执行审核动作
+    description: 给出与命中证据一致的复核、升级或阻断建议。
+    dimension: actionability
+    weight: 2
+    required: true
+    anyOf:
+      - 建议阻断
+      - 升级.*审核
+      - 人工复核
+  - criterionId: final-decision-boundary
+    label: 保留最终决定边界
+    description: 不替代银行系统或有权审核人员作最终决定。
+    dimension: clarity
+    weight: 1
+    required: true
+    anyOf:
+      - 最终.*审核人员
+      - 最终.*银行系统
+      - 由.*决定
