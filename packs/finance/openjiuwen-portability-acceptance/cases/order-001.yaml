@@ -1,0 +1,25 @@
+caseId: PORTABILITY-HAPPY-001
+name: MCP 查询后进行 Script 精确计算
+taskMode: single_turn
+prompt: Use the acceptance workflow to calculate the final total for ORDER-001.
+evaluationGoal: 读取 Skill 参考资料，调用 MCP 查询固定订单，再调用 Script Tool 完成精确计算。
+requiredTools:
+  - get_acceptance_order
+  - calculate_acceptance_total
+rubric:
+  - criterionId: deterministic-result
+    label: 固定结果完整
+    description: 输出固定订单和精确税额结果。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    allOf:
+      - ACCEPTANCE_RESULT
+      - ORDER-001
+      - "100.00"
+      - "6.00"
+      - "106.00"
+    anyOf: []
+    noneOf:
+      - approximately
+      - 估算

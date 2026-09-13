@@ -3,7 +3,6 @@ import asyncio
 import json
 import os
 from pathlib import Path
-import signal
 import sys
 import time
 
@@ -41,6 +40,9 @@ async def execute(request: Request):
     for server in (body.get("environment") or {}).get("mcpServers", []):
         if server["endpoint"] not in cfg.get("mcp", {}):
             raise HTTPException(400, "MCP endpoint is not registered in this worker")
+    for tool in (body.get("environment") or {}).get("scriptTools", []):
+        if tool.get("kind") not in ("PYTHON", "NODE") or not tool.get("name") or not tool.get("path"):
+            raise HTTPException(400, "Invalid local Script Tool binding")
     if body.get("schemaVersion") != "finance.skill-eval.runtime-request.v1":
         raise HTTPException(400, "Unsupported runtime contract")
 
@@ -87,14 +89,22 @@ async def execute(request: Request):
                     try:
                         if process.returncode is None:
                             try:
-                                os.killpg(process.pid, signal.SIGTERM)
+                                if os.name == "nt":
+                                    process.terminate()
+                                else:
+                                    import signal
+                                    os.killpg(process.pid, signal.SIGTERM)
                             except ProcessLookupError:
                                 pass
                             try:
                                 await asyncio.wait_for(process.wait(), 3)
                             except TimeoutError:
                                 try:
-                                    os.killpg(process.pid, signal.SIGKILL)
+                                    if os.name == "nt":
+                                        process.kill()
+                                    else:
+                                        import signal
+                                        os.killpg(process.pid, signal.SIGKILL)
                                 except ProcessLookupError:
                                     pass
                                 await process.wait()

@@ -35,6 +35,8 @@ Service   独立控制台、上传 Skill、环境预检与历史报告
 
 现场演示安装和使用说明：[本地在线评测](docs/local-online-demo.md)。默认财富样例使用明确标注的模拟业务快照，模型与工具现场执行，不是历史答案回放。
 
+Windows 企业工作站首次使用时，将已提交的 `.runtime.local.example.json` 复制为被 Git 忽略的 `.runtime.local.json`，填写本机密钥后运行 `scripts\start-openjiuwen.cmd`。
+
 ## 评测流程
 
 ```text

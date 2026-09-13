@@ -17,6 +17,7 @@ export type RuntimeEnvironmentDescriptor = {
     toolNames: string[];
     credentialEnv?: string | null;
   }>;
+  scriptTools?:Array<{name:string;path:string;kind:'PYTHON'|'NODE';filePaths:string[];inputSchema?:unknown}>;
 };
 
 export type HttpRuntimeAdapterOptions = {

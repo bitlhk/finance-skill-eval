@@ -1,0 +1,5 @@
+[project]
+name = "openjiuwen-portability-acceptance-script"
+version = "1.0.0"
+requires-python = ">=3.11,<3.14"
+dependencies = []

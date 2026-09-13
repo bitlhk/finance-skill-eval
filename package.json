@@ -32,6 +32,7 @@
     "build:web": "vite build",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:ui:migration-v2": "pnpm build && node scripts/verify-migration-v2-ui.mjs",
     "serve": "node dist/service/server.js",
     "serve:codex": "FINANCE_EVAL_JUDGE_PROVIDER=codex_cli node dist/service/server.js",
     "dev": "vite --host 0.0.0.0",

@@ -796,7 +796,7 @@ function MigrationWorkspace({catalog,source,onChanged}:{catalog:Catalog;source:S
   async function upload(files:File[]){if(uploading)return;setUploading(true);setError('');setImports([]);let single:SkillAsset|null=null;try{
     const results=await importMigrationFiles(files,async(bytes)=>{
       const asset=await api<SkillAsset>('/api/skills/upload',{method:'POST',body:new Blob([bytes as BlobPart]),headers:{'content-type':'application/zip'}});
-      await api('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:asset.assetId,name:asset.displayName+'迁移'})});single=asset;
+      single=asset;
     });setImports(results);await onChanged();setUploadedAsset(files.length===1?single:null);setRefreshKey(n=>n+1);
   }catch(e){setError(String(e));}finally{setUploading(false);}}
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL MIGRATION</span><h1>Skill 迁移</h1></div></section>

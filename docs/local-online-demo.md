@@ -41,6 +41,41 @@ node scripts/bootstrap-local.mjs /path/to/model.env /path/to/wealth-skill
 node --env-file=.env.local dist/service/server.js
 ```
 
+### Windows 企业工作站
+
+Windows 支持是本地交付能力的一部分：迁移工具最终会安装到企业用户的电脑上，因此启动 OpenJiuwen 不应依赖 Bash 或 systemd。
+
+仓库提交 `.runtime.local.example.json` 作为公开模板；真实的 `.runtime.local.json` 包含密钥，因此被 Git 忽略。首次使用时先在仓库根目录执行：
+
+```bat
+copy /Y ".runtime.local.example.json" ".runtime.local.json"
+```
+
+打开 `.runtime.local.json`，填写模型服务的 `baseUrl`、`apiKey` 和 `upstreamModelId`。如果实际配置文件位于其他位置，在当前 `cmd.exe` 窗口设置 `FINANCE_RUNTIME_CONFIG` 为它的完整路径。随后运行：
+
+```bat
+scripts\start-openjiuwen.cmd
+```
+
+首次运行会使用本机 Python 3.11–3.13 创建 `.venv-openjiuwen`，并安装 `integrations\openjiuwen\requirements.txt` 中固定的依赖。已有环境缺少依赖时也会自动补装。依赖文件更新后，可显式重新安装：
+
+```bat
+scripts\start-openjiuwen.cmd --setup
+```
+
+脚本固定绑定 `127.0.0.1:56362`，启动前检查运行配置和模型绑定，不会把本机服务直接暴露到局域网。启动后可在另一个 `cmd.exe` 窗口检查：
+
+```bat
+curl.exe http://127.0.0.1:56362/health
+```
+
+如果企业 Python 未加入 `PATH`，可在启动前显式指定批准的解释器：
+
+```bat
+set "FINANCE_OPENJIUWEN_PYTHON=C:\ApprovedPython\python.exe"
+scripts\start-openjiuwen.cmd
+```
+
 默认控制台 `http://127.0.0.1:56361`。服务只绑定回环地址；外部访问使用现有 SSH 隧道。不要将使用个人 Codex 登录及本机模型凭据的 Demo 未经鉴权直接暴露到公网。
 
 本机已由用户 systemd 服务托管：

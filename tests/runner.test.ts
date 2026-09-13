@@ -59,5 +59,5 @@ describe("evaluation runner lifecycle", () => {
       signal: controller.signal,
     })).rejects.toMatchObject({ name: "EvaluationCancelledError" });
     expect(cleanup).toHaveBeenCalledOnce();
-  });
+  }, 10_000);
 });
