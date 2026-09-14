@@ -231,17 +231,17 @@ Script Tool 适合以下情况：
 
 脚本语言不作强制要求。本规范推荐优先考虑 Python，因为它适合脚本任务，依赖环境容易单独准备，也便于在命令行中直接测试。需要共享或服务化时，Python 实现也可以继续封装为 MCP Tool。
 
-如果使用 Python，建议 Tool 自己保存环境定义：
+如果 Python Script Tool 直接包含在 Skill 中，建议按照 Agent Skills 的脚本指南，使用 PEP 723 在脚本文件内声明 Python 版本和依赖。需要锁定依赖时，使用 `uv lock --script` 生成与脚本相邻的锁文件：
 
 ```text
-balance-tool/
-├── pyproject.toml      # Python 版本和直接依赖
-├── uv.lock             # 锁定实际依赖版本
-├── src/                # Tool 实现
-└── tests/              # 独立测试
+account-balance/
+├── SKILL.md
+└── scripts/
+    ├── get_account_balance.py       # Tool 实现及 PEP 723 依赖声明
+    └── get_account_balance.py.lock  # 可选：uv 生成的脚本锁文件
 ```
 
-环境准备属于 Tool 的运行管理，不是 Skill 的业务步骤。`SKILL.md` 不需要指导 Agent 安装 Python 或逐条安装依赖。
+`pyproject.toml` 和项目级 `uv.lock` 只在 Script Tool 本身作为独立 Python 项目管理时使用；这属于 Python 工程结构，不是 Agent Skills 对 Skill 包的要求。环境准备属于 Tool 的运行管理，`SKILL.md` 不需要指导 Agent 逐条安装依赖。
 
 ### 7.3 怎样选择
 
@@ -257,31 +257,49 @@ balance-tool/
 
 ## 8. 完整示例
 
-下面是一个简化的 `SKILL.md`：
+完整样例以真实文件保存在仓库的 `examples/skill-tool-packages/` 目录中。本规范只说明交付结构并链接到源码，避免大段代码遮盖规范正文，也避免文档代码与可构建代码不一致。
 
-```markdown
----
-name: account-balance
-description: 查询客户账户余额，并在查询前检查必要信息。用户询问账户余额或可用资金时使用。
----
+### 8.1 独立 Skill 包 + Java MCP Tool 包
 
-# 查询账户余额
-
-## 执行前检查
-
-- 必须取得账户编号。
-- 账户编号缺失时，请用户补充，不要猜测。
-- 不要要求用户提供密码、Token 或密钥。
-
-## 操作步骤
-
-1. 调用 `get_account_balance`，传入账户编号。
-2. 查询成功后，说明币种、账面余额和可用余额。
-3. 如果账户不存在，请用户检查账户编号。
-4. 如果 Tool 暂时不可用，说明当前无法完成查询，不要编造结果。
+```text
+examples/skill-tool-packages/account-balance/
+├── skill/
+│   └── SKILL.md
+└── mcp/
+    ├── pom.xml
+    ├── Dockerfile
+    ├── README.md
+    └── src/main/java/com/example/balance/
+        ├── BalanceMcpServer.java
+        └── GetAccountBalanceTool.java
 ```
 
-这个 Skill 不关心 `get_account_balance` 是 Java 编写的 MCP Tool，还是 Python 编写的 Script Tool。只要 Runtime 能够提供同名、同用途、输入输出一致的 Tool，Skill 的业务说明就不需要改变。
+- Skill 入口：[account-balance/skill/SKILL.md](../../examples/skill-tool-packages/account-balance/skill/SKILL.md)
+- Maven 依赖和可执行 JAR 配置：[account-balance/mcp/pom.xml](../../examples/skill-tool-packages/account-balance/mcp/pom.xml)
+- MCP Server 启动入口：[BalanceMcpServer.java](../../examples/skill-tool-packages/account-balance/mcp/src/main/java/com/example/balance/BalanceMcpServer.java)
+- Tool Schema、注册和业务结果：[GetAccountBalanceTool.java](../../examples/skill-tool-packages/account-balance/mcp/src/main/java/com/example/balance/GetAccountBalanceTool.java)
+- 容器部署：[account-balance/mcp/Dockerfile](../../examples/skill-tool-packages/account-balance/mcp/Dockerfile)
+- 构建和接入说明：[account-balance/mcp/README.md](../../examples/skill-tool-packages/account-balance/mcp/README.md)
+
+这个交付形态中，Skill 与 MCP 服务可以分别发布。Runtime 或平台配置负责登记 MCP 服务地址，并把 Skill 中的 Tool 名称绑定到 MCP Server 暴露的同名 Tool。服务地址、认证信息和部署参数不写入 `SKILL.md`。
+
+### 8.2 Skill 包内包含 Python Script Tool
+
+```text
+examples/skill-tool-packages/transaction-summary/
+├── SKILL.md
+└── scripts/
+    ├── summarize_transactions.py
+    └── summarize_transactions.py.lock
+```
+
+- Skill 入口：[transaction-summary/SKILL.md](../../examples/skill-tool-packages/transaction-summary/SKILL.md)
+- Script Tool 源码及 PEP 723 依赖声明：[summarize_transactions.py](../../examples/skill-tool-packages/transaction-summary/scripts/summarize_transactions.py)
+- uv 脚本锁文件：[summarize_transactions.py.lock](../../examples/skill-tool-packages/transaction-summary/scripts/summarize_transactions.py.lock)
+
+这个交付形态中，脚本使用 PEP 723 在文件内声明 Python 版本和依赖，使用 `uv lock --script` 生成相邻锁文件。Script Tool 从标准输入读取 JSON，向标准输出写入唯一的 JSON 结果；错误写入标准错误并使用非零退出码。它应能够脱离 Agent Runtime 独立执行和测试。
+
+以上文件是规范的一部分。调整示例时，应直接修改链接指向的源码并完成构建或执行验证，不要在本规范中再复制一份代码。
 
 ## 9. 编写完成后的检查清单
 
