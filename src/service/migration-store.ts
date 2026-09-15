@@ -21,6 +21,7 @@ import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId
 import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { baselineBrief,generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
+import { stageEnvelope,staleAgainst } from './stage-envelope.js';
 import { TechnicalValidationService } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 
@@ -52,6 +53,8 @@ type Migration = {
   generation?:{candidateDigest:string;target:{runtime:string;environmentId?:string;intent:string};
     diff:Array<{path:string;operation:string;before:string;after:string}>;generatedAt:string};
   inspection?:ProjectInspection;
+  /** The A2 product as a stage product: its binding is what says which asset it describes. */
+  analysis?:import('./stage-envelope.js').StageEnvelope<ProjectInspection>;
   decisions?:ToolDecision[];
   portableGenerations?:PortableGeneration[];
   portableGenerationDiff?:PortableDiff[];
@@ -138,11 +141,21 @@ export class MigrationStore {
     }
     if(!inspection)return conflict('分析不可用：A2 agent 未产出工具与基线。静态规则不再猜测工具与输入输出，因此无法继续迁移。');
     value.inspection=inspection;
+    // The baseline is a stage product, so it is recorded as one: what produced it and what it was
+    // bound to. Without the binding there is no way to say later whether it still describes the
+    // asset it was written for (L1 §3.5 rule 1).
+    value.analysis=stageEnvelope({assetDigest:asset.artifactSha256,stageId:'A2',producer:'AGENT',status:'PRODUCED',
+      payload:inspection});
     value.decisions=(value.decisions??[]).filter(decision=>decision.baseAssetId===asset.assetId&&value.inspection!.tools.some(tool=>tool.toolId===decision.toolId));
     await writeJsonAtomic(this.file(id),value);return value.inspection;
   });}
   async inspection(id:string){const value=await this.get(id),asset=value.candidate??value.source;
-    if(!value.inspection||value.inspection.assetId!==asset.assetId)return this.inspect(id);return value.inspection;
+    if(!value.inspection||value.inspection.assetId!==asset.assetId)return this.inspect(id);
+    // The asset id says which asset, the digest says which contents. A record written before
+    // 0.1 → 2.0 upgrade can carry an inspection for an asset whose bytes have since moved, and the
+    // binding is what catches that.
+    if(value.analysis&&staleAgainst(value.analysis,{asset:asset.artifactSha256}))return this.inspect(id);
+    return value.inspection;
   }
   async decide(id:string,toolId:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({form:z.enum(['MCP','SCRIPT']),language:z.string().min(1).max(40).optional(),reason:z.string().min(1).max(1000).optional(),baseAssetId:z.string().min(1)}).parse(input);

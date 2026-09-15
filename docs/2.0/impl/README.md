@@ -33,7 +33,7 @@
 
 | ID | 状态 | 特性 | 类型 | 说明 |
 | --- | --- | --- | --- | --- |
-|X-1 | ❌ | 统一契约信封 | 改造 | 现有 5 种绑定字段名（`assetDigest` / `artifactSha256` / `candidateDigest` / `baseAssetId` / `digest`）收敛为一种。见 L1 §3.5 |
+|X-1 | 🟡 | 统一契约信封 | 改造 | stage 边界已落 `StageEnvelope`（A2/A4 产出、`binding.assetDigest` 一个名字、`inputDigests` 驱动失效、`ABSTAINED` 一等状态），A2 的产物按信封落盘并在 `/inspection` 上校验绑定。**未收敛**：持久化记录里的 `artifactSha256` / `baseAssetId` / `candidateDigest`（改了会破坏 0.1 历史兼容）、以及外部 Host 的 `runtime-request` 信封。边界见 L1 §3.5 |
 |X-2 | ✅ | TS ↔ Python agent 调用契约 | 新建 | 新增请求 schema 或端点。现有 `finance.skill-eval.runtime-request.v1` 强制评估形状（`case` / `side` / `variant`），迁移 agent 用不了 |
 |X-3 | ✅ | 版本号动态读取 | 改造 | `session.py` 写死字面量 → `importlib.metadata.version("openjiuwen")`。否则升级后证据会撒谎 |
 

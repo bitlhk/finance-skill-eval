@@ -165,9 +165,21 @@ type StageTrace = {
 
 三条规则：
 
-1. **绑定强制**——`inputDigests` 中任一上游摘要变化，本产物即失效。失效传播只沿这张表走，不另设机制；
+1. **绑定强制**——`binding.assetDigest` 说这个产物是照着哪份资产做的，`inputDigests` 说它吃了哪些上游产物；
+   任一变化，本产物即失效。**`asset` 是保留键**：它就是 `binding.assetDigest`，不许在 `inputDigests` 里再起一个名字；
 2. **弃权是一等状态**——`ABSTAINED` 是合法产出，agent stage 必须能返回它；
 3. **人工门不可跳过**——`producer: 'HUMAN'` 的产物，任何 agent 产出都不能替代。
+
+**这个信封管到哪里**（写清楚，免得有人到处找）：
+
+| 是什么 | 归不归信封 |
+| --- | --- |
+| agent stage 的产出（A2 的分析、A4 的交付物） | ✅ 就落在这里 |
+| 落盘的 `ProjectInspection` / 迁移记录 | 记录里存信封（`analysis`），但它自己的 `schemaVersion` 与字段是持久化格式，不跟着改 |
+| `finance.skill-eval.runtime-request.v1` | ❌ **外部 Host 的契约**，不是我们的 stage 产物 |
+| Skill 资产记录里的 `artifactSha256` | ❌ 0.1 就在的持久化字段，改了会破坏历史兼容 |
+
+agent 进程自己在 stdout 上写的那行 JSON 是**传输封装**，不是 stage 产物；`runMigrationAgent` 把它映射成信封。
 
 ## 4. 状态计算
 

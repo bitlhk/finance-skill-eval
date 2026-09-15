@@ -121,6 +121,33 @@ it('reports what the analysis agent could not read, instead of calling it unavai
     expect(result.json().message).not.toContain('分析不可用');
   }finally{await app.close();}
 });
+it('re-runs the analysis when the recorded product no longer matches its binding',async()=>{
+  const data=await mkdtemp(path.join(os.tmpdir(),'migration-binding-'));dirs.push(data);
+  let calls=0;
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:async input=>{calls+=1;return {status:'PRODUCED' as const,
+      payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[{name:'lookup',sourcePaths:['tool/lookup.py'],language:'Python',portability:'RUNTIME_BOUND',
+        input:{description:'',schema:null,path:'skill/SKILL.md',line:3},output:{description:'',schema:null,path:'skill/SKILL.md',line:3},
+        evidence:[],findings:[],recommendedForm:'SCRIPT',recommendationReason:'夹具'}]},
+      scanner:{scannerDigest:'a'.repeat(64),coverage:[]}};}});
+  const headers={authorization:'Bearer test'};
+  try{
+    const zip=Buffer.from(zipSync({'skill/SKILL.md':strToU8(method),'tool/lookup.py':strToU8('def lookup(value): return value\n')}));
+    const asset=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
+    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'binding'}})).json();
+    await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
+    expect(calls).toBe(1);
+    // Same asset, so the recorded product still describes it.
+    await app.inject({url:`/api/migrations/${project.id}/inspection`,headers});
+    expect(calls).toBe(1);
+    // A record whose product was written for other contents -- what an upgrade can leave behind.
+    const file=path.join(data,'migrations',`${project.id}.json`),record=JSON.parse(await readFile(file,'utf8'));
+    record.analysis.binding.assetDigest='0'.repeat(64);
+    await writeFile(file,JSON.stringify(record,null,2));
+    await app.inject({url:`/api/migrations/${project.id}/inspection`,headers});
+    expect(calls).toBe(2);
+  }finally{await app.close();}
+});
 it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{
   const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});
   const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'test'});

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
+import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -15,19 +16,24 @@ import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
 export type AgentStage = "A2" | "A4";
 export type AgentStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
 
-export type AgentResult<T = Record<string, unknown>> = {
-  stage: AgentStage;
-  status: AgentStatus;
-  assetDigest?: string;
-  payload: T;
-  files?: Record<string, string>;
-  /** The static scanner's own result, when the A2 agent ran it. */
-  scanner?: Record<string, unknown> | null;
-  trace: { rounds: Array<Record<string, unknown>> };
-  elapsedMs: number;
-  modelId?: string;
-  error?: string;
+/** The result line the agent process writes. Framing, not a stage product. */
+type WireResult<T> = {
+  assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
+  scanner?: Record<string, unknown> | null; trace?: { rounds: Array<Record<string, unknown>> };
+  elapsedMs?: number; modelId?: string; error?: string;
 };
+
+/** What the agent produced, beyond the envelope's own binding and status. */
+export type AgentPayload<T> = {
+  judgement: T;
+  /** A4: the files it wrote. */
+  files?: Record<string, string>;
+  /** A2: the static scanner's own result, when the agent ran it. */
+  scanner?: Record<string, unknown> | null;
+};
+
+/** The agent process speaks its own JSON on the wire; this is the stage product the platform uses. */
+export type AgentResult<T = Record<string, unknown>> = StageEnvelope<AgentPayload<T>>;
 
 /**
  * What the analysis hand-off looks like from the store's side: "give me an analysis".
@@ -52,11 +58,11 @@ export async function analyzeWithAgent(input: { assetDigest: string; runId: stri
   const result = await runMigrationAgent<{ reason?: string; missing?: string[] }>("A2", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
   if (result?.status === "ABSTAINED") return {
     status: "ABSTAINED",
-    reason: String(result.payload?.reason ?? "").trim() || "分析 agent 没有说明弃权原因",
-    missing: (result.payload?.missing ?? []).map(String).filter(Boolean),
+    reason: String(result.payload.judgement?.reason ?? "").trim() || "分析 agent 没有说明弃权原因",
+    missing: (result.payload.judgement?.missing ?? []).map(String).filter(Boolean),
   };
   if (result?.status !== "PRODUCED") return null;
-  return { status: "PRODUCED", payload: result.payload, scanner: result.scanner ?? null };
+  return { status: "PRODUCED", payload: result.payload.judgement, scanner: result.payload.scanner ?? null };
 }
 
 /** What the A4 hand-off looks like from the store's side: "build me these Tools". */
@@ -74,7 +80,7 @@ export async function implementWithAgent(input: {
   if (!migrationAgentEnabled()) return null;
   const result = await runMigrationAgent<{ tools?: unknown[] }>("A4", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
   if (result?.status !== "PRODUCED" && result?.status !== "ABSTAINED") return null;
-  return { status: result.status, payload: result.payload, files: result.files ?? {} };
+  return { status: result.status, payload: result.payload.judgement, files: result.payload.files ?? {} };
 }
 
 export type MigrationAgentOptions = {
@@ -392,14 +398,16 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
   const entry = path.join(options.projectRoot, ENTRY[stage]);
   const runtimeConfig = process.env.FINANCE_RUNTIME_CONFIG?.trim()
     ?? path.join(options.projectRoot, ".runtime.local.json");
+  const assetDigest = String(request.assetDigest ?? "");
+  const failed = (error: string, elapsedMs = 0): AgentResult<T> => stageEnvelope({
+    assetDigest, stageId: stage, producer: "AGENT", status: "FAILED",
+    payload: { judgement: {} as T }, run: { elapsedMs, error },
+  });
 
   // Cheapest possible unavailable check: without the interpreter or the runtime
   // config there is nothing to spawn, and callers fall back to the rules path.
   if (!existsSync(program) || !existsSync(runtimeConfig)) {
-    return {
-      stage, status: "FAILED", payload: {} as T, trace: { rounds: [] }, elapsedMs: 0,
-      error: "migration agent runtime is not available",
-    };
+    return failed("migration agent runtime is not available");
   }
 
   const body = JSON.stringify({
@@ -451,20 +459,33 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
       const line = stdout.split("\n").map(part => part.trim()).filter(Boolean).reverse()
         .find(part => part.startsWith("{") && part.includes("\"result\""));
       if (!line) {
-        resolve({
-          stage, status: "FAILED", payload: {} as T, trace: { rounds: [] }, elapsedMs: 0,
-          error: `agent produced no result line${stderr ? `: ${stderr.slice(-500)}` : ""}`,
-        });
+        resolve(failed(`agent produced no result line${stderr ? `: ${stderr.slice(-500)}` : ""}`));
         return;
       }
       try {
-        const parsed = JSON.parse(line) as { result: AgentResult<T> };
-        resolve(parsed.result);
+        // The process speaks its own JSON. Its framing is not the stage product: the product is the
+        // envelope below, and this is where the two meet.
+        const wire = (JSON.parse(line) as { result?: WireResult<T> }).result ?? {};
+        const status = String(wire.status ?? "").toUpperCase();
+        resolve(stageEnvelope({
+          assetDigest: String(wire.assetDigest ?? assetDigest),
+          stageId: stage,
+          producer: "AGENT",
+          status: status === "PRODUCED" || status === "ABSTAINED" ? status : "FAILED",
+          payload: {
+            judgement: (wire.payload ?? {}) as T,
+            ...(wire.files ? { files: wire.files } : {}),
+            ...(wire.scanner ? { scanner: wire.scanner } : {}),
+          },
+          ...(wire.trace ? { trace: wire.trace } : {}),
+          run: {
+            ...(wire.modelId ? { modelId: String(wire.modelId) } : {}),
+            ...(typeof wire.elapsedMs === "number" ? { elapsedMs: wire.elapsedMs } : {}),
+            ...(wire.error ? { error: String(wire.error) } : {}),
+          },
+        }));
       } catch (error) {
-        resolve({
-          stage, status: "FAILED", payload: {} as T, trace: { rounds: [] }, elapsedMs: 0,
-          error: `agent result was not JSON: ${error instanceof Error ? error.message : String(error)}`,
-        });
+        resolve(failed(`agent result was not JSON: ${error instanceof Error ? error.message : String(error)}`));
       }
     });
     child.stdin.end(body);
