@@ -235,24 +235,43 @@ export class MigrationStore {
     const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
     const implementations=await this.generateImplementations(archive,value.inspection,decisions,asset,plan);
     const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,implementations});
-    const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
-    const sourceInspection=value.inspection;
-    const decoded:Record<string,string>={};for(const [name,bytes] of Object.entries(generated.files))try{decoded[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
+    const candidate=await this.publishCandidate(generated.files);
+    const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:value.inspection,decisions:value.decisions!,baseAssetId:asset.assetId,generations:generated.generations});
+    value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
+    (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
+    await writeJsonAtomic(this.file(id),value);return value;
+  });}
+  /** Turn placed files into an asset. Separate from generating them: this is the step that makes
+   * the result referenceable, and it has nothing to say about whether the code is any good. */
+  private async publishCandidate(files:Record<string,Uint8Array>):Promise<SkillAssetRecord>{
+    return this.skills.uploadZip(Buffer.from(zipSync(files)));
+  }
+  /**
+   * The candidate's own check, after it exists.
+   *
+   * It is a separate method because it is a separate cost and a separate failure: the scanner plus
+   * a model call, against the generation's model call or agent run. Folded into one method, a slow
+   * or failing check decided whether generation was attempted at all -- and the two are worth
+   * reporting apart.
+   */
+  private async inspectCandidate(input:{candidate:SkillAssetRecord;files:Record<string,Uint8Array>;
+    inspection:ProjectInspection;decisions:ToolDecision[];baseAssetId:string;generations:PortableGeneration[]}):Promise<ProjectInspection>{
+    const decoded:Record<string,string>={};for(const [name,bytes] of Object.entries(input.files))try{decoded[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
     if(!this.diagnostics)return conflict('静态诊断服务不可用，不能确认生成候选');
     let candidateDiagnosis;
-    try{candidateDiagnosis=await this.diagnostics.diagnose(candidate);}
+    try{candidateDiagnosis=await this.diagnostics.diagnose(input.candidate);}
     catch{return conflict('生成候选的静态诊断执行失败，候选未被采纳；请检查 uv、锁文件和扫描器配置');}
-    if(candidateDiagnosis.digest!==candidate.artifactSha256)return conflict('生成候选的静态诊断与资产不匹配');
-    const candidateInspection=inspectProject({assetId:candidate.assetId,assetDigest:candidate.artifactSha256,files:decoded,skillFile:candidate.skillFile,diagnosis:candidateDiagnosis});
+    if(candidateDiagnosis.digest!==input.candidate.artifactSha256)return conflict('生成候选的静态诊断与资产不匹配');
+    const candidateInspection=inspectProject({assetId:input.candidate.assetId,assetDigest:input.candidate.artifactSha256,files:decoded,skillFile:input.candidate.skillFile,diagnosis:candidateDiagnosis});
     if(candidateInspection.skill.status!=='COMPLIANT'){
       const errors=candidateInspection.skill.findings.filter(item=>item.severity==='ERROR').map(item=>`${item.code}: ${item.message}`).join('；');
       return conflict(`生成候选不符合 Skill 包规范，候选未被采纳：${errors||'Skill 检查未通过'}`);
     }
-    candidateInspection.tools=sourceInspection.tools.map(tool=>{
-      const decision=value.decisions!.find(item=>item.toolId===tool.toolId&&item.baseAssetId===asset.assetId)!;
-      const generation=generated.generations.find(item=>item.toolId===tool.toolId)!;
-      // Describe what was generated instead of asserting a language: asserting it made the
-      // record say Python for a Node script and Java for anything that was not Java.
+    // Describe what was generated instead of asserting a language: asserting it made the
+    // record say Python for a Node script and Java for anything that was not Java.
+    candidateInspection.tools=input.inspection.tools.map(tool=>{
+      const decision=input.decisions.find(item=>item.toolId===tool.toolId&&item.baseAssetId===input.baseAssetId)!;
+      const generation=input.generations.find(item=>item.toolId===tool.toolId)!;
       if(decision.form==='SCRIPT'){
         const entry=generation.entrypoint??generation.files.find(name=>CODE_FILE.test(name))!;
         return {...tool,sourcePaths:[entry],language:languageOfSourcePaths([entry]),kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:(/\.py$/iu.test(entry)?'PYTHON':'NODE') as 'PYTHON'|'NODE',path:entry},findings:[]};
@@ -260,10 +279,8 @@ export class MigrationStore {
       const generatedFiles=generation.files.filter(name=>CODE_FILE.test(name));
       return {...tool,sourcePaths:generatedFiles,language:languageOfSourcePaths(generatedFiles),kind:'MCP' as const,portability:'PORTABLE_MCP' as const,entrypoint:undefined,findings:[]};
     });
-    value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
-    (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
-    await writeJsonAtomic(this.file(id),value);return value;
-  });}
+    return candidateInspection;
+  }
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.serial(async()=>{
     const p=z.strictObject({toolId:z.string().min(1),baseAssetId:z.string().min(1),request:z.unknown().optional(),endpoint:z.string().url().optional(),arguments:z.record(z.unknown()).optional()}).parse(input);
     const value=await this.get(id),asset=value.candidate??value.source;if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新验证');

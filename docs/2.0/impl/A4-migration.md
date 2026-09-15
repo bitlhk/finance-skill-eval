@@ -14,7 +14,7 @@
 |A4-1 | ✅ | A4 agent 入口 | 新建 | `integrations/openjiuwen/migrate_agent.py`。`create_code_agent` + **自装配**工具集，**不含 bash / powershell / code** |
 |A4-2 | ✅ | `compile_tool` | 新建 | 按授权语言选工具链（`javac --release 17` / `py_compile` / `tsc` …）。`CodeTool` 是**执行任意代码**，不是编译，不用 |
 |A4-3 | ✅ | `run_contract_test` | 新建 | 门禁三条（起得来/工具有/调得通）；接口差异相对**基线**报告，不参与通过与否。MCP 起真实服务（agent 给的 `start`、平台挑空闲端口、导出 `PORT`），不是把业务模块当 stdin 程序跑 |
-|A4-4 | 🟡 | 拆开生成与候选自检 | 改造 | `generatePortable` 一个方法里混了：代码生成 + 打包上传 + **对整个候选重新跑诊断**（含一次模型调用，最长阻塞 180s）+ 合规自检 + 重写 `candidateInspection.tools` |
+|A4-4 | ✅ | 拆开生成与候选自检 | 改造 | 拆成三段：`generateImplementations`（要代码）、`publishCandidate`（落成资产）、`inspectCandidate`（诊断 + 合规自检 + 描述生成结果）。`generatePortable` 只做编排——**生成与自检是两笔不同的开销**（各含一次模型调用），混在一个方法里等于让慢而脆的自检决定要不要生成 |
 |A4-5 | ✅ | A4 循环 | 新建 | 生成 → 编译 → 契约测试 → 回灌。三出口：全过 `PRODUCED` / 判定无法忠实迁移 `ABSTAINED` / 预算耗尽 `FAILED` |
 |A4-6 | ✅ | 逐 Tool 弃权 | 新建 | 弃权是**逐 Tool** 的——一个 Tool 弃权退回 A3，不拖累其他 Tool |
 |A4-7 | ✅ | trace 记录 | 新建 | `StageTrace.rounds`：每轮产物摘要 / 编译结果 / 契约测试结果 / 失败原因。**循环相对单次生成唯一多出来的证据** |

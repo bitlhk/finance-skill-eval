@@ -228,7 +228,7 @@ it('blocks partially analyzed source until it is explicitly acknowledged and re-
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-partial-'));dirs.push(data);
   const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationModel:unreachableMigrationModel,
     // The scanner's coverage rides along with the analysis; it is what says "this file was not read".
-    migrationAnalyzer:async()=>({payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
+    migrationAnalyzer:async()=>({status:'PRODUCED',payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
       analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py','tool/vendor/opaque.js'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',
         entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}})]},
       scanner:{scannerDigest:'a'.repeat(64),coverage:[{path:'skill/SKILL.md',status:'PARSED'},{path:'tool/vendor/opaque.js',status:'UNSUPPORTED_LANGUAGE'}]}})});
