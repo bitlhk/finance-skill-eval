@@ -17,9 +17,9 @@
 | A1 导入 | [A1-import.md](./A1-import.md) | F-01 | — | 3 | — | 3/3 |
 | A2 检查诊断 | [A2-inspection.md](./A2-inspection.md) | F-02 / F-03 | 4 | 3 | — | 6/7 |
 | A3 授权 | [A3-authorization.md](./A3-authorization.md) | F-04 | — | 2 | — | 2/2 |
-| A4 改造 + 验证 | [A4-migration.md](./A4-migration.md) | F-05 / F-06 | 6 | 3 | 1 | 6/10 |
+| A4 改造 + 验证 | [A4-migration.md](./A4-migration.md) | F-05 / F-06 | 6 | 3 | 1 | 7/10 |
 | 跨 stage | 见下 | — | 1 | 2 | — | 2/3 |
-| **合计** | | | **11** | **13** | **1** | **18/25** |
+| **合计** | | | **11** | **13** | **1** | **19/25** |
 
 **状态标记**：✅ 完成（已实测） · 🟡 部分 · ⚠ 被 [L0 §2.2](../L0-overall-architecture.md) 的待定项挡住 · ❌ 未做
 

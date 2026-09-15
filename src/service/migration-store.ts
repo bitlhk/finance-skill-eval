@@ -182,12 +182,24 @@ export class MigrationStore {
         contract,
       },{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
         modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}).catch(()=>null);
+      if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
+        // An abstention is a decision that belongs to a human. Report which Tool and why,
+        // rather than letting the packager fail with a generic message.
+        const reported=((result.payload as {tools?:Array<{toolId?:string;status?:string;reason?:string;missing?:string[]}>}).tools??[])
+          .filter(item=>String(item.status??'').toUpperCase()==='ABSTAINED');
+        if(reported.length){
+          const detail=reported.map(item=>`${item.toolId||'未知 Tool'}：${item.reason?.trim()||'未说明原因'}${
+            item.missing?.length?`（缺 ${item.missing.join('、')}）`:''}`).join('；');
+          throw Object.assign(new Error(`有 Tool 无法忠实迁移，已停止生成并退回授权环节重新决策。${detail}`),{statusCode:409});
+        }
+        if(result.status==='ABSTAINED')throw Object.assign(new Error(
+          `迁移模型无法完成本次迁移，已退回授权环节重新决策。${String((result.payload as {reason?:string}).reason??'').trim()}`),{statusCode:409});
+      }
       if(result?.status==='PRODUCED'){
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const mapped=toGeneratedImplementations(result.payload as never,result.files??{},nameById);
         if(Object.keys(mapped).length)return mapped;
       }
-      if(result?.status==='ABSTAINED')break;
       }
     }
     return this.codeGenerator.generate({archive,inspection,decisions});
