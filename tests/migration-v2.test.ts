@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach,expect,it } from 'vitest';
 import { strToU8,unzipSync,zipSync } from 'fflate';
 import { validateSkill } from '../src/service/skill-validator.js';
-import { inspectProject } from '../src/service/tool-inspector.js';
+import { analysisFixture, analyzedTool, implementationFixture, inspectionFixture, toolFixture } from './analysis-fixture.js';
 import { buildMigrationPlan } from '../src/service/migration-model.js';
 import { LocalWorker } from '../src/service/local-worker.js';
 import { findMissingRequiredTools } from '../src/service/run-manager.js';
@@ -14,10 +14,12 @@ import { MigrationCodeGenerator } from '../src/service/migration-code-generator.
 
 const dirs:string[]=[];
 afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
-const javaBusiness=(className:string)=>`package com.finance.migration.business;\nimport java.util.LinkedHashMap;\nimport java.util.Map;\npublic final class ${className} {\n  public static Object execute(Map<String,Object> arguments) throws Exception { return new LinkedHashMap<>(arguments); }\n}\n`;
-const javaMigrationModel=()=>({configured:true,model:{providerId:'test',modelId:'java-migration',parameters:{}},adapter:{adapterId:'java-migration-fake',async complete(request:{messages:Array<{content:string}>}){
-  const payload=JSON.parse(request.messages.at(-1)!.content),implementations=payload.tools.map((tool:{toolId:string;name:string;requiredJavaClass:string;businessPath:string})=>({toolId:tool.toolId,toolName:tool.name,language:'java',entrypoint:tool.businessPath,entryClass:tool.requiredJavaClass,files:[{path:tool.businessPath,content:javaBusiness(tool.requiredJavaClass)}],dependencies:[],smokeInput:{},explanation:'pure Java semantic migration'}));
-  return {modelId:'java-migration',content:JSON.stringify({implementations})};
+const INCOMPLETE_PY='import json\ndef lookup(value):\n    return {"value": value}\n';
+const COMPLETE_PY='import json,sys\ndef lookup(value):\n    return {"value": value}\nif __name__ == "__main__": json.dump(lookup(json.load(sys.stdin)), sys.stdout)\n';
+// The path this test exercises reuses a Script that is already executable, so no model may be
+// consulted. Failing loudly here is what makes that a claim rather than an assumption.
+const unreachableMigrationModel=()=>({configured:true,model:{providerId:'test',modelId:'unreachable',parameters:{}},adapter:{adapterId:'unreachable',async complete(){
+  throw new Error('这条迁移路径不该调用代码生成模型');
 }}});
 
 it('checks the enterprise Skill baseline without treating tool language as compliance',()=>{
@@ -28,32 +30,21 @@ it('checks the enterprise Skill baseline without treating tool language as compl
   expect(invalid.findings.map(f=>f.code)).toEqual(expect.arrayContaining(['NAME_INVALID','DESCRIPTION_REQUIRED','ABSOLUTE_PATH']));
 });
 
-it('detects language-neutral MCP, Script and Runtime-bound tools independently',()=>{
-  const method='---\nname: mixed-tools\ndescription: 使用三个工具处理测试任务。\n---\n调用 `portable_mcp`、`script_tool` 和 `bound_tool`。失败时返回原因。';
-  const files={'SKILL.md':method,
-    'server.js':'import { Server } from "@modelcontextprotocol/sdk";\nconst inputSchema={"type":"object"};\nfunction portable_mcp(input) { return input; }\n',
-    'scripts/script_tool.py':'import json,sys\ndef script_tool(value): return value\nif __name__ == "__main__": json.dump(script_tool(json.load(sys.stdin)),sys.stdout)\n',
-    'bound.py':'from agentscope.tool import ToolResponse\ndef bound_tool(value): return ToolResponse(content=value)\ndef register(toolkit): toolkit.register_tool_function(tool_func=bound_tool)\n'};
-  const result=inspectProject({assetId:'a',assetDigest:'d',files,skillFile:'SKILL.md'});
-  expect(Object.fromEntries(result.tools.map(t=>[t.name,t.portability]))).toEqual({bound_tool:'RUNTIME_BOUND',portable_mcp:'PORTABLE_MCP',script_tool:'PORTABLE_SCRIPT'});
-  expect(result.tools.find(t=>t.name==='portable_mcp')?.language).toBe('JavaScript');
-  expect(result.tools.find(t=>t.name==='portable_mcp')?.inputSchema).toEqual({type:'object'});
-});
-
-it('does not treat SDK names in comments or ordinary strings as Tool evidence',()=>{
-  const result=inspectProject({assetId:'a',assetDigest:'d',skillFile:'SKILL.md',files:{
-    'SKILL.md':'---\nname: comment-only\ndescription: 验证注释不会成为依赖证据。\n---\n调用 `plain_tool`，失败时说明原因。',
-    'plain.js':'// FastMCP inputSchema agentscope register_tool\nconst note = "McpServer openjiuwen";\nfunction plain_tool(v){ return v; }',
-  }});
-  expect(result.tools[0]?.portability).toBe('INCOMPLETE');
-});
+// Tool discovery, portability classification and Schema reading used to be rules here. They are
+// now the A2 analysis: a judgement about what a package's tools are, made with citations rather
+// than by pattern-matching prose and source literals. It is not unit-testable without an agent,
+// which is the point -- so the rules-side assertions moved to tests/analysis-contract.test.ts
+// (what the platform accepts from an analysis) and to the skill package's analysis-rules.md.
 
 it('allows local Script Tools to satisfy OpenJiuwen required Tool bindings',()=>{
   expect(findMissingRequiredTools(['lookup','calculate'],[],[{name:'lookup',path:'scripts/lookup.py',kind:'PYTHON',filePaths:['scripts/lookup.py']}])).toEqual(['calculate']);
 });
 
 it('requires one migration choice per tool and groups MCP choices',()=>{
-  const inspection=inspectProject({assetId:'a',assetDigest:'d',skillFile:'SKILL.md',files:{'SKILL.md':'---\nname: mixed\ndescription: 测试工具。\n---\n`mcp_tool` `bound_tool`，失败时说明原因。','mcp.js':'import "@modelcontextprotocol/sdk"; const inputSchema={}; function mcp_tool(){}','bound.py':'from agentscope.tool import ToolResponse\ndef bound_tool(): return ToolResponse(content=[])'}});
+  const inspection=inspectionFixture([
+    toolFixture({name:'bound_tool',sourcePaths:['bound.py'],language:'Python',portability:'RUNTIME_BOUND'}),
+    toolFixture({name:'mcp_tool',sourcePaths:['mcp.js'],language:'JavaScript',portability:'PORTABLE_MCP',kind:'MCP',recommendedForm:'MCP',recommendedLanguage:'node'}),
+  ],'a');
   const byName=Object.fromEntries(inspection.tools.map(t=>[t.name,t]));
   const decisions=[{toolId:byName.mcp_tool!.toolId,form:'MCP' as const,reason:'共享服务',baseAssetId:'a',decidedAt:'now'},
     {toolId:byName.bound_tool!.toolId,form:'SCRIPT' as const,reason:'本地任务',baseAssetId:'a',decidedAt:'now'}];
@@ -68,7 +59,7 @@ it('turns every Skill-spec violation into a migration item and normalizes the ca
   expect(misplaced.status).toBe('NON_COMPLIANT');
   expect(misplaced.findings).toContainEqual(expect.objectContaining({code:'SCRIPT_OUTSIDE_SCRIPTS',path:'skill/run.py'}));
   expect(misplaced.findings.some(item=>item.path.startsWith('tool/'))).toBe(false);
-  const blocked=inspectProject({assetId:'bad-layout',assetDigest:'a'.repeat(64),files:{'skill/SKILL.md':source,'skill/run.py':'print("bad")'},skillFile:'skill/SKILL.md'});
+  const blocked={...inspectionFixture([],'bad-layout'),skill:validateSkill({'skill/SKILL.md':source,'skill/run.py':'print("bad")'},'skill/SKILL.md')};
   expect(buildMigrationPlan(blocked,[],'bad-layout')).toEqual(expect.objectContaining({generationAllowed:true,skillBlockingReasons:[],skillMigrationItems:expect.arrayContaining([expect.stringContaining('SCRIPT_OUTSIDE_SCRIPTS')])}));
   const archive={'skill/SKILL.md':strToU8(source),'skill/run.py':strToU8('print("bad")'),'skill/notes/readme.txt':strToU8('notes'),'skill/nested/SKILL.md':strToU8('legacy')};
   const generated=generatePortableCandidate({archive,base:{schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'bad-layout',skillId:'Bad_Name',version:'1',displayName:'bad',description:'bad',sourceType:'uploaded',artifactSha256:'a'.repeat(64),skillFile:'skill/SKILL.md',fileCount:2,createdAt:'now'},inspection:blocked,decisions:[],version:'2.0.0'});
@@ -84,32 +75,17 @@ it('turns every Skill-spec violation into a migration item and normalizes the ca
   expect(validateSkill({'skill/skill.md':source},'skill/skill.md').findings).toContainEqual(expect.objectContaining({code:'SKILL_FILENAME_INVALID'}));
 });
 
-it('generates a version-pinned executable Java MCP service instead of a placeholder',()=>{
-  const skill='---\nname: deployable-mcp\ndescription: 测试可部署 MCP 生成。\n---\n调用 `lookup`，失败时返回原因。';
-  const archive={'skill/SKILL.md':strToU8(skill),'tool/scripts/lookup.py':strToU8('import json,sys\ndef lookup(value): return {"value": value}\nif __name__ == "__main__": json.dump(lookup(json.load(sys.stdin)),sys.stdout)')};
-  const inspection=inspectProject({assetId:'asset',assetDigest:'d'.repeat(64),files:Object.fromEntries(Object.entries(archive).map(([name,value])=>[name,Buffer.from(value).toString()])),skillFile:'skill/SKILL.md'});
-  const tool=inspection.tools[0]!;
-  const business=javaBusiness('LookupBusiness');
-  const generated=generatePortableCandidate({archive,base:{schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'asset',skillId:'deployable-mcp',version:'1.0.0',displayName:'deployable',description:'test',sourceType:'uploaded',artifactSha256:'d'.repeat(64),skillFile:'skill/SKILL.md',fileCount:2,createdAt:'now'},inspection,decisions:[{toolId:tool.toolId,form:'MCP',language:'java',reason:'portable',baseAssetId:'asset',decidedAt:'now'}],version:'2.0.0',implementations:{[tool.toolId]:{language:'java',sourcePath:'mcp-java/src/main/java/com/finance/migration/business/LookupBusiness.java',source:business,additionalFiles:[],dependencies:[],entryClass:'LookupBusiness',smokeInput:{},generatedBy:'test/java',explanation:'pure Java',attempts:1,checks:[{name:'JAVA_COMPILE',passed:true,message:'compiled'}]}}});
-  const text=(name:string)=>Buffer.from(generated.files[name]!).toString();
-  expect(text('mcp-java/pom.xml')).toContain('<mcp.java.sdk.version>1.1.4</mcp.java.sdk.version>');
-  expect(text('mcp-java/pom.xml')).toContain('<artifactId>maven-shade-plugin</artifactId>');
-  expect(text('mcp-java/src/main/java/com/finance/migration/MigrationMcpServer.java')).toContain('HttpServletStreamableServerTransportProvider');
-  expect(text('mcp-java/src/main/java/com/finance/migration/MigrationMcpServer.java')).toContain('.tools(LookupTool.specification(mapper))');
-  expect(text('mcp-java/src/main/java/com/finance/migration/tools/LookupTool.java')).toContain('LookupBusiness.execute(arguments)');
-  expect(text('mcp-java/src/main/java/com/finance/migration/business/LookupBusiness.java')).toContain('public static Object execute');
-  expect(Object.keys(generated.files).some(name=>name.endsWith('.py'))).toBe(false);
-  expect(text('mcp-java/Dockerfile')).not.toContain('uv');
-  expect(text('mcp-java/src/main/java/com/finance/migration/tools/LookupTool.java')).not.toContain('BUSINESS_IMPLEMENTATION_NOT_CONNECTED');
-  expect(generated.files['mcp-java/Dockerfile']).toBeDefined();
-});
+// The platform used to render the Java MCP service from a template (pinned SDK, shaded jar,
+// generated adapter). It does not any more: the service is the agent's, and its shape is asserted
+// where it belongs -- tests/mcp-scaffold.test.ts for placement, and the contract test for what it
+// advertises. There is nothing left here to pin.
 
 it('packages model-migrated Runtime code with its real business implementation intact',()=>{
   const skill='---\nname: runtime-business\ndescription: 迁移真实订单计算工具。\n---\n调用 `calculate_total`。';
   const runtime='from decimal import Decimal\nfrom agentscope.tool import ToolResponse\n\ndef calculate_total(subtotal: str, rate: str) -> ToolResponse:\n    tax = Decimal(subtotal) * Decimal(rate)\n    return ToolResponse(content={"total": str(Decimal(subtotal) + tax)})\n\ndef register(toolkit):\n    toolkit.register_tool_function(tool_func=calculate_total)\n';
   const archive={'skill/SKILL.md':strToU8(skill),'tool/runtime.py':strToU8(runtime)};
-  const files=Object.fromEntries(Object.entries(archive).map(([name,value])=>[name,Buffer.from(value).toString()]));
-  const inspection=inspectProject({assetId:'asset',assetDigest:'e'.repeat(64),files,skillFile:'skill/SKILL.md'}),tool=inspection.tools[0]!;
+  const inspection=inspectionFixture([toolFixture({name:'calculate_total',sourcePaths:['tool/runtime.py'],language:'Python',portability:'RUNTIME_BOUND'})]);
+  const tool=inspection.tools[0]!;
   expect(tool.portability).toBe('RUNTIME_BOUND');
   const migrated='from decimal import Decimal\nimport json, sys\ndef calculate_total(subtotal: str, rate: str):\n    tax = Decimal(subtotal) * Decimal(rate)\n    return {"total": str(Decimal(subtotal) + tax)}\nif __name__ == "__main__":\n    json.dump(calculate_total(**json.load(sys.stdin)), sys.stdout)\n';
   const generated=generatePortableCandidate({archive,base:{schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'asset',skillId:'runtime-business',version:'1.0.0',displayName:'runtime',description:'test',sourceType:'uploaded',artifactSha256:'e'.repeat(64),skillFile:'skill/SKILL.md',fileCount:2,createdAt:'now'},inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',reason:'local',baseAssetId:'asset',decidedAt:'now'}],version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'model-generated/calculate_total.py',source:migrated,additionalFiles:[],dependencies:[],smokeInput:{},generatedBy:'test/model',explanation:'semantic port',attempts:1,checks:[{name:'PYTHON_COMPILE',passed:true,message:'compiled'},{name:'JSON_SMOKE',passed:true,message:'smoked'}]}}});
@@ -123,20 +99,19 @@ it('packages model-migrated Runtime code with its real business implementation i
 
 it('uses a migration model for Runtime-bound code and validates the returned complete entrypoint',async()=>{
   const skill='---\nname: model-migration\ndescription: 测试模型迁移。\n---\n调用 `lookup`。',runtime='from vendor.runtime import Result\ndef lookup(value): return Result(value)';
-  const archive={'skill/SKILL.md':strToU8(skill),'tool/runtime.py':strToU8(runtime)},files=Object.fromEntries(Object.entries(archive).map(([name,value])=>[name,Buffer.from(value).toString()]));
-  const inspection=inspectProject({assetId:'asset',assetDigest:'f'.repeat(64),files,skillFile:'skill/SKILL.md'});
-  inspection.tools=[{...inspection.tools[0]!,toolId:'lookup-id',name:'lookup',portability:'RUNTIME_BOUND',language:'Python',sourcePaths:['tool/runtime.py']}];
+  const archive={'skill/SKILL.md':strToU8(skill),'tool/runtime.py':strToU8(runtime)};
+  const inspection=inspectionFixture([toolFixture({toolId:'lookup-id',name:'lookup',sourcePaths:['tool/runtime.py'],language:'Python',portability:'RUNTIME_BOUND'})]);
   let prompt='',calls=0;const generator=new MigrationCodeGenerator(()=>({configured:true,model:{providerId:'test',modelId:'migration-model',parameters:{}},adapter:{adapterId:'fake',async complete(request){prompt=request.messages.at(-1)!.content;calls++;
-    const source=calls===1?'package com.finance.migration.business; import java.util.Map; public final class LookupBusiness { public static Object execute(Map<String,Object> arguments) throws Exception { return arguments } }':javaBusiness('LookupBusiness');
-    return {modelId:'migration-model',content:JSON.stringify({implementations:[{toolId:'lookup-id',toolName:'lookup',language:'java',entrypoint:'LookupBusiness.java',entryClass:'LookupBusiness',files:[{path:'LookupBusiness.java',content:source}],dependencies:[],smokeInput:{},explanation:'移除 vendor runtime 并生成纯 Java 业务实现'}]})};}}}));
-  const result=await generator.generate({archive,inspection,decisions:[{toolId:'lookup-id',form:'MCP',language:'java',reason:'shared',baseAssetId:'asset',decidedAt:'now'}]});
-  expect(calls).toBe(2);expect(prompt).toContain('Java 编译失败');expect(result['lookup-id']?.source).toContain('class LookupBusiness');expect(result['lookup-id']?.language).toBe('java');expect(result['lookup-id']?.generatedBy).toBe('test/migration-model');expect(result['lookup-id']?.checks).toHaveLength(1);
+    const source=calls===1?INCOMPLETE_PY:COMPLETE_PY;
+    return {modelId:'migration-model',content:JSON.stringify({implementations:[{toolId:'lookup-id',toolName:'lookup',language:'python',entrypoint:'lookup.py',files:[{path:'lookup.py',content:source}],dependencies:[],smokeInput:{},explanation:'移除 vendor runtime 并生成纯 Python 业务实现'}]})};}}}));
+  const result=await generator.generate({archive,inspection,decisions:[{toolId:'lookup-id',form:'SCRIPT',reason:'local',baseAssetId:'asset',decidedAt:'now'}]});
+  expect(calls).toBe(2);expect(prompt).toContain('缺少同名业务函数或 JSON 主入口');expect(result['lookup-id']?.source).toContain('json.dump');expect(result['lookup-id']?.language).toBe('python');expect(result['lookup-id']?.generatedBy).toBe('test/migration-model');
 });
 
 it('refuses semantic migration when no migration model is configured',async()=>{
   const generator=new MigrationCodeGenerator(()=>({configured:false,model:{providerId:'none',modelId:'none',parameters:{}},adapter:null}));
-  const inspection={assetId:'asset',assetDigest:'a'.repeat(64),skill:{status:'COMPLIANT' as const,findings:[]},scriptsExecuted:false as const,tools:[{toolId:'t',name:'tool',sourcePaths:['tool/x.java'],language:'Java',kind:'RUNTIME' as const,portability:'RUNTIME_BOUND' as const,recommendedForm:'MCP' as const,recommendedLanguage:'java',recommendationReason:'test',findings:[],evidence:[]} ]};
-  await expect(generator.generate({archive:{'tool/x.java':strToU8('class X {}')},inspection,decisions:[{toolId:'t',form:'MCP',reason:'shared',baseAssetId:'asset',decidedAt:'now'}]})).rejects.toThrow('尚未配置 MIGRATION');
+  const inspection=inspectionFixture([toolFixture({toolId:'t',name:'tool',sourcePaths:['tool/x.py'],language:'Python',portability:'RUNTIME_BOUND'})]);
+  await expect(generator.generate({archive:{'tool/x.py':strToU8('def x(): pass')},inspection,decisions:[{toolId:'t',form:'SCRIPT',reason:'local',baseAssetId:'asset',decidedAt:'now'}]})).rejects.toThrow('尚未配置 MIGRATION');
 });
 
 it('runs a trusted one-shot job with JSON IO and always cleans its directory',async()=>{
@@ -152,7 +127,24 @@ it('runs a trusted one-shot job with JSON IO and always cleans its directory',as
 
 it('exposes the v2 inspection, mixed decisions and immutable generated candidate over HTTP',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-http-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationModel:javaMigrationModel});
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:analysisFixture([
+      analyzedTool({name:'portable_mcp',sourcePaths:['tool/scripts/portable_mcp.py'],portability:'RUNTIME_BOUND'}),
+      analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}}),
+      analyzedTool({name:'bound_tool',sourcePaths:['tool/scripts/bound_tool.py'],portability:'RUNTIME_BOUND'}),
+    ]),
+    // The A4 agent owns the service now, so the test stands one in -- the same seam a live run
+    // uses, and the placer treats these files exactly like the agent's real output.
+    migrationImplementer:implementationFixture([
+      {tool:'portable_mcp',entrypoint:'mcp-java/src/main/java/com/finance/migration/Server.java',language:'java',
+       start:['java','-jar','mcp-java/target/service.jar'],
+       files:{'mcp-java/pom.xml':'<project>portable</project>','mcp-java/src/main/java/com/finance/migration/Server.java':'class Server { PortableMcpTool.specification(mapper) }'}},
+      {tool:'bound_tool',entrypoint:'mcp-java/src/main/java/com/finance/migration/Server.java',language:'java',
+       start:['java','-jar','mcp-java/target/service.jar'],
+       files:{'mcp-java/pom.xml':'<project>portable</project>','mcp-java/src/main/java/com/finance/migration/Server.java':'class Server { PortableMcpTool.specification(mapper) }'}},
+      {tool:'script_tool',entrypoint:'scripts/script_tool.py',language:'python',
+       files:{'scripts/script_tool.py':'import json,sys\ndef script_tool(v): return {"tool":"script_tool","value":v}\nif __name__ == "__main__": json.dump(script_tool(json.load(sys.stdin)),sys.stdout)\n'}},
+    ])});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown)=>(app.inject({method:'POST',url,headers,payload}));
   try{
     const cli=(name:string)=>`import json,sys\ndef ${name}(v): return {"tool":"${name}","value":v}\nif __name__ == "__main__": json.dump(${name}(json.load(sys.stdin)),sys.stdout)`;
@@ -172,29 +164,15 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
     const generated=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});expect(generated.statusCode).toBe(200);
     const candidate=generated.json().candidate;expect(candidate.assetId).not.toBe(uploaded.assetId);
     const report=(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();
-    expect(report.portableGenerationDiff.some((item:{path:string})=>item.path.endsWith('MigrationMcpServer.java'))).toBe(true);
+    expect(report.portableGenerationDiff.some((item:{path:string})=>item.path.endsWith('Server.java'))).toBe(true);
     const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});expect(exported.statusCode).toBe(200);
     const files=unzipSync(exported.rawPayload),names=Object.keys(files);
+    // The agent's files ship as written; the platform adds nothing of its own but the Skill layout.
     expect(names.filter(name=>name==='mcp-java/pom.xml')).toHaveLength(1);
-    expect(names).toContain('mcp-java/Dockerfile');
+    expect(names).toContain('mcp-java/src/main/java/com/finance/migration/Server.java');
     expect(names).toContain('skill/SKILL.md');
     expect(names).toContain('skill/scripts/script_tool.py');
     expect(names.some(name=>name.startsWith('migration-generated/'))).toBe(false);
-    const pom=Buffer.from(files['mcp-java/pom.xml']!).toString();
-    expect(pom).toContain('<mcp.java.sdk.version>1.1.4</mcp.java.sdk.version>');
-    expect(pom).toContain('<artifactId>maven-shade-plugin</artifactId>');
-    const server=Buffer.from(files['mcp-java/src/main/java/com/finance/migration/MigrationMcpServer.java']!).toString();
-    expect(server).toContain('HttpServletStreamableServerTransportProvider');
-    expect(server).toContain('PortableMcpTool.specification(mapper)');
-    expect(server).toContain('BoundToolTool.specification(mapper)');
-    expect(server).toContain('context.addServlet(new ServletHolder(transport), "/mcp")');
-    const portableTool=Buffer.from(files['mcp-java/src/main/java/com/finance/migration/tools/PortableMcpTool.java']!).toString();
-    expect(portableTool).toContain('SyncToolSpecification');
-    expect(portableTool).toContain('PortableMcpBusiness.execute(arguments)');
-    expect(portableTool).not.toContain('ProcessBuilder');
-    expect(names).toContain('mcp-java/src/main/java/com/finance/migration/business/PortableMcpBusiness.java');
-    expect(names.some(name=>name.startsWith('mcp-java/')&&name.endsWith('.py'))).toBe(false);
-    expect(portableTool).not.toContain('BUSINESS_IMPLEMENTATION_NOT_CONNECTED');
     const scriptTool=inspection.tools.find((t:{name:string})=>t.name==='script_tool');
     const scriptValidation=await post(`/api/migrations/${project.id}/validate/technical`,{toolId:scriptTool.toolId,baseAssetId:candidate.assetId,request:{value:7}});
     expect(scriptValidation.statusCode).toBe(200);
@@ -205,7 +183,7 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
 
 it('exports v2 evidence states and upgrades legacy projects without changing history',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-state-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false});
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationAnalyzer:analysisFixture([])});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
   try{
     const zip=Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: text-only\ndescription: 处理不需要工具的文本任务。\n---\n信息不足时明确说明。')}));
@@ -227,7 +205,9 @@ it('exports v2 evidence states and upgrades legacy projects without changing his
 
 it('prepares a Python Script Tool from its pyproject before technical validation',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-pyproject-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false});
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:analysisFixture([analyzedTool({name:'project_tool',sourcePaths:['scripts/project_tool.py'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',
+      entrypoint:{kind:'PYTHON',path:'scripts/project_tool.py'}})])});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
   try{
     const archive={
@@ -246,7 +226,12 @@ it('prepares a Python Script Tool from its pyproject before technical validation
 
 it('blocks partially analyzed source until it is explicitly acknowledged and re-scans the candidate',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-partial-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationModel:javaMigrationModel});
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationModel:unreachableMigrationModel,
+    // The scanner's coverage rides along with the analysis; it is what says "this file was not read".
+    migrationAnalyzer:async()=>({payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
+      analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py','tool/vendor/opaque.js'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',
+        entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}})]},
+      scanner:{scannerDigest:'a'.repeat(64),coverage:[{path:'skill/SKILL.md',status:'PARSED'},{path:'tool/vendor/opaque.js',status:'UNSUPPORTED_LANGUAGE'}]}})});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
   try{
     const archive={

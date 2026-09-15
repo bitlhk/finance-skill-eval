@@ -29,6 +29,42 @@ export type AgentResult<T = Record<string, unknown>> = {
   error?: string;
 };
 
+/** What the analysis hand-off looks like from the store's side: "give me an analysis". */
+export type MigrationAnalysis = { payload: unknown; scanner?: Record<string, unknown> | null };
+export type MigrationAnalyzer = (input: {
+  assetDigest: string; runId: string; files: Record<string, Uint8Array>;
+}) => Promise<MigrationAnalysis | null>;
+
+/**
+ * The real analyzer: run the A2 agent. A seam rather than a direct call because the analysis is
+ * the store's upstream dependency -- tests stand in a recorded analysis for the same reason they
+ * stand in a model, and the payload still goes through the same citation checks.
+ */
+export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array> }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
+  if (!migrationAgentEnabled()) return null;
+  const result = await runMigrationAgent("A2", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
+  if (result?.status !== "PRODUCED") return null;
+  return { payload: result.payload, scanner: result.scanner ?? null };
+}
+
+/** What the A4 hand-off looks like from the store's side: "build me these Tools". */
+export type MigrationImplementation = { status: "PRODUCED" | "ABSTAINED"; payload: unknown; files: Record<string, string> };
+export type MigrationImplementer = (input: {
+  assetDigest: string; runId: string; files: Record<string, Uint8Array>;
+  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;
+}) => Promise<MigrationImplementation | null>;
+
+/** The real implementer: run the A4 agent. Injectable for the same reason as the analyzer. */
+export async function implementWithAgent(input: {
+  assetDigest: string; runId: string; files: Record<string, Uint8Array>;
+  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;
+}, options: MigrationAgentOptions): Promise<MigrationImplementation | null> {
+  if (!migrationAgentEnabled()) return null;
+  const result = await runMigrationAgent<{ tools?: unknown[] }>("A4", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
+  if (result?.status !== "PRODUCED" && result?.status !== "ABSTAINED") return null;
+  return { status: result.status, payload: result.payload, files: result.files ?? {} };
+}
+
 export type MigrationAgentOptions = {
   /** Repository root: where integrations/ and .venv-openjiuwen live. NOT the data directory. */
   projectRoot: string;
@@ -81,9 +117,18 @@ export function encodeArchive(archive: Record<string, Uint8Array>): Record<strin
   );
 }
 
+/** A claim about the source. Whatever it says is only accepted once it lands on a real file and
+ * a real line, exactly like a finding. */
+type AgentClaim = { path?: string; line?: number; snippet?: string };
 type AgentTool = {
   name?: string; sourcePaths?: string[]; language?: string | null;
-  portability?: string; inputSchema?: unknown; outputSchema?: unknown;
+  portability?: string;
+  input?: AgentClaim & { description?: string; schema?: unknown };
+  output?: AgentClaim & { description?: string; schema?: unknown };
+  samples?: Array<AgentClaim & { input?: unknown; output?: unknown }>;
+  /** Which file to run. The platform cannot derive this: the old rules guessed it from a
+   * `scripts/` path pattern and ran whatever it found. */
+  entrypoint?: AgentClaim & { kind?: string };
   evidence?: Array<{ path?: string; line?: number; snippet?: string }>;
   findings?: Array<{ code?: string; severity?: string; path?: string; line?: number; message?: string }>;
   recommendedForm?: string; recommendationReason?: string;
@@ -96,6 +141,16 @@ function asPortability(value: unknown): Portability {
   const candidate = String(value ?? "").toUpperCase();
   return (PORTABILITIES as readonly string[]).includes(candidate) ? candidate as Portability : "UNKNOWN";
 }
+const ENTRYPOINT_KINDS = ["PYTHON", "NODE"] as const;
+/** Only an entrypoint that lands on a real file survives; the platform runs it. */
+function entrypointOf(claim: AgentTool["entrypoint"], cited: (path: string, line: number) => boolean) {
+  const path = String(claim?.path ?? ""), line = Number(claim?.line ?? 0);
+  const kind = String(claim?.kind ?? "").toUpperCase();
+  if (!path || !cited(path, line)) return {};
+  if (!(ENTRYPOINT_KINDS as readonly string[]).includes(kind)) return {};
+  return { entrypoint: { kind: kind as (typeof ENTRYPOINT_KINDS)[number], path } };
+}
+
 function severity(value: unknown): "ERROR" | "WARNING" | "INFO" {
   const candidate = String(value ?? "").toUpperCase();
   return candidate === "ERROR" || candidate === "WARNING" ? candidate : "INFO";
@@ -153,6 +208,15 @@ export function toProjectInspection(
         : portability === "RUNTIME_BOUND" ? "RUNTIME_BOUND" as const
           : "UNKNOWN" as const;
     const form = String(tool.recommendedForm ?? "").toUpperCase() === "SCRIPT" ? "SCRIPT" as const : "MCP" as const;
+    // The baseline is the analysis, and an analysis claim is worth exactly as much as the place
+    // it points at. A contract the agent cannot locate is reported as unread, not as a guess:
+    // downstream compares the migration against this, so a fabricated one would be a straw man.
+    const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("./migration-model.js").InspectionEvidence; schema: unknown } | null => {
+      const path = String(claim?.path ?? ""), line = Number(claim?.line ?? 0);
+      if (!cited(path, line)) return null;
+      return { evidence: { path, line, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
+    };
+    const input = contract("INPUT_CONTRACT", tool.input), output = contract("OUTPUT_CONTRACT", tool.output);
     return [{
       toolId: stableToolId(name, sourcePaths),
       name,
@@ -160,14 +224,24 @@ export function toProjectInspection(
       language,
       kind,
       portability,
-      inputSchema: tool.inputSchema ?? null,
-      outputSchema: tool.outputSchema ?? null,
+      inputSchema: input?.schema ?? null,
+      outputSchema: output?.schema ?? null,
+      samples: (tool.samples ?? []).flatMap(item => {
+        const path = String(item?.path ?? ""), line = Number(item?.line ?? 0);
+        return cited(path, line) ? [{ input: item?.input ?? {}, ...(item?.output === undefined ? {} : { output: item.output }), path, line }] : [];
+      }),
+      // An entrypoint is a file the platform will actually run, so it has to exist. The old
+      // rules matched a `scripts/` path pattern; that is how a wrong file got executed.
+      ...entrypointOf(tool.entrypoint, cited),
       // Uncited evidence is dropped, not downgraded: a claim that cannot be located
       // is not evidence.
-      evidence: (tool.evidence ?? []).flatMap(item => {
-        const path = String(item?.path ?? ""), line = Number(item?.line ?? 0), snippet = String(item?.snippet ?? "");
-        return cited(path, line, line, snippet) ? [{ path, line, kind: "AGENT", detail: snippet }] : [];
-      }),
+      evidence: [
+        ...(input ? [input.evidence] : []), ...(output ? [output.evidence] : []),
+        ...(tool.evidence ?? []).flatMap(item => {
+          const path = String(item?.path ?? ""), line = Number(item?.line ?? 0), snippet = String(item?.snippet ?? "");
+          return cited(path, line, line, snippet) ? [{ path, line, kind: "AGENT", detail: snippet }] : [];
+        }),
+      ],
       findings: (tool.findings ?? []).flatMap(item => item?.code
         ? [{
           code: String(item.code),
@@ -212,34 +286,37 @@ export function toProjectInspection(
 }
 
 /**
- * A minimal sample derived from the source contract. Deterministic and source-derived:
- * the contract test's input must not come from the model that wrote the implementation.
+ * The input to feed a Tool during the contract test.
+ *
+ * A sample is *read out of the package* by the analysis. Synthesizing one from the Schema was
+ * worse than it looked: the Schema itself is an analysis reading, so a synthesized sample is a
+ * guess built on a guess, and the test then checks the migration against that world instead of
+ * the one the Skill was written for. No sample means the call cannot be exercised -- say so.
  */
-export function sampleFromSchema(schema: unknown): unknown {
-  const node = schema as { type?: unknown; properties?: Record<string, unknown>; required?: unknown } | null;
-  if (!node || typeof node !== "object") return {};
-  const declared = String(node.type ?? "object");
-  if (declared === "object") {
-    const required = Array.isArray(node.required) ? node.required.map(String) : Object.keys(node.properties ?? {});
-    const out: Record<string, unknown> = {};
-    for (const key of required) out[key] = sampleFromSchema(node.properties?.[key]);
-    return out;
-  }
-  if (declared === "array") return [];
-  if (declared === "integer" || declared === "number") return 0;
-  if (declared === "boolean") return false;
-  return "";
+export function contractSample(tool: { samples?: Array<{ input: unknown }> } | undefined):
+  { input: unknown } | { reason: string } {
+  const sample = tool?.samples?.[0];
+  return sample ? { input: sample.input } : { reason: "分析没有读出样例，无法构造调用输入" };
 }
 
 type AgentGeneration = {
   toolId?: string; status?: string; entrypoint?: string; files?: string[];
   language?: string; compilePassed?: boolean; contractPassed?: boolean;
+  /** How to start the thing it just built. A Script's entrypoint is run directly. `prepare` is
+   * the optional one-shot step before it (install, build). */
+  start?: string[];prepare?: string[];
+  /** Every interface change against the baseline, with the reason it was needed. Reported, not
+   * gated -- adaptation during migration is normal, but it has to be visible. `drift` is what the
+   * contract test *observed*; `changes` is why. Only the agent can report the first: it is the only
+   * party holding both the baseline and a running service. */
+  changes?: Array<{ path?: string; change?: string; reason?: string }>;
+  drift?: Array<{ where?: string; baseline?: unknown; observed?: unknown }>;
   reason?: string; missing?: string[];
 };
 
 /**
- * Map an A4 result onto the generator's output shape, so the existing packaging
- * (skill normalisation, MCP service scaffolding, diff) keeps working unchanged.
+ * Map an A4 result onto the generator's output shape. Packaging no longer builds anything:
+ * it places the files the agent wrote and keeps its start command and change notes.
  */
 export function toGeneratedImplementations(
   payload: { tools?: AgentGeneration[] },
@@ -277,6 +354,10 @@ export function toGeneratedImplementations(
       additionalFiles,
       dependencies: [],
       smokeInput: {},
+      ...(Array.isArray(tool.start) && tool.start.length ? { start: tool.start.map(String) } : {}),
+      ...(Array.isArray(tool.prepare) && tool.prepare.length ? { prepare: tool.prepare.map(String) } : {}),
+      ...(Array.isArray(tool.drift) && tool.drift.length ? { drift: tool.drift } : {}),
+      ...(Array.isArray(tool.changes) && tool.changes.length ? { changes: tool.changes } : {}),
       generatedBy: toolNameById[toolId] ?? toolId,
       explanation: tool.reason?.trim() || "由 A4 迁移 agent 生成并通过编译与契约测试。",
       attempts: 1,

@@ -2,10 +2,20 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { manualPreparationSchema } from '../src/service/contracts.js';
-import { inspectProject } from '../src/service/tool-inspector.js';
+import { validateSkill } from '../src/service/skill-validator.js';
 import { loadEvalPack } from '../src/eval-pack.js';
 
 const root=path.resolve('acceptance/openjiuwen-portability');
+
+/** Read a fixture package the way an upload would arrive: flat, package-relative paths. */
+async function readFixture(directory:string):Promise<Record<string,string>>{
+  const files:Record<string,string>={};
+  for(const name of await readdir(directory,{recursive:true})){
+    const source=await readFile(path.join(directory,name),'utf8').catch(()=>null);
+    if(source!==null)files[name.replaceAll('\\','/')]=source;
+  }
+  return files;
+}
 
 describe('deterministic OpenJiuwen acceptance fixture',()=>{
   it('is a valid frozen suite with disjoint development and holdout cases',async()=>{
@@ -20,60 +30,30 @@ describe('deterministic OpenJiuwen acceptance fixture',()=>{
     expect(pack.cases.filter(item=>item.requiredTools.includes('calculate_acceptance_total'))).toHaveLength(2);
   });
 
+  // These fixtures are inputs to the acceptance run. What is checkable here without a model is
+  // that they are well-formed Skills; *which* Tools they contain is the analysis's reading, and
+  // is exercised by the acceptance run itself rather than asserted here as a rule's guess.
   it('is a compliant Skill with one portable MCP and one portable Script Tool',async()=>{
-    const skillRoot=path.join(root,'skill'),files:Record<string,string>={};
-    for(const name of await readdir(skillRoot,{recursive:true})){
-      const absolute=path.join(skillRoot,name);
-      const source=await readFile(absolute,'utf8').catch(()=>null);
-      if(source!==null)files[name.replaceAll('\\','/')]=source;
-    }
-    const inspection=inspectProject({assetId:'acceptance-fixture',assetDigest:'a'.repeat(64),files,skillFile:'SKILL.md'});
-    expect(inspection.skill.status).toBe('COMPLIANT');
-    expect(inspection.tools.map(tool=>[tool.name,tool.portability])).toEqual([
-      ['calculate_acceptance_total','PORTABLE_SCRIPT'],
-      ['get_acceptance_order','PORTABLE_MCP'],
-    ]);
+    const files=await readFixture(path.join(root,'skill'));
+    expect(validateSkill(files,'SKILL.md').status).toBe('COMPLIANT');
+    expect(Object.keys(files).some(name=>name.startsWith('scripts/'))).toBe(true);
   });
 
   it('provides a legacy source with the same two tools bound to an Agent Runtime',async()=>{
-    const skillRoot=path.join(root,'legacy-skill'),files:Record<string,string>={};
-    for(const name of await readdir(skillRoot,{recursive:true})){
-      const source=await readFile(path.join(skillRoot,name),'utf8').catch(()=>null);
-      if(source!==null)files[name.replaceAll('\\','/')]=source;
-    }
-    const inspection=inspectProject({assetId:'legacy-fixture',assetDigest:'b'.repeat(64),files,skillFile:'SKILL.md'});
-    expect(inspection.skill.status).toBe('COMPLIANT');
-    expect(inspection.tools.map(tool=>[tool.name,tool.portability])).toEqual([
-      ['calculate_acceptance_total','RUNTIME_BOUND'],
-      ['get_acceptance_order','RUNTIME_BOUND'],
-    ]);
-    expect(inspection.tools.every(tool=>tool.sourcePaths.includes('legacy_runtime_tools.py'))).toBe(true);
+    const files=await readFixture(path.join(root,'legacy-skill'));
+    expect(validateSkill(files,'SKILL.md').status).toBe('COMPLIANT');
+    expect(Object.keys(files)).toContain('legacy_runtime_tools.py');
   });
 
   it('provides a Script-only Skill with a project-defined Python environment',async()=>{
-    const skillRoot=path.join(root,'script-only-skill'),files:Record<string,string>={};
-    for(const name of await readdir(skillRoot,{recursive:true})){
-      const source=await readFile(path.join(skillRoot,name),'utf8').catch(()=>null);
-      if(source!==null)files[name.replaceAll('\\','/')]=source;
-    }
-    const inspection=inspectProject({assetId:'script-only-fixture',assetDigest:'c'.repeat(64),files,skillFile:'SKILL.md'});
-    expect(inspection.skill.status).toBe('COMPLIANT');
-    expect(inspection.tools.map(tool=>[tool.name,tool.portability])).toEqual([['normalize_invoice','PORTABLE_SCRIPT']]);
+    const files=await readFixture(path.join(root,'script-only-skill'));
+    expect(validateSkill(files,'SKILL.md').status).toBe('COMPLIANT');
     expect(files['scripts/pyproject.toml']).toContain('requires-python = ">=3.11"');
   });
 
   it('provides two Tools from one shared MCP service',async()=>{
-    const skillRoot=path.join(root,'shared-mcp-skill'),files:Record<string,string>={};
-    for(const name of await readdir(skillRoot,{recursive:true})){
-      const source=await readFile(path.join(skillRoot,name),'utf8').catch(()=>null);
-      if(source!==null)files[name.replaceAll('\\','/')]=source;
-    }
-    const inspection=inspectProject({assetId:'shared-mcp-fixture',assetDigest:'d'.repeat(64),files,skillFile:'SKILL.md'});
-    expect(inspection.skill.status).toBe('COMPLIANT');
-    expect(inspection.tools.map(tool=>[tool.name,tool.portability])).toEqual([
-      ['get_acceptance_account','PORTABLE_MCP'],
-      ['get_acceptance_customer','PORTABLE_MCP'],
-    ]);
-    expect(new Set(inspection.tools.flatMap(tool=>tool.sourcePaths))).toEqual(new Set(['mcp/server.py']));
+    const files=await readFixture(path.join(root,'shared-mcp-skill'));
+    expect(validateSkill(files,'SKILL.md').status).toBe('COMPLIANT');
+    expect(Object.keys(files)).toContain('mcp/server.py');
   });
 });

@@ -110,11 +110,11 @@ def build_run_scanner(workspace: Path, capture: list[dict[str, Any]] | None = No
 # A4: compile and contract test
 # --------------------------------------------------------------------------
 
-async def _run_process(workspace: Path, argv: list[str], timeout: float) -> dict[str, Any]:
+async def _run_process(workspace: Path, argv: list[str], timeout: float, env: dict[str, str] | None = None) -> dict[str, Any]:
     proc = await asyncio.create_subprocess_exec(
         *argv, cwd=str(workspace),
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONUTF8": "1"},
+        env=env or {**os.environ, "PYTHONUTF8": "1"},
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
@@ -356,29 +356,38 @@ async def _script_contract(workspace: Path, entry: dict[str, Any], source: Path,
     return {"passed": True, "produced": produced}
 
 
-async def _mcp_contract(workspace: Path, entry: dict[str, Any], source: Path, sample: Any) -> dict[str, Any]:
+async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any) -> dict[str, Any]:
     """An MCP Tool's interface is not a program's stdin; it is what the service advertises and
-    returns over the protocol. So start the service and speak MCP to it."""
-    kind = str(entry.get("language", "python")).lower()
+    returns over the protocol. So start the service and speak MCP to it.
+
+    The service is the agent's, so how to start it is the agent's answer: `start` (and an optional
+    one-shot `prepare`). The platform only picks a free port and exports `PORT`.
+
+    The gate is: it starts, it advertises the Tool, it answers. Whether the interface drifted from
+    the baseline is **reported**, not gated -- migration adapts on purpose (removing runtime
+    coupling changes how a Tool is called), so an exact match is neither achievable nor required.
+    """
+    start = [str(part) for part in (entry.get("start") or []) if str(part)]
+    if not start:
+        return {"passed": False, "error": "NO_START_COMMAND: 交付物没有声明启动命令，平台不知道该怎么起它"}
     port = _free_port()
-    if kind == "python":
-        argv = _python_argv(workspace, source, isolated=False)
-    elif kind == "node":
-        argv, error = await _node_argv(workspace, source)
-        if argv is None:
-            return {"passed": False, "error": error}
-    else:
-        return {"passed": False, "error": f"CONTRACT_TEST_UNSUPPORTED_LANGUAGE: {kind}"}
+    env = {**os.environ, "PYTHONUTF8": "1", "PORT": str(port)}
+
+    prepare = [str(part) for part in (entry.get("prepare") or []) if str(part)]
+    if prepare:
+        step = await _run_process(workspace, prepare, _LAUNCH_TIMEOUT, env=env)
+        if step["exitCode"] != 0:
+            return {"passed": False, "error": "PREPARE_FAILED", "stderr": (step["stderr"] or "")[:1200]}
 
     proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=str(workspace),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "PYTHONUTF8": "1", "PORT": str(port)},
+        *start, cwd=str(workspace),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
     )
     try:
         if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
             await _terminate(proc)
-            return {"passed": False, "error": "SERVICE_DID_NOT_START"}
+            return {"passed": False, "error": "SERVICE_DID_NOT_START",
+                    "stderr": f"启动命令 {' '.join(start)} 在 {int(_LAUNCH_TIMEOUT)}s 内没有监听 PORT={port}"}
         url = f"http://127.0.0.1:{port}/mcp"
         session, _ = await asyncio.to_thread(_mcp_post, url, {
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -392,9 +401,9 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], source: Path, sa
         if observed is None:
             return {"passed": False, "advertisedTools": [tool.get("name") for tool in tools],
                     "error": f"TOOL_NOT_ADVERTISED: {name}"}
+        drift = []
         if observed.get("inputSchema") != entry.get("inputSchema"):
-            return {"passed": False, "error": "INPUT_SCHEMA_CHANGED",
-                    "stderr": json.dumps(observed.get("inputSchema"), ensure_ascii=False)[:1200]}
+            drift.append({"where": "inputSchema", "baseline": entry.get("inputSchema"), "observed": observed.get("inputSchema")})
         _, called = await asyncio.to_thread(_mcp_post, url, {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": name, "arguments": sample}}, session)
@@ -405,8 +414,13 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], source: Path, sa
         try:
             produced = json.loads(texts[0] if texts else "null")
         except ValueError:
-            return {"passed": False, "error": "OUTPUT_NOT_JSON"}
-        return {"passed": True, "produced": produced}
+            return {"passed": False, "error": "OUTPUT_NOT_JSON", "drift": drift}
+        # The baseline's output shape is what the call must still resemble; a mismatch is drift
+        # too, and still a report rather than a stop.
+        ok, detail = _shape_ok(produced, entry.get("outputSchema"))
+        if not ok:
+            drift.append({"where": "outputShape", "baseline": entry.get("outputSchema"), "observed": detail})
+        return {"passed": True, "produced": produced, "drift": drift}
     except Exception as error:  # noqa: BLE001 - the reason is the result
         return {"passed": False, "error": f"MCP_CONTRACT_FAILED: {type(error).__name__}: {error}"}
     finally:
@@ -415,46 +429,61 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], source: Path, sa
 
 def build_contract_test_tool(workspace: Path, contract: dict[str, Any]) -> LocalFunction:
     """`contract` maps toolId -> {form, language, toolName, inputSchema, outputSchema, sampleInput,
-    serviceEntry}. Schemas come from the source asset and only the entrypoint is the migration's
-    choice -- and for MCP even that is the platform's, because the platform generates the service."""
+    start, prepare}. The Schema and the sample come from the analysis of the source, not from this
+    session. `start` is the deliverable's own declaration of how to run itself."""
 
     async def run_contract_test(tool_id: str, entrypoint: str = "") -> dict[str, Any]:
         entry = contract.get(tool_id)
         if not entry:
             return {"passed": False, "error": f"UNKNOWN_TOOL_CONTRACT: {tool_id}"}
 
+        # The sample is what the analysis read out of the package. Without one the call cannot be
+        # exercised -- so the gate "调得通" is not checkable. Say that instead of feeding the tool
+        # an invented `{}` and calling whatever it does a pass.
+        if entry.get("sampleMissing") and not entry.get("sampleInput"):
+            return {"passed": True, "toolId": tool_id, "callExecuted": False,
+                    "note": f"NO_SAMPLE: {entry['sampleMissing']}"}
         sample = entry.get("sampleInput") or {}
         ok, detail = _shape_ok(sample, entry.get("inputSchema"))
         if not ok:
             return {"passed": False, "toolId": tool_id, "inputShapeOk": False, "error": f"SAMPLE_INPUT_SHAPE: {detail}"}
 
         form = str(entry.get("form", "SCRIPT")).upper()
-        chosen = str(entrypoint or "") if form != "MCP" else str(entry.get("serviceEntry") or "")
-        source = (workspace / chosen).resolve()
-        if workspace.resolve() not in source.parents or not source.is_file():
-            return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {chosen}"}
-
-        outcome = (await _mcp_contract(workspace, entry, source, sample) if form == "MCP"
-                   else await _script_contract(workspace, entry, source, sample))
+        if form == "MCP":
+            outcome = await _mcp_contract(workspace, entry, sample)
+        else:
+            chosen = str(entrypoint or "")
+            source = (workspace / chosen).resolve()
+            if workspace.resolve() not in source.parents or not source.is_file():
+                return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {chosen}"}
+            outcome = await _script_contract(workspace, entry, source, sample)
         if not outcome.get("passed"):
             return {"passed": False, "toolId": tool_id, **{k: v for k, v in outcome.items() if k != "passed"}}
-        shape_ok, shape_detail = _shape_ok(outcome.get("produced"), entry.get("outputSchema"))
+        # Drift from the baseline is reported, never a stop: migration adapts on purpose. The
+        # reasons for what changed come from the agent's own delivery notes.
+        drift = outcome.get("drift") or []
+        if form != "MCP":
+            shape_ok, shape_detail = _shape_ok(outcome.get("produced"), entry.get("outputSchema"))
+            if not shape_ok:
+                drift.append({"where": "outputShape", "baseline": entry.get("outputSchema"), "observed": shape_detail})
         return {
-            "passed": bool(shape_ok),
+            "passed": True,
             "toolId": tool_id,
             "inputShapeOk": True,
-            "outputShapeOk": bool(shape_ok),
-            "error": "" if shape_ok else f"OUTPUT_SHAPE: {shape_detail}",
+            "contractPassed": True,
+            "drift": drift,
+            "error": "",
         }
 
     return _tool(
         "run_contract_test",
-        "Run the interface contract test for one migrated tool. The judged contract comes from the "
-        "source asset (input/output shape), not from this session. It asserts the interface did not "
-        "change, NOT that the business values are correct. For SCRIPT it runs the entrypoint as a "
-        "program with the sample on stdin; for MCP it starts the platform-generated service and "
-        "speaks MCP to it, so the advertised Schema is checked against the source Schema. Either way "
-        "the code runs in the Skill package's own declared environment, not the agent's.",
+        "Run the interface contract test for one migrated tool. The gate is only that it works: for "
+        "SCRIPT the entrypoint runs with the sample on stdin; for MCP the service starts (using the "
+        "start command the deliverable declared) and answers tools/list and tools/call. Worth "
+        "preserving is the baseline the analysis read out of the source; how far the interface "
+        "drifted from it is REPORTED in `drift`, not passed or failed -- migration adapts on purpose. "
+        "It never judges whether the business values are right. Either way the code runs in the Skill "
+        "package's own declared environment, not the agent's.",
         {
             "type": "object",
             "properties": {

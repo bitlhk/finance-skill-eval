@@ -82,10 +82,12 @@ it('accepts only source-verifiable model Runtime bindings and feeds them into To
   expect(new Set(diagnosis.findings.map(item=>item.id)).size).toBe(diagnosis.findings.length);
   const inspection=inspectProject({assetId:asset.assetId,assetDigest:asset.artifactSha256,
     files:{'SKILL.md':'---\nname: synthetic-method\ndescription: 测试间接工具。\n---\n调用 `indirect_tool`，失败时返回原因。\n','wrapper.py':implementation},skillFile:'SKILL.md',diagnosis});
-  expect(inspection.tools[0]).toEqual(expect.objectContaining({name:'indirect_tool',portability:'RUNTIME_BOUND'}));
+  // Tool classification is the analysis's, not a rule's -- but the diagnostics themselves still
+  // have to land on source, and their counts still reach the inspection.
+  expect(inspection.tools).toEqual([]);
   expect(inspection.runtimeAnalysis).toEqual(expect.objectContaining({status:'COMPLETE',acceptedBindings:1,rejectedBindings:1}));
 });
-it('fails closed with a clear conflict when the uv scanner project is unavailable',async()=>{
+it('fails closed with a clear conflict when no analysis is available',async()=>{
   const root=await mkdtemp(path.join(os.tmpdir(),'migration-missing-scanner-')),data=path.join(root,'data');dirs.push(root);
   await mkdir(path.join(root,'packs','finance'),{recursive:true});
   await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
@@ -96,7 +98,7 @@ it('fails closed with a clear conflict when the uv scanner project is unavailabl
     const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
     const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'missing scanner'}})).json();
     const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
-    expect(result.statusCode).toBe(409);expect(result.json().message).toContain('静态诊断执行失败');
+    expect(result.statusCode).toBe(409);expect(result.json().message).toContain('分析不可用');
   }finally{await app.close();}
 });
 it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{

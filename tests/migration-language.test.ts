@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMigrationPlan, recommendLanguage, unmigratableLanguages, type ProjectInspection, type ToolDecision, type ToolInspection } from '../src/service/migration-model.js';
-import { inspectProject } from '../src/service/tool-inspector.js';
+import { inspectionFixture, toolFixture } from './analysis-fixture.js';
 
 const tool=(overrides:Partial<ToolInspection>):ToolInspection=>({
   toolId:'data_tool-00000000',name:'data_tool',sourcePaths:['tool/DataTool.java'],language:'Java',kind:'RUNTIME_BOUND',portability:'RUNTIME_BOUND',
@@ -79,13 +79,11 @@ describe('buildMigrationPlan language decisions',()=>{
   });
 });
 
-it('marks an out-of-scope source language UNSUPPORTED rather than guessing a migration',()=>{
-  const files={
-    'SKILL.md':'---\nname: synthetic\nversion: 1.0.0\n---\nRun `data_tool` to summarise.\n',
-    'scripts/data_tool.go':'package data_tool\n\nfunc main() {}\n'};
-  const result=inspectProject({assetId:'asset',assetDigest:'a'.repeat(64),files,skillFile:'SKILL.md',diagnosis:null});
-  const found=result.tools.find(item=>item.name==='data_tool')!;
-  expect(found.language).toBe('Go');
-  expect(found.portability).toBe('UNSUPPORTED');
-  expect(found.findings.map(item=>item.code)).toContain('SOURCE_LANGUAGE_UNSUPPORTED');
+it('refuses to auto-migrate a source language outside the supported set',()=>{
+  // The analysis reports the language and the portability; the plan is what refuses. Marking a
+  // Tool UNSUPPORTED by rule is gone with the rest of the rules-side Tool guessing.
+  const go=toolFixture({name:'data_tool',sourcePaths:['scripts/data_tool.go'],language:'Go',portability:'UNSUPPORTED'});
+  const plan=buildMigrationPlan(inspectionFixture([go]),[decision(go.toolId,'MCP')],'asset');
+  expect(plan.items[0]!.blockingReasons.join()).toContain('Go');
+  expect(plan.generationAllowed).toBe(false);
 });

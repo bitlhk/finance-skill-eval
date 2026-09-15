@@ -11,14 +11,36 @@
 |A2-4 | ✅ | 建议形式与建议语言 | 新建 | `ToolInspection` 新增 `recommendedForm` / `recommendedLanguage` / `recommendationReason`。判据收敛成 `recommendLanguage()` 一处；agent 只给**形式**建议，语言由平台算 |
 |A2-5 | ✅ | 发现的证据校验 | 保留 | 行号 + 逐字片段校验**留在 TS 侧**，作用于 agent 返回的 findings。机械判据不进技能包——提示词是软约束 |
 |A2-6 | 🟡 | 弃权 | 新建 | 最终输出 `status = ABSTAINED` + `reason` / `missing`。不用工具表达终态 |
-|A2-7 | ✅ | 修掉反引号捞 Tool | 改造 | `tool-inspector.ts` 把 `SKILL.md` 里**每个反引号标识符**都登记为候选 Tool，散文里的 `` `JSON` `` 也会变成 Tool 并产出假 ERROR |
+|A2-7 | ✅ | 反引号捞 Tool | 改造 | 曾把 `SKILL.md` 里每个反引号标识符都登记为候选 Tool。**不是补症状，是删掉了整条规则路径**——见 A2-8 |
+|A2-8 | ✅ | **对 Skill 的分析** | 新建 | 产出：用到了哪些工具、每个的`input`/`output`/`sample`/`entrypoint`，**每条带 `path`+`line`**。TS 侧逐条走 `cited()` 校验：落不到真实行的契约**丢成 `null`，不保留猜测**。四条错法全部撤掉，`tool-inspector.ts` 只剩 Skill 规范检查 + 覆盖率 |
+
+## A2-8 分析的产出：对 Skill 的分析
+
+A2 回答三个问题：
+
+1. 这个 Skill 用到了哪些工具；
+2. 每个工具的输入输出是什么；
+3. 样例是什么。
+
+它同时是**基线**（迁移保留什么、校验比什么）和**出题的种子**。
+
+**不采用的做法**（都定性为错，不应重新引入）：
+
+| 错法 | 为什么错 |
+| --- | --- |
+| 扫散文里的反引号当 Tool 名 | 拿散文当结构化数据。`SKILL.md` 里的 `` `JSON` `` 不是 Tool |
+| 正则从源码刨 `inputSchema :=` 字面量 | 只认字面声明。从变量、装饰器、类型标注、运行时拼出来的都读不到 |
+| 让模型凭空填一个 Schema | **源里未必存在那个东西**。runtime 绑定的工具本来就没有"声明的 Schema"，形状只活在代码和文档里 |
+| 从源码编一个样例输入（`sampleFromSchema`） | 拿猜测造测试数据。样例应当**读出来** |
+
+分析结果落在**证据**上：每条都要能指到真实的文件与行，跟 findings 走同一套 `cited()` 校验。落不到源码/文档上的主张不成立。
 
 ## 现状
 
 | 文件 | 现状 |
-| --- | --- | --- |
-| `src/service/migration-diagnostics.ts` | 确定性扫描 + **单次模型调用**；证据裁决机制（文件 + 行号 + 逐字片段）**已实现** |
-| `src/service/tool-inspector.ts` | 纯规则的可移植性级联；含反引号捞 Tool 的粗暴路径 |
+| --- | --- |
+| `src/service/migration-diagnostics.ts` | 确定性扫描 + 原子发现的证据裁决（文件 + 行号 + 逐字片段） |
+| `src/service/tool-inspector.ts` | **只剩 Skill 规范检查 + 覆盖率装配**。工具发现与 Schema 读取整条删掉；它返回 `tools: []` 而不是猜 |
 | `src/service/skill-validator.ts` | 规则检查 |
 
 ## 要动的
@@ -26,7 +48,9 @@
 - 单次模型调用 → `analyze_agent.py`（A2-1）
 - 扫描器从前置改为工具（A2-2）
 - 新增技能包（A2-3）与新字段（A2-4）
-- 修工具发现（A2-7）
+- **产出改成「对 Skill 的分析」**：工具、输入输出、样例；上面四条错法撤掉
+
+**没有分析时的行为**：`inspect()` 直接 409（「分析不可用」），不再退到规则路径。没有基线就没有可迁移的东西，说清楚比给一个猜测好。A2 的 runner 做成了可注入的 seam（`MigrationAnalyzer`），测试用它喂一份分析结果——**payload 仍然要走同一套出处校验**。
 
 ## 不动的
 

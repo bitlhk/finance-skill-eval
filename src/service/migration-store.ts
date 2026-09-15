@@ -18,8 +18,8 @@ import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
 import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
-import { encodeArchive,migrationAgentEnabled,runMigrationAgent,sampleFromSchema,toGeneratedImplementations,toProjectInspection } from './migration-agent.js';
-import { generatePortableCandidate,mcpWorkspace,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
+import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
+import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { TechnicalValidationService } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 
@@ -65,7 +65,11 @@ export class MigrationStore {
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
-    private codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION'))) {}
+    private codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
+    private analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+      modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
+    private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+      modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'})) {}
   async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
   async verifyTarget(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
@@ -112,31 +116,21 @@ export class MigrationStore {
     const files:Record<string,string>={};
     for(const [name,bytes] of Object.entries(archive))try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
 
-    // A2 runs as an agent. When the runtime is not configured (or the model is
-    // unavailable) it falls back to the deterministic rules path, so the store keeps
-    // working without a live agent.
-    const agent=migrationAgentEnabled()?await runMigrationAgent("A2",{
-      assetDigest:asset.artifactSha256,runId:id,files:encodeArchive(archive),
-    },{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}).catch(()=>null):null;
-    let agentInspection:ProjectInspection|null=null;
-    if(agent?.status==='PRODUCED'){
+    // A2 runs as an agent, and the analysis is the only source of Tools and of the baseline
+    // (each Tool's input/output and samples). There is no rules fallback: reading a package is a
+    // judgement, and every rule that tried to do it by pattern-matching invented something the
+    // source never declared. Without an analysis there is no baseline, so there is nothing to
+    // migrate against -- better to say that than to hand the flow a guess.
+    const agent=await this.analyzer({assetDigest:asset.artifactSha256,runId:id,files:archive}).catch(()=>null);
+    let inspection:ProjectInspection|null=null;
+    if(agent){
       try{
         const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId,agent.scanner??null,files);
         // An inspection with neither tools nor a skill verdict carries no information.
-        if(candidate.tools.length||candidate.skill.status!=='UNKNOWN')agentInspection=candidate;
-      }catch{agentInspection=null;}
+        if(candidate.tools.length||candidate.skill.status!=='UNKNOWN')inspection=candidate;
+      }catch{inspection=null;}
     }
-
-    if(!this.diagnostics&&!agentInspection)return conflict('静态诊断服务不可用，已阻止后续迁移');
-    let inspection:ProjectInspection;
-    if(agentInspection)inspection=agentInspection;
-    else{
-      let diagnosis;
-      try{diagnosis=await this.diagnostics!.diagnose(asset);}
-      catch{return conflict('静态诊断执行失败，已阻止后续迁移；请检查 uv、锁文件和扫描器配置');}
-      if(diagnosis.digest!==asset.artifactSha256)return conflict('静态诊断与当前资产不匹配，已阻止后续迁移');
-      inspection=inspectProject({assetId:asset.assetId,assetDigest:asset.artifactSha256,files,skillFile:asset.skillFile,diagnosis});
-    }
+    if(!inspection)return conflict('分析不可用：A2 agent 未产出工具与基线。静态规则不再猜测工具与输入输出，因此无法继续迁移。');
     value.inspection=inspection;
     value.decisions=(value.decisions??[]).filter(decision=>decision.baseAssetId===asset.assetId&&value.inspection!.tools.some(tool=>tool.toolId===decision.toolId));
     await writeJsonAtomic(this.file(id),value);return value.inspection;
@@ -164,37 +158,32 @@ export class MigrationStore {
    * shape -- the agent supplies the implementation, never the test.
    */
   private async generateImplementations(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord,plan:MigrationPlan){
-    if(migrationAgentEnabled()){
-      // The MCP services and their adapters are the platform's, so they go into the agent's
-      // workspace: the agent then writes only business code and the contract test starts the
-      // very same service that ships.
-      const workspace=mcpWorkspace({skillId:asset.skillId,inspection,decisions});
+    {
       // The contract takes its language from the plan the human approved, so what is
-      // generated cannot disagree with what was shown to them.
+      // generated cannot disagree with what was shown to them. What *to preserve* comes from
+      // the analysis; how to build and start it is the agent's own answer.
       const contract:Record<string,unknown>={};
       for(const decision of decisions){
         const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
         const language=plan.items.find(item=>item.toolId===decision.toolId)?.language
           ??recommendLanguage(decision.form,tool?.language??null);
-        const site=workspace.sites[decision.toolId];
+        const sample=contractSample(tool);
         contract[decision.toolId]={form:decision.form,language,toolName:tool?.name??'',
           inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
-          sampleInput:sampleFromSchema(tool?.inputSchema),
-          ...(site?{serviceEntry:site.serviceEntry,businessPath:site.businessPath}:{})};
+          samples:(tool?.samples??[]).map(item=>item.input),
+          // No sample means the call cannot be exercised. Report that rather than invent one.
+          ...('reason' in sample?{sampleMissing:sample.reason}:{sampleInput:sample.input})};
       }
       // A4 is not deterministic: the same input can produce or stall. Retry the run a
       // bounded number of times, but treat ABSTAINED as a decision, not a flake.
       const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??2));
       for(let attempt=1;attempt<=attempts;attempt++){
-      const seeded=encodeArchive(archive);
-      for(const [name,content] of Object.entries(workspace.files))seeded[name]=content;
-      const result=await runMigrationAgent<{tools?:unknown[]}>("A4",{
-        assetDigest:asset.artifactSha256,runId:asset.assetId,files:seeded,
+      const result=await this.implementer({
+        assetDigest:asset.artifactSha256,runId:asset.assetId,files:archive,
         decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
-        tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema})),
+        tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema,samples:t.samples})),
         contract,
-      },{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
-        modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}).catch(()=>null);
+      });
       if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
         // An abstention is a decision that belongs to a human. Report which Tool and why,
         // rather than letting the packager fail with a generic message.
@@ -210,14 +199,12 @@ export class MigrationStore {
       }
       if(result?.status==='PRODUCED'){
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
-        const mapped=toGeneratedImplementations(result.payload as never,result.files??{},nameById);
+        const mapped=toGeneratedImplementations(result.payload as never,result.files,nameById);
         if(Object.keys(mapped).length)return mapped;
       }
       }
     }
-    const sites=mcpWorkspace({skillId:asset.skillId,inspection,decisions}).sites;
-    return this.codeGenerator.generate({archive,inspection,decisions,
-      businessPaths:Object.fromEntries(Object.entries(sites).map(([toolId,site])=>[toolId,site.businessPath]))});
+    return this.codeGenerator.generate({archive,inspection,decisions});
   }
   private async generatePortable(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
@@ -302,11 +289,11 @@ export class MigrationStore {
     const environment=environmentId?await this.environments?.get(environmentId):null;
     if(!environment||environment.type!=='runtime_http'||environment.runtimeType!=='openjiuwen')return conflict('目标必须是已登记的 OpenJiuwen 环境');
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
-    const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint?.path&&['PYTHON','NODE'].includes(tool.entrypoint.kind))
+    const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
       .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;
         while(true){const prefix=cursor?`${cursor}/`:'';if(archive[`${prefix}pyproject.toml`]||archive[`${prefix}package.json`]){root=cursor;break;}if(!cursor)break;cursor=cursor.split('/').slice(0,-1).join('/');}
         const filePaths=Object.keys(archive).filter(name=>(!root||name.startsWith(`${root}/`))&&/\.(?:py|js|mjs|cjs|json|toml|lock)$/iu.test(name));
-        return {name:tool.name,path:entry,kind:tool.entrypoint!.kind as 'PYTHON'|'NODE',filePaths,...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
+        return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
     const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeToolBindings:{left:scripts,right:scripts}}};
     return this.validate(id,normalized);
   }

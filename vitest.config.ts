@@ -12,8 +12,9 @@ export default defineConfig({
     // results depend on scheduling rather than on the code.
     testTimeout: 30000,
     env: {
-      // Tests must not reach a live model or a 60-second agent run. The store falls
-      // back to the deterministic rules path when the agent is off.
+      // Tests must not reach a live model or a 60-second agent run. There is no rules fallback
+      // any more: a test that needs an inspection stands one in through `migrationAnalyzer`
+      // (tests/analysis-fixture.ts) rather than letting a rule invent Tools.
       FINANCE_EVAL_MIGRATION_AGENT: "off",
     },
   },

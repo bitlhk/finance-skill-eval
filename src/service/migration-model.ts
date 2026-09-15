@@ -9,11 +9,14 @@ export type ToolPortability='PORTABLE_MCP'|'PORTABLE_SCRIPT'|'RUNTIME_BOUND'|'IN
 export type ToolForm='MCP'|'SCRIPT';
 export type ToolFinding={code:string;severity:FindingSeverity;path:string;line:number;message:string};
 export type InspectionEvidence={path:string;line:number;kind:string;detail:string};
+/** A concrete input/output instance the analysis read out of the package. Used as test data:
+ * a synthesized sample would be testing against a world nobody wrote. */
+export type ToolSample={input:unknown;output?:unknown;path:string;line:number};
 export type ToolInspection={
   toolId:string;name:string;sourcePaths:string[];language:string|null;
   kind:'MCP'|'SCRIPT'|'RUNTIME_BOUND'|'UNKNOWN';portability:ToolPortability;
-  inputSchema:unknown|null;outputSchema:unknown|null;evidence:InspectionEvidence[];findings:ToolFinding[];
-  recommendedForm:ToolForm;recommendedLanguage:string;recommendationReason:string;entrypoint?:{kind:'PYTHON'|'NODE'|'MCP_HTTP';path?:string;endpoint?:string};
+  inputSchema:unknown|null;outputSchema:unknown|null;samples:ToolSample[];evidence:InspectionEvidence[];findings:ToolFinding[];
+  recommendedForm:ToolForm;recommendedLanguage:string;recommendationReason:string;entrypoint?:{kind:'PYTHON'|'NODE';path:string};
 };
 export type ProjectInspection={assetId:string;assetDigest:string;inspectedAt:string;skill:SkillInspection;tools:ToolInspection[];scriptsExecuted:false;
   staticAnalysis?:{status:'COMPLETE'|'PARTIAL'|'UNAVAILABLE';dependencyStatus:'EXPLICIT_BINDING'|'NO_BINDING_IN_CHECKED_SCOPE'|'UNKNOWN';scannerDigest:string|null;
