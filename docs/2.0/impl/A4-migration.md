@@ -23,7 +23,7 @@
 |A4-10 | ✅ | 去掉模型自写冒烟输入 | 删除 | 出题人、答题人、判卷人不能是同一个 |
 |A4-11 | ✅ | 交付启动命令 | 新建 | `start`（argv 数组）与可选 `prepare`（装依赖/构建）。平台按它起服务；`portable-candidate.ts` 只负责放置与路径安全，不再拼启动方式 |
 |A4-12 | ✅ | 接口差异报告 | 新建 | `changes`（每一处改动 + 理由）+ `drift`（契约测试实测到的差异）随交付物上行，落进 `PortableGeneration` 并在生成步骤展示。**只是报告，不判通过与否** |
-|A4-13 | ✅ | 模板进技能包 | 改造 | 三套脚手架搬进 `skills/enterprise-migration/references/service-templates.md` 当指导；分析规则在 `analysis-rules.md`。`portable-candidate.ts` 里已无模板。Java 骨架由 `scripts/verify-java-mcp-template.mjs` **从文档里读出来**编译并跑（真实 MCP 客户端），否则"指导"没人执行，会烂掉 |
+|A4-13 | ✅ | 模板进技能包 | 改造 | 三套脚手架搬进 `skills/enterprise-migration/references/service-templates.md` 当指导；分析规则在 `analysis-rules.md`。`portable-candidate.ts` 里已无模板。**三套骨架都由 `scripts/verify-mcp-templates.mjs` 从文档里读出来**编译/装依赖并跑（真实 MCP 客户端），否则"指导"没人执行，会烂掉 |
 
 ## 现状
 

@@ -31,8 +31,10 @@
 ## Python MCP 骨架
 
 用官方 `mcp` 的低层 `Server`——只有它能公布**给定**的 Schema（高层 API 从函数签名推，会推错）。
+依赖写在 PEP 723 头里，`uv run --no-project server.py` 直接跑。
 
-```python
+```
+=== mcp-python/server.py ===
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["mcp", "uvicorn"]
@@ -43,54 +45,105 @@ import os
 from mcp.server.lowlevel import Server
 from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool
 
-INPUT_SCHEMA = { ... }  # 源工具的输入 Schema，原样
+TOOL_NAME = "<tool>"
+# Schema 按 JSON 文本解析，不要手抄成 Python 字面量：JSON 的 false/null 不是 Python 的 False/None，
+# 一个 `additionalProperties: false` 就足以让服务起不来。
+INPUT_SCHEMA = json.loads(r"""<源工具输入 Schema 的 JSON 字面量>""")
+
+
+def execute(name: str, arguments: dict) -> object:
+    return {"received": arguments}
+
 
 async def _list_tools(_context, _params) -> ListToolsResult:
-    return ListToolsResult(tools=[Tool(name="<tool>", description="", inputSchema=INPUT_SCHEMA)])
+    return ListToolsResult(tools=[Tool(name=TOOL_NAME, description="", inputSchema=INPUT_SCHEMA)])
+
 
 async def _call_tool(_context, params: CallToolRequestParams) -> CallToolResult:
     output = execute(params.name, dict(params.arguments or {}))
     return CallToolResult(content=[TextContent(type="text", text=json.dumps(output, ensure_ascii=False))])
 
+
 server = Server(name="<skill>-mcp", version="0.1.0", on_list_tools=_list_tools, on_call_tool=_call_tool)
+
 
 def main() -> None:
     import uvicorn
     port = int(os.environ.get("PORT", "8080"))
-    uvicorn.run(server.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0"), host="0.0.0.0", port=port)
+    uvicorn.run(server.streamable_http_app(streamable_http_path="/mcp"), host="0.0.0.0", port=port)
+
 
 if __name__ == "__main__":
     main()
 ```
 
-依赖写进 PEP 723 头。要按项目结构管理时同时给 `pyproject.toml`，**两处依赖列表必须一致**。
+要按项目结构管理依赖时同时给 `pyproject.toml`，**两处依赖列表必须一致**。
 
 ## Node MCP 骨架
 
-```js
+`package.json` 里 `"type": "module"`，依赖 `@modelcontextprotocol/sdk`。HTTP 那层是最容易写错的地方：
+**一个会话一个 transport**，`/mcp` 以外的路径给 404，body 读完了再交给 `handleRequest`。
+
+```
+=== mcp-node/server.mjs ===
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
-const INPUT_SCHEMA = { ... };  // 源工具的输入 Schema，原样
+const TOOL_NAME = "<tool>";
+const INPUT_SCHEMA = <源工具输入 Schema 的 JSON 字面量>;
+
+function execute(name, args) {
+  return { received: args };
+}
 
 const server = new Server({ name: "<skill>-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [{ name: "<tool>", description: "", inputSchema: INPUT_SCHEMA }],
+  tools: [{ name: TOOL_NAME, description: "", inputSchema: INPUT_SCHEMA }],
 }));
 server.setRequestHandler(CallToolRequestSchema, async request => ({
   content: [{ type: "text", text: JSON.stringify(execute(request.params.name, request.params.arguments ?? {})) }],
 }));
 
-const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
-await server.connect(transport);
+const transports = new Map();
 const port = Number(process.env.PORT ?? 8080);
-createServer((req, res) => { /* 只接 /mcp，读 body 后交给 transport.handleRequest */ }).listen(port, "0.0.0.0");
-```
 
-`package.json` 里 `"type": "module"`，依赖 `@modelcontextprotocol/sdk`。
+createServer(async (req, res) => {
+  if (!req.url || !req.url.startsWith("/mcp")) {
+    res.writeHead(404).end();
+    return;
+  }
+  const sessionId = req.headers["mcp-session-id"];
+  let transport = sessionId ? transports.get(sessionId) : undefined;
+  if (!transport) {
+    transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: id => { transports.set(id, transport); },
+    });
+    transport.onclose = () => { if (transport.sessionId) transports.delete(transport.sessionId); };
+    await server.connect(transport);
+  }
+  let body;
+  if (req.method === "POST") {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    body = raw ? JSON.parse(raw) : undefined;
+  }
+  await transport.handleRequest(req, res, body);
+}).listen(port, "0.0.0.0");
+
+=== mcp-node/package.json ===
+{
+  "name": "<skill>-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.30.0" }
+}
+```
 
 ## Java MCP 骨架
 
