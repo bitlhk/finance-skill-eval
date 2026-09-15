@@ -18,7 +18,7 @@
 |A4-5 | ✅ | A4 循环 | 新建 | 生成 → 编译 → 契约测试 → 回灌。三出口：全过 `PRODUCED` / 判定无法忠实迁移 `ABSTAINED` / 预算耗尽 `FAILED` |
 |A4-6 | 🟡 | 逐 Tool 弃权 | 新建 | 弃权是**逐 Tool** 的——一个 Tool 弃权退回 A3，不拖累其他 Tool |
 |A4-7 | ✅ | trace 记录 | 新建 | `StageTrace.rounds`：每轮产物摘要 / 编译结果 / 契约测试结果 / 失败原因。**循环相对单次生成唯一多出来的证据** |
-|A4-8 | ❌ | 生成器按语言 | 改造 | `portable-candidate.ts` 写死 Java MCP 工程 → 按源 Tool 判断语言；Script 增加 Node |
+|A4-8 | 🟡 | 生成器按语言 | 改造 | `portable-candidate.ts` 写死 Java MCP 工程 → 按源 Tool 判断语言；Script 增加 Node |
 |A4-9 | ✅ | 生成文件保护 | 改造 | 守卫的前缀 `migration-generated/v2/` 与实际输出（`mcp/` / `skill/` / `scripts/`）**不匹配，永不触发**。用户改过的生成文件会被重新生成吞掉 |
 |A4-10 | ✅ | 去掉模型自写冒烟输入 | 删除 | 判据改由 A4-3 承担。出题人、答题人、判卷人不能是同一个 |
 

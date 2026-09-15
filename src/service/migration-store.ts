@@ -144,12 +144,12 @@ export class MigrationStore {
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return this.inspect(id);return value.inspection;
   }
   async decide(id:string,toolId:string,input:unknown){return this.serial(async()=>{
-    const p=z.strictObject({action:z.enum(['MIGRATE_TO_MCP','MIGRATE_TO_SCRIPT']),targetLanguage:z.string().min(1).max(40).optional(),reason:z.string().min(1).max(1000).optional(),baseAssetId:z.string().min(1)}).parse(input);
+    const p=z.strictObject({form:z.enum(['MCP','SCRIPT']),language:z.string().min(1).max(40).optional(),reason:z.string().min(1).max(1000).optional(),baseAssetId:z.string().min(1)}).parse(input);
     const value=await this.get(id),asset=value.candidate??value.source;
     if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新检查结果后重新确认');
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
     const tool=value.inspection.tools.find(item=>item.toolId===toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
-    const decision:ToolDecision={toolId,action:p.action,...(p.targetLanguage?{targetLanguage:p.targetLanguage}:{}),reason:p.reason??(p.action==='MIGRATE_TO_MCP'?'迁移到本 Skill 的共享 MCP 服务':'迁移为独立 Python 脚本'),baseAssetId:p.baseAssetId,decidedAt:new Date().toISOString()};
+    const decision:ToolDecision={toolId,form:p.form,...(p.language?{language:p.language}:{}),reason:p.reason??(p.form==='MCP'?'迁移到本 Skill 的共享 MCP 服务':'迁移为独立脚本 Tool'),baseAssetId:p.baseAssetId,decidedAt:new Date().toISOString()};
     value.decisions=[...(value.decisions??[]).filter(item=>!(item.toolId===toolId&&item.baseAssetId===p.baseAssetId)),decision];
     await writeJsonAtomic(this.file(id),value);return decision;
   });}
@@ -167,7 +167,7 @@ export class MigrationStore {
       const contract:Record<string,unknown>={};
       for(const decision of decisions){
         const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
-        const language=decision.action==='MIGRATE_TO_SCRIPT'?'python':((tool?.language??'').toLowerCase()==='java'?'java':'python');
+        const language=decision.form==='SCRIPT'?'python':((tool?.language??'').toLowerCase()==='java'?'java':'python');
         contract[decision.toolId]={language,inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
           sampleInput:sampleFromSchema(tool?.inputSchema)};
       }
@@ -177,7 +177,7 @@ export class MigrationStore {
       for(let attempt=1;attempt<=attempts;attempt++){
       const result=await runMigrationAgent<{tools?:unknown[]}>("A4",{
         assetDigest:asset.artifactSha256,runId:asset.assetId,files:encodeArchive(archive),
-        decisions:decisions.map(d=>({toolId:d.toolId,form:d.action==='MIGRATE_TO_SCRIPT'?'SCRIPT':'MCP',language:d.targetLanguage})),
+        decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
         tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema})),
         contract,
       },{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
@@ -233,7 +233,7 @@ export class MigrationStore {
     candidateInspection.tools=sourceInspection.tools.map(tool=>{
       const decision=value.decisions!.find(item=>item.toolId===tool.toolId&&item.baseAssetId===asset.assetId)!;
       const generation=generated.generations.find(item=>item.toolId===tool.toolId)!;
-      if(decision.action==='MIGRATE_TO_SCRIPT'){
+      if(decision.form==='SCRIPT'){
         const entry=generation.entrypoint??generation.files.find(name=>name.endsWith('.py'))!;
         return {...tool,sourcePaths:[entry],language:'Python',kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:'PYTHON' as const,path:entry},findings:[]};
       }

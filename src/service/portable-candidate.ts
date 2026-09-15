@@ -4,7 +4,7 @@ import type { ProjectInspection,ToolDecision } from './migration-model.js';
 import type { GeneratedToolImplementation } from './migration-code-generator.js';
 import { normalizeSkillPackage } from './skill-normalizer.js';
 
-export type PortableGeneration={toolId:string;toolName:string;action:ToolDecision['action'];files:string[];entrypoint?:string;readyForValidation:boolean;todo:string[];generatedBy?:string;explanation?:string;attempts?:number;checks?:GeneratedToolImplementation['checks']};
+export type PortableGeneration={toolId:string;toolName:string;form:ToolDecision['form'];files:string[];entrypoint?:string;readyForValidation:boolean;todo:string[];generatedBy?:string;explanation?:string;attempts?:number;checks?:GeneratedToolImplementation['checks']};
 export type PortableDiff={path:string;operation:'ADD'|'MODIFY';before:string;after:string};
 
 const javaClass=(name:string)=>name.split(/[^a-zA-Z0-9]+/u).filter(Boolean).map(p=>p[0]!.toUpperCase()+p.slice(1)).join('')+'Tool';
@@ -207,7 +207,7 @@ function executableJava(tool:ProjectInspection['tools'][number],implementations:
 export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>}){
   const implementations=input.implementations??{};
   const files:Record<string,Uint8Array>={},generations:PortableGeneration[]=[];
-  const mcpDecisions=input.decisions.filter(decision=>decision.action==='MIGRATE_TO_MCP');
+  const mcpDecisions=input.decisions.filter(decision=>decision.form==='MCP');
   const hasMcp=mcpDecisions.length>0,mcpRoot='mcp',packagePath='com/finance/migration';
   // A Tool being migrated is replaced, not carried alongside. Shipping the
   // runtime-coupled original next to its replacement would defeat the migration.
@@ -234,7 +234,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   }
   for(const decision of input.decisions){
     const tool=input.inspection.tools.find(t=>t.toolId===decision.toolId);if(!tool)throw new Error(`Unknown Tool decision: ${decision.toolId}`);
-    if(decision.action==='MIGRATE_TO_MCP'){
+    if(decision.form==='MCP'){
       const implementation=executableJava(tool,implementations)!,className=javaClass(tool.name);
       const implementationFiles=[{path:implementation.sourcePath,content:implementation.source},...implementation.additionalFiles];
       const generated=[
@@ -242,7 +242,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
         ...implementationFiles.map(file=>({name:`${mcpRoot}/src/main/java/${packagePath}/business/${file.path}`,content:file.content})),
       ];
       for(const item of generated)files[item.name]=strToU8(item.content);
-      generations.push({toolId:tool.toolId,toolName:tool.name,action:decision.action,files:[...sharedMcpFiles,...generated.map(f=>f.name)],entrypoint:`${mcpRoot}/src/main/java/${packagePath}/business/${implementation.sourcePath}`,readyForValidation:true,todo:[],generatedBy:implementation.generatedBy,explanation:implementation.explanation,attempts:implementation.attempts,checks:implementation.checks});
+      generations.push({toolId:tool.toolId,toolName:tool.name,form:decision.form,files:[...sharedMcpFiles,...generated.map(f=>f.name)],entrypoint:`${mcpRoot}/src/main/java/${packagePath}/business/${implementation.sourcePath}`,readyForValidation:true,todo:[],generatedBy:implementation.generatedBy,explanation:implementation.explanation,attempts:implementation.attempts,checks:implementation.checks});
     }else{
       const implementation=executablePython(tool,input.archive,implementations);
       if(!implementation)
@@ -253,7 +253,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
       const generated:{name:string;content:string}[]=implementationFiles.map((file,index)=>({name:multi?`${base}${module}/${file.path}`:target,content:index===0?withPep723(file.content,dependencies):file.content}));
       const lock=input.archive[`${implementation.sourcePath}.lock`];if(lock)files[`${target}.lock`]=lock;
       for(const item of generated)files[item.name]=strToU8(item.content);
-      generations.push({toolId:tool.toolId,toolName:tool.name,action:decision.action,files:[...generated.map(f=>f.name),...(lock?[`${target}.lock`]:[])],entrypoint:target,readyForValidation:true,todo:[],...('generatedBy' in implementation?{generatedBy:implementation.generatedBy,explanation:implementation.explanation,attempts:implementation.attempts,checks:implementation.checks}:{})});
+      generations.push({toolId:tool.toolId,toolName:tool.name,form:decision.form,files:[...generated.map(f=>f.name),...(lock?[`${target}.lock`]:[])],entrypoint:target,readyForValidation:true,todo:[],...('generatedBy' in implementation?{generatedBy:implementation.generatedBy,explanation:implementation.explanation,attempts:implementation.attempts,checks:implementation.checks}:{})});
     }
   }
   const diff:PortableDiff[]=Object.entries(files).flatMap(([name,bytes])=>{

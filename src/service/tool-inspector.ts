@@ -95,14 +95,22 @@ function inspectTool(name:string,files:Record<string,string>,skillFile:string,di
   }
   if(related.some(f=>['MISSING_MODULE','OMITTED_IMPLEMENTATION','DYNAMIC_DEPENDENCY'].includes(f.dependencyType)))
     findings.push({code:'IMPLEMENTATION_INCOMPLETE',severity:'ERROR',path:related[0]!.path,line:related[0]!.line,message:'业务实现或依赖不完整。'});
-  let portability:ToolInspection['portability'],kind:ToolInspection['kind'],recommendedAction:ToolInspection['recommendedAction'];
-  if(findings.some(f=>f.severity==='ERROR')){portability='INCOMPLETE';kind=mcp?'MCP':runtime?'RUNTIME_BOUND':script?'SCRIPT':'UNKNOWN';recommendedAction=mcp||languageOf(sourcePaths[0]??'')==='Java'?'MIGRATE_TO_MCP':'MIGRATE_TO_SCRIPT';}
-  else if(mcp&&hasSchema){portability='PORTABLE_MCP';kind='MCP';recommendedAction='MIGRATE_TO_MCP';}
-  else if(script){portability='PORTABLE_SCRIPT';kind='SCRIPT';recommendedAction='MIGRATE_TO_SCRIPT';}
-  else if(runtime){portability='RUNTIME_BOUND';kind='RUNTIME_BOUND';recommendedAction=languageOf(sourcePaths[0]??'')==='Java'?'MIGRATE_TO_MCP':'MIGRATE_TO_SCRIPT';}
-  else if(mcp){portability='INCOMPLETE';kind='MCP';recommendedAction='MIGRATE_TO_MCP';findings.push({code:'SCHEMA_MISSING',severity:'ERROR',path:sourcePaths[0]??skillFile,line:1,message:'MCP Tool 缺少可确认的输入 Schema。'});}
-  else {portability='INCOMPLETE';kind='UNKNOWN';recommendedAction='MIGRATE_TO_SCRIPT';findings.push({code:'IMPLEMENTATION_NOT_FOUND',severity:'ERROR',path:skillFile,line:1,message:'Skill 引用了 Tool，但没有找到可确认的实现。'});}
+  let portability:ToolInspection['portability'],kind:ToolInspection['kind'],recommendedForm:ToolInspection['recommendedForm'];
+  if(findings.some(f=>f.severity==='ERROR')){portability='INCOMPLETE';kind=mcp?'MCP':runtime?'RUNTIME_BOUND':script?'SCRIPT':'UNKNOWN';recommendedForm=mcp||languageOf(sourcePaths[0]??'')==='Java'?'MCP':'SCRIPT';}
+  else if(mcp&&hasSchema){portability='PORTABLE_MCP';kind='MCP';recommendedForm='MCP';}
+  else if(script){portability='PORTABLE_SCRIPT';kind='SCRIPT';recommendedForm='SCRIPT';}
+  else if(runtime){portability='RUNTIME_BOUND';kind='RUNTIME_BOUND';recommendedForm=languageOf(sourcePaths[0]??'')==='Java'?'MCP':'SCRIPT';}
+  else if(mcp){portability='INCOMPLETE';kind='MCP';recommendedForm='MCP';findings.push({code:'SCHEMA_MISSING',severity:'ERROR',path:sourcePaths[0]??skillFile,line:1,message:'MCP Tool 缺少可确认的输入 Schema。'});}
+  else {portability='INCOMPLETE';kind='UNKNOWN';recommendedForm='SCRIPT';findings.push({code:'IMPLEMENTATION_NOT_FOUND',severity:'ERROR',path:skillFile,line:1,message:'Skill 引用了 Tool，但没有找到可确认的实现。'});}
   const language=[...new Set(sourcePaths.map(languageOf).filter(v=>v!==null))].join(', ')||null;
+  // Same language where possible: a cross-language rewrite costs fidelity.
+  const sourceLanguage=(language??'').toLowerCase();
+  const recommendedLanguage=recommendedForm==='SCRIPT'?'python'
+    :sourceLanguage.includes('java')?'java'
+      :(sourceLanguage.includes('node')||sourceLanguage.includes('javascript'))?'node':'python';
+  const recommendationReason=recommendedForm==='SCRIPT'
+    ?(portability==='PORTABLE_SCRIPT'?'已符合独立脚本协议，可原样复用。':'独立入口的本机任务，脚本形式的安装与调试成本最低。')
+    :(portability==='PORTABLE_MCP'?'已是可独立运行的 MCP Tool，保留原实现。':'需要被多方调用的服务型能力，合并进同一个 MCP 服务。');
   if(mcp&&hasSchema&&inputSchema===null)findings.push({code:'SCHEMA_NOT_STATICALLY_RESOLVED',severity:'WARNING',path:sourcePaths[0]??skillFile,line:1,message:'发现 Schema 声明，但静态检查无法还原其完整内容；技术验证将以 MCP tools/list 为准。'});
-  return {toolId:stableToolId(name,sourcePaths),name,sourcePaths,language,kind,portability,inputSchema,outputSchema,evidence,findings,recommendedAction,...(entrypoint?{entrypoint}:{})};
+  return {toolId:stableToolId(name,sourcePaths),name,sourcePaths,language,kind,portability,inputSchema,outputSchema,evidence,findings,recommendedForm,recommendedLanguage,recommendationReason,...(entrypoint?{entrypoint}:{})};
 }

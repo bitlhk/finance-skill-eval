@@ -173,7 +173,10 @@ export function toProjectInspection(
           message: String(item.message ?? ""),
         }]
         : []),
-      recommendedAction: (form === "SCRIPT" ? "MIGRATE_TO_SCRIPT" : "MIGRATE_TO_MCP") as "MIGRATE_TO_MCP" | "MIGRATE_TO_SCRIPT",
+      recommendedForm: form,
+      recommendedLanguage: String(tool.recommendedLanguage ?? "").trim()
+        || (form === "SCRIPT" ? "python" : (String(tool.language ?? "").toLowerCase().includes("java") ? "java" : "python")),
+      recommendationReason: String(tool.recommendationReason ?? "").trim(),
     }];
   });
   // Coverage comes from the scanner, not from the agent's own account of itself.
