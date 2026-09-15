@@ -29,8 +29,15 @@ export type AgentResult<T = Record<string, unknown>> = {
   error?: string;
 };
 
-/** What the analysis hand-off looks like from the store's side: "give me an analysis". */
-export type MigrationAnalysis = { payload: unknown; scanner?: Record<string, unknown> | null };
+/**
+ * What the analysis hand-off looks like from the store's side: "give me an analysis".
+ *
+ * `ABSTAINED` is a result, not an absence. Flattening it to `null` here is what used to make the
+ * agent's "here is what I could not read" arrive as a faceless "analysis unavailable".
+ */
+export type MigrationAnalysis =
+  | { status: "PRODUCED"; payload: unknown; scanner?: Record<string, unknown> | null }
+  | { status: "ABSTAINED"; reason: string; missing: string[] };
 export type MigrationAnalyzer = (input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
 }) => Promise<MigrationAnalysis | null>;
@@ -42,9 +49,14 @@ export type MigrationAnalyzer = (input: {
  */
 export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array> }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
   if (!migrationAgentEnabled()) return null;
-  const result = await runMigrationAgent("A2", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
+  const result = await runMigrationAgent<{ reason?: string; missing?: string[] }>("A2", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
+  if (result?.status === "ABSTAINED") return {
+    status: "ABSTAINED",
+    reason: String(result.payload?.reason ?? "").trim() || "分析 agent 没有说明弃权原因",
+    missing: (result.payload?.missing ?? []).map(String).filter(Boolean),
+  };
   if (result?.status !== "PRODUCED") return null;
-  return { payload: result.payload, scanner: result.scanner ?? null };
+  return { status: "PRODUCED", payload: result.payload, scanner: result.scanner ?? null };
 }
 
 /** What the A4 hand-off looks like from the store's side: "build me these Tools". */

@@ -122,8 +122,12 @@ export class MigrationStore {
     // source never declared. Without an analysis there is no baseline, so there is nothing to
     // migrate against -- better to say that than to hand the flow a guess.
     const agent=await this.analyzer({assetDigest:asset.artifactSha256,runId:id,files:archive}).catch(()=>null);
+    // An abstention is the agent's judgement, so it is reported as one: whoever reads this gets the
+    // agent's own account of what it could not read, not a generic "unavailable".
+    if(agent?.status==='ABSTAINED')return conflict(
+      `分析 agent 判定这个工程无法完成分析：${agent.reason}${agent.missing.length?`（缺 ${agent.missing.join('、')}）`:''}。请补齐后重新检查。`);
     let inspection:ProjectInspection|null=null;
-    if(agent){
+    if(agent?.status==='PRODUCED'){
       try{
         const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId,agent.scanner??null,files);
         // An inspection with neither tools nor a skill verdict carries no information.

@@ -101,6 +101,26 @@ it('fails closed with a clear conflict when no analysis is available',async()=>{
     expect(result.statusCode).toBe(409);expect(result.json().message).toContain('分析不可用');
   }finally{await app.close();}
 });
+it('reports what the analysis agent could not read, instead of calling it unavailable',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'migration-abstained-')),data=path.join(root,'data');dirs.push(root);
+  await mkdir(path.join(root,'packs','finance'),{recursive:true});
+  await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
+  // An abstention is a judgement: the agent knows why it stopped. Collapsing it into "no analysis"
+  // throws that away and leaves the reader with nothing to act on.
+  const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:async()=>({status:'ABSTAINED' as const,reason:'工具实现是编译产物，读不到源码',missing:['tool/orders/impl.jar']})});
+  const headers={authorization:'Bearer test'};
+  try{
+    const zip=Buffer.from(zipSync({'SKILL.md':strToU8(method)}));
+    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
+    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'abstained'}})).json();
+    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
+    expect(result.statusCode).toBe(409);
+    expect(result.json().message).toContain('工具实现是编译产物，读不到源码');
+    expect(result.json().message).toContain('tool/orders/impl.jar');
+    expect(result.json().message).not.toContain('分析不可用');
+  }finally{await app.close();}
+});
 it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{
   const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});
   const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'test'});

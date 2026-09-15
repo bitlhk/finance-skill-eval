@@ -48,6 +48,7 @@ export function analyzedTool(input: {
 /** A stand-in A2: it returns an analysis payload, which still goes through the citation checks. */
 export function analysisFixture(tools: Array<Record<string, unknown>>, scanner?: Record<string, unknown> | null): MigrationAnalyzer {
   return async () => ({
+    status: 'PRODUCED' as const,
     payload: { status: 'PRODUCED', skill: { status: 'COMPLIANT', findings: [] }, tools },
     // Generation is gated on the scanner having run, so a fixture that expects to generate
     // reports a clean coverage by default.

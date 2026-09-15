@@ -10,7 +10,7 @@
 |A2-3 | ✅ | 企业规范技能包 | 新建 | `skills/enterprise-migration/`，四份参照：`skill-spec`（合规）/ `portability-rules`（六个状态的判据）/ `target-rules`（形式与语言建议）/ `evidence-rules` |
 |A2-4 | ✅ | 建议形式与建议语言 | 新建 | `ToolInspection` 新增 `recommendedForm` / `recommendedLanguage` / `recommendationReason`。判据收敛成 `recommendLanguage()` 一处；agent 只给**形式**建议，语言由平台算 |
 |A2-5 | ✅ | 发现的证据校验 | 保留 | 行号 + 逐字片段校验**留在 TS 侧**，作用于 agent 返回的 findings。机械判据不进技能包——提示词是软约束 |
-|A2-6 | 🟡 | 弃权 | 新建 | 最终输出 `status = ABSTAINED` + `reason` / `missing`。不用工具表达终态 |
+|A2-6 | ✅ | 弃权 | 新建 | 最终输出 `status = ABSTAINED` + `reason` / `missing`。不用工具表达终态。**弃权一路走到调用方**：`MigrationAnalysis` 是三态，store 报出 agent 自己说的"缺什么"，不再折成通用的"分析不可用" |
 |A2-7 | ✅ | 反引号捞 Tool | 改造 | 曾把 `SKILL.md` 里每个反引号标识符都登记为候选 Tool。**不是补症状，是删掉了整条规则路径**——见 A2-8 |
 |A2-8 | ✅ | **对 Skill 的分析** | 新建 | 产出：用到了哪些工具、每个的`input`/`output`/`sample`/`entrypoint`，**每条带 `path`+`line`**。TS 侧逐条走 `cited()` 校验：落不到真实行的契约**丢成 `null`，不保留猜测**。四条错法全部撤掉，`tool-inspector.ts` 只剩 Skill 规范检查 + 覆盖率 |
 

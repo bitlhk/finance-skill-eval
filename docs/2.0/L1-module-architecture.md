@@ -287,7 +287,9 @@ else:
   - 逐 Tool 的 `recommendedForm` / `recommendedLanguage` / `recommendationReason`；
   写在**最终输出**里
 - **基线与分析结果都要落到证据上**，跟 findings 走同一套 `cited()` 校验；落不到源码/文档上的主张不成立
-- **弃权**：最终输出中 `status = ABSTAINED`，附 `reason` 与 `missing`
+- **弃权**：最终输出中 `status = ABSTAINED`，附 `reason` 与 `missing`。
+  **弃权要一路走到调用方**：它是 agent 的判断，不是故障。把 `ABSTAINED` 折成"没有分析"，
+  调用方就只能报"分析不可用"——人看到一句无从下手的话，而 agent 明明说了缺什么
 
 **不使用提交工具**。弃权是终态不是动作；且框架的工具包装会吞掉异常（`wrap()` 返回 `{"status":"unavailable"}`），工具无法提前终止循环。完成信号由 `TaskCompletionRail` 承载。
 
