@@ -86,6 +86,7 @@ async def run(body: dict) -> None:
 
     workspace = build_workspace({k: base64.b64decode(v).decode("utf-8") for k, v in body["files"].items()})
     tool_trace: list[dict] = []
+    scanner_results: list[dict] = []
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a2-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
         lang = "cn"
@@ -98,7 +99,7 @@ async def run(body: dict) -> None:
             GrepTool(sys_op, lang, agent_id),
             GlobTool(sys_op, lang, agent_id),
             ListDirTool(sys_op, lang, agent_id),
-            build_run_scanner(workspace),
+            build_run_scanner(workspace, scanner_results),
         ]
 
         model = init_model(
@@ -136,6 +137,7 @@ async def run(body: dict) -> None:
             "status": status,
             "payload": payload,
             "rawOutput": raw[:20000],
+            "scanner": scanner_results[0] if scanner_results else None,
             "trace": {"rounds": tool_trace},
             "elapsedMs": round((time.monotonic() - started) * 1000),
             "modelId": settings["model_name"],

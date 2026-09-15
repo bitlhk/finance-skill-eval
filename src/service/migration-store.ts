@@ -18,7 +18,7 @@ import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
 import { buildMigrationPlan,stableToolId,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
-import { encodeArchive,migrationAgentEnabled,runMigrationAgent,toProjectInspection } from './migration-agent.js';
+import { encodeArchive,migrationAgentEnabled,runMigrationAgent,sampleFromSchema,toGeneratedImplementations,toProjectInspection } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { TechnicalValidationService } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
@@ -120,7 +120,7 @@ export class MigrationStore {
     let agentInspection:ProjectInspection|null=null;
     if(agent?.status==='PRODUCED'){
       try{
-        const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId);
+        const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId,agent.scanner??null);
         // An inspection with neither tools nor a skill verdict carries no information.
         if(candidate.tools.length||candidate.skill.status!=='UNKNOWN')agentInspection=candidate;
       }catch{agentInspection=null;}
@@ -157,6 +157,41 @@ export class MigrationStore {
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
     return buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);
   }
+  /**
+   * A4 runs as an agent; the configured MIGRATION model is the fallback when the
+   * agent runtime is absent. The judged contract is the source tool's own input/output
+   * shape -- the agent supplies the implementation, never the test.
+   */
+  private async generateImplementations(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord){
+    if(migrationAgentEnabled()){
+      const contract:Record<string,unknown>={};
+      for(const decision of decisions){
+        const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
+        const language=decision.action==='MIGRATE_TO_SCRIPT'?'python':((tool?.language??'').toLowerCase()==='java'?'java':'python');
+        contract[decision.toolId]={language,inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
+          sampleInput:sampleFromSchema(tool?.inputSchema)};
+      }
+      // A4 is not deterministic: the same input can produce or stall. Retry the run a
+      // bounded number of times, but treat ABSTAINED as a decision, not a flake.
+      const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??2));
+      for(let attempt=1;attempt<=attempts;attempt++){
+      const result=await runMigrationAgent<{tools?:unknown[]}>("A4",{
+        assetDigest:asset.artifactSha256,runId:asset.assetId,files:encodeArchive(archive),
+        decisions:decisions.map(d=>({toolId:d.toolId,form:d.action==='MIGRATE_TO_SCRIPT'?'SCRIPT':'MCP',language:d.targetLanguage})),
+        tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema})),
+        contract,
+      },{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+        modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}).catch(()=>null);
+      if(result?.status==='PRODUCED'){
+        const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
+        const mapped=toGeneratedImplementations(result.payload as never,result.files??{},nameById);
+        if(Object.keys(mapped).length)return mapped;
+      }
+      if(result?.status==='ABSTAINED')break;
+      }
+    }
+    return this.codeGenerator.generate({archive,inspection,decisions});
+  }
   private async generatePortable(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
     if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新生成');
@@ -176,7 +211,7 @@ export class MigrationStore {
       delete archive[name];
     }
     const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
-    const implementations=await this.codeGenerator.generate({archive,inspection:value.inspection,decisions});
+    const implementations=await this.generateImplementations(archive,value.inspection,decisions,asset);
     const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,implementations});
     const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
     const sourceInspection=value.inspection;

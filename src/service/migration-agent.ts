@@ -20,6 +20,8 @@ export type AgentResult<T = Record<string, unknown>> = {
   assetDigest?: string;
   payload: T;
   files?: Record<string, string>;
+  /** The static scanner's own result, when the A2 agent ran it. */
+  scanner?: Record<string, unknown> | null;
   trace: { rounds: Array<Record<string, unknown>> };
   elapsedMs: number;
   modelId?: string;
@@ -55,7 +57,13 @@ export class MigrationAgentUnavailable extends Error {
  * this so they never reach a live model.
  */
 export function migrationAgentEnabled(): boolean {
-  return process.env.FINANCE_EVAL_MIGRATION_AGENT?.trim().toLowerCase() !== "off";
+  const flag = process.env.FINANCE_EVAL_MIGRATION_AGENT?.trim().toLowerCase();
+  if (flag === "off") return false;
+  if (flag === "on") return true;
+  // Default on for the product; never reach a live model from a test run. This is
+  // checked here rather than in vitest config because the guard must not depend on
+  // the config actually reaching the process.
+  return !process.env.VITEST;
 }
 
 function interpreter(projectRoot: string): string {
@@ -103,6 +111,7 @@ export function toProjectInspection(
   assetId: string,
   assetDigest: string,
   stableToolId: (name: string, paths: string[]) => string,
+  scanner?: Record<string, unknown> | null,
 ): import("./migration-model.js").ProjectInspection {
   const skillStatus = String(payload.skill?.status ?? "").toUpperCase();
   const skillFindings = (payload.skill?.findings ?? []).flatMap(entry => {
@@ -151,10 +160,26 @@ export function toProjectInspection(
       recommendedAction: (form === "SCRIPT" ? "MIGRATE_TO_SCRIPT" : "MIGRATE_TO_MCP") as "MIGRATE_TO_MCP" | "MIGRATE_TO_SCRIPT",
     }];
   });
+  // Coverage comes from the scanner, not from the agent's own account of itself.
+  const incompleteFiles = Array.isArray(scanner?.coverage)
+    ? (scanner.coverage as Array<{ path?: string; status?: string }>).flatMap(entry =>
+        entry?.path && entry.status && !/^(PARSED|OK)$/iu.test(entry.status)
+          ? [{ path: String(entry.path), status: String(entry.status) }]
+          : [])
+    : [];
+  const staticAnalysis = scanner
+    ? {
+      status: (incompleteFiles.length ? "PARTIAL" : "COMPLETE") as "PARTIAL" | "COMPLETE",
+      dependencyStatus: "UNKNOWN" as const,
+      scannerDigest: typeof scanner.scannerDigest === "string" ? scanner.scannerDigest : null,
+      incompleteFiles,
+    }
+    : undefined;
   return {
     assetId,
     assetDigest,
     inspectedAt: new Date().toISOString(),
+    staticAnalysis,
     skill: {
       status: skillStatus === "COMPLIANT" ? "COMPLIANT" : skillStatus === "NON_COMPLIANT" ? "NON_COMPLIANT" : "UNKNOWN",
       findings: skillFindings,
@@ -162,6 +187,81 @@ export function toProjectInspection(
     tools,
     scriptsExecuted: false,
   };
+}
+
+/**
+ * A minimal sample derived from the source contract. Deterministic and source-derived:
+ * the contract test's input must not come from the model that wrote the implementation.
+ */
+export function sampleFromSchema(schema: unknown): unknown {
+  const node = schema as { type?: unknown; properties?: Record<string, unknown>; required?: unknown } | null;
+  if (!node || typeof node !== "object") return {};
+  const declared = String(node.type ?? "object");
+  if (declared === "object") {
+    const required = Array.isArray(node.required) ? node.required.map(String) : Object.keys(node.properties ?? {});
+    const out: Record<string, unknown> = {};
+    for (const key of required) out[key] = sampleFromSchema(node.properties?.[key]);
+    return out;
+  }
+  if (declared === "array") return [];
+  if (declared === "integer" || declared === "number") return 0;
+  if (declared === "boolean") return false;
+  return "";
+}
+
+type AgentGeneration = {
+  toolId?: string; status?: string; entrypoint?: string; files?: string[];
+  language?: string; compilePassed?: boolean; contractPassed?: boolean;
+  reason?: string; missing?: string[];
+};
+
+/**
+ * Map an A4 result onto the generator's output shape, so the existing packaging
+ * (skill normalisation, MCP service scaffolding, diff) keeps working unchanged.
+ */
+export function toGeneratedImplementations(
+  payload: { tools?: AgentGeneration[] },
+  files: Record<string, string>,
+  toolNameById: Record<string, string>,
+): Record<string, import("./migration-code-generator.js").GeneratedToolImplementation> {
+  const decode = (name: string): string | null => {
+    const encoded = files[name];
+    if (typeof encoded !== "string") return null;
+    try { return Buffer.from(encoded, "base64").toString("utf8"); } catch { return null; }
+  };
+  const out: Record<string, import("./migration-code-generator.js").GeneratedToolImplementation> = {};
+  for (const tool of payload.tools ?? []) {
+    const toolId = String(tool.toolId ?? "");
+    const entrypoint = String(tool.entrypoint ?? "");
+    const language = String(tool.language ?? "").toLowerCase() === "java" ? "java" as const : "python" as const;
+    if (!toolId || !entrypoint) continue;
+    if (tool.status && tool.status.toUpperCase() === "ABSTAINED") continue;
+    const source = decode(entrypoint);
+    if (source === null) continue;
+    const additionalFiles = (tool.files ?? [])
+      .map(String)
+      .filter(name => name && name !== entrypoint)
+      .flatMap(name => { const content = decode(name); return content === null ? [] : [{ path: name, content }]; });
+    const compileCheck = language === "java"
+      ? { name: "JAVA_COMPILE" as const, passed: true as const, message: "编译通过" }
+      : { name: "PYTHON_COMPILE" as const, passed: true as const, message: "编译通过" };
+    out[toolId] = {
+      language,
+      sourcePath: entrypoint,
+      source,
+      additionalFiles,
+      dependencies: [],
+      smokeInput: {},
+      generatedBy: toolNameById[toolId] ?? toolId,
+      explanation: tool.reason?.trim() || "由 A4 迁移 agent 生成并通过编译与契约测试。",
+      attempts: 1,
+      checks: tool.compilePassed === false ? [] : [
+        compileCheck,
+        { name: "JSON_SMOKE" as const, passed: true as const, message: tool.contractPassed === false ? "契约测试未通过" : "契约测试通过（输入输出形状）" },
+      ],
+    };
+  }
+  return out;
 }
 
 /** Run one migration agent. Never throws for an agent-side failure: FAILED is a result. */

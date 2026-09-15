@@ -91,9 +91,12 @@ async def _scan(workspace: Path) -> dict[str, Any]:
     return parsed
 
 
-def build_run_scanner(workspace: Path) -> LocalFunction:
+def build_run_scanner(workspace: Path, capture: list[dict[str, Any]] | None = None) -> LocalFunction:
     async def run_scanner(**_kwargs: Any) -> dict[str, Any]:
-        return await _scan(workspace)
+        result = await _scan(workspace)
+        if capture is not None and isinstance(result, dict):
+            capture.append(result)
+        return result
 
     return _tool(
         "run_scanner",

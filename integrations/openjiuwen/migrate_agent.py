@@ -87,7 +87,8 @@ async def run(body: dict) -> None:
     bound = resolve_model(config, body["model"])
     settings = request_settings(bound, model_id)
 
-    workspace = build_workspace({k: base64.b64decode(v).decode("utf-8") for k, v in body["files"].items()})
+    originals = {k: base64.b64decode(v) for k, v in body["files"].items()}
+    workspace = build_workspace({k: v.decode("utf-8") for k, v in originals.items()})
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a4-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
         lang = "cn"
@@ -156,7 +157,13 @@ async def run(body: dict) -> None:
                 continue
             if "__pycache__" in rel.split("/") or path.suffix in {".pyc", ".pyo", ".class"}:
                 continue
-            produced[rel] = base64.b64encode(path.read_bytes()).decode()
+            # A source file that came back unchanged is not part of the delivery --
+            # shipping the runtime-coupled original alongside its migration would be wrong.
+            raw = path.read_bytes()
+            original = originals.get(rel)
+            if original is not None and original == raw:
+                continue
+            produced[rel] = base64.b64encode(raw).decode()
 
         emit(protocol, {"result": {
             "stage": "A4",
