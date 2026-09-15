@@ -8,17 +8,12 @@
 |A3-1 | ✅ | 决策契约对齐 | 改造 | `ToolDecision` 从 `action` + 自由字符串 `targetLanguage` 改为 **`form` 必选 + `language` 可选**（缺省采用 A2 的建议语言） |
 |A3-2 | ✅ | 授权界面 | 改造 | 展示 A2 的建议形式、建议语言与理由；形式必选，语言可选 |
 
-## 现状
+## 现在是什么样
 
-`MigrationStore.decide()` 已存在，但：
+`MigrationStore.decide()` 收 **`form`（`MCP` | `SCRIPT`，必选）+ `language`（可选）**。语言缺省时按 A2 的建议算
+（`recommendLanguage()` 一处实现），所以人工不选也有一致的默认，而且默认来自判据不是运气。
 
-- 收的是 `action: MIGRATE_TO_MCP | MIGRATE_TO_SCRIPT`
-- `targetLanguage` 是**自由字符串**，无默认值、无建议来源
-- 契约里没有"建议"这个概念（`ToolInspection` 现在只有 `recommendedAction`）
-
-## 要动的
-
-契约字段（A3-1）与界面（A3-2）。**逻辑本身很薄**——这是阶段 A 里改动最小的一块。
+**这块逻辑很薄**——阶段 A 里改动最小的一块，改动集中在契约字段（A3-1）与界面（A3-2）。
 
 ## 为什么要区分授权与建议
 
