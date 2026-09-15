@@ -17,9 +17,11 @@ import { generateCandidateFiles, versionedMethod, regenerationArchive } from './
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
-import { buildMigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
+import { buildMigrationPlan,stableToolId,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
+import { encodeArchive,migrationAgentEnabled,runMigrationAgent,toProjectInspection } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { TechnicalValidationService } from './technical-validation.js';
+import { MigrationCodeGenerator } from './migration-code-generator.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
@@ -61,7 +63,8 @@ export class MigrationStore {
   private chain:Promise<unknown> = Promise.resolve();
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
-    private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore) {}
+    private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
+    private codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION'))) {}
   async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
   async verifyTarget(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
@@ -90,7 +93,7 @@ export class MigrationStore {
       createdAt:new Date().toISOString(),source,candidate:null,candidateNotes:'',runs:[],assessment:'NOT_VALIDATED'};
     await writeJsonAtomic(this.file(value.id),value); return value;
     });
-    await this.diagnostics?.diagnose(value.source).catch(()=>undefined);return value;
+    void this.diagnostics?.diagnose(value.source).catch(()=>undefined);return value;
   }
   async upgrade(id:string){
     const legacy=await this.get(id),asset=legacy.candidate??legacy.source;
@@ -107,8 +110,33 @@ export class MigrationStore {
     const value=await this.get(id),asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const files:Record<string,string>={};
     for(const [name,bytes] of Object.entries(archive))try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
-    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(asset).catch(()=>null):null;
-    value.inspection=inspectProject({assetId:asset.assetId,assetDigest:asset.artifactSha256,files,skillFile:asset.skillFile,diagnosis});
+
+    // A2 runs as an agent. When the runtime is not configured (or the model is
+    // unavailable) it falls back to the deterministic rules path, so the store keeps
+    // working without a live agent.
+    const agent=migrationAgentEnabled()?await runMigrationAgent("A2",{
+      assetDigest:asset.artifactSha256,runId:id,files:encodeArchive(archive),
+    },{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}).catch(()=>null):null;
+    let agentInspection:ProjectInspection|null=null;
+    if(agent?.status==='PRODUCED'){
+      try{
+        const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId);
+        // An inspection with neither tools nor a skill verdict carries no information.
+        if(candidate.tools.length||candidate.skill.status!=='UNKNOWN')agentInspection=candidate;
+      }catch{agentInspection=null;}
+    }
+
+    if(!this.diagnostics&&!agentInspection)return conflict('静态诊断服务不可用，已阻止后续迁移');
+    let inspection:ProjectInspection;
+    if(agentInspection)inspection=agentInspection;
+    else{
+      let diagnosis;
+      try{diagnosis=await this.diagnostics!.diagnose(asset);}
+      catch{return conflict('静态诊断执行失败，已阻止后续迁移；请检查 uv、锁文件和扫描器配置');}
+      if(diagnosis.digest!==asset.artifactSha256)return conflict('静态诊断与当前资产不匹配，已阻止后续迁移');
+      inspection=inspectProject({assetId:asset.assetId,assetDigest:asset.artifactSha256,files,skillFile:asset.skillFile,diagnosis});
+    }
+    value.inspection=inspection;
     value.decisions=(value.decisions??[]).filter(decision=>decision.baseAssetId===asset.assetId&&value.inspection!.tools.some(tool=>tool.toolId===decision.toolId));
     await writeJsonAtomic(this.file(id),value);return value.inspection;
   });}
@@ -130,9 +158,16 @@ export class MigrationStore {
     return buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);
   }
   private async generatePortable(id:string,input:unknown){return this.serial(async()=>{
-    const p=z.strictObject({baseAssetId:z.string().min(1)}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
+    const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
     if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新生成');
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
+    if(!value.inspection.staticAnalysis||value.inspection.staticAnalysis.status==='UNAVAILABLE')return conflict('静态分析不可用，已阻止生成候选');
+    const toolPaths=new Set(value.inspection.tools.flatMap(tool=>tool.sourcePaths));
+    const toolIncompleteFiles=value.inspection.staticAnalysis.toolIncompleteFiles??value.inspection.staticAnalysis.incompleteFiles.filter(item=>toolPaths.has(item.path));
+    if(toolIncompleteFiles.length&&!p.acknowledgePartialAnalysis){
+      const files=toolIncompleteFiles.map(item=>`${item.path} (${item.status})`).join('、');
+      return conflict(`静态分析未完整覆盖 Tool 相关源码；确认人工审阅后才能继续：${files}`);
+    }
     const plan=buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);if(!plan.generationAllowed)return conflict('当前逐 Tool 决策尚不能生成候选');
     const archive=await this.skills.readArchive(asset.assetId),version=`2.0.0-migration.${(value.candidateHistory?.length??0)+1}`;
     for(const [name,bytes] of Object.entries(archive).filter(([name])=>name.startsWith('migration-generated/v2/'))){
@@ -140,9 +175,32 @@ export class MigrationStore {
       if(expected===undefined||Buffer.from(bytes).toString('utf8')!==expected)return conflict('生成文件已被人工修改；为避免覆盖工程改动，请将其作为新实现重新导入和检查');
       delete archive[name];
     }
-    const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions:value.decisions!.filter(d=>d.baseAssetId===asset.assetId),version});
+    const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
+    const implementations=await this.codeGenerator.generate({archive,inspection:value.inspection,decisions});
+    const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,implementations});
     const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
-    value.candidate=candidate;value.candidateNotes='按逐 Tool 决策生成 2.0 候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
+    const sourceInspection=value.inspection;
+    const decoded:Record<string,string>={};for(const [name,bytes] of Object.entries(generated.files))try{decoded[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
+    if(!this.diagnostics)return conflict('静态诊断服务不可用，不能确认生成候选');
+    let candidateDiagnosis;
+    try{candidateDiagnosis=await this.diagnostics.diagnose(candidate);}
+    catch{return conflict('生成候选的静态诊断执行失败，候选未被采纳；请检查 uv、锁文件和扫描器配置');}
+    if(candidateDiagnosis.digest!==candidate.artifactSha256)return conflict('生成候选的静态诊断与资产不匹配');
+    const candidateInspection=inspectProject({assetId:candidate.assetId,assetDigest:candidate.artifactSha256,files:decoded,skillFile:candidate.skillFile,diagnosis:candidateDiagnosis});
+    if(candidateInspection.skill.status!=='COMPLIANT'){
+      const errors=candidateInspection.skill.findings.filter(item=>item.severity==='ERROR').map(item=>`${item.code}: ${item.message}`).join('；');
+      return conflict(`生成候选不符合 Skill 包规范，候选未被采纳：${errors||'Skill 检查未通过'}`);
+    }
+    candidateInspection.tools=sourceInspection.tools.map(tool=>{
+      const decision=value.decisions!.find(item=>item.toolId===tool.toolId&&item.baseAssetId===asset.assetId)!;
+      const generation=generated.generations.find(item=>item.toolId===tool.toolId)!;
+      if(decision.action==='MIGRATE_TO_SCRIPT'){
+        const entry=generation.entrypoint??generation.files.find(name=>name.endsWith('.py'))!;
+        return {...tool,sourcePaths:[entry],language:'Python',kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:'PYTHON' as const,path:entry},findings:[]};
+      }
+      return {...tool,sourcePaths:generation.files.filter(name=>name.endsWith('.java')),language:'Java',kind:'MCP' as const,portability:'PORTABLE_MCP' as const,entrypoint:undefined,findings:[]};
+    });
+    value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await writeJsonAtomic(this.file(id),value);return value;
   });}
@@ -317,6 +375,7 @@ export class MigrationStore {
       if (binding.skillAssetId!==asset.assetId || variant?.mode!=='skill_version' || variant.artifactSha256!==asset.artifactSha256
           || variant.skillId!==asset.skillId || variant.version!==asset.version) return conflict('Pair asset binding does not match the frozen source/candidate');
     }
+    if(p.pair==='BC'&&p.configuration.evaluationMode!=='candidate_assessment')return conflict('BC is a migrated-candidate quality assessment, not a left/right winner comparison');
     if (p.pair==='AB' && p.configuration.runtimeBindings.left.environmentId!==p.configuration.runtimeBindings.right.environmentId) return conflict('AB must preserve the original Runtime environment');
     const comparisonFingerprint=fingerprint({pack:pack.packFingerprint, model:p.configuration.executionModel,
       cases:p.configuration.selectedCaseIds, data:p.dataSnapshot, permissions:p.permissionBasis,
@@ -375,17 +434,17 @@ export class MigrationStore {
       if(/(^|\/)(\.env(?:\..*)?|access-token|id_rsa|id_ed25519)$|\.(pem|key)$/i.test(name)||/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"'\n]{8,}["']/i.test(Buffer.from(bytes).toString()))
         return conflict('候选可能包含凭据，请先检查并移除敏感配置；未导出任何文件');
     }
-    const technicalReady=this.currentTechnicalState(value).ready;
-    const state=value.schemaVersion==='finance.skill-migration.v2'
-      ? report.verification.targetExecution==='PASSED'?'OPENJIUWEN_VALIDATED_CANDIDATE':technicalReady?'TECHNICALLY_VALIDATED_DRAFT':'DRAFT_NOT_VALIDATED'
-      : report.verification.targetExecution==='PASSED'?'TARGET_VERIFIED_CANDIDATE':'DRAFT_NOT_VALIDATED';
-    const manifest={schemaVersion:value.schemaVersion==='finance.skill-migration.v2'?'finance.skill-migration.exchange.v2':'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
+    // V2 exports are the standard Skill/Tool delivery itself. Migration evidence
+    // remains available from /report and must not pollute the specified package.
+    if(value.schemaVersion==='finance.skill-migration.v2')return Buffer.from(zipSync(files));
+    const state=report.verification.targetExecution==='PASSED'?'TARGET_VERIFIED_CANDIDATE':'DRAFT_NOT_VALIDATED';
+    const manifest={schemaVersion:'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
       state,builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
       executionPolicy:'INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION',dependencies:'NOT_VALIDATED',
       fileDigestAlgorithm:'SHA-256 of original file bytes',
       files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,createHash('sha256').update(content).digest('hex')]))};
     return Buffer.from(zipSync({...files,'migration-manifest.json':strToU8(JSON.stringify(manifest,null,2)),
-      'migration-report.json':strToU8(JSON.stringify({schemaVersion:value.schemaVersion==='finance.skill-migration.v2'?'migration.export-scope.v2':'migration.export-scope.v1',state,
+      'migration-report.json':strToU8(JSON.stringify({schemaVersion:'migration.export-scope.v1',state,
         candidateDigest:value.candidate.artifactSha256,inspection:report.inspection,decisions:report.decisions,migrationPlan:report.migrationPlan,
         technicalValidations:report.technicalValidations.map(v=>({validationId:v.validationId,toolId:v.toolId,assetDigest:v.assetDigest,implementationDigest:v.implementationDigest,casesDigest:v.casesDigest,mode:v.mode,status:v.status,stages:v.stages,current:v.current})),openJiuwenValidations:report.openJiuwenValidations,verification:report.verification,
         changes:(value.portableGenerationDiff??value.generation?.diff??[]).map(d=>({path:d.path,operation:d.operation})),

@@ -109,7 +109,7 @@ export class SkillStore {
     return files;
   }
 
-  async uploadZip(buffer: Buffer): Promise<SkillAssetRecord> {
+  async uploadZip(buffer: Buffer, options: { migrationInput?: boolean } = {}): Promise<SkillAssetRecord> {
     if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
       throw new Error("Skill ZIP must be between 1 byte and 8 MB");
     }
@@ -137,13 +137,19 @@ export class SkillStore {
       .map(([name]) => name)
       .filter(name => /(^|\/)skill\.md$/iu.test(name))
       .sort((left, right) => left.split("/").length - right.split("/").length);
-    const skillFile = skillCandidates[0];
-    if (!skillFile) throw new Error("Skill ZIP does not contain SKILL.md");
-    if (skillCandidates.length > 1) throw new Error('Skill ZIP has ambiguous root Skill files: multiple Skills are not supported; upload each Skill separately');
+    // Migration input is not required to sit under skill/: pick the shallowest
+    // readable instruction file wherever the tree puts it.
+    const migrationFallback = options.migrationInput
+      ? normalizedFiles.map(([name])=>name).filter(name=>/\.(?:md|mdx|txt)$/iu.test(name))
+        .sort((left,right)=>left.split('/').length-right.split('/').length||left.localeCompare(right))[0]
+      : undefined;
+    const skillFile = skillCandidates.find(name=>name==='skill/SKILL.md')??skillCandidates[0]??migrationFallback;
+    if (!skillFile) throw new Error(options.migrationInput?'Migration ZIP needs a readable instruction file (.md/.mdx/.txt) anywhere in the archive':'Skill ZIP does not contain SKILL.md');
+    if (skillCandidates.length > 1&&!options.migrationInput) throw new Error('Skill ZIP has ambiguous root Skill files: multiple Skills are not supported; upload each Skill separately');
     const sourceBytes = normalizedFiles.find(([name]) => name === skillFile)?.[1];
     if (!sourceBytes) throw new Error("Unable to read SKILL.md from archive");
     const source = Buffer.from(sourceBytes).toString("utf8");
-    if (!source.trim()) throw new Error("SKILL.md is empty");
+    if (!source.trim()&&!options.migrationInput) throw new Error("SKILL.md is empty");
     const metadata = parseFrontmatter(source);
     const skillId = asText(metadata.name) ?? `uploaded-skill-${randomUUID().slice(0, 8)}`;
     const version = asText(metadata.version) ?? "0.0.0-upload";
@@ -178,5 +184,16 @@ export class SkillStore {
     };
     await writeJsonAtomic(path.join(this.recordsDirectory, `${assetId}.json`), record);
     return record;
+  }
+
+  async uploadMigrationZip(buffer: Buffer): Promise<SkillAssetRecord> {
+    // Import stays thin: unzip, digest, safety limits. It does not judge the
+    // directory layout -- real source projects do not follow a fixed one, and
+    // A2 is an agent that can inspect the tree itself. Credential files are not
+    // rejected here; the export path is the gate that matters.
+    if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
+      throw new Error("Migration ZIP must be between 1 byte and 8 MB");
+    }
+    return this.uploadZip(buffer, { migrationInput: true });
   }
 }
