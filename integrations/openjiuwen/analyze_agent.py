@@ -47,6 +47,8 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 - 你可以调用 run_scanner 获取确定性发现与**覆盖率**。覆盖率是用来回答「我漏看了什么」的，
   它比你自己读文件更可靠；覆盖率不全时，在 coverageGaps 里如实列出。
 - 不要修改工作区里的任何文件。
+- 你只给**形式建议**（MCP 还是 Script）。实现语言由平台按固定判据算出，**不要给语言建议**：
+  那取决于平台有哪些生成模板，工程里看不到这个信息。
 
 最后**只输出一个 JSON 对象**，不要有其它文字：
 {
@@ -60,7 +62,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
     "portability":"PORTABLE_MCP|PORTABLE_SCRIPT|RUNTIME_BOUND|INCOMPLETE|UNSUPPORTED|UNKNOWN",
     "inputSchema":null,"outputSchema":null,
     "evidence":[{"path":"","line":1,"snippet":""}],
-    "recommendedForm":"MCP|SCRIPT","recommendedLanguage":"","recommendationReason":"",
+    "recommendedForm":"MCP|SCRIPT","recommendationReason":"",
     "findings":[{"code":"","severity":"","path":"","line":1,"message":""}]
   }],
   "coverageGaps": [""],

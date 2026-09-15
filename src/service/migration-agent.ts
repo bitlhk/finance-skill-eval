@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -85,7 +86,7 @@ type AgentTool = {
   portability?: string; inputSchema?: unknown; outputSchema?: unknown;
   evidence?: Array<{ path?: string; line?: number; snippet?: string }>;
   findings?: Array<{ code?: string; severity?: string; path?: string; line?: number; message?: string }>;
-  recommendedForm?: string; recommendedLanguage?: string; recommendationReason?: string;
+  recommendedForm?: string; recommendationReason?: string;
 };
 
 const PORTABILITIES = ["PORTABLE_MCP", "PORTABLE_SCRIPT", "RUNTIME_BOUND", "INCOMPLETE", "UNSUPPORTED", "UNKNOWN"] as const;
@@ -143,6 +144,9 @@ export function toProjectInspection(
     const name = String(tool.name ?? "").trim();
     if (!name) return [];
     const sourcePaths = (tool.sourcePaths ?? []).map(String).filter(Boolean);
+    // The language is read off the files, not taken from the agent's account of them: the
+    // recommendation below is a platform rule, so its input has to be a fact.
+    const language = languageOfSourcePaths(sourcePaths);
     const portability = asPortability(tool.portability);
     const kind = portability === "PORTABLE_MCP" ? "MCP" as const
       : portability === "PORTABLE_SCRIPT" ? "SCRIPT" as const
@@ -153,7 +157,7 @@ export function toProjectInspection(
       toolId: stableToolId(name, sourcePaths),
       name,
       sourcePaths,
-      language: tool.language ?? null,
+      language,
       kind,
       portability,
       inputSchema: tool.inputSchema ?? null,
@@ -174,8 +178,7 @@ export function toProjectInspection(
         }]
         : []),
       recommendedForm: form,
-      recommendedLanguage: String(tool.recommendedLanguage ?? "").trim()
-        || (form === "SCRIPT" ? "python" : (String(tool.language ?? "").toLowerCase().includes("java") ? "java" : "python")),
+      recommendedLanguage: recommendLanguage(form, language),
       recommendationReason: String(tool.recommendationReason ?? "").trim(),
     }];
   });

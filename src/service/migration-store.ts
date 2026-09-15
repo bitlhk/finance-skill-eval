@@ -17,7 +17,7 @@ import { generateCandidateFiles, versionedMethod, regenerationArchive } from './
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
-import { buildMigrationPlan,stableToolId,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
+import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
 import { encodeArchive,migrationAgentEnabled,runMigrationAgent,sampleFromSchema,toGeneratedImplementations,toProjectInspection } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { TechnicalValidationService } from './technical-validation.js';
@@ -57,6 +57,7 @@ type Migration = {
   technicalValidations?:TechnicalValidation[];
 };
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
+const CODE_FILE=/\.(?:java|py|js|mjs|cjs|ts)$/iu;
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -162,12 +163,15 @@ export class MigrationStore {
    * agent runtime is absent. The judged contract is the source tool's own input/output
    * shape -- the agent supplies the implementation, never the test.
    */
-  private async generateImplementations(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord){
+  private async generateImplementations(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord,plan:MigrationPlan){
     if(migrationAgentEnabled()){
+      // The contract takes its language from the plan the human approved, so what is
+      // generated cannot disagree with what was shown to them.
       const contract:Record<string,unknown>={};
       for(const decision of decisions){
         const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
-        const language=decision.form==='SCRIPT'?'python':((tool?.language??'').toLowerCase()==='java'?'java':'python');
+        const language=plan.items.find(item=>item.toolId===decision.toolId)?.language
+          ??recommendLanguage(decision.form,tool?.language??null);
         contract[decision.toolId]={language,inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
           sampleInput:sampleFromSchema(tool?.inputSchema)};
       }
@@ -227,7 +231,7 @@ export class MigrationStore {
       delete archive[item.path];
     }
     const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
-    const implementations=await this.generateImplementations(archive,value.inspection,decisions,asset);
+    const implementations=await this.generateImplementations(archive,value.inspection,decisions,asset,plan);
     const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,implementations});
     const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
     const sourceInspection=value.inspection;
@@ -245,11 +249,14 @@ export class MigrationStore {
     candidateInspection.tools=sourceInspection.tools.map(tool=>{
       const decision=value.decisions!.find(item=>item.toolId===tool.toolId&&item.baseAssetId===asset.assetId)!;
       const generation=generated.generations.find(item=>item.toolId===tool.toolId)!;
+      // Describe what was generated instead of asserting a language: asserting it made the
+      // record say Python for a Node script and Java for anything that was not Java.
       if(decision.form==='SCRIPT'){
-        const entry=generation.entrypoint??generation.files.find(name=>name.endsWith('.py'))!;
-        return {...tool,sourcePaths:[entry],language:'Python',kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:'PYTHON' as const,path:entry},findings:[]};
+        const entry=generation.entrypoint??generation.files.find(name=>CODE_FILE.test(name))!;
+        return {...tool,sourcePaths:[entry],language:languageOfSourcePaths([entry]),kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:(/\.py$/iu.test(entry)?'PYTHON':'NODE') as 'PYTHON'|'NODE',path:entry},findings:[]};
       }
-      return {...tool,sourcePaths:generation.files.filter(name=>name.endsWith('.java')),language:'Java',kind:'MCP' as const,portability:'PORTABLE_MCP' as const,entrypoint:undefined,findings:[]};
+      const generatedFiles=generation.files.filter(name=>CODE_FILE.test(name));
+      return {...tool,sourcePaths:generatedFiles,language:languageOfSourcePaths(generatedFiles),kind:'MCP' as const,portability:'PORTABLE_MCP' as const,entrypoint:undefined,findings:[]};
     });
     value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
