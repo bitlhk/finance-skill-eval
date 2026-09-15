@@ -19,7 +19,7 @@ import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
 import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
 import { encodeArchive,migrationAgentEnabled,runMigrationAgent,sampleFromSchema,toGeneratedImplementations,toProjectInspection } from './migration-agent.js';
-import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
+import { generatePortableCandidate,mcpWorkspace,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { TechnicalValidationService } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 
@@ -165,6 +165,10 @@ export class MigrationStore {
    */
   private async generateImplementations(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord,plan:MigrationPlan){
     if(migrationAgentEnabled()){
+      // The MCP services and their adapters are the platform's, so they go into the agent's
+      // workspace: the agent then writes only business code and the contract test starts the
+      // very same service that ships.
+      const workspace=mcpWorkspace({skillId:asset.skillId,inspection,decisions});
       // The contract takes its language from the plan the human approved, so what is
       // generated cannot disagree with what was shown to them.
       const contract:Record<string,unknown>={};
@@ -172,15 +176,20 @@ export class MigrationStore {
         const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
         const language=plan.items.find(item=>item.toolId===decision.toolId)?.language
           ??recommendLanguage(decision.form,tool?.language??null);
-        contract[decision.toolId]={language,inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
-          sampleInput:sampleFromSchema(tool?.inputSchema)};
+        const site=workspace.sites[decision.toolId];
+        contract[decision.toolId]={form:decision.form,language,toolName:tool?.name??'',
+          inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
+          sampleInput:sampleFromSchema(tool?.inputSchema),
+          ...(site?{serviceEntry:site.serviceEntry,businessPath:site.businessPath}:{})};
       }
       // A4 is not deterministic: the same input can produce or stall. Retry the run a
       // bounded number of times, but treat ABSTAINED as a decision, not a flake.
       const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??2));
       for(let attempt=1;attempt<=attempts;attempt++){
+      const seeded=encodeArchive(archive);
+      for(const [name,content] of Object.entries(workspace.files))seeded[name]=content;
       const result=await runMigrationAgent<{tools?:unknown[]}>("A4",{
-        assetDigest:asset.artifactSha256,runId:asset.assetId,files:encodeArchive(archive),
+        assetDigest:asset.artifactSha256,runId:asset.assetId,files:seeded,
         decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
         tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema})),
         contract,
@@ -206,7 +215,9 @@ export class MigrationStore {
       }
       }
     }
-    return this.codeGenerator.generate({archive,inspection,decisions});
+    const sites=mcpWorkspace({skillId:asset.skillId,inspection,decisions}).sites;
+    return this.codeGenerator.generate({archive,inspection,decisions,
+      businessPaths:Object.fromEntries(Object.entries(sites).map(([toolId,site])=>[toolId,site.businessPath]))});
   }
   private async generatePortable(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),asset=value.candidate??value.source;

@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "../adapters.js";
 import type { EvalPack } from "../contracts.js";
 import { DirectModelRuntimeAdapter } from "../direct-model-runtime.js";
 import { HttpRuntimeAdapter, type RuntimeEnvironmentDescriptor } from "../http-runtime.js";
-import { DeterministicRubricJudge, ModelPairwiseJudge, type PairwiseJudge } from "../judge.js";
+import { DeterministicRubricJudge, ModelCandidateJudge, ModelPairwiseJudge, type PairwiseJudge } from "../judge.js";
 import { ReplayRuntimeAdapter } from "../replay.js";
 import { SideRuntimeAdapter } from '../side-runtime.js';
 import { EvaluationCancelledError, runEvaluation } from "../runner.js";
@@ -19,6 +19,7 @@ import { generateRunQuestions } from "./run-questions.js";
 import type { PreparationStore } from "./preparation-store.js";
 import type { SkillStore } from "./skill-store.js";
 import { canonicalNeutralArchive, nativeTransportAllowed } from './neutral-archive.js';
+import { CandidateAssessmentRuntimeAdapter } from '../candidate-assessment-runtime.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -236,6 +237,7 @@ export class EvaluationRunManager {
           timeoutMs:configuration.timeoutMs,
           environment:await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeToolBindings?.[side]??[])});
       };
+      if(configuration.evaluationMode==='candidate_assessment')return makeSide('right');
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
     if (configuration.runtime.type === "replay") {
@@ -321,7 +323,9 @@ export class EvaluationRunManager {
     }
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("Judge model is not configured on this service");
-    return new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);
+    return configuration.evaluationMode==='candidate_assessment'
+      ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
+      :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);
   }
 
   private async execute(job: EvaluationJob, controller: AbortController): Promise<void> {
@@ -376,7 +380,8 @@ export class EvaluationRunManager {
       };
       job.progress.totalRuns = pack.cases.length * 2;
       await this.options.jobs.save(job);
-      const runtime = await this.runtimeFor(job.configuration, pack);
+      let runtime = await this.runtimeFor(job.configuration, pack);
+      if(job.configuration.evaluationMode==='candidate_assessment')runtime=new CandidateAssessmentRuntimeAdapter(runtime,pack.variants.right,pack.models.execution.right);
       controller.signal.throwIfAborted();
       const judge = this.judgeFor(job.configuration, pack);
       let lastLivePublishedAt = 0;

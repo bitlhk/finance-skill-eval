@@ -255,7 +255,8 @@ export function toGeneratedImplementations(
   for (const tool of payload.tools ?? []) {
     const toolId = String(tool.toolId ?? "");
     const entrypoint = String(tool.entrypoint ?? "");
-    const language = String(tool.language ?? "").toLowerCase() === "java" ? "java" as const : "python" as const;
+    const reported = String(tool.language ?? "").toLowerCase();
+    const language: "java" | "python" | "node" = reported === "java" ? "java" : reported === "node" ? "node" : "python";
     if (!toolId || !entrypoint) continue;
     if (tool.status && tool.status.toUpperCase() === "ABSTAINED") continue;
     const source = decode(entrypoint);
@@ -266,7 +267,9 @@ export function toGeneratedImplementations(
       .flatMap(name => { const content = decode(name); return content === null ? [] : [{ path: name, content }]; });
     const compileCheck = language === "java"
       ? { name: "JAVA_COMPILE" as const, passed: true as const, message: "编译通过" }
-      : { name: "PYTHON_COMPILE" as const, passed: true as const, message: "编译通过" };
+      : language === "node"
+        ? { name: "NODE_CHECK" as const, passed: true as const, message: "语法检查通过" }
+        : { name: "PYTHON_COMPILE" as const, passed: true as const, message: "编译通过" };
     out[toolId] = {
       language,
       sourcePath: entrypoint,

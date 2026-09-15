@@ -47,10 +47,8 @@ it('edits a separate version, retains unsupported files and exports them inertly
     const exported=await app.inject({url:`/api/migrations/${id}/export`,headers});expect(exported.statusCode).toBe(200);
     const archive=unzipSync(exported.rawPayload);
     expect(Buffer.from(archive['helper.py']!).toString()).toBe('raise Exception("not executed")');
-    const manifest=JSON.parse(Buffer.from(archive['migration-manifest.json']!).toString());
-    expect(manifest.executionPolicy).toBe('INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION');
-    expect(manifest.dependencies).toBe('NOT_VALIDATED');
-    expect(JSON.parse(Buffer.from(archive['migration-report.json']!).toString()).professionalAcceptance).toBe('NOT_REVIEWED');
+    expect(archive['migration-manifest.json']).toBeUndefined();
+    expect(archive['migration-report.json']).toBeUndefined();
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/releases`,headers})).statusCode).toBe(409);
   } finally {await app.close();}
 });

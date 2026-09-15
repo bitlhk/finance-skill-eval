@@ -385,7 +385,7 @@ type MigrationPlan = {
 };
 ```
 
-一个计划可以同时包含共享 MCP 服务（按源 Tool 语言）和 Script（Python / Node）。所有选择 MCP 的 Tool 合并到一个服务工程中。
+一个计划可以同时包含共享 MCP 服务和 Script（Python / Node）。选择 MCP 的 Tool **按实现语言分组**，每种语言一个服务工程（`mcp-java/` / `mcp-python/` / `mcp-node/`）。
 
 Skill 规范检查的错误写入 `skillMigrationItems`，不作为源包生成门禁。`skillBlockingReasons` 只保留给无法安全生成的系统级冲突；当前目录和文件冲突采用稳定重命名处理，因此不阻塞。候选包必须重新通过 Skill 规范检查后才能被采纳。
 
@@ -463,7 +463,7 @@ create_code_agent(
 - 只替换上一次由生成器拥有且未经人工修改的文件；
 - 保留 Skill、references 和 assets；
 - 为每个 Tool 分别记录生成文件和 Diff；
-- 同一 Skill 的多个 MCP Tool 共用一个 MCP Server 工程和服务入口；
+- 同一 Skill 中**同语言**的多个 MCP Tool 共用一个 MCP Server 工程和服务入口；
 - **不生成占位、待办或骨架实现**——无法忠实迁移时返回 `ABSTAINED`，不交付业务骨架；
 - 生成后的 Skill 只在 Tool 名称或调用说明确有变化时修改。
 
@@ -633,7 +633,7 @@ GET  /api/migrations/:id/export
 
 - Runtime 绑定 Tool 分别生成 MCP（按源语言）和 Script（Python / Node）；
 - 同一项目混合两种迁移方式；
-- 同一 Skill 的多个 MCP Tool 只生成一个 MCP 服务；
+- 同一 Skill 中同语言的多个 MCP Tool 只生成一个 MCP 服务；
 - **A2 agent**：只读 rail 生效（写工具不可调用）；`run_scanner` 的覆盖率进入产出；判定不足时返回弃权；工具调用与摘要进入 trace；
 - **A4 agent**：通用 shell 不可用；`compile_tool` 与 `run_contract_test` 两层失败可区分；
 - **A4 循环**：编译失败回灌后重生成；契约测试失败回灌后重生成；预算耗尽返回 `FAILED`；

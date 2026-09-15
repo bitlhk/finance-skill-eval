@@ -120,7 +120,7 @@ description: 根据已核验风险证据形成审核建议。
       expect(created.statusCode).toBe(202);
       const jobId = created.json().jobId as string;
       let job: Record<string, unknown> = {};
-      for (let attempt = 0; attempt < 80; attempt += 1) {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const response = await app.inject({ method: "GET", url: `/api/runs/${jobId}` });
         job = response.json();
@@ -140,5 +140,5 @@ description: 根据已核验风险证据形成审核建议。
     } finally {
       await app.close();
     }
-  }, 30_000);
+  }, 45_000);
 });

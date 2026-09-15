@@ -16,7 +16,7 @@ const dirs:string[]=[];
 afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
 const javaBusiness=(className:string)=>`package com.finance.migration.business;\nimport java.util.LinkedHashMap;\nimport java.util.Map;\npublic final class ${className} {\n  public static Object execute(Map<String,Object> arguments) throws Exception { return new LinkedHashMap<>(arguments); }\n}\n`;
 const javaMigrationModel=()=>({configured:true,model:{providerId:'test',modelId:'java-migration',parameters:{}},adapter:{adapterId:'java-migration-fake',async complete(request:{messages:Array<{content:string}>}){
-  const payload=JSON.parse(request.messages.at(-1)!.content),implementations=payload.tools.map((tool:{toolId:string;name:string;requiredJavaClass:string})=>({toolId:tool.toolId,toolName:tool.name,language:'java',entrypoint:`${tool.requiredJavaClass}.java`,entryClass:tool.requiredJavaClass,files:[{path:`${tool.requiredJavaClass}.java`,content:javaBusiness(tool.requiredJavaClass)}],dependencies:[],smokeInput:{},explanation:'pure Java semantic migration'}));
+  const payload=JSON.parse(request.messages.at(-1)!.content),implementations=payload.tools.map((tool:{toolId:string;name:string;requiredJavaClass:string;businessPath:string})=>({toolId:tool.toolId,toolName:tool.name,language:'java',entrypoint:tool.businessPath,entryClass:tool.requiredJavaClass,files:[{path:tool.businessPath,content:javaBusiness(tool.requiredJavaClass)}],dependencies:[],smokeInput:{},explanation:'pure Java semantic migration'}));
   return {modelId:'java-migration',content:JSON.stringify({implementations})};
 }}});
 
@@ -90,18 +90,18 @@ it('generates a version-pinned executable Java MCP service instead of a placehol
   const inspection=inspectProject({assetId:'asset',assetDigest:'d'.repeat(64),files:Object.fromEntries(Object.entries(archive).map(([name,value])=>[name,Buffer.from(value).toString()])),skillFile:'skill/SKILL.md'});
   const tool=inspection.tools[0]!;
   const business=javaBusiness('LookupBusiness');
-  const generated=generatePortableCandidate({archive,base:{schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'asset',skillId:'deployable-mcp',version:'1.0.0',displayName:'deployable',description:'test',sourceType:'uploaded',artifactSha256:'d'.repeat(64),skillFile:'skill/SKILL.md',fileCount:2,createdAt:'now'},inspection,decisions:[{toolId:tool.toolId,form:'MCP',reason:'portable',baseAssetId:'asset',decidedAt:'now'}],version:'2.0.0',implementations:{[tool.toolId]:{language:'java',sourcePath:'LookupBusiness.java',source:business,additionalFiles:[],dependencies:[],entryClass:'LookupBusiness',smokeInput:{},generatedBy:'test/java',explanation:'pure Java',attempts:1,checks:[{name:'JAVA_COMPILE',passed:true,message:'compiled'}]}}});
+  const generated=generatePortableCandidate({archive,base:{schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'asset',skillId:'deployable-mcp',version:'1.0.0',displayName:'deployable',description:'test',sourceType:'uploaded',artifactSha256:'d'.repeat(64),skillFile:'skill/SKILL.md',fileCount:2,createdAt:'now'},inspection,decisions:[{toolId:tool.toolId,form:'MCP',language:'java',reason:'portable',baseAssetId:'asset',decidedAt:'now'}],version:'2.0.0',implementations:{[tool.toolId]:{language:'java',sourcePath:'mcp-java/src/main/java/com/finance/migration/business/LookupBusiness.java',source:business,additionalFiles:[],dependencies:[],entryClass:'LookupBusiness',smokeInput:{},generatedBy:'test/java',explanation:'pure Java',attempts:1,checks:[{name:'JAVA_COMPILE',passed:true,message:'compiled'}]}}});
   const text=(name:string)=>Buffer.from(generated.files[name]!).toString();
-  expect(text('mcp/pom.xml')).toContain('<mcp.java.sdk.version>1.1.4</mcp.java.sdk.version>');
-  expect(text('mcp/pom.xml')).toContain('<artifactId>maven-shade-plugin</artifactId>');
-  expect(text('mcp/src/main/java/com/finance/migration/MigrationMcpServer.java')).toContain('HttpServletStreamableServerTransportProvider');
-  expect(text('mcp/src/main/java/com/finance/migration/MigrationMcpServer.java')).toContain('.tools(LookupTool.specification(mapper))');
-  expect(text('mcp/src/main/java/com/finance/migration/tools/LookupTool.java')).toContain('LookupBusiness.execute(arguments)');
-  expect(text('mcp/src/main/java/com/finance/migration/business/LookupBusiness.java')).toContain('public static Object execute');
+  expect(text('mcp-java/pom.xml')).toContain('<mcp.java.sdk.version>1.1.4</mcp.java.sdk.version>');
+  expect(text('mcp-java/pom.xml')).toContain('<artifactId>maven-shade-plugin</artifactId>');
+  expect(text('mcp-java/src/main/java/com/finance/migration/MigrationMcpServer.java')).toContain('HttpServletStreamableServerTransportProvider');
+  expect(text('mcp-java/src/main/java/com/finance/migration/MigrationMcpServer.java')).toContain('.tools(LookupTool.specification(mapper))');
+  expect(text('mcp-java/src/main/java/com/finance/migration/tools/LookupTool.java')).toContain('LookupBusiness.execute(arguments)');
+  expect(text('mcp-java/src/main/java/com/finance/migration/business/LookupBusiness.java')).toContain('public static Object execute');
   expect(Object.keys(generated.files).some(name=>name.endsWith('.py'))).toBe(false);
-  expect(text('mcp/Dockerfile')).not.toContain('uv');
-  expect(text('mcp/src/main/java/com/finance/migration/tools/LookupTool.java')).not.toContain('BUSINESS_IMPLEMENTATION_NOT_CONNECTED');
-  expect(generated.files['mcp/Dockerfile']).toBeDefined();
+  expect(text('mcp-java/Dockerfile')).not.toContain('uv');
+  expect(text('mcp-java/src/main/java/com/finance/migration/tools/LookupTool.java')).not.toContain('BUSINESS_IMPLEMENTATION_NOT_CONNECTED');
+  expect(generated.files['mcp-java/Dockerfile']).toBeDefined();
 });
 
 it('packages model-migrated Runtime code with its real business implementation intact',()=>{
@@ -129,7 +129,7 @@ it('uses a migration model for Runtime-bound code and validates the returned com
   let prompt='',calls=0;const generator=new MigrationCodeGenerator(()=>({configured:true,model:{providerId:'test',modelId:'migration-model',parameters:{}},adapter:{adapterId:'fake',async complete(request){prompt=request.messages.at(-1)!.content;calls++;
     const source=calls===1?'package com.finance.migration.business; import java.util.Map; public final class LookupBusiness { public static Object execute(Map<String,Object> arguments) throws Exception { return arguments } }':javaBusiness('LookupBusiness');
     return {modelId:'migration-model',content:JSON.stringify({implementations:[{toolId:'lookup-id',toolName:'lookup',language:'java',entrypoint:'LookupBusiness.java',entryClass:'LookupBusiness',files:[{path:'LookupBusiness.java',content:source}],dependencies:[],smokeInput:{},explanation:'移除 vendor runtime 并生成纯 Java 业务实现'}]})};}}}));
-  const result=await generator.generate({archive,inspection,decisions:[{toolId:'lookup-id',form:'MCP',reason:'shared',baseAssetId:'asset',decidedAt:'now'}]});
+  const result=await generator.generate({archive,inspection,decisions:[{toolId:'lookup-id',form:'MCP',language:'java',reason:'shared',baseAssetId:'asset',decidedAt:'now'}]});
   expect(calls).toBe(2);expect(prompt).toContain('Java 编译失败');expect(result['lookup-id']?.source).toContain('class LookupBusiness');expect(result['lookup-id']?.language).toBe('java');expect(result['lookup-id']?.generatedBy).toBe('test/migration-model');expect(result['lookup-id']?.checks).toHaveLength(1);
 });
 
@@ -165,7 +165,9 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
     const inspection=(await post(`/api/migrations/${project.id}/inspect`,{})).json();
     expect(inspection.tools).toHaveLength(3);expect(inspection.scriptsExecuted).toBe(false);
     for(const tool of inspection.tools){const form=tool.name==='script_tool'?'SCRIPT':'MCP';
-      expect((await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form,baseAssetId:uploaded.assetId}})).statusCode).toBe(200);}
+      // The fixtures are Python; asking for MCP/Java is the cross-language rewrite this
+      // model produces, so it has to be named rather than inferred.
+      expect((await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form,...(form==='MCP'?{language:'java'}:{}),baseAssetId:uploaded.assetId}})).statusCode).toBe(200);}
     const plan=(await app.inject({url:`/api/migrations/${project.id}/plan`,headers})).json();expect(plan.generationAllowed).toBe(true);expect(new Set(plan.items.map((i:{generator:string})=>i.generator))).toEqual(new Set(['SCRIPT_TOOL','MCP_SERVICE']));
     const generated=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});expect(generated.statusCode).toBe(200);
     const candidate=generated.json().candidate;expect(candidate.assetId).not.toBe(uploaded.assetId);
@@ -173,25 +175,25 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
     expect(report.portableGenerationDiff.some((item:{path:string})=>item.path.endsWith('MigrationMcpServer.java'))).toBe(true);
     const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});expect(exported.statusCode).toBe(200);
     const files=unzipSync(exported.rawPayload),names=Object.keys(files);
-    expect(names.filter(name=>name==='mcp/pom.xml')).toHaveLength(1);
-    expect(names).toContain('mcp/Dockerfile');
+    expect(names.filter(name=>name==='mcp-java/pom.xml')).toHaveLength(1);
+    expect(names).toContain('mcp-java/Dockerfile');
     expect(names).toContain('skill/SKILL.md');
     expect(names).toContain('skill/scripts/script_tool.py');
     expect(names.some(name=>name.startsWith('migration-generated/'))).toBe(false);
-    const pom=Buffer.from(files['mcp/pom.xml']!).toString();
+    const pom=Buffer.from(files['mcp-java/pom.xml']!).toString();
     expect(pom).toContain('<mcp.java.sdk.version>1.1.4</mcp.java.sdk.version>');
     expect(pom).toContain('<artifactId>maven-shade-plugin</artifactId>');
-    const server=Buffer.from(files['mcp/src/main/java/com/finance/migration/MigrationMcpServer.java']!).toString();
+    const server=Buffer.from(files['mcp-java/src/main/java/com/finance/migration/MigrationMcpServer.java']!).toString();
     expect(server).toContain('HttpServletStreamableServerTransportProvider');
     expect(server).toContain('PortableMcpTool.specification(mapper)');
     expect(server).toContain('BoundToolTool.specification(mapper)');
     expect(server).toContain('context.addServlet(new ServletHolder(transport), "/mcp")');
-    const portableTool=Buffer.from(files['mcp/src/main/java/com/finance/migration/tools/PortableMcpTool.java']!).toString();
+    const portableTool=Buffer.from(files['mcp-java/src/main/java/com/finance/migration/tools/PortableMcpTool.java']!).toString();
     expect(portableTool).toContain('SyncToolSpecification');
     expect(portableTool).toContain('PortableMcpBusiness.execute(arguments)');
     expect(portableTool).not.toContain('ProcessBuilder');
-    expect(names).toContain('mcp/src/main/java/com/finance/migration/business/PortableMcpBusiness.java');
-    expect(names.some(name=>name.startsWith('mcp/')&&name.endsWith('.py'))).toBe(false);
+    expect(names).toContain('mcp-java/src/main/java/com/finance/migration/business/PortableMcpBusiness.java');
+    expect(names.some(name=>name.startsWith('mcp-java/')&&name.endsWith('.py'))).toBe(false);
     expect(portableTool).not.toContain('BUSINESS_IMPLEMENTATION_NOT_CONNECTED');
     const scriptTool=inspection.tools.find((t:{name:string})=>t.name==='script_tool');
     const scriptValidation=await post(`/api/migrations/${project.id}/validate/technical`,{toolId:scriptTool.toolId,baseAssetId:candidate.assetId,request:{value:7}});

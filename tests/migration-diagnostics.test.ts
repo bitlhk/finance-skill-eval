@@ -1,10 +1,11 @@
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
 import { MigrationDiagnostics } from '../src/service/migration-diagnostics.js';
+import { inspectProject } from '../src/service/tool-inspector.js';
 import { createEvaluationService } from '../src/service/server.js';
 import type { ConfiguredModelRole } from '../src/service/config.js';
 
@@ -64,6 +65,39 @@ it('AI reads all readable code, cannot turn unsupported finding IDs into evidenc
   const get=()=>readFile(path.join(dir,'migration-diagnostics',asset.artifactSha256+'.json'),'utf8').then(JSON.parse);
   await expect.poll(async()=>(await get()).ai.status).toBe('FAILED');expect(body).toContain('extra.py');
   await diagnostics.diagnose(asset,true);await expect.poll(async()=>(await get()).ai.status).toBe('COMPLETE');expect(calls).toBe(2);
+});
+it('accepts only source-verifiable model Runtime bindings and feeds them into Tool classification',async()=>{
+  const implementation='def indirect_tool(service, value):\n    return service.invoke(value)\n';
+  const role=()=>({configured:true,model:{providerId:'fixture',modelId:'runtime-analyzer',parameters:{}},adapter:{adapterId:'fixture',async complete(){
+    return {modelId:'runtime-analyzer',content:JSON.stringify({summary:'indirect runtime wrapper',suggestions:[],runtimeBindings:[
+      {path:'wrapper.py',line:1,endLine:2,snippet:'def indirect_tool(service, value):\n    return service.invoke(value)',dependencyType:'RUNTIME_CONTEXT',layer:'DEPENDENCY',reason:'service is supplied by the original runtime',impact:'target runtime cannot construct this value',suggestion:'replace it with an explicit portable client',confidence:'HIGH',symbol:'indirect_tool'},
+      {path:'wrapper.py',line:99,endLine:99,snippet:'invented',dependencyType:'RUNTIME_CONTEXT',layer:'DEPENDENCY',reason:'invalid',impact:'invalid',suggestion:'invalid',confidence:'LOW',symbol:'indirect_tool'}
+    ]})};
+  }}}) as ConfiguredModelRole;
+  const {asset,diagnostics}=await setup({'SKILL.md':'---\nname: synthetic-method\ndescription: 测试间接工具。\n---\n调用 `indirect_tool`，失败时返回原因。\n','wrapper.py':implementation},role);
+  const diagnosis=await diagnostics.diagnose(asset);
+  expect(diagnosis.ai).toEqual(expect.objectContaining({status:'COMPLETE',acceptedRuntimeBindings:1,rejectedRuntimeBindings:1}));
+  const modelFinding=diagnosis.findings.find(item=>item.source==='MODEL');
+  expect(modelFinding).toEqual(expect.objectContaining({dependencyType:'RUNTIME_CONTEXT',verification:'VERIFIED',symbol:'indirect_tool'}));
+  expect(new Set(diagnosis.findings.map(item=>item.id)).size).toBe(diagnosis.findings.length);
+  const inspection=inspectProject({assetId:asset.assetId,assetDigest:asset.artifactSha256,
+    files:{'SKILL.md':'---\nname: synthetic-method\ndescription: 测试间接工具。\n---\n调用 `indirect_tool`，失败时返回原因。\n','wrapper.py':implementation},skillFile:'SKILL.md',diagnosis});
+  expect(inspection.tools[0]).toEqual(expect.objectContaining({name:'indirect_tool',portability:'RUNTIME_BOUND'}));
+  expect(inspection.runtimeAnalysis).toEqual(expect.objectContaining({status:'COMPLETE',acceptedBindings:1,rejectedBindings:1}));
+});
+it('fails closed with a clear conflict when the uv scanner project is unavailable',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'migration-missing-scanner-')),data=path.join(root,'data');dirs.push(root);
+  await mkdir(path.join(root,'packs','finance'),{recursive:true});
+  await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
+  const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,accessToken:'test',publicDemo:false});
+  const headers={authorization:'Bearer test'};
+  try{
+    const zip=Buffer.from(zipSync({'SKILL.md':strToU8(method)}));
+    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
+    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'missing scanner'}})).json();
+    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
+    expect(result.statusCode).toBe(409);expect(result.json().message).toContain('静态诊断执行失败');
+  }finally{await app.close();}
 });
 it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{
   const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});

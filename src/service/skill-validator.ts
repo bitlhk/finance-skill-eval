@@ -10,6 +10,11 @@ export function validateSkill(files:Record<string,string>,skillFile:string):Skil
   const source=files[skillFile];
   if(source===undefined)return {status:'UNKNOWN',findings:[finding('SKILL_FILE_UNREADABLE','ERROR',skillFile,1,'无法读取 SKILL.md。','请提供 UTF-8 文本文件。')]};
   const findings:SkillFinding[]=[];
+  const skillFiles=Object.keys(files).filter(name=>/(^|\/)skill\.md$/iu.test(name));
+  if(skillFile.split('/').at(-1)!=='SKILL.md')
+    findings.push(finding('SKILL_FILENAME_INVALID','ERROR',skillFile,1,'Skill 入口文件必须准确命名为 SKILL.md。','将文件名改为区分大小写的 SKILL.md。'));
+  if(skillFiles.length!==1)
+    findings.push(finding('SKILL_FILE_COUNT_INVALID','ERROR',skillFile,1,'Skill 包必须且只能包含一个 SKILL.md。','移除重复入口；多个 Skill 请分别打包。'));
   const match=source.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u);
   let metadata:Record<string,unknown>={};
   if(!match){findings.push(finding('FRONTMATTER_MISSING','ERROR',skillFile,1,'SKILL.md 缺少 YAML frontmatter。','在文件开头添加 name 和 description。'));}
@@ -23,7 +28,17 @@ export function validateSkill(files:Record<string,string>,skillFile:string):Skil
   else if(description.length>1024)findings.push(finding('DESCRIPTION_TOO_LONG','ERROR',skillFile,1,'Skill description 超过 1024 个字符。','缩短描述。'));
   const root=skillFile.includes('/')?skillFile.slice(0,skillFile.lastIndexOf('/')):'';
   const folder=root.split('/').filter(Boolean).at(-1);
-  if(folder&&name&&folder!==name)findings.push(finding('DIRECTORY_NAME_MISMATCH','WARNING',skillFile,1,'Skill 目录名与 name 不一致。','将目录名调整为与 name 一致。'));
+  if(folder&&folder!=='skill'&&name&&folder!==name)findings.push(finding('DIRECTORY_NAME_MISMATCH','WARNING',skillFile,1,'Skill 目录名与 name 不一致。','将目录名调整为与 name 一致。'));
+  const prefix=root?`${root}/`:'';
+  const scoped=root?Object.keys(files).filter(file=>file!==skillFile&&file.startsWith(prefix)):[];
+  for(const file of scoped){
+    const relative=file.slice(prefix.length),top=relative.split('/')[0]!;
+    if(['scripts','references','assets'].includes(top))continue;
+    const script=/\.(?:py|js|mjs|cjs|ts|sh|ps1|bat|cmd)$/iu.test(relative);
+    findings.push(finding(script?'SCRIPT_OUTSIDE_SCRIPTS':'SKILL_PATH_UNSUPPORTED','ERROR',file,1,
+      script?'Skill 自带脚本必须放在 scripts/ 目录中。':'Skill 目录中只允许 SKILL.md、scripts/、references/ 和 assets/。',
+      script?`将 ${relative} 移到 scripts/ 下。`:'将文件移到合适的标准目录，或从 Skill 目录移除。'));
+  }
   for(const ref of source.matchAll(/`((?:scripts|references|assets)\/[^`]+)`/gu)){
     const requested=root?`${root}/${ref[1]}`:ref[1]!;
     if(!(requested in files))findings.push(finding('REFERENCE_MISSING','ERROR',skillFile,lineOf(source,ref.index),`引用文件不存在：${ref[1]}`,'补充文件或修正相对路径。'));

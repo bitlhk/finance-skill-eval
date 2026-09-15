@@ -38,7 +38,8 @@ export function loadServiceConfig(): ServiceConfig {
     ),
   };
 }
-function roleEnvironment(role: "ANALYZER" | "EXECUTION" | "JUDGE" | "OPTIMIZER", fallbackModel: string): {
+export type ModelRole = "ANALYZER" | "EXECUTION" | "JUDGE" | "OPTIMIZER" | "MIGRATION";
+function roleEnvironment(role: ModelRole, fallbackModel: string): {
   baseUrl: string;
   apiKey: string;
   modelId: string;
@@ -57,18 +58,18 @@ function roleEnvironment(role: "ANALYZER" | "EXECUTION" | "JUDGE" | "OPTIMIZER",
 }
 
 export function configuredModelRole(
-  role: "ANALYZER" | "EXECUTION" | "JUDGE" | "OPTIMIZER",
+  role: ModelRole,
   fallbackModel = "glm-5.2",
 ): ConfiguredModelRole {
   const environment = roleEnvironment(role, fallbackModel);
   const provider = process.env[`FINANCE_EVAL_${role}_PROVIDER`]?.trim().toLowerCase();
-  if ((role === "JUDGE" || role === "OPTIMIZER") && provider === "codex_cli") {
+  if ((role === "JUDGE" || role === "OPTIMIZER" || role === "MIGRATION") && provider === "codex_cli") {
     return {
       configured: true,
       model: {
         providerId: "codex-host",
         modelId: process.env[`FINANCE_EVAL_${role}_MODEL`]?.trim() || "gpt-6-astra",
-        label: role === "JUDGE" ? "Codex 匿名 Judge" : "Codex Skill 优化模型",
+        label: role === "JUDGE" ? "Codex 匿名 Judge" : role === "MIGRATION" ? "Codex 代码迁移模型" : "Codex Skill 优化模型",
         parameters: {},
       },
       adapter: new CodexCliModelAdapter({
@@ -83,7 +84,7 @@ export function configuredModelRole(
     model: {
       providerId: `service-${role.toLowerCase()}`,
       modelId: environment.modelId,
-      label: `${role === "ANALYZER" ? "出题" : role === "EXECUTION" ? "执行" : "阅卷"}模型`,
+      label: `${role === "ANALYZER" ? "出题" : role === "EXECUTION" ? "执行" : role === "MIGRATION" ? "代码迁移" : "阅卷"}模型`,
       parameters: {},
     },
     adapter: configured

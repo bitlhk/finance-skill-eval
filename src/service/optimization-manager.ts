@@ -180,7 +180,7 @@ export class OptimizationManager {
       const variant = (a: SkillAssetRecord) => ({ mode: "skill_version", skillId: a.skillId, version: a.version, artifactSha256: a.artifactSha256 });
       const rerun = await this.options.runs.create({ ...source.configuration, caseSource: "fixed", selectedCaseIds: source.questionSet ? [] : source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => c.caseId),
         ...optimizationRerunBindings(source.configuration,original!,item.candidate!),
-        includeHoldout: true, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model" }, source.questionSet);
+        includeHoldout: true, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model",evaluationMode:"pairwise" }, source.questionSet);
       item.rerunJobId = rerun.jobId;
       await this.stage(item, "reevaluating");
       while (true) {

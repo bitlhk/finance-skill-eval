@@ -30,7 +30,7 @@ it('persists immutable source/candidate, keeps drafts unvalidated and blocks rel
     const report=await app.inject({url:`/api/migrations/${id}/report`,headers});expect(report.json().project.assessment).toBe('NOT_VALIDATED');
     expect((await app.inject({url:`/api/migrations/${id}/releases`,method:'POST',headers,payload:{validated:true}})).statusCode).toBe(409);
     const exported=await app.inject({url:`/api/migrations/${id}/export`,headers});expect(exported.statusCode).toBe(200);
-    const files=unzipSync(exported.rawPayload);expect(JSON.parse(Buffer.from(files['migration-manifest.json']!).toString()).state).toBe('DRAFT_NOT_VALIDATED');
+    const files=unzipSync(exported.rawPayload);expect(files['SKILL.md']).toBeDefined();expect(files['migration-manifest.json']).toBeUndefined();
     expect((await app.inject({url:'/api/migrations'})).statusCode).toBe(401);
   }finally{await app.close();}
 });

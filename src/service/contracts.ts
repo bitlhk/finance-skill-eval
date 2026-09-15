@@ -41,6 +41,7 @@ export const runConfigurationSchema = z.strictObject({
     }),
   ]),
   judgeMode: z.enum(["deterministic", "model"]).default("deterministic"),
+  evaluationMode: z.enum(["pairwise", "candidate_assessment"]).default("pairwise"),
   skillAssetId: z.string().min(1).optional(),
   caseSource: z.enum(["fixed", "ai_generated"]).default("fixed"),
   generatedCaseCount: z.number().int().min(1).max(3).default(3),

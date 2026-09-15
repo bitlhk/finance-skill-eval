@@ -10,8 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
-import sys
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -202,51 +201,244 @@ def _shape_ok(value: Any, schema: Any) -> tuple[bool, str]:
     return True, ""
 
 
-def build_contract_test_tool(workspace: Path, contract: dict[str, Any]) -> LocalFunction:
-    """`contract` maps toolId -> {entrypoint, inputSchema, outputSchema, sampleInput}."""
+_PEP723 = re.compile(r"^#\s*///\s*script\s*$", re.MULTILINE)
+_LAUNCH_TIMEOUT = 180.0
 
-    async def run_contract_test(tool_id: str, entrypoint: str) -> dict[str, Any]:
+
+def _relative(workspace: Path, path: Path) -> str:
+    return path.relative_to(workspace).as_posix()
+
+
+def _python_argv(workspace: Path, entry: Path, *, isolated: bool) -> list[str]:
+    """Launch in the Skill package's own environment -- never the agent's interpreter.
+
+    Mirrors `pythonCommand` in src/service/technical-validation.ts. `sys.executable` is the
+    platform's environment; testing the deliverable in it would validate an environment the
+    deliverable will never run in.
+
+    Two things about this are easy to get wrong, and both were verified against uv directly:
+
+    * uv only reads a PEP 723 block when the script is uv's *own* argument. Through the
+      `python` subcommand it builds an empty environment, so a script that declares a
+      dependency silently runs without it.
+    * `-I` also implies `-P`, which keeps the script's own directory off `sys.path`. A Script
+      is a standalone program so that is right for it, but a service is a project whose entry
+      imports sibling modules, so it launches without `-I`.
+    """
+    directory = entry.parent
+    while True:
+        if (directory / "pyproject.toml").is_file():
+            args = ["run", "--project", _relative(workspace, directory)]
+            if (directory / "uv.lock").is_file():
+                args.append("--locked")
+            guard = ["-I"] if isolated else []
+            return ["uv", *args, "python", *guard, _relative(workspace, entry)]
+        if directory == workspace:
+            break
+        directory = directory.parent
+    relative = _relative(workspace, entry)
+    if _PEP723.search(entry.read_text(encoding="utf-8", errors="replace")):
+        return ["uv", "run", "--no-project", relative]
+    guard = ["-I"] if isolated else []
+    return ["uv", "run", "--no-project", "python", *guard, relative]
+
+
+async def _node_argv(workspace: Path, entry: Path) -> tuple[list[str] | None, str]:
+    """Node has no PEP 723 equivalent, so the package's `package.json` is installed first."""
+    directory = entry.parent
+    while True:
+        if (directory / "package.json").is_file():
+            if not (directory / "node_modules").is_dir():
+                result = await _run_process(workspace, ["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
+                                            _LAUNCH_TIMEOUT)
+                if result["exitCode"] != 0:
+                    return None, f"DEPENDENCY_RESOLUTION_FAILED: {result['stderr'][:600]}"
+            return ["node", _relative(workspace, entry)], ""
+        if directory == workspace:
+            return ["node", _relative(workspace, entry)], ""
+        directory = directory.parent
+
+
+def _parse_rpc_body(body: str) -> Any:
+    body = body.strip()
+    if not body:
+        return None
+    if body.startswith(("{", "[")):
+        return json.loads(body)
+    for line in body.splitlines():
+        if line.startswith("data:"):
+            return json.loads(line[5:].strip())
+    return None
+
+
+def _mcp_post(url: str, payload: dict[str, Any], session_id: str | None = None, timeout: float = 30.0) -> tuple[str | None, Any]:
+    import urllib.request
+
+    headers = {"content-type": "application/json", "accept": "application/json, text/event-stream"}
+    if session_id:
+        headers["mcp-session-id"] = session_id
+    request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.headers.get("mcp-session-id") or session_id, _parse_rpc_body(response.read().decode("utf-8", "replace"))
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+async def _terminate(proc: Any) -> None:
+    """Stop a service and everything it spawned.
+
+    Killing `uv` alone is not enough: the interpreter it launched inherits the pipes and keeps
+    running, so `wait()` would block on a process that is waiting for its own child.
+    """
+    if proc.returncode is not None:
+        return
+    try:
+        if os.name == "nt":
+            await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(proc.pid), "/T", "/F",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        else:
+            proc.kill()
+    except OSError:
+        proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), 20)
+    except (TimeoutError, ProcessLookupError):
+        pass
+
+
+async def _wait_for_port(port: int, timeout: float) -> bool:
+    import socket
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), 0.5):
+                return True
+        except OSError:
+            await asyncio.sleep(0.4)
+    return False
+
+
+async def _script_contract(workspace: Path, entry: dict[str, Any], source: Path, sample: Any) -> dict[str, Any]:
+    kind = str(entry.get("language", "python")).lower()
+    if kind == "python":
+        argv = _python_argv(workspace, source, isolated=True)
+    elif kind == "node":
+        argv, error = await _node_argv(workspace, source)
+        if argv is None:
+            return {"passed": False, "error": error}
+    else:
+        return {"passed": False, "error": f"CONTRACT_TEST_UNSUPPORTED_LANGUAGE: {kind}"}
+
+    proc = await asyncio.create_subprocess_exec(
+        *argv, cwd=str(workspace),
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PYTHONUTF8": "1"},
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(json.dumps(sample).encode()), _LAUNCH_TIMEOUT)
+    except TimeoutError:
+        proc.kill()
+        return {"passed": False, "error": "CONTRACT_TEST_TIMEOUT"}
+    if proc.returncode != 0:
+        return {"passed": False, "error": f"EXIT_{proc.returncode}", "stderr": err.decode(errors="replace")[:1500]}
+    try:
+        produced = json.loads(out.decode(errors="replace").strip() or "null")
+    except ValueError:
+        return {"passed": False, "error": "OUTPUT_NOT_JSON"}
+    return {"passed": True, "produced": produced}
+
+
+async def _mcp_contract(workspace: Path, entry: dict[str, Any], source: Path, sample: Any) -> dict[str, Any]:
+    """An MCP Tool's interface is not a program's stdin; it is what the service advertises and
+    returns over the protocol. So start the service and speak MCP to it."""
+    kind = str(entry.get("language", "python")).lower()
+    port = _free_port()
+    if kind == "python":
+        argv = _python_argv(workspace, source, isolated=False)
+    elif kind == "node":
+        argv, error = await _node_argv(workspace, source)
+        if argv is None:
+            return {"passed": False, "error": error}
+    else:
+        return {"passed": False, "error": f"CONTRACT_TEST_UNSUPPORTED_LANGUAGE: {kind}"}
+
+    proc = await asyncio.create_subprocess_exec(
+        *argv, cwd=str(workspace),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PYTHONUTF8": "1", "PORT": str(port)},
+    )
+    try:
+        if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
+            await _terminate(proc)
+            return {"passed": False, "error": "SERVICE_DID_NOT_START"}
+        url = f"http://127.0.0.1:{port}/mcp"
+        session, _ = await asyncio.to_thread(_mcp_post, url, {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "finance-skill-migration", "version": "0.1.0"}}})
+        await asyncio.to_thread(_mcp_post, url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
+        _, listed = await asyncio.to_thread(_mcp_post, url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, session)
+        tools = ((listed or {}).get("result") or {}).get("tools") or []
+        name = str(entry.get("toolName") or "")
+        observed = next((tool for tool in tools if tool.get("name") == name), None)
+        if observed is None:
+            return {"passed": False, "advertisedTools": [tool.get("name") for tool in tools],
+                    "error": f"TOOL_NOT_ADVERTISED: {name}"}
+        if observed.get("inputSchema") != entry.get("inputSchema"):
+            return {"passed": False, "error": "INPUT_SCHEMA_CHANGED",
+                    "stderr": json.dumps(observed.get("inputSchema"), ensure_ascii=False)[:1200]}
+        _, called = await asyncio.to_thread(_mcp_post, url, {
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": name, "arguments": sample}}, session)
+        result = ((called or {}).get("result") or {})
+        texts = [item.get("text", "") for item in (result.get("content") or []) if item.get("type") == "text"]
+        if result.get("isError"):
+            return {"passed": False, "error": f"TOOL_CALL_FAILED: {''.join(texts)[:600]}"}
+        try:
+            produced = json.loads(texts[0] if texts else "null")
+        except ValueError:
+            return {"passed": False, "error": "OUTPUT_NOT_JSON"}
+        return {"passed": True, "produced": produced}
+    except Exception as error:  # noqa: BLE001 - the reason is the result
+        return {"passed": False, "error": f"MCP_CONTRACT_FAILED: {type(error).__name__}: {error}"}
+    finally:
+        await _terminate(proc)
+
+
+def build_contract_test_tool(workspace: Path, contract: dict[str, Any]) -> LocalFunction:
+    """`contract` maps toolId -> {form, language, toolName, inputSchema, outputSchema, sampleInput,
+    serviceEntry}. Schemas come from the source asset and only the entrypoint is the migration's
+    choice -- and for MCP even that is the platform's, because the platform generates the service."""
+
+    async def run_contract_test(tool_id: str, entrypoint: str = "") -> dict[str, Any]:
         entry = contract.get(tool_id)
         if not entry:
             return {"passed": False, "error": f"UNKNOWN_TOOL_CONTRACT: {tool_id}"}
-        # Schemas come from the source asset and cannot be supplied by the session;
-        # only the entrypoint is the migration's choice.
-        source = (workspace / str(entrypoint or "")).resolve()
-        if workspace.resolve() not in source.parents or not source.is_file():
-            return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {entrypoint}"}
-
-        kind = str(entry.get("language", "python")).lower()
-        if kind == "python":
-            program = [sys.executable, "-I", str(source)]
-        elif kind == "node":
-            program = ["node", str(source)]
-        else:
-            return {"passed": False, "toolId": tool_id, "error": f"CONTRACT_TEST_UNSUPPORTED_LANGUAGE: {kind}"}
 
         sample = entry.get("sampleInput") or {}
         ok, detail = _shape_ok(sample, entry.get("inputSchema"))
         if not ok:
             return {"passed": False, "toolId": tool_id, "inputShapeOk": False, "error": f"SAMPLE_INPUT_SHAPE: {detail}"}
 
-        proc = await asyncio.create_subprocess_exec(
-            *program, cwd=str(workspace),
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "PYTHONUTF8": "1"},
-        )
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(json.dumps(sample).encode()), 90)
-        except TimeoutError:
-            proc.kill()
-            return {"passed": False, "toolId": tool_id, "error": "CONTRACT_TEST_TIMEOUT"}
-        if proc.returncode != 0:
-            return {"passed": False, "toolId": tool_id,
-                    "error": f"EXIT_{proc.returncode}", "stderr": err.decode(errors="replace")[:1500]}
-        try:
-            produced = json.loads(out.decode(errors="replace").strip() or "null")
-        except ValueError:
-            return {"passed": False, "toolId": tool_id, "error": "OUTPUT_NOT_JSON"}
+        form = str(entry.get("form", "SCRIPT")).upper()
+        chosen = str(entrypoint or "") if form != "MCP" else str(entry.get("serviceEntry") or "")
+        source = (workspace / chosen).resolve()
+        if workspace.resolve() not in source.parents or not source.is_file():
+            return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {chosen}"}
 
-        shape_ok, shape_detail = _shape_ok(produced, entry.get("outputSchema"))
+        outcome = (await _mcp_contract(workspace, entry, source, sample) if form == "MCP"
+                   else await _script_contract(workspace, entry, source, sample))
+        if not outcome.get("passed"):
+            return {"passed": False, "toolId": tool_id, **{k: v for k, v in outcome.items() if k != "passed"}}
+        shape_ok, shape_detail = _shape_ok(outcome.get("produced"), entry.get("outputSchema"))
         return {
             "passed": bool(shape_ok),
             "toolId": tool_id,
@@ -259,14 +451,18 @@ def build_contract_test_tool(workspace: Path, contract: dict[str, Any]) -> Local
         "run_contract_test",
         "Run the interface contract test for one migrated tool. The judged contract comes from the "
         "source asset (input/output shape), not from this session. It asserts the interface did not "
-        "change, NOT that the business values are correct.",
+        "change, NOT that the business values are correct. For SCRIPT it runs the entrypoint as a "
+        "program with the sample on stdin; for MCP it starts the platform-generated service and "
+        "speaks MCP to it, so the advertised Schema is checked against the source Schema. Either way "
+        "the code runs in the Skill package's own declared environment, not the agent's.",
         {
             "type": "object",
             "properties": {
                 "tool_id": {"type": "string"},
-                "entrypoint": {"type": "string", "description": "Workspace-relative path to the generated entry file."},
+                "entrypoint": {"type": "string",
+                               "description": "Workspace-relative entry file. Required for SCRIPT; ignored for MCP, whose service the platform generates."},
             },
-            "required": ["tool_id", "entrypoint"],
+            "required": ["tool_id"],
             "additionalProperties": False,
         },
         run_contract_test,

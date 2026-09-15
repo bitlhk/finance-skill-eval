@@ -6,7 +6,7 @@ import path from 'node:path';
 export type LocalWorkerRequest={requestId:string;program:string;args:string[];files:Array<{path:string;content:Uint8Array}>;stdin?:string;timeoutMs?:number;maxOutputBytes?:number;signal?:AbortSignal};
 export type LocalWorkerResult={requestId:string;mode:'LOCAL_TRUSTED';startedAt:string;finishedAt:string;exitCode:number|null;timedOut:boolean;cancelled:boolean;stdout:string;stderr:string;outputTruncated:boolean};
 
-const allowedPrograms=new Set(['node','node.exe','python','python.exe','python3','python3.exe','uv','uv.exe','java','java.exe']);
+const allowedPrograms=new Set(['node','node.exe','python','python.exe','python3','python3.exe','uv','uv.exe','java','java.exe','javac','javac.exe']);
 
 function safeRelative(value:string){
   const normalized=value.replaceAll('\\','/').replace(/^\.\//u,'');

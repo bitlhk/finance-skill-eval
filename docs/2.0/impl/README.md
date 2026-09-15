@@ -17,13 +17,13 @@
 | A1 导入 | [A1-import.md](./A1-import.md) | F-01 | — | 3 | — | 3/3 |
 | A2 检查诊断 | [A2-inspection.md](./A2-inspection.md) | F-02 / F-03 | 4 | 3 | — | 7/7 |
 | A3 授权 | [A3-authorization.md](./A3-authorization.md) | F-04 | — | 2 | — | 2/2 |
-| A4 改造 + 验证 | [A4-migration.md](./A4-migration.md) | F-05 / F-06 | 6 | 3 | 1 | 7/10 |
+| A4 改造 + 验证 | [A4-migration.md](./A4-migration.md) | F-05 / F-06 | 6 | 3 | 1 | 8/10 |
 | 跨 stage | 见下 | — | 1 | 2 | — | 2/3 |
-| **合计** | | | **11** | **13** | **1** | **20/25** |
+| **合计** | | | **11** | **13** | **1** | **21/25** |
 
 **状态标记**：✅ 完成（已实测） · 🟡 部分 · ⚠ 被 [L0 §2.2](../L0-overall-architecture.md) 的待定项挡住 · ❌ 未做
 
-**已跑通并实测**：A1 全部；A2 的 agent 入口、扫描器工具、规范技能包、证据校验、语言判据（四档 + 跨语言提示 + 不支持的源语言，单测覆盖）；A3 的形式/语言分离（实测：平台建议 MCP，人工选 SCRIPT，计划按语言给出 `language=python`）；A4 的 agent 入口与三个领域工具；X-2 的 TS↔Python 契约。`A1 → A2 → A3 → A4` 的完整链路已端到端验证。
+**已跑通并实测**：A1 全部；A2 的 agent 入口、扫描器工具、规范技能包、证据校验、语言判据（四档 + 跨语言提示 + 不支持的源语言，单测覆盖）；A3 的形式/语言分离（实测：平台建议 MCP，人工选 SCRIPT，计划按语言给出 `language=python`）；A4 的 agent 入口与三个领域工具；**A4-8 的三套 MCP 脚手架**（实测：Java / Python / Node 各生成一个服务工程，起服务后用真实 MCP 客户端跑通 `initialize` → `tools/list` → `tools/call`，`tools/list` 公布的正是 A2 提取的源 Schema）；X-2 的 TS↔Python 契约。`A1 → A2 → A3 → A4` 的完整链路已端到端验证。
 
 ---
 
@@ -57,5 +57,5 @@ X-1 统一契约信封
 
 ## 卡点
 
-1. **A4-3 是 A4 的关键路径。** 契约测试是新东西；循环、trace、弃权都挂在它上面。它不成立，A4 整条链只能退回"单次生成"。
-2. **A4-8 在 A2-4 之后变成必需。** 语言判据允许「Python / Node 源 → MCP」（同语言优先），但 MCP 生成器只有 Java 模板。判据落地后，这条路径会被真的走到。
+1. **A4-3 的契约测试不覆盖 Java。** `run_contract_test` 只支持 python / node，而 Java MCP 是首期主力路径——它只有 `javac` 一层把关。要么给 Java 加"编译 + 跑一个 Main"的契约测试，要么在文档里明确 Java 的验证强度低于其他语言。
+2. **回退生成器只支持 MCP/Java 与 Script/Python。** `MigrationCodeGenerator` 是 agent 不可用时的兜底；它现在会明确拒绝其他组合，而不是产出一个错的。扩到 python/node MCP 是笔独立的账。

@@ -142,6 +142,39 @@ const anonymousJudgeResponseSchema = z.strictObject({
   })).length(4),
 });
 
+const candidateJudgeResponseSchema = z.strictObject({
+  confidence:z.enum(["low","medium","high"]),summary:z.string().min(1),
+  dimensions:z.array(z.strictObject({
+    id:z.enum(["professional_fit","business_completeness","clarity","actionability"]),
+    label:z.string().min(1),score:z.number().min(0).max(4),reason:z.string().min(1),
+  })).length(4),
+});
+
+/** Absolute quality assessment for a migrated candidate. It deliberately has no winning side. */
+export class ModelCandidateJudge implements PairwiseJudge {
+  readonly judgeId:string;
+  constructor(private readonly adapter:ModelAdapter,private readonly model:ModelRef){
+    this.judgeId=`model-candidate:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
+  }
+  async compare(input:{signal?:AbortSignal;evalCase:EvalCase;left:RuntimeExecutionEvidence;right:RuntimeExecutionEvidence;profile:JudgeProfile}):Promise<JudgeResult>{
+    if(input.right.status!=="completed")return judgeResultSchema.parse({winner:"tie",confidence:"high",summary:"迁移候选未完成 Runtime 执行，本题不进行 Skill 质量评分。",
+      dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,leftScore:0,rightScore:0,reason:"Runtime 执行未完成。"})),reviewerLabel:"Runtime 完整性判断"});
+    const businessEvidence={status:input.right.status,toolCalls:input.right.toolCalls.filter(call=>call.name!=="read_file"),streamCompleted:input.right.streamCompleted,
+      sourceFacts:Array.isArray(input.right.metadata.toolEvidence)?input.right.metadata.toolEvidence.filter((item:{tool?:string})=>item.tool!=="read_file"):[]};
+    const messages=[{role:"system" as const,content:[input.profile.domainInstructions,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","Runtime 工具证据是实际执行事实；没有证据时不得把题面中的就绪描述当成已完成调用。","只返回符合约定的 JSON。"].join("\n")},
+      {role:"user" as const,content:JSON.stringify({task:input.evalCase.prompt,evaluationGoal:input.evalCase.evaluationGoal,rubric:input.evalCase.rubric,candidateOutput:input.right.output,runtimeEvidence:businessEvidence,
+        responseContract:{confidence:"low | medium | high",summary:"string",scoreRule:"score must be a JSON integer from 0 to 4",dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,score:0,reason:"string"}))}})}];
+    const request=(attempt:number)=>this.adapter.complete({requestId:`candidate-judge-${input.evalCase.caseId}-${attempt}`,model:this.model,signal:input.signal,responseFormat:"json",
+      messages:attempt===1?messages:[...messages,{role:"system" as const,content:"上一轮返回未满足 JSON 契约。直接返回 confidence、summary、dimensions 三个顶层字段。"}]});
+    let judged:z.infer<typeof candidateJudgeResponseSchema>;
+    try{judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject((await request(1)).content));}
+    catch(error){if(input.signal?.aborted)throw error;judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject((await request(2)).content));}
+    return judgeResultSchema.parse({winner:"tie",confidence:judged.confidence,summary:judged.summary,
+      dimensions:judged.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,leftScore:dimension.score,rightScore:dimension.score,reason:dimension.reason})),
+      reviewerLabel:`AI 候选质量评估 · ${this.model.modelId}（非独立人类专家签署）`});
+  }
+}
+
 export function remapAnonymousSideLabels(text: string, swapped: boolean): string {
   if (!swapped) return text;
   return text

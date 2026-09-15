@@ -47,7 +47,7 @@ export function parseCodexJsonOutput(output: string): {
 
 function judgePrompt(request: ModelCompletionRequest): string {
   return [
-    "You are a stateless model completing the role specified in the following system message (judge or skill optimizer).",
+    "You are a stateless model completing the role specified in the following system message.",
     "Do not call tools, inspect files, or modify the workspace.",
     request.responseFormat === "json"
       ? "Return only the JSON object requested by the messages, with no markdown fence."

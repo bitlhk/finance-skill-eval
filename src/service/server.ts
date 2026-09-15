@@ -7,7 +7,7 @@ import { analyzeSkillAndGenerateCases } from "../analyzer.js";
 import { FINANCE_SKILL_EVAL_VERSION } from "../index.js";
 import { renderHtmlReport, type EvaluationReport } from "../report.js";
 import { EvalPackCatalog } from "./catalog.js";
-import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./config.js";
+import { configuredModelRole, loadServiceConfig, type ConfiguredModelRole, type ServiceConfig } from "./config.js";
 import { createEnvironmentSchema, manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import { EnvironmentStore } from "./environment-store.js";
 import { EvaluationJobStore } from "./job-store.js";
@@ -20,6 +20,7 @@ import { MigrationStore } from './migration-store.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
+import { MigrationCodeGenerator } from './migration-code-generator.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -59,9 +60,10 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> = {},
+  overrides: Partial<ServiceConfig> & {migrationModel?:()=>ConfiguredModelRole} = {},
 ): Promise<FastifyInstance> {
-  const config = { ...loadServiceConfig(), ...overrides };
+  const {migrationModel,...configOverrides}=overrides;
+  const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   app.addHook('onSend',async(request,reply,payload)=>{
@@ -91,13 +93,18 @@ export async function createEvaluationService(
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments);
+  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments,
+    new MigrationCodeGenerator(migrationModel??(()=>configuredModelRole('MIGRATION'))));
   // Private workspace only. A public demo must not expose customer migration snapshots.
   app.addHook('preValidation',async(request,reply)=>{
     if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
   });
   app.get('/api/migrations',()=>migrations.list());
   app.get('/api/migrations/target',()=>migrations.target());
+  app.post('/api/migrations/upload',async request=>{
+    if(!Buffer.isBuffer(request.body))throw new Error('Request body must be a migration ZIP');
+    return skills.uploadMigrationZip(request.body);
+  });
   app.post('/api/migrations',request=>migrations.create(request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/upgrade',request=>migrations.upgrade(request.params.id));
   app.get<{Params:{id:string}}>('/api/migrations/:id',request=>migrations.get(request.params.id));
@@ -123,8 +130,10 @@ export async function createEvaluationService(
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimized-candidate',request=>migrations.adoptOptimization(request.params.id,request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id/report',request=>migrations.report(request.params.id));
   app.post('/api/migrations/:id/releases',()=>migrations.release());
-  app.get<{Params:{id:string}}>('/api/migrations/:id/export',async(request,reply)=>reply.type('application/zip')
-    .header('content-disposition','attachment; filename="migration-candidate.zip"').send(await migrations.exportCandidate(request.params.id)));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/export',async(request,reply)=>{
+    const project=await migrations.get(request.params.id),name=(project.candidate??project.source).skillId.replace(/[^a-z0-9-]+/giu,'-');
+    return reply.type('application/zip').header('content-disposition',`attachment; filename="${name}.zip"`).send(await migrations.exportCandidate(request.params.id));
+  });
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));

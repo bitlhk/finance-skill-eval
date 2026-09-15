@@ -5,18 +5,36 @@ import { LocalWorker } from './local-worker.js';
 import { validateMcpTool } from '../mcp-preflight.js';
 
 const digest=(values:unknown[])=>createHash('sha256').update(JSON.stringify(values)).digest('hex');
-function pythonArgs(archive:Record<string,Uint8Array>,entrypoint:string){
+const PEP723=/^#\s*\/\/\/\s*script\s*$/mu;
+
+/**
+ * Launch a Skill package's Python entrypoint in **the package's own environment**, never the
+ * platform's. The package declares its dependencies; we only resolve them.
+ *
+ * `uv run --no-project python -I <file>` looks equivalent to running the file directly, but it
+ * is not: uv only reads a PEP 723 block when the script is uv's own argument. Through the
+ * `python` subcommand it builds an empty environment, so a migrated script that declares a
+ * dependency would silently run without it -- passing or failing on whatever the platform
+ * happens to have installed.
+ */
+export function pythonCommand(archive:Record<string,Uint8Array>,entrypoint:string){
+  const configured=process.env.FINANCE_EVAL_PYTHON;
+  if(configured)return {program:configured,args:['-I',entrypoint]};
   let directory=entrypoint.replaceAll('\\','/').split('/').slice(0,-1).join('/');
   while(true){
     const project=directory?`${directory}/pyproject.toml`:'pyproject.toml';
     if(archive[project]){
       const args=['run','--project',directory||'.'];
       const lock=directory?`${directory}/uv.lock`:'uv.lock';if(archive[lock])args.push('--locked');
-      return [...args,'python','-I',entrypoint];
+      return {program:'uv',args:[...args,'python','-I',entrypoint]};
     }
-    if(!directory)return ['run','--no-project','--python','3.11','python','-I',entrypoint];
+    if(!directory)break;
     directory=directory.split('/').slice(0,-1).join('/');
   }
+  const source=archive[entrypoint];
+  if(source&&PEP723.test(new TextDecoder('utf-8',{fatal:false}).decode(source)))
+    return {program:'uv',args:['run','--no-project',entrypoint]};
+  return {program:'uv',args:['run','--no-project','python','-I',entrypoint]};
 }
 
 export class TechnicalValidationService{
@@ -26,10 +44,9 @@ export class TechnicalValidationService{
     const implementationDigest=digest(input.tool.sourcePaths.map(path=>[path,Buffer.from(input.archive[path]??[]).toString('base64')]));
     const casesDigest=digest([input.request??{}]);
     if(!entry?.path||!['PYTHON','NODE'].includes(entry.kind))return this.failed(validationId,input.asset,input.tool.toolId,implementationDigest,casesDigest,'LOCAL_TRUSTED',startedAt,'没有可执行的 Script 入口');
-    const program=entry.kind==='PYTHON'?'uv':'node';
-    const args=entry.kind==='PYTHON'?pythonArgs(input.archive,entry.path):[entry.path];
+    const command=entry.kind==='PYTHON'?pythonCommand(input.archive,entry.path):{program:'node',args:[entry.path]};
     try{
-      const result=await this.worker.run({requestId:validationId,program,args,files:Object.entries(input.archive).map(([path,content])=>({path,content})),stdin:JSON.stringify(input.request??{}),timeoutMs:30_000,maxOutputBytes:256*1024,signal:input.signal});
+      const result=await this.worker.run({requestId:validationId,program:command.program,args:command.args,files:Object.entries(input.archive).map(([path,content])=>({path,content})),stdin:JSON.stringify(input.request??{}),timeoutMs:30_000,maxOutputBytes:256*1024,signal:input.signal});
       const stages=[
         {name:'PROCESS',passed:result.exitCode===0&&!result.timedOut&&!result.cancelled,message:result.cancelled?'用户取消':result.timedOut?'执行超时':`退出码 ${result.exitCode}`},
         {name:'OUTPUT_LIMIT',passed:!result.outputTruncated,message:result.outputTruncated?'输出超过限制':'输出大小正常'},

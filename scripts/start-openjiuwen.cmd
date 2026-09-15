@@ -11,8 +11,13 @@ set "RUNTIME_PROJECT=%PROJECT_ROOT%\integrations\openjiuwen"
 set "RUNTIME_LOCK=%RUNTIME_PROJECT%\uv.lock"
 set "FORCE_SETUP=0"
 
-rem uv 的安装目标环境。外部可用 UV_PROJECT_ENVIRONMENT 覆盖，默认落在本目录的 venv。
+rem uv target environment. Override with UV_PROJECT_ENVIRONMENT; defaults to the venv below.
 if not defined UV_PROJECT_ENVIRONMENT set "UV_PROJECT_ENVIRONMENT=%VENV_DIR%"
+
+rem Load local machine config from .env.local (written by scripts/bootstrap-local.mjs).
+rem cmd does not read it on its own. Existing environment variables win over the file.
+set "LOCAL_ENV=%PROJECT_ROOT%\.env.local"
+if exist "%LOCAL_ENV%" for /f "usebackq eol=# tokens=1* delims==" %%A in ("%LOCAL_ENV%") do if not "%%A"=="" if not defined %%A set "%%A=%%B"
 
 if /I "%~1"=="--setup" set "FORCE_SETUP=1"
 if not "%~1"=="" if /I not "%~1"=="--setup" goto :usage
@@ -75,7 +80,7 @@ if not exist "%VENV_DIR%\Scripts\uv.exe" goto :install_dependencies
 goto :validate_config
 
 :install_dependencies
-rem 环境来自 uv.lock（运行时版本与传递依赖的唯一来源）。
+rem The environment comes from uv.lock: single source of runtime version and transitive deps.
 where uv.exe >nul 2>nul
 if errorlevel 1 goto :uv_missing
 echo [INFO] Installing the locked OpenJiuwen dependencies...
