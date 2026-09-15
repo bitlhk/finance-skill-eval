@@ -1,7 +1,0 @@
-openjiuwen==0.1.17.post1
-fastapi==0.141.1
-uvicorn==0.52.4
-fastmcp==2.14.7
-opentelemetry-sdk==1.44.0
-opentelemetry-exporter-otlp==1.44.0
-uv==0.12.13

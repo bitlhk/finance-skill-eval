@@ -3,12 +3,26 @@
 ## 1. 实现原则
 
 - 围绕用户流程增量改造现有 `MigrationStore`，不先建立空的多层框架；
+- **控制流固定，执行体放开**：stage 序列由人定，agent 不决定步骤；stage 内部可以是规则、单次模型或受限 agent；
+- **授权归人，评判自动**：人工只出现在授权处，一切评判由确定性验证完成；
+- **契约是证据产物**：每个 stage 的产出都绑定资产摘要，上游变化即失效；
 - 领域模型采用 2.0，新代码仍能读取 0.1 记录；
 - Skill 检查与 Tool 检查分开；
 - 决策、生成和验证都绑定具体 Tool 与具体资产；
 - MCP 和 Script 的共同状态统一，执行方式分别实现；
 - 本机 Worker 只负责一次任务，不拥有业务状态；
 - 前端只消费后端计算的状态，不在浏览器中复制准入规则。
+
+### 1.1 阶段 A 的四个 stage
+
+| Stage | 执行体 | 产出 |
+| --- | --- | --- |
+| A1 导入 | 规则 | `SkillAssetRecord` |
+| A2 检查诊断 | **agent**（诊断）+ 规则（Tool 检查） | `Diagnosis` + `ProjectInspection` + 建议（形式 + 语言） |
+| A3 授权 | **人工** | `ToolDecision[]` |
+| A4 改造 + 验证 | 规则编排 + **agent**（生成） | 候选 `SkillAssetRecord` + 验证结果 |
+
+阶段 B（评估）的设计见 [L0 §11.3](./L0-overall-architecture.md)，本文不展开。
 
 ## 2. 模块划分
 
@@ -25,7 +39,23 @@ src/service/
 └── server.ts                   # HTTP 接口
 ```
 
-现有 `MigrationDiagnostics` 作为静态扫描基础，对外结果拆成 Skill 和 Tool 两个区域。
+现有 `MigrationDiagnostics` 的扫描器保留，降级为 A2 agent 可调用的工具。
+
+**Python 侧（agent 运行时）**：
+
+```text
+integrations/openjiuwen/
+├── pyproject.toml      # 依赖声明（版本单一来源的一半）
+├── uv.lock             # 传递依赖锁定（版本单一来源，见 §16）
+├── session.py          # 既有：评估用 agent（ReActAgent）
+├── worker.py           # 既有：本地监督进程，HTTP + SSE
+├── analyze_agent.py    # 新增：A2 检查诊断 agent 入口
+└── migrate_agent.py    # 新增：A4 改造 agent 入口
+
+skills/enterprise-migration/   # 新增：企业规范技能包（见 §6.7）
+```
+
+新增的两个 agent 入口是 `session.py` 的同类兄弟——同一套工具包装、事件上报、错误脱敏、进程隔离模式，差别只在系统提示词与工具集。三者**不复用同一个 session**：评估 agent 的"不执行写操作"等约束与 A4 需要的写工作区冲突。
 
 ## 3. 核心领域模型
 
@@ -80,7 +110,10 @@ type ToolInspection = {
   outputSchema: unknown | null;
   evidence: InspectionEvidence[];
   findings: ToolFinding[];
-  recommendedAction: 'MIGRATE_TO_MCP' | 'MIGRATE_TO_SCRIPT';
+  // 平台建议，供 A3 人工授权参考；不代替人工决定
+  recommendedForm: 'MCP' | 'SCRIPT';
+  recommendedLanguage: string;
+  recommendationReason: string;
 };
 ```
 
@@ -91,38 +124,90 @@ type ToolInspection = {
 ```ts
 type ToolDecision = {
   toolId: string;
-  action: 'MIGRATE_TO_MCP' | 'MIGRATE_TO_SCRIPT';
-  targetLanguage?: string;
-  reason: string; // 平台记录的选择说明，不要求用户填写
+  form: 'MCP' | 'SCRIPT';       // 人工必选
+  language?: string;            // 人工可选；缺省则采用 A2 的建议语言
+  reason: string;               // 平台记录的选择说明，不要求用户填写
   baseAssetId: string;
   decidedAt: string;
 };
 ```
 
-`targetLanguage` 表示生成器选择，不参与 Tool 是否符合标准的判断。
+这是**授权**产物：人工在这里批准"这个 Tool 的业务行为可以脱离原系统运行"。这是合规与风控判断，系统无依据可作。`language` 是可选的技术覆盖，不参与 Tool 是否符合标准的判断。
+
+### 3.5 统一契约信封
+
+所有 stage 产出共用同一外层信封，替换现存多个含义相同但命名不同的绑定字段（`assetDigest` / `artifactSha256` / `candidateDigest` / `baseAssetId` / `digest`）。
+
+```ts
+type StageEnvelope<T> = {
+  schemaVersion: string;
+  binding: {
+    assetDigest: string;                  // 绑定的资产（唯一语义）
+    stageId: 'A1' | 'A2' | 'A3' | 'A4';
+    producer: 'RULES' | 'MODEL' | 'AGENT' | 'HUMAN';
+    producedAt: string;
+    inputDigests: Record<string, string>; // 依赖的上游产物
+  };
+  status: 'PRODUCED' | 'ABSTAINED' | 'FAILED';
+  trace?: StageTrace;                     // 仅 agent stage
+  payload: T;
+};
+
+type StageTrace = {
+  rounds: Array<{
+    artifactDigest: string;
+    compileResult?: string;
+    contractResult?: string;
+    failureReason?: string;
+  }>;
+};
+```
+
+三条规则：
+
+1. **绑定强制**——`inputDigests` 中任一上游摘要变化，本产物即失效。失效传播只沿这张表走，不另设机制；
+2. **弃权是一等状态**——`ABSTAINED` 是合法产出，agent stage 必须能返回它；
+3. **人工门不可跳过**——`producer: 'HUMAN'` 的产物，任何 agent 产出都不能替代。
 
 ## 4. 状态计算
 
+### 4.1 阶段 A（准入门槛）
+
 ```text
 IMPORTED
-  → INSPECTED
-  → DECISIONS_REQUIRED
-  → READY_TO_GENERATE / READY_TO_VALIDATE
-  → TECHNICALLY_VALIDATED
+  → INSPECTED              # A2 检查诊断完成
+  → AUTHORIZED             # A3 逐 Tool 授权完成
+  → GENERATING             # A4 生成循环进行中
+  → ADMITTED               # 出口
+```
+
+准入出口 = 代码符合源契约 + Skill 合规可加载。四层验证全过：
+
+1. 合规自检；
+2. 编译（按语言分支）；
+3. 契约测试（源工具的输入 / 输出形状）；
+4. 加载检查（MCP `initialize`/`tools.list`，或 runtime `loadedSkills`）。
+
+重要规则：
+
+- 存在未决 Tool 时不能生成；
+- 每个 Tool 都必须选择形式（MCP / Script）；
+- **不生成占位、待办或骨架实现**——agent 判定无法忠实迁移时返回 `ABSTAINED`，退回授权环节重新决策；
+- 迁移形式必须有平台支持的生成器；
+- 候选摘要变化后，阶段 A 的验证结果不再有效。
+
+### 4.2 阶段 B（评估）
+
+```text
+ADMITTED
   → OPENJIUWEN_VALIDATED
   → EVALUATED
   → OPTIMIZED
   → EXPORTABLE
 ```
 
-重要规则：
-
-- 存在未决 Tool 时不能生成或验证；
-- 每个 Tool 都必须选择 MCP 或 Script；
-- 缺少业务实现时仍可生成带待办的工程，但在补全实现前不能通过技术验证；
-- 迁移动作必须有平台支持的生成器；
 - 所有必需 Tool 的当前资产技术验证通过后，才能进入 OpenJiuwen；
-- 候选摘要变化后，旧技术验证和 OpenJiuwen 验证不再有效。
+- 候选摘要变化后，旧端到端验证不再有效。
 
 ## 5. SkillValidator
 
@@ -135,6 +220,7 @@ IMPORTED
 
 - 单一 `SKILL.md`；
 - `name`、`description` 和目录名规则；
+- 迁移上传包内 `SKILL.md` 的准确大小写、标准子目录，以及脚本只能位于 `scripts/`；
 - 引用文件存在；
 - Tool 使用说明可识别；
 - 密钥、绝对路径和 Runtime 专用业务步骤风险；
@@ -144,9 +230,62 @@ IMPORTED
 
 每个 finding 包含 `code`、`severity`、`path`、`line`、`message` 和 `suggestion`。检查器只读，不执行上传代码。
 
-## 6. ToolInspector
+这些检查规则的依据来自**企业规范技能包**的 `skill-spec.md`（见 §6.7），由 A2 agent 按需读取；规则本身可独立更新，不需改动提示词。
 
-### 发现顺序
+## 6. A2 检查诊断（agent）
+
+A2 是一个 agent，不是一段规则代码。它承担两件事——企业 Skill 规范检查（§5 的规则）与 Tool 发现及可移植性判断——并产出**建议形式与建议语言**。
+
+### 6.1 agent 配置
+
+用 OpenJiuwen `harness` 的 `explore_agent`（只读探索型）：
+
+```python
+create_explore_agent(
+    model            = <ANALYZER 角色>,
+    system_prompt    = <迁移诊断专用提示词>,
+    workspace        = 源工程解压目录,
+    tools            = [read_file, grep, glob, list_dir, run_scanner],   # 自己装配
+    rails            = [
+        ToolCallResilienceRail(),
+        TaskCompletionRail(...),                   # 完成信号 + 轮数/时长预算
+    ],
+    skills           = [企业规范技能包],
+    max_iterations   = 15,
+    enable_task_loop = True,                       # TaskCompletionRail 生效的前提
+    search_via_bash  = False,                      # 用离散 GrepTool
+)
+```
+
+**工具集**（全部自己装配，不用 `SysOperationRail`）：
+
+| 工具 | 来源 |
+| --- | --- |
+| `ReadFileTool` / `GrepTool` / `GlobTool` / `ListDirTool` | 框架公开类，直接构造 |
+| `run_scanner` | 本项目新增 |
+| **`BashTool` / `PowerShellTool` / `WriteFileTool` / `EditFileTool` —— 一概不给** | —— |
+
+**为什么不用 `SysOperationRail(read_only=True)`**：实测（版本见 §16 锁文件）它的只读分支是
+
+```python
+shared = [glob_tool, list_dir_tool, grep_tool, bash_tool]
+if self._read_only:
+    self.tools = [read_tool, *shared]
+else:
+    self.tools = [read_tool, write_tool, edit_tool, *shared]
+```
+
+只把 `write_file` / `edit_file` 摘掉，**`bash` 在两个分支里都注入**。bash 照样能写文件，所以那不是只读。要真正的只读只能自己装配工具集——**工具集就是白名单**。
+
+### 6.2 输入与产出
+
+- **输入**：源工程工作区（只读）+ 企业规范技能包
+- **产出**：`Diagnosis` + `ProjectInspection`（含逐 Tool 的 `recommendedForm` / `recommendedLanguage` / `recommendationReason`），写在**最终输出**里
+- **弃权**：最终输出中 `status = ABSTAINED`，附 `reason` 与 `missing`
+
+**不使用提交工具**。弃权是终态不是动作；且框架的工具包装会吞掉异常（`wrap()` 返回 `{"status":"unavailable"}`），工具无法提前终止循环。完成信号由 `TaskCompletionRail` 承载。
+
+### 6.3 发现顺序
 
 1. 静态 MCP 声明和 Server 入口；
 2. `SKILL.md` 明确引用；
@@ -154,53 +293,192 @@ IMPORTED
 4. 命令行入口、Python/Java 函数及测试；
 5. 未能归属的业务函数只作为提示，不自动认定为 Tool。
 
-### 证据原则
+### 6.4 证据原则
 
 - 只有文件中可定位的内容才能成为静态证据；
+- Analyzer 模型用于补查规则难以覆盖的间接 Runtime SDK 耦合，但路径、行号和原文片段必须由服务再次校验；
+- 静态扫描器**不是必经前置，而是 agent 可调用的工具之一**。保留它是为了**覆盖率**——它按构造枚举全部文件并报告哪些读不了（二进制 / 超限），因而能回答 agent 回答不了的"我漏了什么"。这是"未完整覆盖 Tool 相关源码时必须人工确认"所依赖的依据；
 - 注释和字符串中的 SDK 名称不算依赖；
 - 函数名不能单独证明输入输出 Schema；
 - Java、Python、JavaScript、Go 等 MCP 采用相同合规判断；
 - `UNKNOWN` 不得提升为可移植；
 - 已有 Tool 是否真正可运行由后续技术验证决定。
 
+### 6.5 判据落点
+
+agent 化之后，判据分成两处，边界必须守住：
+
+| 落点 | 内容 | 为什么 |
+| --- | --- | --- |
+| **代码**（强制） | Schema 提取、`SCHEMA_MISSING` 判定、发现的「文件 + 行号 + 逐字片段」校验、覆盖率计算、摘要绑定与失效 | 能机械验证；提示词是软约束，模型可以不遵守 |
+| **技能包**（判断） | 六个可移植性状态的判定条件、形式与语言建议规则、授权与技术问题的边界 | 属于判断，且需要可独立更新而不动提示词 |
+
+### 6.6 trace
+
+按仓库已有模式采集，不引入新机制：
+
+- `agent.stream()` 的事件流（[`integrations/openjiuwen/session.py`](../../integrations/openjiuwen/session.py) 的用法）
+- 每个工具外套一层 wrapper，记录 `name` / `status` / `argumentsDigest` / `resultDigest`
+
+两者共同填 `StageEnvelope.trace`。
+
+### 6.7 企业规范技能包
+
+A2 的判断依据以**框架技能包**形式提供，按需读取，不塞进系统提示。
+
+```
+skills/enterprise-migration/
+├── SKILL.md                    # 索引：什么时候读哪一份
+└── references/
+    ├── skill-spec.md           # 合规：SKILL.md、name/description、引用、目录卫生、凭据、失败处理
+    ├── portability-rules.md    # 可移植性：六个状态的判定条件 + 四条例外
+    ├── target-rules.md         # 形式与语言建议规则 + 授权/技术问题的边界
+    └── evidence-rules.md       # 证据与覆盖率判据
+```
+
+三块内容：
+
+1. **企业 Skill 规范**——来自 `skill-specification.md`；
+2. **可移植性判据**——六个状态的判定条件，以及在代码里无法机械表达的那四条例外；
+3. **迁移建议规则**——形式建议、语言建议、授权边界。这部分判据目前在代码和文档里都不存在，需新写。
+
+**前置待定**：「便于转换的语言」的判据（见 [L0 §2.2](./L0-overall-architecture.md)）必须先定下来，才能写进 `target-rules.md`。这是唯一会挡住 A2 验收的待定项。
+
+### 6.8 已核对的框架 API
+
+以下已在锁定的运行时版本上**实测核对**（见 §16），不是照文档推测：
+
+| 用途 | 名称 | 导入路径 |
+| --- | --- | --- |
+| A2 agent | `create_explore_agent` / `build_explore_agent_config` | `openjiuwen.harness.subagents.explore_agent` |
+| A4 agent | `create_code_agent` / `build_code_agent_config` | `openjiuwen.harness.subagents.code_agent` |
+| 完成信号 | `TaskCompletionRail` | `openjiuwen.harness.rails` |
+| 预算评估器 | `MaxRoundsEvaluator` / `TimeoutEvaluator` / `TokenBudgetEvaluator` / `CompletionPromiseEvaluator` | `openjiuwen.harness.schema.stop_condition` |
+| 工具调用韧性 | `ToolCallResilienceRail` | `openjiuwen.harness.rails.tool_call_resilience_rail`（**未从 `harness.rails` 再导出，必须走全路径**） |
+| 文件工具 | `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GlobTool` / `GrepTool` / `ListDirTool` | `openjiuwen.harness.tools` |
+| 系统操作层 | `SysOperation` / `OperationMode` | `openjiuwen.core.sys_operation` |
+
+**核对时推翻了初稿的三处**：
+
+1. `LLMRetryRail` **不存在**——该职责现由 `ToolCallResilienceRail` 与 `ModelAnomalyDetectionRail` 承担；
+2. `SysOperationRail(read_only=True)` **不是只读**——bash 在只读分支里照旧注入；
+3. `SysOperationRail` **无法去掉 shell**——`BashTool` 无条件注册，`bash_deny_patterns` 只是拒绝名单。
+
+第 2、3 条直接改变了 A2/A4 的工具装配方式（见 §6.1、§8.0）。**harness 是活跃模块，小版本之间会增删——版本冻结后必须实测核对，不能照抄旧版本。**
+
 ## 7. MigrationPlanner
 
-`MigrationPlanner` 接收当前检查结果和逐 Tool 决策，输出：
+**这是派生视图，不是独立 stage。** 它是（检查结果 + 逐 Tool 授权）的纯函数——输入全为确定性数据，无一处需要判断，因此按需算出来即可，不必冻结为独立产物。
 
 ```ts
 type MigrationPlan = {
   baseAssetId: string;
+  skillMigrationItems: string[];
+  skillBlockingReasons: string[];
   items: Array<{
     toolId: string;
-    action: ToolDecision['action'];
-    generator: 'SHARED_JAVA_MCP' | 'PYTHON_SCRIPT';
+    form: ToolDecision['form'];
+    language: string;                 // 授权给定的语言，或 A2 的建议
     blockingReasons: string[];
   }>;
   generationAllowed: boolean;
-  technicalValidationAllowed: boolean;
 };
 ```
 
-一个计划可以同时包含共享 Java MCP 服务和 Python Script。所有选择 MCP 的 Tool 合并到一个服务工程中。
+一个计划可以同时包含共享 MCP 服务（按源 Tool 语言）和 Script（Python / Node）。所有选择 MCP 的 Tool 合并到一个服务工程中。
 
-## 8. CandidateBuilder
+Skill 规范检查的错误写入 `skillMigrationItems`，不作为源包生成门禁。`skillBlockingReasons` 只保留给无法安全生成的系统级冲突；当前目录和文件冲突采用稳定重命名处理，因此不阻塞。候选包必须重新通过 Skill 规范检查后才能被采纳。
+
+## 8. A4：改造 + 验证（循环）
+
+A4 不是一个生成动作，而是一个**循环**：
+
+```
+   生成 ──→ 合规自检 ──→ 编译 ──→ 契约测试 ──→ 加载检查
+    ↑                                            │
+    └────────── 失败原因回灌 ─────────────────────┘
+```
+
+**回灌内容**：上一轮产物 + **哪一层失败、失败原因**。没有这个就只是重试，不是"有错就改"。
+
+### 8.0 agent 配置
+
+用 OpenJiuwen `harness` 的 `code_agent`：
+
+```python
+create_code_agent(
+    model            = <MIGRATION 角色>,
+    system_prompt    = <实现迁移专用提示词>,
+    workspace        = 本轮候选工作区,             # 每轮干净副本
+    tools            = [read_file, write_file, edit_file, grep, glob, list_dir,
+                        compile_tool, run_contract_test],   # 自己装配，不含 shell
+    rails            = [
+        ToolCallResilienceRail(),
+        TaskCompletionRail(...),
+    ],
+    skills           = [企业规范技能包],           # 与 A2 共用
+    max_iterations   = 25,
+    enable_task_loop = True,
+)
+```
+
+**工具集**（全部自己装配）：
+
+| 工具 | 来源 |
+| --- | --- |
+| `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GrepTool` / `GlobTool` / `ListDirTool` | 框架公开类，直接构造 |
+| `compile_tool` / `run_contract_test` | 本项目新增 |
+| **`BashTool` / `PowerShellTool` / `CodeTool` —— 一概不给** | —— |
+
+**不给通用 shell。** A4 需要的是编译和验证，走两个专用工具；让 agent 自己拼命令既没必要，也让 trace 不可读。
+
+**这一点必须自己装配工具才能做到**：`SysOperationRail` **无条件**注册 `BashTool`（Windows 上还有 `PowerShellTool`），没有参数能去掉；`bash_deny_patterns` 只是拒绝名单，不是允许名单。所以不能靠参数，只能不用那个 rail。
+
+`CodeTool` 即使 `with_code_tool=True` 也不该用——它是**执行任意代码**（`execute_code(code, language, timeout)`），不是编译。用自己的 `compile_tool`：窄、可控、trace 里能清楚记"编译失败了"。
+
+**弃权**：与 A2 同机制，写在最终输出里，且是**逐 Tool** 的——一个 Tool 弃权不拖累其他 Tool。
+
+### 8.0.1 两级预算
+
+| 层级 | 载体 |
+| --- | --- |
+| 单轮 agent 步数 | `max_iterations` |
+| 循环轮数 / 总时长 | 框架的 `MaxRoundsEvaluator` / `TimeoutEvaluator` |
+
+两者都显式，不混用。
+
+**出口**：
+
+| 出口 | 条件 | status |
+| --- | --- | --- |
+| 通过 | 四层全过 | `PRODUCED` |
+| 弃权 | agent 判定某个 Tool 无法忠实迁移 | `ABSTAINED`，退回 A3 |
+| 耗尽 | 轮数或时长预算用完 | `FAILED` |
+
+轮数上限与总时长上限都必须显式，否则循环没有终止保证。
+
+### 生成约束
 
 - 每次生成建立新候选，不覆盖源资产；
 - 只替换上一次由生成器拥有且未经人工修改的文件；
 - 保留 Skill、references 和 assets；
 - 为每个 Tool 分别记录生成文件和 Diff；
 - 同一 Skill 的多个 MCP Tool 共用一个 MCP Server 工程和服务入口；
-- 缺少业务实现或 Schema 时生成明确待办，验证状态为阻断；
+- **不生成占位、待办或骨架实现**——无法忠实迁移时返回 `ABSTAINED`，不交付业务骨架；
 - 生成后的 Skill 只在 Tool 名称或调用说明确有变化时修改。
 
-首期生成器：
+### 生成器
 
-| 生成器 | 输出 |
-| --- | --- |
-| Java MCP | 单个共享 MCP Server 工程、多个 Tool 声明、业务端口骨架、测试和待办 |
-| Python Script | `pyproject.toml`、`uv.lock`、命令入口、JSON 输入输出、测试和待办 |
+| 生成器 | 输出语言 | 产物 |
+| --- | --- | --- |
+| MCP | **按源 Tool 判断**：同语言，或便于转换的语言 | 单个共享 MCP Server 工程、多个 Tool 声明、迁移后的完整业务实现、构建与部署文件 |
+| Script | **Python / Node** | 迁移后的完整入口和辅助源码、固定依赖、JSON 输入输出及可执行检查 |
 
 生成器不得复制 Runtime SDK 的 Session、Context 或注册对象到业务接口。
+
+### 判据
+
+契约测试的判据是**源工具的输入 / 输出契约**——迁移不改入参出参，契约来自源资产，是冻结的、非模型产出的。**不允许用模型自写的测试输入当门禁判据**（出题人、答题人、判卷人会是同一个）。
 
 ## 9. LocalWorker
 
@@ -239,6 +517,12 @@ type LocalWorkerResult = {
 - Windows 首期使用可直接启动的程序，不依赖 Bash；
 - 返回结果明确标记 `LOCAL_TRUSTED`。
 
+### 9.1 面向 agent 的扩展
+
+A4 的生成 agent 需要在一个工作区内多次调用程序（读、写、编译、跑测试）。因此 LocalWorker 需要支持**同一工作目录跨多次调用保活**，而不只是现在的一次性 `run`。
+
+安全属性全部保留：允许列表、临时目录、路径约束、超时、输出上限、结束清理。
+
 ## 10. TechnicalValidationService
 
 ### MCP
@@ -259,11 +543,33 @@ type LocalWorkerResult = {
 5. 验证超时和取消；
 6. 清理工作目录。
 
+### 契约测试（阶段 A 准入层）
+
+契约测试是 A4 循环的判据层，与上面的技术验证分开：
+
+- 输入：源工具的 `inputSchema` / `outputSchema`（来自 A2 的检查结果）；
+- 判定：迁移后的 Tool 接受同样的输入形状，产出符合同样的输出形状；
+- 只判接口与结构，不判业务值——业务值正确性属于阶段 B；
+- 契约提取不到时，本身就是 `SCHEMA_MISSING` 错误，不得用模型猜测的 Schema 代替。
+
 技术验证记录绑定 `assetDigest + toolId + implementationDigest + casesDigest`。
 
-## 11. OpenJiuwenValidationService
+## 11. OpenJiuwenValidationService（阶段 B）
+
+这一层判定的是 **Skill 与 Tool 合起来能否完成任务**，属于能力评价，因此不计入阶段 A 的准入门槛。
 
 现有 `integrations/openjiuwen/worker.py` 和 `session.py` 继续作为可信 Host。2.0 读取当前项目的 Skill 和 Tool 映射，不再依赖固定 PF Profile。MCP Tool 通过已登记的 MCP 环境装配；Script Tool 随当前 Skill 候选装入一次性会话目录，并由 Host 使用固定的 Python 或 Node 启动方式执行。
+
+**关键：这一层是唯一真正执行迁移产物的地方。** `session.py` 会实际启动 Script Tool（`uv run … python <entry>` / `node <entry>`）并调用 MCP Tool（fastmcp `Client` + `call_tool`）。换成 Python runtime 之后，迁移出来的 Tool 第一次进入执行——这正是原先"验证链没有验证被迁移的东西"的解。
+
+**两种形式都必须能装配：**
+
+| 形式 | 装配方式 |
+| --- | --- |
+| Script（Python / Node） | 随候选的 `files` 落入一次性会话目录，按入口执行 |
+| MCP | 通过已登记的 MCP 环境端点装配并 `call_tool` |
+
+**当前实现的缺口**：`validateOpenJiuwen` 构造 `runtimeToolBindings` 时只筛 `kind === 'SCRIPT'`，**MCP Tool 不进入绑定**——也就是说 MCP 候选走完阶段 A 之后没有任何端到端验证。这一条要补上。
 
 只有技术验证通过的 Tool 可以被装配。Host 返回当前 Skill 摘要、Tool 实现摘要、Runtime 和模型版本、每个测试用例的实际 Tool 调用，以及输出和断言结果。
 
@@ -275,9 +581,9 @@ GET  /api/migrations/:id
 POST /api/migrations/:id/upgrade
 POST /api/migrations/:id/inspect
 GET  /api/migrations/:id/inspection
-PUT  /api/migrations/:id/tools/:toolId/decision
-GET  /api/migrations/:id/plan
-POST /api/migrations/:id/generate
+PUT  /api/migrations/:id/tools/:toolId/decision   # 授权：form 必选 + language 可选
+GET  /api/migrations/:id/plan                     # 派生视图，非独立产物
+POST /api/migrations/:id/generate                 # A4 循环
 GET  /api/migrations/:id/candidate
 POST /api/migrations/:id/validate/technical
 GET  /api/migrations/:id/validations/technical
@@ -293,17 +599,22 @@ GET  /api/migrations/:id/export
 
 ## 13. 前端模块
 
-工作区使用七个可回看的阶段：
+工作区分两个阶段、可回看：
+
+**阶段 A（准入门槛）**
 
 1. 导入工程；
-2. 查看 Skill 和 Tool 检查；
-3. 为每个 Tool 选择 MCP 或 Script；
-4. 审阅候选及 Diff；
-5. 查看技术验证与 OpenJiuwen 验证；
+2. 查看 Skill 和 Tool 检查诊断（含平台的建议形式与建议语言）；
+3. 授权：为每个 Tool 定形式（必选）与语言（可选）；
+4. 改造 + 验证：审阅候选、Diff 与循环轨迹。
+
+**阶段 B（评估）**
+
+5. 端到端验证；
 6. 评估和 Skill 优化；
 7. 导出。
 
-前端必须清楚区分：静态可移植、技术验证通过、OpenJiuwen 验证通过和历史 0.1 证据。
+前端必须清楚区分：静态可移植、契约测试通过、技术验证通过、端到端验证通过和历史 0.1 证据——**尤其是契约测试通过不等于业务正确**。
 
 ## 14. 测试架构
 
@@ -311,19 +622,26 @@ GET  /api/migrations/:id/export
 
 - Skill 规则；
 - Tool 发现和状态；
-- 混合逐 Tool 决策；
-- 计划准入；
+- 混合逐 Tool 授权；
+- 语言采用授权值或建议值；
+- 计划派生（纯函数）；
 - 摘要变化导致证据失效；
+- **契约测试**：同输入形状被接受、输出形状被校验；契约缺失时报 `SCHEMA_MISSING`；
 - 0.1 读取投影。
 
 ### 集成测试
 
-- Runtime 绑定 Tool 分别生成 Java MCP 和 Python Script；
+- Runtime 绑定 Tool 分别生成 MCP（按源语言）和 Script（Python / Node）；
 - 同一项目混合两种迁移方式；
 - 同一 Skill 的多个 MCP Tool 只生成一个 MCP 服务；
-- 缺业务实现项目被阻断；
+- **A2 agent**：只读 rail 生效（写工具不可调用）；`run_scanner` 的覆盖率进入产出；判定不足时返回弃权；工具调用与摘要进入 trace；
+- **A4 agent**：通用 shell 不可用；`compile_tool` 与 `run_contract_test` 两层失败可区分；
+- **A4 循环**：编译失败回灌后重生成；契约测试失败回灌后重生成；预算耗尽返回 `FAILED`；
+- **弃权**：agent 判定无法忠实迁移时返回 `ABSTAINED` 并退回授权，不交付骨架实现；
+- **门禁不可自证**：模型无法影响契约测试的判据；
 - 本机 Worker 成功、失败、超时和清理；
-- OpenJiuwen Host 装配当前 Tool 映射；
+- **同一工作目录跨多次调用保活**（agent 扩展）；
+- OpenJiuwen Host 装配当前 Tool 映射（阶段 B）；
 - 评估完成后 Optimizer 只改变 Skill。
 
 ### 安全回归
@@ -339,14 +657,38 @@ GET  /api/migrations/:id/export
 | 现有模块 | 2.0 处置 |
 | --- | --- |
 | `MigrationStore` | 增加 2.0 聚合与旧记录投影，逐步收窄旧写接口 |
-| `MigrationDiagnostics` | 保留静态扫描基础，输出拆为 Skill 和 Tool 检查 |
+| `MigrationDiagnostics` | 静态扫描保留并降级为 agent 的工具；模型调用由单次改为 agent 循环 |
 | `migration-candidate` | 改为按 Tool 生成并记录文件所有权 |
 | `mcp-preflight` | 复用为 MCP 技术验证的一部分 |
 | `CommandRuntimeAdapter` | 不作为隔离边界；只用于可信配置命令 |
-| `MigrationTargetRuns` | 从固定 Profile 改为项目 Tool 映射驱动 |
+| `MigrationTargetRuns` / `verifyTarget` | **摘掉产品地位**。原先绑 Java 参考 Host 且只服务 legacy；最终验证统一到 `validateOpenJiuwen`（Python）后，这条链不再承担验证职责。代码去留另定 |
 | `OptimizationManager` | 复用，增加 Tool 文件不可修改约束 |
 | 0.1 JSON 记录 | 继续读取并映射为历史视图，不改写原文件 |
 
-## 16. 实施完成条件
+## 16. 版本与依赖策略
+
+**单一来源：`integrations/openjiuwen/uv.lock`。** 运行时版本与传递依赖都锁在这里，**文档、提示词、代码都不硬编码版本号**——版本会升级，写死在文档里必然过期。
+
+规则：
+
+- **不在文档里写版本号**。需要版本时从锁文件或 `importlib.metadata` 读；
+- 运行时依赖用 `uv.lock` 锁定，**取代了原先的 `requirements.txt`**（它只 pin 了 7 个直接依赖，传递依赖——fastapi / fastmcp / opentelemetry 及其依赖树——全在漂）；
+- **`scripts/start-openjiuwen.cmd` 从 lock 安装**：`uv sync --locked --project integrations/openjiuwen`；
+- **`UV_PROJECT_ENVIRONMENT` 可外部覆盖**，默认指向 `.venv-openjiuwen`。env 用 `python -m venv` 建，再由 uv 同步进去（已实测：uv 接受这种环境）；
+- **uv 必须在 PATH**——环境安装和静态扫描器（`scripts/scan-migration.py`）都依赖它。launcher 会检查并在缺失时给出提示；
+- Python 需 3.11–3.13，由 openjiuwen 自己声明（`requires-python <3.14,>=3.11`）。**3.14 不可用**——若只找到 3.14，安装会失败，这是预期行为，不是配置错误；
+- **注意 uv 的解释器发现**：`uv python list` 只枚举基础环境与 uv 自管安装，**不列出 conda env**；但显式指定即可使用（`uv lock --python <envs/py312/python.exe>`）。本仓库的锁与运行时环境就是用 conda env 解释器生成的；
+- 证据里上报的版本必须**动态读取**。`session.py` 现在写死了字面量，应改为 `importlib.metadata.version("openjiuwen")`；否则升级后证据会撒谎；
+- **Java 参考 Host 冻结，不参与版本策略**——它是测试夹具，不是运行时。
+
+改锁的正确姿势：
+
+```bash
+uv lock --project integrations/openjiuwen
+```
+
+`--locked` 会在 pyproject 与锁不一致时报错，所以改过依赖必须重新锁一次，不能只改 `pyproject.toml`。
+
+## 17. 实施完成条件
 
 实现必须覆盖 [features.md](./features.md) 的所有首期验收项，且现有非迁移评测能力保持通过。
