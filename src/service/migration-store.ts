@@ -20,6 +20,7 @@ import { inspectProject } from './tool-inspector.js';
 import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
 import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
+import { baselineBrief,generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import { TechnicalValidationService } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 
@@ -69,7 +70,8 @@ export class MigrationStore {
     private analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
-      modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'})) {}
+      modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
+    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER'))) {}
   async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
   async verifyTarget(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
@@ -404,6 +406,47 @@ export class MigrationStore {
     const suite=await this.preparations.create({skill:value.source,summary:p.summary,cases:p.cases,holdoutCases:p.holdoutCases,source:'manual'});
     (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
   });}
+  /**
+   * The test set, generated from the analysis rather than typed in by hand.
+   *
+   * It is built from the *source* asset, never the candidate: a test set written against what was
+   * just generated would be graded by the thing it is supposed to check. The analysis supplies the
+   * tool surface, so a question cannot require a Tool the Skill never had.
+   */
+  async generateSuite(id:string,input:unknown) {return this.serial(async()=>{
+    const p=z.strictObject({baseAssetId:z.string().min(1),maximumCases:z.number().int().min(1).max(8).optional()}).parse(input);
+    const value=await this.get(id),current=value.candidate??value.source,asset=value.source;
+    if(p.baseAssetId!==current.assetId)return conflict('资产已变化，请刷新后重新生成测试集');
+    if(!value.inspection||value.inspection.assetId!==current.assetId)return conflict('测试集要从分析结果生成，请先检查当前资产');
+    if(!this.preparations)return conflict('Preparation store unavailable');
+    const decoded=await this.decodedSkillSource(asset);
+    const generated=await this.suiteGenerator({
+      skillId:asset.skillId,
+      skillSource:`${decoded}\n\n${baselineBrief(value.inspection)}`,
+      tools:value.inspection.tools.map(tool=>tool.name),
+      ...(p.maximumCases===undefined?{}:{maximumCases:p.maximumCases}),
+      generationId:`migration-suite-${id}`,
+    });
+    const suite=await this.preparations.create({skill:asset,summary:generated.summary,cases:generated.cases,source:'ai_generated'});
+    (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
+  });}
+  /** The Skill's own words, plus its references. Professional references only -- never a candidate's
+   * generated files, and never anything that looks like an answer key. */
+  private async decodedSkillSource(asset:SkillAssetRecord):Promise<string>{
+    const archive=await this.skills.readArchive(asset.assetId),decode=(name:string)=>{
+      const bytes=archive[name];if(!bytes)return '';try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{return '';}
+    };
+    let remaining=24_000;
+    const parts=[`# SKILL.md\n${decode(asset.skillFile).slice(0,remaining)}`];
+    remaining-=Math.min(remaining,parts[0]!.length);
+    for(const name of Object.keys(archive).sort()){
+      if(remaining<=0)break;
+      if(!/^references\/.*\.md$/u.test(name)||/evals?\/|holdout|sealed|labels/iu.test(name))continue;
+      const text=decode(name).slice(0,Math.min(remaining,8_000));
+      parts.push(`# ${name}\n${text}`);remaining-=text.length;
+    }
+    return parts.join('\n\n');
+  }
   async optimize(id:string,input:unknown) {return this.serial(async()=>{
     const p=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.get(id);
     if (!this.optimizers || !value.candidate) return conflict('Optimizer or candidate unavailable');

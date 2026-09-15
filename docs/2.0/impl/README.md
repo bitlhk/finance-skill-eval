@@ -62,7 +62,5 @@ X-1 统一契约信封
 
 ## 卡点
 
-1. **测试集还没接到分析上。** 分析已经产出基线（工具、输入输出、样例），平台也有出题能力（`ANALYZER` / `preparations` / `ai_generated`）；两者还没接起来。注意验收措辞：**迁移前的 runtime 跑不起来**，所以不能写"效果一致"，只能写"接口未见显著变化 + 测试集通过"。
-2. **A4-4 没拆开。** `generatePortable` 一个方法里仍然混着：放置 + 上传 + **对整个候选重跑一次诊断（含一次模型调用，最长阻塞 180s）** + 合规自检 + 重写 `candidateInspection.tools`。
-3. **回退生成器只产 Script/Python。** `MigrationCodeGenerator` 是 agent 不可用时的兜底，遇到 MCP 直接拒绝并说明；扩到 python/node MCP 是笔独立的账（但按最新决策，平台不该生成服务，所以这笔账要不要做存疑）。
-4. **A2-6 弃权还是 🟡。** 终态靠 `status=ABSTAINED` 表达，不用工具表达终态。
+1. **回退生成器只产 Script/Python。** `MigrationCodeGenerator` 是 agent 不可用时的兜底，遇到 MCP 直接拒绝并说明；扩到 python/node MCP 是笔独立的账（但按最新决策，平台不该生成服务，所以这笔账要不要做存疑）。
+2. **Python / Node 骨架还没被脚本执行过。** Java 那套由 `scripts/verify-java-mcp-template.mjs` 从文档里读出来编译并跑通；另外两节目前只有散文，没被同一套校验执行过。

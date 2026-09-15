@@ -19,6 +19,7 @@ import { DemoAccess } from "./demo-access.js";
 import { MigrationStore } from './migration-store.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
 import type { MigrationAnalyzer, MigrationImplementer } from './migration-agent.js';
+import type { MigrationSuiteGenerator } from './migration-suite.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
 import { MigrationCodeGenerator } from './migration-code-generator.js';
@@ -61,9 +62,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationModel?:()=>ConfiguredModelRole;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer} = {},
+  overrides: Partial<ServiceConfig> & {migrationModel?:()=>ConfiguredModelRole;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator} = {},
 ): Promise<FastifyInstance> {
-  const {migrationModel,migrationAnalyzer,migrationImplementer,...configOverrides}=overrides;
+  const {migrationModel,migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
@@ -95,7 +96,7 @@ export async function createEvaluationService(
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
   const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments,
-    new MigrationCodeGenerator(migrationModel??(()=>configuredModelRole('MIGRATION'))),migrationAnalyzer,migrationImplementer);
+    new MigrationCodeGenerator(migrationModel??(()=>configuredModelRole('MIGRATION'))),migrationAnalyzer,migrationImplementer,migrationSuite);
   // Private workspace only. A public demo must not expose customer migration snapshots.
   app.addHook('preValidation',async(request,reply)=>{
     if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
@@ -127,6 +128,7 @@ export async function createEvaluationService(
   app.get<{Params:{id:string}}>('/api/migrations/:id/validations/openjiuwen',request=>migrations.openJiuwenValidations(request.params.id));
   app.post<{Params:{id:string}}>('/api/migrations/:id/review',request=>migrations.review(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/suites',request=>migrations.createSuite(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/suites/generated',request=>migrations.generateSuite(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimize',request=>migrations.optimize(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimized-candidate',request=>migrations.adoptOptimization(request.params.id,request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id/report',request=>migrations.report(request.params.id));

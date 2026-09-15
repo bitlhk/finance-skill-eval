@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach,expect,it } from 'vitest';
 import { strToU8,unzipSync,zipSync } from 'fflate';
 import { validateSkill } from '../src/service/skill-validator.js';
-import { analysisFixture, analyzedTool, implementationFixture, inspectionFixture, toolFixture } from './analysis-fixture.js';
+import { SKILL_MD, analysisFixture, analyzedTool, implementationFixture, inspectionFixture, toolFixture } from './analysis-fixture.js';
 import { buildMigrationPlan } from '../src/service/migration-model.js';
 import { LocalWorker } from '../src/service/local-worker.js';
 import { findMissingRequiredTools } from '../src/service/run-manager.js';
@@ -200,6 +200,45 @@ it('exports v2 evidence states and upgrades legacy projects without changing his
     const upgraded=(await post(`/api/migrations/${project.id}/upgrade`)).json();
     expect(upgraded.id).not.toBe(project.id);expect(upgraded.schemaVersion).toBe('finance.skill-migration.v2');expect(upgraded.source.assetId).toBe(candidate.assetId);expect(upgraded.legacySourceProjectId).toBe(project.id);
     expect(JSON.parse(await readFile(legacyPath,'utf8')).schemaVersion).toBe('finance.skill-migration.v0.1');
+  }finally{await app.close();}
+});
+
+it('writes the test set from the analysis, and never from the generated candidate',async()=>{
+  const data=await mkdtemp(path.join(os.tmpdir(),'migration-suite-'));dirs.push(data);
+  const seen:Array<{skillSource:string;tools:string[]}>=[];
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['tool/lookup.py'],inputSchema:{type:'object',properties:{account_id:{type:'string'}}},sample:{account_id:'A-1'}})]),
+    // Stands in for the analyzer model: what matters is what it is handed, not what it returns.
+    migrationSuite:async input=>{seen.push({skillSource:input.skillSource,tools:input.tools});
+      return {summary:'基于分析生成的测试集',cases:[{caseId:'case-1',prompt:'查询 A-1 的余额',requiredTools:['lookup'],taskMode:'single_turn' as const}]};}});
+  const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
+  try{
+    const archive={'skill/SKILL.md':SKILL_MD,'tool/lookup.py':'def lookup(account_id): return {}\n'};
+    const uploaded=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync(Object.fromEntries(Object.entries(archive).map(([name,value])=>[name,strToU8(value)]))))})).json();
+    const project=(await post('/api/migrations',{sourceAssetId:uploaded.assetId,name:'generated suite'})).json();
+    const inspection=(await post(`/api/migrations/${project.id}/inspect`)).json();
+    const suite=(await post(`/api/migrations/${project.id}/suites/generated`,{baseAssetId:uploaded.assetId})).json();
+    expect(suite.source).toBe('ai_generated');
+    expect(suite.cases.map((item:{caseId:string})=>item.caseId)).toEqual(['case-1']);
+    // The question writer is grounded on the analysis: the tool list and the contract it read.
+    expect(seen[0]!.tools).toEqual(['lookup']);
+    expect(seen[0]!.skillSource).toContain('account_id');
+    expect(seen[0]!.skillSource).toContain('A-1');
+    expect(inspection.tools.map((tool:{name:string})=>tool.name)).toEqual(['lookup']);
+    expect((await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json().project.suiteIds).toEqual([suite.preparationId]);
+  }finally{await app.close();}
+});
+
+it('refuses to write a test set before the analysis it would be built from',async()=>{
+  const data=await mkdtemp(path.join(os.tmpdir(),'migration-suite-earlier-'));dirs.push(data);
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['tool/lookup.py']})])});
+  const headers={authorization:'Bearer test'};
+  try{
+    const uploaded=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'skill/SKILL.md':strToU8(SKILL_MD)}))})).json();
+    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:uploaded.assetId,name:'no analysis'}})).json();
+    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/suites/generated`,headers,payload:{baseAssetId:uploaded.assetId}});
+    expect(result.statusCode).toBe(409);expect(result.json().message).toContain('分析结果');
   }finally{await app.close();}
 });
 
