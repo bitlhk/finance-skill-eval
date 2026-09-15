@@ -24,6 +24,8 @@ protocol = sys.stdout
 sys.stdout = sys.stderr
 logging.disable(logging.INFO)
 
+from pathlib import Path as _Path  # noqa: E402
+
 from agent_protocol import build_workspace, emit, parse_structured  # noqa: E402
 from migration_tools import build_run_scanner  # noqa: E402
 
@@ -115,6 +117,9 @@ async def run(body: dict) -> None:
             workspace=str(workspace),
             max_iterations=int(body.get("maxIterations", 15)),
             language=lang,
+            # The judgement rules live in the skill package, not in this prompt, so
+            # they can be revised without touching the agent.
+            skills=[str(_Path(__file__).resolve().parents[2] / "skills")],
             enable_task_loop=False,
         )
 

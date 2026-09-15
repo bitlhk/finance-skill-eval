@@ -120,7 +120,7 @@ export class MigrationStore {
     let agentInspection:ProjectInspection|null=null;
     if(agent?.status==='PRODUCED'){
       try{
-        const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId,agent.scanner??null);
+        const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId,agent.scanner??null,files);
         // An inspection with neither tools nor a skill verdict carries no information.
         if(candidate.tools.length||candidate.skill.status!=='UNKNOWN')agentInspection=candidate;
       }catch{agentInspection=null;}
@@ -205,10 +205,14 @@ export class MigrationStore {
     }
     const plan=buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);if(!plan.generationAllowed)return conflict('当前逐 Tool 决策尚不能生成候选');
     const archive=await this.skills.readArchive(asset.assetId),version=`2.0.0-migration.${(value.candidateHistory?.length??0)+1}`;
-    for(const [name,bytes] of Object.entries(archive).filter(([name])=>name.startsWith('migration-generated/v2/'))){
-      const expected=value.portableGenerationDiff?.find(item=>item.path===name)?.after;
-      if(expected===undefined||Buffer.from(bytes).toString('utf8')!==expected)return conflict('生成文件已被人工修改；为避免覆盖工程改动，请将其作为新实现重新导入和检查');
-      delete archive[name];
+    // Clear the previous generation before regenerating. The recorded diff is the only
+    // reliable list of what was generated -- matching on a path prefix does not work,
+    // because the generator writes mcp/ skill/ scripts/, not a generated/ root.
+    for(const item of value.portableGenerationDiff??[]){
+      const current=archive[item.path];
+      if(current===undefined)continue;
+      if(Buffer.from(current).toString('utf8')!==item.after)return conflict('生成文件已被人工修改；为避免覆盖工程改动，请将其作为新实现重新导入和检查');
+      delete archive[item.path];
     }
     const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
     const implementations=await this.generateImplementations(archive,value.inspection,decisions,asset);

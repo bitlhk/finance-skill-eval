@@ -9,7 +9,14 @@ import sys
 import time
 import tempfile
 import uuid
+from importlib.metadata import version as _package_version
+
 from model_config import resolve_model, request_settings
+
+try:
+    _runtime_version = _package_version("openjiuwen")
+except Exception:  # noqa: BLE001 - evidence must not fail the run
+    _runtime_version = "unknown"
 
 protocol = sys.stdout
 sys.stdout = sys.stderr
@@ -210,7 +217,7 @@ async def run(body):
                        "output": output, "elapsedMs": round((time.monotonic() - started) * 1000),
                        "toolCalls": tool_calls, "loadedSkills": loaded, "usage": usage,
                        "runtimeIdentityVerified": True, "streamCompleted": not bool(error), "error": error,
-                       "metadata": {"executionMode": "live-openjiuwen", "runtimeVersion": "0.1.17.post1",
+                       "metadata": {"executionMode": "live-openjiuwen", "runtimeVersion": _runtime_version,
                                     "skillArtifactSha256": skill["artifactSha256"] if skill else None,
                                     "integrationVersion": "local-openjiuwen-v1.1",
                                     "modelBinding": {"providerId": body["model"]["providerId"], "upstreamModelId": model_settings["model_name"],

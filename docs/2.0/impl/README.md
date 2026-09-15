@@ -12,26 +12,28 @@
 
 ## 总览
 
-| Stage | 拆解 | 对应特性 | 新建 | 改造 | 删除 |
-| --- | --- | --- | --- | --- | --- |
-| A1 导入 | [A1-import.md](./A1-import.md) | F-01 | — | 3 | — |
-| A2 检查诊断 | [A2-inspection.md](./A2-inspection.md) | F-02 / F-03 | 4 | 3 | — |
-| A3 授权 | [A3-authorization.md](./A3-authorization.md) | F-04 | — | 2 | — |
-| A4 改造 + 验证 | [A4-migration.md](./A4-migration.md) | F-05 / F-06 | 6 | 3 | 1 |
-| 跨 stage | 见下 | — | 1 | 2 | — |
-| **合计** | | | **11** | **13** | **1** |
+| Stage | 拆解 | 对应特性 | 新建 | 改造 | 删除 | 完成 |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 导入 | [A1-import.md](./A1-import.md) | F-01 | — | 3 | — | 3/3 |
+| A2 检查诊断 | [A2-inspection.md](./A2-inspection.md) | F-02 / F-03 | 4 | 3 | — | 6/7 |
+| A3 授权 | [A3-authorization.md](./A3-authorization.md) | F-04 | — | 2 | — | 0/2 |
+| A4 改造 + 验证 | [A4-migration.md](./A4-migration.md) | F-05 / F-06 | 6 | 3 | 1 | 6/10 |
+| 跨 stage | 见下 | — | 1 | 2 | — | 2/3 |
+| **合计** | | | **11** | **13** | **1** | **16/25** |
 
-共 **25 项**。
+**状态标记**：✅ 完成（已实测） · 🟡 部分 · ⚠ 被 [L0 §2.2](../L0-overall-architecture.md) 的待定项挡住 · ❌ 未做
+
+**已跑通并实测**：A1 全部；A2 的 agent 入口、扫描器工具、规范技能包、证据校验；A4 的 agent 入口与三个领域工具；X-2 的 TS↔Python 契约。`A1 → A2 → A3 → A4` 的完整链路已端到端验证。
 
 ---
 
 ## 跨 stage
 
-| ID | 特性 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| X-1 | 统一契约信封 | 改造 | 现有 5 种绑定字段名（`assetDigest` / `artifactSha256` / `candidateDigest` / `baseAssetId` / `digest`）收敛为一种。见 L1 §3.5 |
-| X-2 | TS ↔ Python agent 调用契约 | 新建 | 新增请求 schema 或端点。现有 `finance.skill-eval.runtime-request.v1` 强制评估形状（`case` / `side` / `variant`），迁移 agent 用不了 |
-| X-3 | 版本号动态读取 | 改造 | `session.py` 写死字面量 → `importlib.metadata.version("openjiuwen")`。否则升级后证据会撒谎 |
+| ID | 状态 | 特性 | 类型 | 说明 |
+| --- | --- | --- | --- | --- |
+|X-1 | ❌ | 统一契约信封 | 改造 | 现有 5 种绑定字段名（`assetDigest` / `artifactSha256` / `candidateDigest` / `baseAssetId` / `digest`）收敛为一种。见 L1 §3.5 |
+|X-2 | ✅ | TS ↔ Python agent 调用契约 | 新建 | 新增请求 schema 或端点。现有 `finance.skill-eval.runtime-request.v1` 强制评估形状（`case` / `side` / `variant`），迁移 agent 用不了 |
+|X-3 | ✅ | 版本号动态读取 | 改造 | `session.py` 写死字面量 → `importlib.metadata.version("openjiuwen")`。否则升级后证据会撒谎 |
 
 ---
 

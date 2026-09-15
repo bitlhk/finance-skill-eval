@@ -112,11 +112,24 @@ export function toProjectInspection(
   assetDigest: string,
   stableToolId: (name: string, paths: string[]) => string,
   scanner?: Record<string, unknown> | null,
+  files: Record<string, string> = {},
 ): import("./migration-model.js").ProjectInspection {
+  // Every claim must land on a real file, a real line and the verbatim text at that
+  // line. This is the check the agent cannot perform on itself, so it stays here
+  // rather than moving into the prompt.
+  const linesOf = (target: string): string[] => (files[target] ? files[target].split(/\r?\n/u) : []);
+  const cited = (target: string, line: number, endLine = line, snippet?: string): boolean => {
+    const lines = linesOf(target);
+    if (!lines.length || !Number.isInteger(line) || line < 1 || line > lines.length) return false;
+    if (endLine < line || endLine > lines.length) return false;
+    if (!snippet) return true;
+    return lines.slice(line - 1, endLine).join("\n").includes(String(snippet).trim());
+  };
   const skillStatus = String(payload.skill?.status ?? "").toUpperCase();
   const skillFindings = (payload.skill?.findings ?? []).flatMap(entry => {
     const finding = entry as { code?: string; severity?: string; path?: string; line?: number; message?: string; suggestion?: string };
     if (!finding?.code) return [];
+    if (!cited(String(finding.path ?? ""), Number(finding.line ?? 0))) return [];
     return [{
       code: String(finding.code),
       severity: severity(finding.severity),
@@ -145,9 +158,12 @@ export function toProjectInspection(
       portability,
       inputSchema: tool.inputSchema ?? null,
       outputSchema: tool.outputSchema ?? null,
-      evidence: (tool.evidence ?? []).flatMap(item => item?.path
-        ? [{ path: String(item.path), line: Number(item.line ?? 1), kind: "AGENT", detail: String(item.snippet ?? "") }]
-        : []),
+      // Uncited evidence is dropped, not downgraded: a claim that cannot be located
+      // is not evidence.
+      evidence: (tool.evidence ?? []).flatMap(item => {
+        const path = String(item?.path ?? ""), line = Number(item?.line ?? 0), snippet = String(item?.snippet ?? "");
+        return cited(path, line, line, snippet) ? [{ path, line, kind: "AGENT", detail: snippet }] : [];
+      }),
       findings: (tool.findings ?? []).flatMap(item => item?.code
         ? [{
           code: String(item.code),

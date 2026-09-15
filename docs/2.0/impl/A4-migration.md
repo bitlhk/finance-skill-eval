@@ -9,23 +9,23 @@
     └────────── 失败原因回灌 ─────────────────────┘
 ```
 
-| ID | 特性 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| A4-1 | A4 agent 入口 | 新建 | `integrations/openjiuwen/migrate_agent.py`。`create_code_agent` + **自装配**工具集，**不含 bash / powershell / code** |
-| A4-2 | `compile_tool` | 新建 | 按授权语言选工具链（`javac --release 17` / `py_compile` / `tsc` …）。`CodeTool` 是**执行任意代码**，不是编译，不用 |
-| A4-3 | `run_contract_test` | 新建 | 按**源契约**的输入/输出形状验证。判据来自源资产（A2 提取的 Schema），冻结、非模型产出 |
-| A4-4 | 拆开生成与候选自检 | 改造 | `generatePortable` 一个方法里混了：代码生成 + 打包上传 + **对整个候选重新跑诊断**（含一次模型调用，最长阻塞 180s）+ 合规自检 + 重写 `candidateInspection.tools` |
-| A4-5 | A4 循环 | 新建 | 生成 → 编译 → 契约测试 → 回灌。三出口：全过 `PRODUCED` / 判定无法忠实迁移 `ABSTAINED` / 预算耗尽 `FAILED` |
-| A4-6 | 逐 Tool 弃权 | 新建 | 弃权是**逐 Tool** 的——一个 Tool 弃权退回 A3，不拖累其他 Tool |
-| A4-7 | trace 记录 | 新建 | `StageTrace.rounds`：每轮产物摘要 / 编译结果 / 契约测试结果 / 失败原因。**循环相对单次生成唯一多出来的证据** |
-| A4-8 | 生成器按语言 | 改造 | `portable-candidate.ts` 写死 Java MCP 工程 → 按源 Tool 判断语言；Script 增加 Node |
-| A4-9 | 生成文件保护 | 改造 | 守卫的前缀 `migration-generated/v2/` 与实际输出（`mcp/` / `skill/` / `scripts/`）**不匹配，永不触发**。用户改过的生成文件会被重新生成吞掉 |
-| A4-10 | 去掉模型自写冒烟输入 | 删除 | 判据改由 A4-3 承担。出题人、答题人、判卷人不能是同一个 |
+| ID | 状态 | 特性 | 类型 | 说明 |
+| --- | --- | --- | --- | --- |
+|A4-1 | ✅ | A4 agent 入口 | 新建 | `integrations/openjiuwen/migrate_agent.py`。`create_code_agent` + **自装配**工具集，**不含 bash / powershell / code** |
+|A4-2 | ✅ | `compile_tool` | 新建 | 按授权语言选工具链（`javac --release 17` / `py_compile` / `tsc` …）。`CodeTool` 是**执行任意代码**，不是编译，不用 |
+|A4-3 | ✅ | `run_contract_test` | 新建 | 按**源契约**的输入/输出形状验证。判据来自源资产（A2 提取的 Schema），冻结、非模型产出 |
+|A4-4 | 🟡 | 拆开生成与候选自检 | 改造 | `generatePortable` 一个方法里混了：代码生成 + 打包上传 + **对整个候选重新跑诊断**（含一次模型调用，最长阻塞 180s）+ 合规自检 + 重写 `candidateInspection.tools` |
+|A4-5 | ✅ | A4 循环 | 新建 | 生成 → 编译 → 契约测试 → 回灌。三出口：全过 `PRODUCED` / 判定无法忠实迁移 `ABSTAINED` / 预算耗尽 `FAILED` |
+|A4-6 | 🟡 | 逐 Tool 弃权 | 新建 | 弃权是**逐 Tool** 的——一个 Tool 弃权退回 A3，不拖累其他 Tool |
+|A4-7 | ✅ | trace 记录 | 新建 | `StageTrace.rounds`：每轮产物摘要 / 编译结果 / 契约测试结果 / 失败原因。**循环相对单次生成唯一多出来的证据** |
+|A4-8 | ❌ | 生成器按语言 | 改造 | `portable-candidate.ts` 写死 Java MCP 工程 → 按源 Tool 判断语言；Script 增加 Node |
+|A4-9 | ✅ | 生成文件保护 | 改造 | 守卫的前缀 `migration-generated/v2/` 与实际输出（`mcp/` / `skill/` / `scripts/`）**不匹配，永不触发**。用户改过的生成文件会被重新生成吞掉 |
+|A4-10 | ✅ | 去掉模型自写冒烟输入 | 删除 | 判据改由 A4-3 承担。出题人、答题人、判卷人不能是同一个 |
 
 ## 现状
 
 | 文件 | 现状 |
-| --- | --- |
+| --- | --- | --- |
 | `src/service/migration-code-generator.ts` | **单次模型调用 ×3 轮**；判据是**模型自写的 `smokeInput`**；编译写死 Java / Python；源码超 70 万字符**静默截断** |
 | `src/service/portable-candidate.ts` | 模板式生成，MCP 写死 Java 17 + MCP Java SDK |
 | `src/service/migration-store.ts` | `generatePortable` 把生成 + 自检混在一起；**生成与验证是分离的手动步骤，没有循环** |

@@ -29,7 +29,14 @@ function declaredObject(source:string,label:RegExp){
 export function inspectProject(input:{assetId:string;assetDigest:string;files:Record<string,string>;skillFile:string;diagnosis?:Diagnosis|null}):ProjectInspection{
   const skill=validateSkill(input.files,input.skillFile),method=input.files[input.skillFile]??'';
   const names=new Set<string>();
-  for(const hit of method.matchAll(/`([a-zA-Z_][a-zA-Z0-9_-]*)`/gu))names.add(hit[1]!);
+  // A backticked word in prose is a hint, not a Tool. Harvesting every one of them
+  // turned ordinary prose into phantom Tools; only a name that also appears as an
+  // identifier in code becomes a candidate.
+  const codeCorpus=Object.entries(input.files)
+    .filter(([name])=>/\.(?:py|java|js|mjs|cjs|ts|tsx|go|rb|cs|kt)$/iu.test(name))
+    .map(([,content])=>content).join('\n');
+  const appearsInCode=(name:string)=>new RegExp(`(^|[^A-Za-z0-9_])${name.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&')}([^A-Za-z0-9_]|$)`,'mu').test(codeCorpus);
+  for(const hit of method.matchAll(/`([a-zA-Z_][a-zA-Z0-9_-]*)`/gu))if(appearsInCode(hit[1]!))names.add(hit[1]!);
   for(const declaration of input.diagnosis?.declarations??[]){
     const source=input.files[declaration.path]??'';
     if(!['register','main','invoke','run'].includes(declaration.name)&&/register_tool|registerTool|@tool|@Tool|FastMCP|McpServer/iu.test(source))names.add(declaration.name);
@@ -38,12 +45,26 @@ export function inspectProject(input:{assetId:string;assetDigest:string;files:Re
     if(!/(?:^|\/)scripts\/[^/]+\.(?:py|js|mjs|cjs)$/iu.test(file))continue;
     if(/__main__|process\.argv|argparse|sys\.stdin|JSON\.parse/iu.test(source))names.add(path.posix.basename(file).replace(/\.[^.]+$/u,'').replace(/-/gu,'_'));
   }
+  for(const finding of input.diagnosis?.findings??[])if(finding.source==='MODEL'&&finding.symbol)names.add(finding.symbol);
   const tools:ToolInspection[]=[...names].sort().map(name=>inspectTool(name,input.files,input.skillFile,input.diagnosis));
-  return {assetId:input.assetId,assetDigest:input.assetDigest,inspectedAt:new Date().toISOString(),skill,tools,scriptsExecuted:false};
+  const incompleteFiles=input.diagnosis?[...input.diagnosis.coverage
+    .filter(item=>!['AST_PARSED','TEXT_INSPECTED'].includes(item.status))
+    .map(item=>({path:item.path,status:item.status})),
+    ...input.diagnosis.findings.filter(item=>item.layer==='UNKNOWN').map(item=>({path:item.path,status:item.dependencyType}))
+  ].filter((item,index,all)=>all.findIndex(other=>other.path===item.path&&other.status===item.status)===index):[];
+  const toolPaths=new Set(tools.flatMap(tool=>tool.sourcePaths));
+  return {assetId:input.assetId,assetDigest:input.assetDigest,inspectedAt:new Date().toISOString(),skill,tools,scriptsExecuted:false,
+    staticAnalysis:input.diagnosis?{status:input.diagnosis.status,dependencyStatus:input.diagnosis.dependencyStatus,
+      scannerDigest:input.diagnosis.scannerDigest,incompleteFiles,toolIncompleteFiles:incompleteFiles.filter(item=>toolPaths.has(item.path))}
+      :{status:'UNAVAILABLE',dependencyStatus:'UNKNOWN',scannerDigest:null,incompleteFiles:[],toolIncompleteFiles:[]},
+    runtimeAnalysis:input.diagnosis?{status:input.diagnosis.ai.status,model:input.diagnosis.ai.model,
+      acceptedBindings:input.diagnosis.ai.acceptedRuntimeBindings??0,rejectedBindings:input.diagnosis.ai.rejectedRuntimeBindings??0,
+      inputTruncated:input.diagnosis.ai.inputTruncated}:undefined};
 }
 
 function inspectTool(name:string,files:Record<string,string>,skillFile:string,diagnosis?:Diagnosis|null):ToolInspection{
-  const matched=Object.entries(files).filter(([file,source])=>file!==skillFile&&mentions(codeOnly(source),name));
+  const modelPaths=new Set((diagnosis?.findings??[]).filter(f=>f.source==='MODEL'&&f.symbol===name).map(f=>f.path));
+  const matched=Object.entries(files).filter(([file,source])=>file!==skillFile&&(mentions(codeOnly(source),name)||modelPaths.has(file)));
   const sourcePaths=matched.map(([file])=>file);
   const evidence:ToolInspection['evidence']=[],findings:ToolInspection['findings']=[];
   let mcp=false,runtime=false,script=false,hasSchema=false,inputSchema:unknown=null,outputSchema:unknown=null,entrypoint:ToolInspection['entrypoint'];
@@ -68,6 +89,10 @@ function inspectTool(name:string,files:Record<string,string>,skillFile:string,di
     }
   }
   const related=(diagnosis?.findings??[]).filter(f=>sourcePaths.includes(f.path)&&(f.symbol===name||!f.symbol));
+  const runtimeFinding=related.find(f=>['SDK_IMPORT','SDK_INPUT','SDK_RESULT','TOOL_REGISTRATION','RUNTIME_CONTEXT','RUNTIME_STATE','RESOURCE_INJECTION','DYNAMIC_RUNTIME_BINDING'].includes(f.dependencyType));
+  if(runtimeFinding&&!runtime){
+    runtime=true;evidence.push({path:runtimeFinding.path,line:runtimeFinding.line,kind:'RUNTIME_BINDING',detail:runtimeFinding.source==='MODEL'?'模型发现并经源码定位校验的 Runtime SDK 耦合':'静态分析发现 Runtime SDK 耦合'});
+  }
   if(related.some(f=>['MISSING_MODULE','OMITTED_IMPLEMENTATION','DYNAMIC_DEPENDENCY'].includes(f.dependencyType)))
     findings.push({code:'IMPLEMENTATION_INCOMPLETE',severity:'ERROR',path:related[0]!.path,line:related[0]!.line,message:'业务实现或依赖不完整。'});
   let portability:ToolInspection['portability'],kind:ToolInspection['kind'],recommendedAction:ToolInspection['recommendedAction'];
