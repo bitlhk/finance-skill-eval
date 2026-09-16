@@ -91,6 +91,55 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 
 **目标语言集合是平台能力，不写进技能包**——模板增减时文档不该过时。同理，**agent 不给语言建议**：它看不到平台有哪些生成模板。
 
+## 回合花在哪：四个摩擦面（2026-09-16 实测）
+
+一次 A2 跑掉 30 个工具回合、171s，而包只有 3 个文件。把调用**连参数**记下来（`ToolTraceRail` 现在记 `args`）才看清：**这不是"模型重复查"，是四个摩擦面在烧回合**，而且每个都能改。
+
+### ① 路径：我们自己的提示词和工具描述在打架
+
+| 出处 | 说什么 |
+| --- | --- |
+| `analyze_agent.py` 的 SYSTEM_PROMPT | "一律使用**相对**路径……**不要用绝对路径**" |
+| `AbsoluteLineReadFileTool._DESCRIPTION` | "`file_path` **必须是绝对路径**" |
+
+模型被两边拉，同一份 `SKILL.md` 读了三种写法（`C:\…`、`/tmp/…`、`C:/…`），还跑 `bash cygpath -w` 去换算——**6 次**。
+
+**改为**：定死**唯一工作区根**（`build_workspace` 的结果，绝对路径），并把它**写进提示词**；删掉"用相对路径"那句。`/tmp` 那种写法是 bash 带进来的（见 ④），④ 做掉它就不再出现。
+
+### ② 工作区里混着 agent 自己的家具
+
+`IDENTITY.md`、`SOUL.md`、`AGENT.md`、`USER.md`、`HEARTBEAT.md`、`coding_memory/MEMORY.md`、`memory/MEMORY.md`、`context/session_memory.md` 被逐一读——**7 次**。
+
+**不是模型乱翻，是 harness 在系统提示里列了张表**：`prompts/workspace_content/workspace_header.py` 的 `CONTEXT_FILES` 是硬编码的五个文件名，`context.py` 还会把这些文件的内容**每次模型调用都折进系统提示**。
+
+**原生开关就在**：`PromptMode.MINIMAL` 的保留段是 `{IDENTITY, SAFETY, SKILLS, TOOLS, RUNTIME, PROMPT_ATTACHMENTS, MEMORY}`——**没有 WORKSPACE 段**。传 `prompt_mode="minimal"` 即可，不用删文件（探针证实：构造后工作区里只有我们放进去的目录，这些文件本来也不存在）。
+
+### ③ 技能包规则被写成了文件路径
+
+`glob **/analysis-rules.md`、`**/*analysis*`、`**/*rules*`、`**/*`——**4 次**，全在工作区里找规则。
+
+规则是**通过 `skills=[…]` 参数加载**的技能包（在仓库 `skills/` 下），harness 用 `skill_tool` **按名字**暴露（第 20 轮就是这么拿到的）。**探针证实它没有被复制进工作区**。提示词却写成"见技能包 `references/analysis-rules.md`"，读起来像工作区里的一个文件。
+
+**改为**：按**名字**引用（`skill_tool` 取 `analysis-rules`），并说明规则不在工作区里。
+
+### ④ bash：设计说没有，实际有
+
+`analyze_agent.py` 写着"不含 bash，bash 能写所以它不是只读边界"——**实测模型真的调了两次 bash**。
+
+来源查清了，我先前两次判断都错（一次说"只读 rail 挡住"，一次说"注入的 gp 子 agent 带进来的"）：
+
+- `SysOperationRail` **没有 fs-only 选项**：`shared = [glob, list_dir, grep, bash]` 恒含 bash，Windows 上再加 powershell；
+- `add_general_purpose_agent` 默认 `False`，那条路不走；
+- **真正来源是 `SkillUseRail`**：`include_tools` 为真时它注册 `read_file + BashTool`，而 `include_tools = not 已有 SysOperationRail`。我们只传了自己的 rail，条件成立。
+
+而且 bash 是**运行期**（技能刷新时）注册的——构造后 `list_tool_info()` 只有我们的 5 个工具，所以"构造完再摘"没用。
+
+**原生三件都不够**：`read_only=True` 里 bash 仍在；`bash_deny_patterns` 只管 bash（rail 构造 `PowerShellTool` 时没传，Windows 上漏着）；`set_tool_exposure_policy` 只是把工具变成 `DEFERRED`，模型能用 `tool_search` 找回来。
+
+**改为**：传一个 `SysOperationRail` 的**子类**，只作为"已有 fs rail"的标记（不注册工具，免得覆盖我们修正过行号的 `read_file`）。`SkillUseRail` 的 `include_tools` 因此为假，shell 两条路都不再出现。可再叠 `set_tool_exposure_policy` 把可见工具收成白名单。
+
 ## 验收
 
-见 [F-02](../features.md) / [F-03](../features.md)。要点：只读 rail 生效；覆盖率进入产出；证据不足时弃权；工具调用与摘要进入 trace。
+见 [F-02](../features.md) / [F-03](../features.md)。要点：**A2 的工具集就是那 5 个，没有 shell**（下面这条原先写的是"只读 rail 生效"，而事实上只读 rail 里带 shell，已按 ④ 收敛）；覆盖率进入产出；证据不足时弃权；工具调用与摘要进入 trace。
+
+**回合数的验收标准**：同一份验收夹具，工具调用 **≤10**，序列里**不再出现 `bash`**、不出现同一文件的多种路径写法。达标与否用 `reports/probe-a2.mjs` 对照，不靠"这次模型表现好"。

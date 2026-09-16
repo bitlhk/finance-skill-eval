@@ -27,13 +27,20 @@ logging.disable(logging.INFO)
 from pathlib import Path as _Path  # noqa: E402
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool, ToolTraceRail  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool, FilesystemOnlyRail, ToolTraceRail  # noqa: E402
 from migration_tools import build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
 
-**路径规则（重要）**：运行在 Windows 上。所有文件路径一律使用**相对于工作区根目录**的形式，
-例如 `mcp/pom.xml`、`skill/SKILL.md`。**不要用绝对路径，不要用 `/tmp`，不要用反斜杠开头的路径。**
+**路径规则（重要）**：运行在 Windows 上。文件工具要**绝对路径**（工具说明里也写了），根目录只有一个：
+
+    @@WORKSPACE_ROOT@@
+
+要读的文件写成 `@@WORKSPACE_ROOT@@/skill/SKILL.md` 这样。**不要用 `/tmp` 之类的另一种写法**——
+那是同一个目录的另一种叫法，换来换去只会浪费回合。工作区根目录**就是**待检查的工程根目录。
+
+运行框架自己也会在工作区里放一些文件（`AGENT.md`、`SOUL.md`、`USER.md`、`HEARTBEAT.md`、`IDENTITY.md`、
+`memory/`、`coding_memory/`、`context/`），**它们不属于待检查的工程，不要读**。
 
 你的任务有三件：
 1. 检查其中的 Skill 文档是否符合企业 Skill 规范；
@@ -41,7 +48,9 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 3. 判断每个 Tool 的可移植性，并给出形式建议。
 
 第 2 件是**基线**——迁移要保留它，校验要拿它比对，出题要拿它当种子。
-怎么读，见技能包 `references/analysis-rules.md`。要点：**优先读 Skill 文档对工具用法的描述**，
+怎么读，见**已加载的技能包 `analysis-rules`**——用 `skill_tool` 按名字取。
+**它不在工作区里**（那是平台随 agent 一起加载的规则包，不是被检查的包），所以不要去文件系统里找它。
+要点：**优先读 Skill 文档对工具用法的描述**，
 而不是从实现代码里反推；输入、输出、样例**各自都要指到出处**。
 
 规则：
@@ -119,8 +128,9 @@ async def run(body: dict) -> None:
         lang = "cn"
         agent_id = f"a2-{body.get('runId', 'run')}"
 
-        # Read-only tool set, assembled by hand. SysOperationRail would also inject
-        # bash, and bash can write -- so it is not a read-only boundary.
+        # Read-only tool set, assembled by hand -- these five and nothing else. `FilesystemOnlyRail`
+        # (below) is what keeps a shell out: without it the harness registers one at skill-refresh
+        # time, and `bash` can write, which would make "read-only" a claim rather than a boundary.
         tools = [
             AbsoluteLineReadFileTool(sys_op, lang, agent_id),
             GrepTool(sys_op, lang, agent_id),
@@ -136,13 +146,17 @@ async def run(body: dict) -> None:
         )
         agent = create_explore_agent(
             model=model,
-            system_prompt=SYSTEM_PROMPT_TEMPLATE,
+            system_prompt=SYSTEM_PROMPT_TEMPLATE.replace("@@WORKSPACE_ROOT@@", str(workspace)),
             tools=tools,
             sys_operation=sys_op,
             workspace=str(workspace),
             max_iterations=budget,
             language=lang,
-            rails=[ToolTraceRail(tool_trace)],
+            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail()],
+            # `minimal` drops the WORKSPACE prompt section, which otherwise puts the harness's own
+            # agent-home files (AGENT.md, SOUL.md, ...) in front of the model as things to read.
+            # Field runs spent 7 rounds on them; they are not part of the package under inspection.
+            prompt_mode="minimal",
             # The judgement rules live in the skill package, not in this prompt, so
             # they can be revised without touching the agent.
             skills=[str(_Path(__file__).resolve().parents[2] / "skills")],

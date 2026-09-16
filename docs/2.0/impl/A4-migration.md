@@ -70,6 +70,16 @@
 顺带修的：启动命令指向不存在的程序时，`_mcp_contract` / `_run_process` 会**抛异常**而不是报错，
 工具调用直接炸掉；现在与 `service-launch.ts` 一致，回 `SERVICE_FAILED_TO_START` / `PROGRAM_NOT_RUNNABLE`。
 
+### 回合被什么吃掉：四个摩擦面（A4 同样中招）
+
+A2 那边查出四个摩擦面（详见 [A2-inspection.md](A2-inspection.md#回合花在哪四个摩擦面2026-09-16-实测)），**A4 全中**，因为它和 A2 共用同一套装配方式：
+
+1. **路径**：同样的"提示词要相对路径 / 工具描述要绝对路径"冲突，A4 还要**写文件**，路径来回换的代价只会更大；
+2. **工作区的家具**：同样的 `prompt_mode` 默认 FULL，WORKSPACE 段把 `AGENT.md`/`SOUL.md` 那张表塞进提示。A4 尤其危险——它收交付物的那段现在靠**黑名单**把脚手架挑出去（`head in {agents, coding_memory, context, memory, messages, skills, todo}`），一旦 harness 改个目录名，**脚手架会被当成交付物打进候选**。`prompt_mode="minimal"` 之后这条名单仍然保留（它管的是收集，不是提示），但**壳层不再诱导模型去读**；
+3. **技能包按名字引用**：A4 提示词里同样写了路径（"骨架见技能包 `references/service-templates.md`"），改成按名字取；
+4. **shell**：A4 也写着"不含 bash"，实际同样由 `SkillUseRail` 在运行期注册一把。A4 比 A2 更需要没有 shell——它手里有写工具，一把能执行任意命令的 shell 会让"只编译、只跑契约测试"这个约束形同虚设。
+
+**A4 的验收同样按回合数**：工具调用次数应显著下降，序列里不再出现 `bash`。
 ## A4 拿到什么
 
 只有三样：

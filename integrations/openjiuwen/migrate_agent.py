@@ -26,7 +26,7 @@ sys.stdout = sys.stderr
 logging.disable(logging.INFO)
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool, ToolTraceRail  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool, FilesystemOnlyRail, ToolTraceRail  # noqa: E402
 from migration_tools import build_compile_tool, build_contract_test_tool  # noqa: E402
 
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
@@ -34,8 +34,15 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 工作区里是待迁移的源工程。你的任务是按给定的逐 Tool 决策，把每个 Tool 迁移成可以独立运行的形式，
 并且让它**通过编译和契约测试**。
 
-**路径规则（重要）**：运行在 Windows 上。所有文件路径一律使用**相对于工作区根目录**的形式，
-例如 `mcp/pom.xml`、`scripts/summarize.py`。不要用绝对路径，不要用 `/tmp`。
+**路径规则（重要）**：运行在 Windows 上。文件工具要**绝对路径**（工具说明里也写了），根目录只有一个：
+
+    @@WORKSPACE_ROOT@@
+
+要写的文件写成 `@@WORKSPACE_ROOT@@/mcp/server.py` 这样。**不要用 `/tmp` 之类的另一种写法**——
+那是同一个目录的另一种叫法，换来换去只会浪费回合。工作区根目录**就是**源工程根目录。
+
+运行框架自己也会在工作区里放一些文件（`AGENT.md`、`SOUL.md`、`USER.md`、`HEARTBEAT.md`、`IDENTITY.md`、
+`memory/`、`coding_memory/`、`context/`），**它们不属于源工程，不要读也不要动**。
 
 工作方式（循环，直到每个 Tool 都通过或你确认做不到）：
 1. 读源实现，理解它的边界条件、外部调用和错误语义；
@@ -48,7 +55,8 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
      这里给的 `start` 要和最后 JSON 里给的一致。
 5. 失败就按失败原因改，再回到 3。
 
-交付形态（骨架与硬要求见技能包 `references/service-templates.md`）：
+交付形态（骨架与硬要求见**已加载的技能包 `service-templates`**——用 `skill_tool` 按名字取；
+**它不在工作区里**，不要去文件系统找）：
 
 - **MCP**：自己写出**完整的 MCP 服务**——服务入口、工具适配、依赖清单、Dockerfile、README。
   平台不会替你生成任何一部分。硬要求：Streamable HTTP 在 `/mcp`；端口读 `PORT` 环境变量；
@@ -158,13 +166,17 @@ async def run(body: dict) -> None:
         )
         agent = create_code_agent(
             model=model,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT.replace("@@WORKSPACE_ROOT@@", str(workspace)),
             tools=tools,
             sys_operation=sys_op,
             workspace=str(workspace),
             max_iterations=budget,
             language=lang,
-            rails=[ToolTraceRail(tool_trace)],
+            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail()],
+            # `minimal` drops the WORKSPACE prompt section: it advertises the harness's own
+            # agent-home files (AGENT.md, SOUL.md, ...) as things to read, and they are not the
+            # source project. It also keeps the scaffold out of the model's way.
+            prompt_mode="minimal",
             enable_task_loop=False,
         )
 

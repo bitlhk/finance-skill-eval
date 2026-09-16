@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 from openjiuwen.core.single_agent.rail.base import AgentRail
+from openjiuwen.harness.rails.sys_operation_rail import SysOperationRail
 from openjiuwen.harness.tools import ReadFileTool
 
 # The numbered form is exactly `_cat_n`'s: right-aligned to width 6, a tab, then the line. Anchored
@@ -87,6 +88,17 @@ class AbsoluteLineReadFileTool(ReadFileTool):
         return shift_line_numbers(rendered, max(0, int(offset)))
 
 
+def _short(value, limit: int = 200) -> str:
+    """One readable line for a tool's arguments, whatever shape they arrive in."""
+    import json
+
+    try:
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(value)
+    return text[:limit]
+
+
 class ToolTraceRail(AgentRail):
     """The platform's own record of what the agent did, round by round.
 
@@ -106,7 +118,14 @@ class ToolTraceRail(AgentRail):
         if not name or name == "compile_source" or name == "run_contract_test":
             # Those two record themselves, with the outcome that matters (passed/failed and why).
             return
-        self.capture.append({"tool": name})
+        # The arguments, not just the name: "read_file five times" says nothing about whether the
+        # agent read five files or one file five times, and that difference is the whole question
+        # when a run spends more rounds than the package has files.
+        entry: dict = {"tool": name}
+        args = getattr(inputs, "tool_args", None)
+        if args:
+            entry["args"] = _short(args)
+        self.capture.append(entry)
 
     async def on_tool_exception(self, ctx) -> None:  # noqa: ANN001 - harness type
         inputs = getattr(ctx, "inputs", None)
@@ -114,3 +133,36 @@ class ToolTraceRail(AgentRail):
         detail = str(getattr(ctx, "exception", "") or "")
         if name:
             self.capture.append({"tool": name, "failed": True, "detail": detail[:600]})
+
+
+class FilesystemOnlyRail(SysOperationRail):
+    """Says "the filesystem tools are already here" -- and provides none itself.
+
+    This exists because the harness has no filesystem-only mode, and both ways a shell gets in key
+    off the *type* of the rails list rather than on anything we can configure:
+
+    * `SysOperationRail` always registers `bash` -- `shared = [glob, list_dir, grep, bash]` is
+      built the same way in read-only mode, and Windows adds a powershell tool on top;
+    * when no rail of that type is mounted, `SkillUseRail` registers its own `bash` as well
+      ("so skills can do file/shell ops"), and it does that at *refresh* time, after the agent is
+      built -- which is why removing the tool after construction does not work.
+
+    Mounting this type satisfies both checks (`include_tools = not _already_provided(
+    SysOperationRail)`), so neither one registers a shell.
+
+    It registers nothing on purpose: the agents assemble their own file tools, including a
+    `ReadFileTool` subclass whose line numbers match the file. Letting a rail register the stock
+    `read_file` would quietly undo that fix.
+    """
+
+    priority = 100
+
+    def __init__(self) -> None:
+        super().__init__(read_only=True)
+        self.tools = []
+
+    def init(self, agent) -> None:  # noqa: ANN001 - harness type
+        """Deliberately empty. The tools come from the agent's own `tools=` list."""
+
+    def uninit(self, agent) -> None:  # noqa: ANN001 - harness type
+        """Nothing was registered, so there is nothing to remove."""
