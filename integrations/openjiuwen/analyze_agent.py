@@ -160,6 +160,12 @@ async def run(body: dict) -> None:
             # The judgement rules live in the skill package, not in this prompt, so
             # they can be revised without touching the agent.
             skills=[str(_Path(__file__).resolve().parents[2] / "skills")],
+            # The harness builds an agent home into the workspace it is handed -- AGENT.md, SOUL.md,
+            # memory/, todo/, messages/, skills/ -- and that home lands in the same directory as the
+            # package under inspection. Field runs listed those directories 4 times. The schema
+            # cannot be trimmed (missing default nodes are re-added in `Workspace.__post_init__`),
+            # but it does not have to be built at all.
+            auto_create_workspace=False,
             enable_task_loop=False,
         )
 

@@ -108,11 +108,27 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 
 ### ② 工作区里混着 agent 自己的家具
 
-`IDENTITY.md`、`SOUL.md`、`AGENT.md`、`USER.md`、`HEARTBEAT.md`、`coding_memory/MEMORY.md`、`memory/MEMORY.md`、`context/session_memory.md` 被逐一读——**7 次**。
+`IDENTITY.md`、`SOUL.md`、`AGENT.md`、`USER.md`、`HEARTBEAT.md`、`coding_memory/MEMORY.md`、`memory/MEMORY.md`、`context/session_memory.md` 被逐一读——**7 次**；`agents`、`todo`、`messages`、`skills` 这些目录还被列了 **4 次**。
 
-**不是模型乱翻，是 harness 在系统提示里列了张表**：`prompts/workspace_content/workspace_header.py` 的 `CONTEXT_FILES` 是硬编码的五个文件名，`context.py` 还会把这些文件的内容**每次模型调用都折进系统提示**。
+**不是模型乱翻。** 两层原因，两层都要治：
 
-**原生开关就在**：`PromptMode.MINIMAL` 的保留段是 `{IDENTITY, SAFETY, SKILLS, TOOLS, RUNTIME, PROMPT_ATTACHMENTS, MEMORY}`——**没有 WORKSPACE 段**。传 `prompt_mode="minimal"` 即可，不用删文件（探针证实：构造后工作区里只有我们放进去的目录，这些文件本来也不存在）。
+1. **提示层**：harness 在系统提示里列了张表（`prompts/workspace_content/workspace_header.py` 的 `CONTEXT_FILES` 硬编码五个文件名），`context.py` 还会把这些文件的内容**每次模型调用都折进系统提示**。
+   → `prompt_mode="minimal"`：其保留段是 `{IDENTITY, SAFETY, SKILLS, TOOLS, RUNTIME, PROMPT_ATTACHMENTS, MEMORY}`，**没有 WORKSPACE 段**。
+
+2. **文件层**：那些目录**真的被建出来了**。建它的是 `DeepAgent.init_workspace()`，用 `DEFAULT_WORKSPACE_SCHEMA` 落盘——而那是**一个"人"的家**：`AGENT.md` 里有"你叫什么、能否打断"，`SOUL.md` 里有"人格与价值观"，还有日记本 `memory/daily_memory/`、待办 `todo/`、消息 `messages/`。它和待检查的包躺在**同一层**。
+
+   **注意这不是 code agent 的锅**：`init_workspace` 在 `create_deep_agent` 里，A2（explore）和 A4（code）一样中招。
+
+   **schema 减不掉**：`Workspace.__post_init__` 会把缺失的默认节点**补回来**（`get_directory` 还会回退到默认 schema），所以"自定义布局"只能加不能减——实测传 `directories=[skill, tool]`，`get_node_path('AGENT.md')` 照样返回路径。
+
+   **但可以干脆不建**：`_needs_workspace_init()` 的第三个条件是 `config.auto_create_workspace`（`schema/config.py` 默认 `True`），两个 agent 都透传 `**config_kwargs`。传 `auto_create_workspace=False` 之后实测：
+
+   ```
+   True  → workspace: AGENT.md HEARTBEAT.md IDENTITY.md SOUL.md USER.md agents coding_memory context memory messages skill skills todo
+   False → workspace: skill
+   ```
+
+   工具集两边完全一样（5 个 + `skill_tool`），关掉不损失能力。
 
 ### ③ 技能包规则被写成了文件路径
 
@@ -143,3 +159,17 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 见 [F-02](../features.md) / [F-03](../features.md)。要点：**A2 的工具集就是那 5 个，没有 shell**（下面这条原先写的是"只读 rail 生效"，而事实上只读 rail 里带 shell，已按 ④ 收敛）；覆盖率进入产出；证据不足时弃权；工具调用与摘要进入 trace。
 
 **回合数的验收标准**：同一份验收夹具，工具调用 **≤10**，序列里**不再出现 `bash`**、不出现同一文件的多种路径写法。达标与否用 `reports/probe-a2.mjs` 对照，不靠"这次模型表现好"。
+
+### 实测（同一份夹具，逐条对照）
+
+| | 改前 | 改后 |
+| --- | --- | --- |
+| 工具回合 | 30 | **15** |
+| 路径写法 | 3 种 | **1 种** ✅ ① |
+| `bash` | 2 次 | **0** ✅ ④ |
+| 读框架家具 | 7 次 | **0** ✅ ② |
+| 列框架目录（`agents`/`todo`/`messages`/`skills`） | 4 次 | **0** ✅ ② |
+| 找技能包规则 | glob 4 次 | `skill_tool` 1 次 ✅ ③ |
+| 读包内文件 | 同一文件多写法重读 | 5 次，全是包内内容 |
+
+**还没达标（15 > 10）**，剩下的是**包内的重复清点**：4 次 `list_files` + 3 次 `grep` + 1 次 `glob` 去翻一个 3 文件工程，而第 2 轮 `run_scanner` 的**覆盖率里已经有完整文件清单**。这与 ③ 同类：提示词得说明"覆盖率就是清单"，否则模型会自己再数一遍。**这一条没做，不当作已完成。**

@@ -177,6 +177,11 @@ async def run(body: dict) -> None:
             # agent-home files (AGENT.md, SOUL.md, ...) as things to read, and they are not the
             # source project. It also keeps the scaffold out of the model's way.
             prompt_mode="minimal",
+            # The harness builds an agent home into the workspace it is handed -- AGENT.md, SOUL.md,
+            # memory/, todo/, messages/, skills/ -- and that home lands in the same directory as the
+            # source project. The schema cannot be trimmed (missing default nodes are re-added in
+            # `Workspace.__post_init__`), but it does not have to be built at all.
+            auto_create_workspace=False,
             enable_task_loop=False,
         )
 
