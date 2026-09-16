@@ -121,6 +121,12 @@ it('runs a trusted one-shot job with JSON IO and always cleans its directory',as
   expect(result.mode).toBe('LOCAL_TRUSTED');expect(result.exitCode).toBe(0);expect(JSON.parse(result.stdout)).toEqual({ok:7});expect(await readdir(root)).toEqual([]);
   const controller=new AbortController(),cancelled=worker.run({requestId:'cancel',program:'node',args:['wait.js'],files:[{path:'wait.js',content:Buffer.from('setInterval(()=>{},1000)')}],signal:controller.signal});
   setTimeout(()=>controller.abort(),30);expect((await cancelled).cancelled).toBe(true);expect(await readdir(root)).toEqual([]);
+  // Cancelled while the request is still being set up. The signal fires before anything is
+  // listening, so a worker that only waits for the next event runs the whole timeout instead --
+  // which is what made this file flaky on a loaded machine.
+  const early=new AbortController(),earlyWork=worker.run({requestId:'early-cancel',program:'node',args:['wait.js'],files:[{path:'wait.js',content:Buffer.from('setInterval(()=>{},1000)')}],signal:early.signal});
+  early.abort();
+  expect((await earlyWork).cancelled).toBe(true);expect(await readdir(root)).toEqual([]);
   await expect(worker.run({requestId:'bad',program:'cmd.exe',args:[],files:[]})).rejects.toThrow('not allowed');
   await expect(worker.run({requestId:'bad-path',program:'node',args:[],files:[{path:'../escape',content:Buffer.from('')}]})).rejects.toThrow('Unsafe');
 });

@@ -136,7 +136,11 @@ export async function startService(input: {
   // A command that cannot be executed at all -- the toolchain is missing -- arrives as an event,
   // not as an exit code, and an unhandled one would take the process down with it.
   child.once('error', error => { spawnError = `SERVICE_FAILED_TO_START: 启动命令 ${start.join(' ')} 无法执行：${error.message}`; });
-  input.signal?.addEventListener('abort', () => { void terminate(child); }, { once: true });
+  const abort = () => { void terminate(child); };
+  input.signal?.addEventListener('abort', abort, { once: true });
+  // Same lost-cancel window as the one-shot worker: the signal may have fired while `prepare` was
+  // running, and waiting for it to fire again means holding a service nobody wants.
+  if (input.signal?.aborted) abort();
 
   const alive = (): string | null => spawnError ?? (child.exitCode === null
     ? null

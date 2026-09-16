@@ -64,6 +64,9 @@ export class LocalWorker{
         child.stdout.on('data',chunk=>{stdout=append(stdout,chunk);});child.stderr.on('data',chunk=>{stderr=append(stderr,chunk);});
         const timer=setTimeout(()=>{timedOut=true;child.kill('SIGKILL');},request.timeoutMs??30_000);
         const abort=()=>{cancelled=true;child.kill('SIGKILL');};request.signal?.addEventListener('abort',abort,{once:true});
+        // A cancel that arrived while the request was still being set up has already fired its
+        // event, so waiting for another one means waiting out the whole timeout instead.
+        if(request.signal?.aborted)abort();
         child.on('error',error=>{if(settled)return;settled=true;clearTimeout(timer);request.signal?.removeEventListener('abort',abort);reject(error);});
         child.on('close',code=>{if(settled)return;settled=true;clearTimeout(timer);request.signal?.removeEventListener('abort',abort);resolve({requestId:request.requestId,mode:'LOCAL_TRUSTED',startedAt,finishedAt:new Date().toISOString(),exitCode:code,timedOut,cancelled,stdout,stderr,outputTruncated:truncated});});
         child.stdin.end(request.stdin??'');
