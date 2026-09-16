@@ -41,6 +41,31 @@ it('takes samples from the analysis and drops the ones it cannot locate', () => 
   expect(tool.samples).toEqual([{ input: { account_id: 'A10001' }, output: { currency: 'CNY' }, path: 'skill/SKILL.md', line: 5 }]);
 });
 
+it('finds a contract by the text it quotes, not by the line number it counted', () => {
+  // Counting lines is arithmetic an agent is bad at: a real run cited line 25 of a 19-line file for
+  // every contract it read, and the whole baseline was dropped while the text it quoted sat right
+  // there. The quote is the evidence; the number is a hint.
+  const tool = inspect({ input: { description: '传入 account_id', snippet: '调用 `lookup`，传入 account_id',
+    path: 'skill/SKILL.md', line: 25 } });
+  expect(tool.inputSchema).toBeNull();
+  expect(tool.evidence).toContainEqual({ path: 'skill/SKILL.md', line: 5, kind: 'INPUT_CONTRACT', detail: '传入 account_id' });
+});
+
+it('drops a contract whose quoted text is nowhere in the file', () => {
+  // A quote that cannot be found means the analysis did not read what it says it read, whatever
+  // line it names.
+  const tool = inspect({ input: { description: '编的', snippet: '这句话文件里没有', path: 'skill/SKILL.md', line: 5 } });
+  expect(tool.evidence.some(item => item.kind === 'INPUT_CONTRACT')).toBe(false);
+  expect(tool.inputSchema).toBeNull();
+});
+
+it('keeps an entrypoint that names a real file even when the line is wrong', () => {
+  // Which file to run is the one thing the platform cannot work out for itself.
+  const tool = inspect({ entrypoint: { kind: 'PYTHON', path: 'tool/lookup.py', line: 77 } });
+  expect(tool.entrypoint).toEqual({ kind: 'PYTHON', path: 'tool/lookup.py' });
+  expect(inspect({ entrypoint: { kind: 'PYTHON', path: 'tool/nope.py', line: 1 } }).entrypoint).toBeUndefined();
+});
+
 it('refuses to synthesize a test input when the analysis found no sample', () => {
   // Deriving a sample from the Schema would be a guess built on a guess: the Schema is itself an
   // analysis reading. Better to say the call cannot be exercised.

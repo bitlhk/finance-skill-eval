@@ -131,6 +131,7 @@ export class MigrationStore {
     // agent's own account of what it could not read, not a generic "unavailable".
     if(agent?.status==='ABSTAINED')return conflict(
       `分析 agent 判定这个工程无法完成分析：${agent.reason}${agent.missing.length?`（缺 ${agent.missing.join('、')}）`:''}。请补齐后重新检查。`);
+    if(agent?.status==='FAILED')return conflict(`分析 agent 没有跑完：${agent.reason}。这是执行问题不是工程问题，请重试或查看 agent 日志。`);
     let inspection:ProjectInspection|null=null;
     if(agent?.status==='PRODUCED'){
       try{
@@ -196,6 +197,9 @@ export class MigrationStore {
       // A4 is not deterministic: the same input can produce or stall. Retry the run a
       // bounded number of times, but treat ABSTAINED as a decision, not a flake.
       const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??2));
+      // Remembered so the fallback is only reached when the agent is genuinely unavailable: an
+      // agent that ran and failed has a reason, and that reason is what the reader needs.
+      let agentFailure:string|null=null;
       for(let attempt=1;attempt<=attempts;attempt++){
       const result=await this.implementer({
         assetDigest:asset.artifactSha256,runId:asset.assetId,files:archive,
@@ -216,12 +220,15 @@ export class MigrationStore {
         if(result.status==='ABSTAINED')throw Object.assign(new Error(
           `迁移模型无法完成本次迁移，已退回授权环节重新决策。${String((result.payload as {reason?:string}).reason??'').trim()}`),{statusCode:409});
       }
+      if(result?.status==='FAILED'){agentFailure=result.reason;continue;}
       if(result?.status==='PRODUCED'){
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const mapped=toGeneratedImplementations(result.payload as never,result.files,nameById);
         if(Object.keys(mapped).length)return mapped;
       }
       }
+      if(agentFailure)return conflict(
+        `迁移 agent 跑完了但没交付可用结果：${agentFailure}。这是执行问题不是工程问题——不会退回只能产出脚本的回退生成器。请重试或查看 agent 日志。`);
     }
     return this.codeGenerator.generate({archive,inspection,decisions});
   }

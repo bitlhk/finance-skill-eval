@@ -38,12 +38,14 @@ export type AgentResult<T = Record<string, unknown>> = StageEnvelope<AgentPayloa
 /**
  * What the analysis hand-off looks like from the store's side: "give me an analysis".
  *
- * `ABSTAINED` is a result, not an absence. Flattening it to `null` here is what used to make the
- * agent's "here is what I could not read" arrive as a faceless "analysis unavailable".
+ * Three states, all of them results. `ABSTAINED` is the agent's judgement and `FAILED` carries the
+ * agent's own account of what went wrong; flattening either into `null` is what made both arrive
+ * as a faceless "analysis unavailable", which tells whoever has to act on it nothing at all.
  */
 export type MigrationAnalysis =
   | { status: "PRODUCED"; payload: unknown; scanner?: Record<string, unknown> | null }
-  | { status: "ABSTAINED"; reason: string; missing: string[] };
+  | { status: "ABSTAINED"; reason: string; missing: string[] }
+  | { status: "FAILED"; reason: string };
 export type MigrationAnalyzer = (input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
 }) => Promise<MigrationAnalysis | null>;
@@ -52,6 +54,8 @@ export type MigrationAnalyzer = (input: {
  * The real analyzer: run the A2 agent. A seam rather than a direct call because the analysis is
  * the store's upstream dependency -- tests stand in a recorded analysis for the same reason they
  * stand in a model, and the payload still goes through the same citation checks.
+ *
+ * `null` means only one thing now: this platform is not set up to run the agent at all.
  */
 export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array> }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
   if (!migrationAgentEnabled()) return null;
@@ -61,12 +65,23 @@ export async function analyzeWithAgent(input: { assetDigest: string; runId: stri
     reason: String(result.payload.judgement?.reason ?? "").trim() || "分析 agent 没有说明弃权原因",
     missing: (result.payload.judgement?.missing ?? []).map(String).filter(Boolean),
   };
-  if (result?.status !== "PRODUCED") return null;
+  if (result?.status !== "PRODUCED") return {
+    status: "FAILED",
+    reason: String(result?.run?.error ?? "").trim() || "分析 agent 没有产出结果，也没有说明原因",
+  };
   return { status: "PRODUCED", payload: result.payload.judgement, scanner: result.payload.scanner ?? null };
 }
 
-/** What the A4 hand-off looks like from the store's side: "build me these Tools". */
-export type MigrationImplementation = { status: "PRODUCED" | "ABSTAINED"; payload: unknown; files: Record<string, string> };
+/**
+ * What the A4 hand-off looks like from the store's side: "build me these Tools".
+ *
+ * `null` means this platform cannot run the agent at all, which is what the fallback generator is
+ * for. An agent that ran and did not finish says `FAILED` and is reported as such -- falling back
+ * there hides the reason and hands the work to a generator that cannot build a service.
+ */
+export type MigrationImplementation =
+  | { status: "PRODUCED" | "ABSTAINED"; payload: unknown; files: Record<string, string> }
+  | { status: "FAILED"; reason: string };
 export type MigrationImplementer = (input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
   decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;
@@ -79,7 +94,10 @@ export async function implementWithAgent(input: {
 }, options: MigrationAgentOptions): Promise<MigrationImplementation | null> {
   if (!migrationAgentEnabled()) return null;
   const result = await runMigrationAgent<{ tools?: unknown[] }>("A4", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
-  if (result?.status !== "PRODUCED" && result?.status !== "ABSTAINED") return null;
+  if (result?.status !== "PRODUCED" && result?.status !== "ABSTAINED") return {
+    status: "FAILED",
+    reason: String(result?.run?.error ?? "").trim() || "迁移 agent 没有产出结果，也没有说明原因",
+  };
   return { status: result.status, payload: result.payload.judgement, files: result.payload.files ?? {} };
 }
 
@@ -160,11 +178,16 @@ function asPortability(value: unknown): Portability {
   return (PORTABILITIES as readonly string[]).includes(candidate) ? candidate as Portability : "UNKNOWN";
 }
 const ENTRYPOINT_KINDS = ["PYTHON", "NODE"] as const;
-/** Only an entrypoint that lands on a real file survives; the platform runs it. */
-function entrypointOf(claim: AgentTool["entrypoint"], cited: (path: string, line: number) => boolean) {
-  const path = String(claim?.path ?? ""), line = Number(claim?.line ?? 0);
-  const kind = String(claim?.kind ?? "").toUpperCase();
-  if (!path || !cited(path, line)) return {};
+/**
+ * Only an entrypoint that lands on a real file survives; the platform runs it.
+ *
+ * The file is what it checks, not the agent's line number: a wrong line would cost the platform
+ * the one thing it cannot work out for itself -- which file to run -- while the agent had named
+ * the right file.
+ */
+function entrypointOf(claim: AgentTool["entrypoint"], exists: (path: string) => boolean) {
+  const path = String(claim?.path ?? ""), kind = String(claim?.kind ?? "").toUpperCase();
+  if (!path || !exists(path)) return {};
   if (!(ENTRYPOINT_KINDS as readonly string[]).includes(kind)) return {};
   return { entrypoint: { kind: kind as (typeof ENTRYPOINT_KINDS)[number], path } };
 }
@@ -188,9 +211,8 @@ export function toProjectInspection(
   scanner?: Record<string, unknown> | null,
   files: Record<string, string> = {},
 ): import("./migration-model.js").ProjectInspection {
-  // Every claim must land on a real file, a real line and the verbatim text at that
-  // line. This is the check the agent cannot perform on itself, so it stays here
-  // rather than moving into the prompt.
+  // Every claim must land on a real file and on text that is really there. This is the check the
+  // agent cannot perform on itself, so it stays here rather than moving into the prompt.
   const linesOf = (target: string): string[] => (files[target] ? files[target].split(/\r?\n/u) : []);
   const cited = (target: string, line: number, endLine = line, snippet?: string): boolean => {
     const lines = linesOf(target);
@@ -198,6 +220,25 @@ export function toProjectInspection(
     if (endLine < line || endLine > lines.length) return false;
     if (!snippet) return true;
     return lines.slice(line - 1, endLine).join("\n").includes(String(snippet).trim());
+  };
+  /**
+   * Where a claim actually lands.
+   *
+   * Counting lines is arithmetic, and an agent reading a file through a tool is bad at it -- one
+   * run cited line 25 of a 19-line file for every contract it reported, so the whole baseline was
+   * dropped even though the text it quoted was right there. So the quoted text is what is trusted
+   * and the line number is only a hint: a snippet that can be found is located, a snippet that
+   * cannot be found means the claim is not evidence, and a bare line number is taken at its word.
+   */
+  const locate = (target: string, line: number, snippet?: string): number | null => {
+    const lines = linesOf(target);
+    if (!lines.length) return null;
+    const text = String(snippet ?? "").trim();
+    if (text) {
+      const found = lines.findIndex(candidate => candidate.includes(text));
+      return found >= 0 ? found + 1 : null;
+    }
+    return Number.isInteger(line) && line >= 1 && line <= lines.length ? line : null;
   };
   const skillStatus = String(payload.skill?.status ?? "").toUpperCase();
   const skillFindings = (payload.skill?.findings ?? []).flatMap(entry => {
@@ -230,9 +271,9 @@ export function toProjectInspection(
     // it points at. A contract the agent cannot locate is reported as unread, not as a guess:
     // downstream compares the migration against this, so a fabricated one would be a straw man.
     const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("./migration-model.js").InspectionEvidence; schema: unknown } | null => {
-      const path = String(claim?.path ?? ""), line = Number(claim?.line ?? 0);
-      if (!cited(path, line)) return null;
-      return { evidence: { path, line, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
+      const path = String(claim?.path ?? ""), at = locate(path, Number(claim?.line ?? 0), claim?.snippet);
+      if (at === null) return null;
+      return { evidence: { path, line: at, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
     };
     const input = contract("INPUT_CONTRACT", tool.input), output = contract("OUTPUT_CONTRACT", tool.output);
     return [{
@@ -245,19 +286,20 @@ export function toProjectInspection(
       inputSchema: input?.schema ?? null,
       outputSchema: output?.schema ?? null,
       samples: (tool.samples ?? []).flatMap(item => {
-        const path = String(item?.path ?? ""), line = Number(item?.line ?? 0);
-        return cited(path, line) ? [{ input: item?.input ?? {}, ...(item?.output === undefined ? {} : { output: item.output }), path, line }] : [];
+        const path = String(item?.path ?? ""), at = locate(path, Number(item?.line ?? 0), item?.snippet);
+        return at === null ? [] : [{ input: item?.input ?? {}, ...(item?.output === undefined ? {} : { output: item.output }), path, line: at }];
       }),
       // An entrypoint is a file the platform will actually run, so it has to exist. The old
       // rules matched a `scripts/` path pattern; that is how a wrong file got executed.
-      ...entrypointOf(tool.entrypoint, cited),
+      ...entrypointOf(tool.entrypoint, path => linesOf(path).length > 0),
       // Uncited evidence is dropped, not downgraded: a claim that cannot be located
       // is not evidence.
       evidence: [
         ...(input ? [input.evidence] : []), ...(output ? [output.evidence] : []),
         ...(tool.evidence ?? []).flatMap(item => {
-          const path = String(item?.path ?? ""), line = Number(item?.line ?? 0), snippet = String(item?.snippet ?? "");
-          return cited(path, line, line, snippet) ? [{ path, line, kind: "AGENT", detail: snippet }] : [];
+          const path = String(item?.path ?? ""), snippet = String(item?.snippet ?? "").trim();
+          const at = locate(path, Number(item?.line ?? 0), snippet);
+          return at === null ? [] : [{ path, line: at, kind: "AGENT", detail: snippet }];
         }),
       ],
       findings: (tool.findings ?? []).flatMap(item => item?.code

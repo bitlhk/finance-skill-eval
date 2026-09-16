@@ -148,6 +148,26 @@ it('re-runs the analysis when the recorded product no longer matches its binding
     expect(calls).toBe(2);
   }finally{await app.close();}
 });
+it('reports why the analysis agent did not finish, instead of calling it unavailable',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'migration-agent-failed-')),data=path.join(root,'data');dirs.push(root);
+  await mkdir(path.join(root,'packs','finance'),{recursive:true});
+  await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
+  // A run that did not finish is an execution problem, and the reader needs to know that rather
+  // than be told, uselessly, that there is no analysis.
+  const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:async()=>({status:'FAILED' as const,reason:'agent produced no result line: model call failed'})});
+  const headers={authorization:'Bearer test'};
+  try{
+    const zip=Buffer.from(zipSync({'SKILL.md':strToU8(method)}));
+    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
+    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'agent failed'}})).json();
+    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
+    expect(result.statusCode).toBe(409);
+    expect(result.json().message).toContain('model call failed');
+    expect(result.json().message).toContain('执行问题');
+    expect(result.json().message).not.toContain('分析不可用');
+  }finally{await app.close();}
+});
 it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{
   const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});
   const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'test'});
