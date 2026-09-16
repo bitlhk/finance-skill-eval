@@ -26,6 +26,7 @@ sys.stdout = sys.stderr
 logging.disable(logging.INFO)
 
 from agent_protocol import build_workspace, emit, parse_structured  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool  # noqa: E402
 from migration_tools import build_compile_tool, build_contract_test_tool  # noqa: E402
 
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
@@ -108,7 +109,7 @@ async def run(body: dict) -> None:
     from openjiuwen.core.sys_operation.sys_operation import SysOperationCard
     from openjiuwen.harness.subagents.code_agent import create_code_agent
     from openjiuwen.harness.tools import (
-        EditFileTool, GlobTool, GrepTool, ListDirTool, ReadFileTool, WriteFileTool,
+        EditFileTool, GlobTool, GrepTool, ListDirTool, WriteFileTool,
     )
 
     from model_config import resolve_model, request_settings
@@ -130,7 +131,7 @@ async def run(body: dict) -> None:
         # compilation and validation have dedicated tools, so a general shell is unnecessary
         # and would make the trace opaque.
         tools = [
-            ReadFileTool(sys_op, lang, agent_id),
+            AbsoluteLineReadFileTool(sys_op, lang, agent_id),
             WriteFileTool(sys_op, lang, agent_id),
             EditFileTool(sys_op, lang, agent_id),
             GrepTool(sys_op, lang, agent_id),

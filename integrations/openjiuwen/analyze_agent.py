@@ -27,6 +27,7 @@ logging.disable(logging.INFO)
 from pathlib import Path as _Path  # noqa: E402
 
 from agent_protocol import build_workspace, emit, parse_structured  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool  # noqa: E402
 from migration_tools import build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
@@ -96,7 +97,7 @@ async def run(body: dict) -> None:
     from openjiuwen.core.sys_operation.base import OperationMode
     from openjiuwen.core.sys_operation.sys_operation import SysOperationCard
     from openjiuwen.harness.subagents.explore_agent import create_explore_agent
-    from openjiuwen.harness.tools import GlobTool, GrepTool, ListDirTool, ReadFileTool
+    from openjiuwen.harness.tools import GlobTool, GrepTool, ListDirTool
 
     from model_config import resolve_model, request_settings
 
@@ -117,7 +118,7 @@ async def run(body: dict) -> None:
         # Read-only tool set, assembled by hand. SysOperationRail would also inject
         # bash, and bash can write -- so it is not a read-only boundary.
         tools = [
-            ReadFileTool(sys_op, lang, agent_id),
+            AbsoluteLineReadFileTool(sys_op, lang, agent_id),
             GrepTool(sys_op, lang, agent_id),
             GlobTool(sys_op, lang, agent_id),
             ListDirTool(sys_op, lang, agent_id),

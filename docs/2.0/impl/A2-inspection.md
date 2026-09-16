@@ -38,6 +38,15 @@ A2 回答三个问题：
 **为什么按原文而不是按行号**：数行号是算术，agent 隔着读文件的工具数不准——实跑时它对一份 19 行的 `SKILL.md` 报了第 25、29、31 行，
 整份基线因此被丢成空。抄原文是模型做得好的事，定位是平台做得好的事。
 
+**行号错在哪，查过两次，是两件事**：
+
+1. **harness 有个真 bug，已在我们这侧修掉**（`integrations/openjiuwen/harness_tools.py`）：`ReadFileTool` 会给行号，
+   但它是**按窗口**编号的——`fs` 读的是 `line_range=(offset+1, ...)`，渲染却把这段窗口从 1 编起。实测 offset=5、limit=3：
+   文件第 6/7/8 行被标成 1/2/3。两个 agent 现在都用 `AbsoluteLineReadFileTool`，行号对得上文件。
+2. **但上面那次的 25/29/31 不是这个 bug。** 修完之后再测一次，模型对同一份文件仍然报 25/29/35，而它引的原文分别在
+   第 13/15/18 行——**整文件读取也被报错**，所以那是模型自己编的，不是工具给的。这正是第 1 条不能省的理由：
+   **片段是判据，行号只是提示**，不是保险起见，是必需。
+
 ## 现在是什么样
 
 | 文件 | 现状 |
@@ -46,6 +55,7 @@ A2 回答三个问题：
 | `src/service/migration-agent.ts` | A2 的进程边界与出处校验（`locate()`）；把 agent 的产出映射成平台的 `ProjectInspection` |
 | `src/service/migration-diagnostics.ts` | 确定性扫描 + 原子发现的证据裁决（文件 + 行号 + 逐字片段） |
 | `src/service/skill-validator.ts` | 规则检查 |
+| `integrations/openjiuwen/harness_tools.py` | `AbsoluteLineReadFileTool`：harness 的读文件工具给行号，但对带 offset 的读取按窗口编号；这里改成按文件的真实行号 |
 
 **没有分析时的行为**：`inspect()` 直接 409，不再退到规则路径；弃权与失败各带 agent 自己给的理由（见 A2-6）。
 A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它喂一份分析结果——**payload 仍然要走同一套出处校验**。
