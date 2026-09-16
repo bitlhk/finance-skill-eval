@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { zipSync } from 'fflate';
@@ -41,7 +41,6 @@ const app = await createEvaluationService({
 });
 const headers = { authorization: `Bearer ${token}` };
 const post = (url, payload = {}) => app.inject({ method: 'POST', url, headers, payload });
-const get = url => app.inject({ url, headers });
 const fail = message => { throw new Error(message); };
 
 try {
@@ -97,7 +96,12 @@ try {
   const produced = suite.json();
   checks.push({ step: 'test_set', source: produced.source, cases: produced.cases.map(item => ({ caseId: item.caseId, requiredTools: item.requiredTools })) });
 
-  process.stdout.write(`${JSON.stringify({ mode: 'REAL_AGENTS_REAL_MODEL', checks }, null, 2)}\n`);
+  // The service logs to stdout, so a six-minute run's result would otherwise arrive interleaved
+  // with request lines -- unreadable by a person and unparseable by a script. The report goes to a
+  // file; stdout gets the headline.
+  await mkdir(path.resolve('reports'), { recursive: true });
+  await writeFile(path.resolve('reports/real-agent-migration.json'), `${JSON.stringify({ mode: 'REAL_AGENTS_REAL_MODEL', checks }, null, 2)}\n`);
+  process.stdout.write(`real-agent-migration: ${checks.map(check => check.step).join(' → ')}；明细见 reports/real-agent-migration.json\n`);
 } finally {
   await app.close();
   await rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
