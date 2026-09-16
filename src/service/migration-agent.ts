@@ -20,8 +20,22 @@ export type AgentStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
 type WireResult<T> = {
   assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
   scanner?: Record<string, unknown> | null; trace?: { rounds: Array<Record<string, unknown>> };
-  elapsedMs?: number; modelId?: string; error?: string;
+  elapsedMs?: number; modelId?: string; error?: string; rawOutput?: string;
 };
+
+/**
+ * Why the agent failed, from whichever field carries it.
+ *
+ * A failed agent either names the reason on `error` or leaves it in what it printed. Reading only
+ * `error` turned "the model answered in prose instead of JSON" into "no reason given" -- the same
+ * loss as dropping the reason, since the printed output *is* the evidence for that failure.
+ */
+function failureReason(wire: WireResult<unknown>): string {
+  const said = String(wire.error ?? "").trim();
+  if (said) return said;
+  const tail = String(wire.rawOutput ?? "").trim().slice(-600);
+  return tail ? `agent 没有说明失败原因，它的原始输出末尾是：${tail}` : "";
+}
 
 /** What the agent produced, beyond the envelope's own binding and status. */
 export type AgentPayload<T> = {
@@ -516,6 +530,7 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
         // envelope below, and this is where the two meet.
         const wire = (JSON.parse(line) as { result?: WireResult<T> }).result ?? {};
         const status = String(wire.status ?? "").toUpperCase();
+        const reason = failureReason(wire);
         resolve(stageEnvelope({
           assetDigest: String(wire.assetDigest ?? assetDigest),
           stageId: stage,
@@ -530,7 +545,7 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
           run: {
             ...(wire.modelId ? { modelId: String(wire.modelId) } : {}),
             ...(typeof wire.elapsedMs === "number" ? { elapsedMs: wire.elapsedMs } : {}),
-            ...(wire.error ? { error: String(wire.error) } : {}),
+            ...(reason ? { error: reason } : {}),
           },
         }));
       } catch (error) {

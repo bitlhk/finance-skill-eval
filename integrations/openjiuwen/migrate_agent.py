@@ -167,6 +167,7 @@ async def run(body: dict) -> None:
             "最后按约定只输出一个 JSON 对象。"
         )})
         raw = str(result.get("output", ""))
+        failure = ""
         try:
             parsed = parse_structured(raw)
             status = "ABSTAINED" if str(parsed.get("status", "")).upper() == "ABSTAINED" else "PRODUCED"
@@ -175,6 +176,8 @@ async def run(body: dict) -> None:
             status = "FAILED"
             payload = {}
             raw = f"{raw}\n\n[parse failed: {exc}]"
+            # Say it here: the platform can only report a reason the agent actually emitted.
+            failure = f"结果不是约定的 JSON：{exc}"[:600]
 
         # The workspace afterwards is the delivery: collect what the agent actually wrote.
         produced: dict[str, str] = {}
@@ -192,11 +195,11 @@ async def run(body: dict) -> None:
                 continue
             # A source file that came back unchanged is not part of the delivery --
             # shipping the runtime-coupled original alongside its migration would be wrong.
-            raw = path.read_bytes()
+            written = path.read_bytes()
             original = originals.get(rel)
-            if original is not None and original == raw:
+            if original is not None and original == written:
                 continue
-            produced[rel] = base64.b64encode(raw).decode()
+            produced[rel] = base64.b64encode(written).decode()
 
         emit(protocol, {"result": {
             "stage": "A4",
@@ -205,6 +208,7 @@ async def run(body: dict) -> None:
             "payload": payload,
             "files": produced,
             "rawOutput": raw[:20000],
+            "error": failure,
             "trace": {"rounds": payload.get("rounds") or []},
             "elapsedMs": round((time.monotonic() - started) * 1000),
             "modelId": settings["model_name"],

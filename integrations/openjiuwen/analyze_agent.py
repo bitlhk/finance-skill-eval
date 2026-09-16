@@ -150,6 +150,7 @@ async def run(body: dict) -> None:
             "query": "检查诊断这个源工程。先调用 run_scanner 拿到确定性发现与覆盖率，再按需读取文件核实。最后按约定只输出一个 JSON 对象。",
         })
         raw = str(result.get("output", ""))
+        failure = ""
         try:
             parsed = parse_structured(raw)
             status = "ABSTAINED" if str(parsed.get("status", "")).upper() == "ABSTAINED" else "PRODUCED"
@@ -158,6 +159,9 @@ async def run(body: dict) -> None:
             status = "FAILED"
             payload = {}
             raw = f"{raw}\n\n[parse failed: {exc}]"
+            # This branch knows exactly what went wrong, so it has to say it. A FAILED with no
+            # reason leaves the platform with nothing to report but a shrug.
+            failure = f"结果不是约定的 JSON：{exc}"[:600]
 
         emit(protocol, {"result": {
             "stage": "A2",
@@ -165,6 +169,7 @@ async def run(body: dict) -> None:
             "status": status,
             "payload": payload,
             "rawOutput": raw[:20000],
+            "error": failure,
             "scanner": scanner_results[0] if scanner_results else None,
             "trace": {"rounds": tool_trace},
             "elapsedMs": round((time.monotonic() - started) * 1000),
