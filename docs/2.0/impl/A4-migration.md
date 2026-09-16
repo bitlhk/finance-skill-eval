@@ -13,11 +13,11 @@
 | --- | --- | --- | --- | --- |
 |A4-1 | ✅ | A4 agent 入口 | 新建 | `integrations/openjiuwen/migrate_agent.py`。`create_code_agent` + **自装配**工具集，**不含 bash / powershell / code** |
 |A4-2 | ✅ | `compile_tool` | 新建 | 按授权语言选工具链（`javac --release 17` / `py_compile` / `tsc` …）。`CodeTool` 是**执行任意代码**，不是编译，不用 |
-|A4-3 | ✅ | `run_contract_test` | 新建 | 门禁三条（起得来/工具有/调得通）；接口差异相对**基线**报告，不参与通过与否。MCP 起真实服务（agent 给的 `start`、平台挑空闲端口、导出 `PORT`），不是把业务模块当 stdin 程序跑 |
+|A4-3 | ✅ | `run_contract_test` | 新建 | 门禁三条（起得来/工具有/调得通）；接口差异相对**基线**报告，不参与通过与否。MCP 起真实服务（**`start` 由 agent 作为入参给出**、平台挑空闲端口、导出 `PORT`），不是把业务模块当 stdin 程序跑。`start` 不在契约里——契约只有分析读出来的东西，见下文「真模型跑出来的三件事」 |
 |A4-4 | ✅ | 拆开生成与候选自检 | 改造 | 拆成三段：`generateImplementations`（要代码）、`publishCandidate`（落成资产）、`inspectCandidate`（诊断 + 合规自检 + 描述生成结果）。`generatePortable` 只做编排——**生成与自检是两笔不同的开销**（各含一次模型调用），混在一个方法里等于让慢而脆的自检决定要不要生成 |
-|A4-5 | ✅ | A4 循环 | 新建 | 生成 → 编译 → 契约测试 → 回灌。三出口：全过 `PRODUCED` / 判定无法忠实迁移 `ABSTAINED` / 预算耗尽 `FAILED` |
+|A4-5 | ✅ | A4 循环 | 新建 | 生成 → 编译 → 契约测试 → 回灌。三出口：全过 `PRODUCED` / 判定无法忠实迁移 `ABSTAINED` / 预算耗尽 `FAILED`。**预算耗尽要说成预算耗尽**：Harness 那时回的不是模型回答，按"回答不是 JSON"报会指错方向 |
 |A4-6 | ✅ | 逐 Tool 弃权 | 新建 | 弃权是**逐 Tool** 的——一个 Tool 弃权退回 A3，不拖累其他 Tool |
-|A4-7 | ✅ | trace 记录 | 新建 | `StageTrace.rounds`：每轮产物摘要 / 编译结果 / 契约测试结果 / 失败原因。**循环相对单次生成唯一多出来的证据** |
+|A4-7 | ✅ | trace 记录 | 新建 | `StageTrace.rounds`：每轮产物摘要 / 编译结果 / 契约测试结果 / 失败原因。**循环相对单次生成唯一多出来的证据**。由**平台自己记**（`compile_source`/`run_contract_test` 回填 + `ToolTraceRail` 记其余工具），原来让模型写进结果 JSON 的 `rounds` 字段已不再读——自述不是证据，且失败时恰好没有 |
 |A4-8 | ✅ | 生成器按语言 | 改造 | 代码（含服务外壳）由 **agent** 生成，平台不生成也不播种。三套模板已搬进技能包当指导（见 A4-13）。回退生成器只剩 Script/Python 一条路，**不扩到 MCP——这是定论不是欠账**：MCP 的后端是一个**服务工程**，平台生成它就会回到"公布的 Schema 是平台猜的那个"。agent 不可用时 MCP 直接 409 说明原因，不产出假的"服务" |
 |A4-9 | ✅ | 生成文件保护 | 改造 | 守卫的前缀 `migration-generated/v2/` 与实际输出（`mcp-<lang>/` / `skill/` / `scripts/`）**不匹配，永不触发**。用户改过的生成文件会被重新生成吞掉 |
 |A4-10 | ✅ | 去掉模型自写冒烟输入 | 删除 | 出题人、答题人、判卷人不能是同一个 |
@@ -47,6 +47,28 @@
 **A4-3 契约测试是整条链的支点。** 循环、trace、弃权都挂在它上面——它不成立，A4 只能退回"单次生成 + 模型自证"。
 
 门禁只有三条：**起得来、工具有、调得通**。接口是否变样是**报告**，不是门禁——迁移必然做适配，逐字一致做不到也不该要求。
+
+### 真模型跑出来的三件事（2026-09-16）
+
+第一次让**真 agent + 真页面**跑完，A4 交付不出来。查下来的根因不在模型，在这里：
+
+1. **MCP 的门永远过不去。** `_mcp_contract` 从**契约**里读 `start`，而契约是平台按分析装配的，只有
+   `form/language/toolName/inputSchema/outputSchema/sample`——**没有 `start`**。`start` 是 agent 的交付声明，
+   按定义在契约测试**之后**才有。于是 MCP 工具每次都拿到 `NO_START_COMMAND`，agent 无从修起，
+   25 轮预算烧完，回一句 `Max iterations reached without completion`。
+   现在 `start` / `prepare` 是 `run_contract_test` 的**入参**：服务怎么起 agent 最清楚，这里就是它唯一能说的地方
+   （与 A4-11 一致，也与本文档原来的说法一致——是代码没跟上）。
+2. **预算耗尽被说成"回答格式不对"。** Harness 在 ReAct 迭代用尽时**不返回模型回答**，只回
+   `Max iterations reached without completion`（`react_agent.py`）。平台去解析这句话，得到 `NO_JSON_IN_OUTPUT`，
+   于是报"结果不是约定的 JSON"——**说的是症状，藏的是病因**，而两者的修法完全不同（加预算/拆任务 vs 再叮嘱模型）。
+   现在按 `result_type` 与那句话本身区分开报。
+3. **trace 不能说没有。** `rounds` 原来是让**模型自己写进结果 JSON** 的——和让它数行号是同一个错误：自述不是证据，
+   而且**恰好在失败时没有**。现在由平台记：`compile_source` / `run_contract_test` 自己回填，
+   其余工具经 `ToolTraceRail`（harness 的 `after_tool_call`）记名。这次就是靠它一眼看到
+   "25 轮里只调了 3 次工具，第一次就被 `NO_START_COMMAND` 顶回来"。
+
+顺带修的：启动命令指向不存在的程序时，`_mcp_contract` / `_run_process` 会**抛异常**而不是报错，
+工具调用直接炸掉；现在与 `service-launch.ts` 一致，回 `SERVICE_FAILED_TO_START` / `PROGRAM_NOT_RUNNABLE`。
 
 ## A4 拿到什么
 

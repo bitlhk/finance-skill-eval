@@ -1,10 +1,16 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { validateMcpTool } from '../dist/mcp-preflight.js';
+
+const execFileAsync = promisify(execFile);
+/** The agents' interpreter, the same one the platform spawns them with. */
+const PYTHON = process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim()
+  || path.resolve('.venv-openjiuwen', 'Scripts', 'python.exe');
 
 /**
  * Execute the MCP skeletons the skill package hands the agent.
@@ -71,6 +77,42 @@ const freePort = () => new Promise((resolve, reject) => {
   probe.listen(0, '127.0.0.1', () => { const address = probe.address(); probe.close(error => error ? reject(error) : resolve(address.port)); });
 });
 
+/**
+ * Run the same skeleton through the A4 agent's own contract test.
+ *
+ * The preflight below proves the skeleton works. This proves the *gate the agent is judged by*
+ * accepts it -- a different claim. `run_contract_test` starts the service from an argv the agent
+ * declares when it calls the tool, and for a while it read that argv from the contract instead,
+ * where the platform never puts it (the contract carries only what the analysis read out of the
+ * source; `start` is the agent's own answer and arrives after the test). Every MCP migration then
+ * died on `NO_START_COMMAND` inside the agent, and nothing here could see it, because nothing here
+ * called that tool.
+ */
+const CONTRACT_DRIVER = `
+import asyncio, json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from migration_tools import build_contract_test_tool
+
+body = json.load(sys.stdin)
+tool = build_contract_test_tool(Path(body["workspace"]), {body["toolId"]: body["contract"]}, [])
+result = asyncio.run(tool.invoke({"tool_id": body["toolId"], "start": body["start"],
+                                  "prepare": body.get("prepare") or []}))
+print(json.dumps(result, ensure_ascii=False))
+`;
+
+async function contractTest(workspace, contract, start, prepare) {
+  const driver = path.join(workspace, 'contract-driver.py');
+  await writeFile(driver, CONTRACT_DRIVER);
+  const { stdout } = await execFileAsync(PYTHON, [driver, path.resolve('integrations/openjiuwen')], {
+    input: JSON.stringify({ workspace, toolId: TOOL_NAME, contract, start, prepare }),
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  const line = stdout.split('\n').map(part => part.trim()).filter(Boolean).reverse().find(part => part.startsWith('{'));
+  if (!line) throw new Error(`the contract tool printed no result: ${stdout.slice(-500)}`);
+  return JSON.parse(line);
+}
+
 async function verify(language, markdown) {
   const root = await mkdtemp(path.join(os.tmpdir(), `mcp-${language.id}-`));
   const directory = path.join(root, language.folder);
@@ -118,7 +160,17 @@ async function verify(language, markdown) {
     const callText = JSON.stringify(result.callResult ?? null);
     if (!callText.includes('received') || !callText.includes(ARGUMENTS.id))
       throw new Error(`the Tool call did not reach the business method: ${callText}`);
-    return { language: language.id, protocol: result.protocolVersion, tool: advertised.name, schema: advertised.inputSchema };
+
+    // The same service again, this time the way A4 is judged on it. `prepare` is skipped: the
+    // project is already installed/built above.
+    const gate = await contractTest(root, {
+      form: 'MCP', toolName: TOOL_NAME, inputSchema: INPUT_SCHEMA, sampleInput: ARGUMENTS,
+    }, [start.program, ...start.args], null);
+    if (gate.passed !== true)
+      throw new Error(`the A4 contract test rejected the skeleton it will be judged on: ${JSON.stringify(gate)}`);
+
+    return { language: language.id, protocol: result.protocolVersion, tool: advertised.name,
+      schema: advertised.inputSchema, contractGate: gate.passed };
   } finally {
     if (server && server.exitCode === null) {
       if (process.platform === 'win32' && server.pid) execFileSync('taskkill.exe', ['/PID', String(server.pid), '/T', '/F'], { stdio: 'ignore' });

@@ -25,8 +25,8 @@ protocol = sys.stdout
 sys.stdout = sys.stderr
 logging.disable(logging.INFO)
 
-from agent_protocol import build_workspace, emit, parse_structured  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool  # noqa: E402
+from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool, ToolTraceRail  # noqa: E402
 from migration_tools import build_compile_tool, build_contract_test_tool  # noqa: E402
 
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
@@ -41,7 +41,11 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 1. 读源实现，理解它的边界条件、外部调用和错误语义；
 2. 写出完整实现（不留 TODO / pass / 占位 / 固定示例应答）；
 3. 调 `compile_source` 编译；
-4. 调 `run_contract_test` 验证输入输出形状没变；
+4. 调 `run_contract_test` 验证起得来、工具有、调得通；
+   - **SCRIPT**：传 `entrypoint`（相对工作区的入口文件）。
+   - **MCP**：**必须传 `start`**（启动服务的 argv 数组），需要装依赖/构建就先传 `prepare`。
+     平台不知道你的服务怎么起，`start` 只能由你给；不传这个 MCP 工具就没法验证。
+     这里给的 `start` 要和最后 JSON 里给的一致。
 5. 失败就按失败原因改，再回到 3。
 
 交付形态（骨架与硬要求见技能包 `references/service-templates.md`）：
@@ -122,6 +126,12 @@ async def run(body: dict) -> None:
 
     originals = {k: base64.b64decode(v) for k, v in body["files"].items()}
     workspace = build_workspace({k: v.decode("utf-8") for k, v in originals.items()})
+    status, raw = "FAILED", ""
+    budget = int(body.get("maxIterations", 25))
+    # The platform's own record of the compile and contract-test rounds. It used to ask the model to
+    # report its rounds in the result JSON, which is the same mistake as asking it for line numbers:
+    # a self-report is not evidence, and it is missing exactly when the run fails.
+    tool_trace: list[dict] = []
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a4-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
         lang = "cn"
@@ -137,8 +147,8 @@ async def run(body: dict) -> None:
             GrepTool(sys_op, lang, agent_id),
             GlobTool(sys_op, lang, agent_id),
             ListDirTool(sys_op, lang, agent_id),
-            build_compile_tool(workspace),
-            build_contract_test_tool(workspace, body.get("contract") or {}),
+            build_compile_tool(workspace, tool_trace),
+            build_contract_test_tool(workspace, body.get("contract") or {}, tool_trace),
         ]
 
         model = init_model(
@@ -152,8 +162,9 @@ async def run(body: dict) -> None:
             tools=tools,
             sys_operation=sys_op,
             workspace=str(workspace),
-            max_iterations=int(body.get("maxIterations", 25)),
+            max_iterations=budget,
             language=lang,
+            rails=[ToolTraceRail(tool_trace)],
             enable_task_loop=False,
         )
 
@@ -177,7 +188,7 @@ async def run(body: dict) -> None:
             payload = {}
             raw = f"{raw}\n\n[parse failed: {exc}]"
             # Say it here: the platform can only report a reason the agent actually emitted.
-            failure = f"结果不是约定的 JSON：{exc}"[:600]
+            failure = not_json_reason(result, exc, budget)
 
         # The workspace afterwards is the delivery: collect what the agent actually wrote.
         produced: dict[str, str] = {}
@@ -209,7 +220,7 @@ async def run(body: dict) -> None:
             "files": produced,
             "rawOutput": raw[:20000],
             "error": failure,
-            "trace": {"rounds": payload.get("rounds") or []},
+            "trace": {"rounds": tool_trace},
             "elapsedMs": round((time.monotonic() - started) * 1000),
             "modelId": settings["model_name"],
         }})
@@ -227,6 +238,9 @@ async def run(body: dict) -> None:
             "error": message,
         }})
     finally:
+        write_agent_dump("a4", f"{status} budget={budget} toolRounds={len(tool_trace)}\n\n"
+                              f"--- rounds ---\n{json.dumps(tool_trace, ensure_ascii=False, indent=1)[:20000]}\n\n"
+                              f"--- output ---\n{raw}")
         shutil.rmtree(workspace, ignore_errors=True)
 
 
