@@ -103,8 +103,8 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 读不出来就整个省略——平台不会替你猜，猜出来的入口会去跑一个错的文件。
 status 为 ABSTAINED 时，reason 与 missing 必须说明缺什么。
 **`snippet` 是一段连续原文**——一字不差地抄，**不要用 `...` 省略中间、不要改标点、不要重排**。
-括号 `{}` 和方括号 `[]` **原样写就好，不用转义**；只有双引号 `"` 和反斜杠 `\` 需要按 JSON 规则转义
-（`\"`、`\\`）。写成 `{{...}}` 或带 `...` 的片段不是原文，平台一查就落空，等于没写。
+括号 `{}` 和方括号 `[]` **原样写就好，不用转义**；只有双引号 `"` 和反斜杠 `\\` 需要按 JSON 规则转义
+（`\\"`、`\\\\`）。写成 `{{...}}` 或带 `...` 的片段不是原文，平台一查就落空，等于没写。
 整份回答会因为一个没闭合的字符串而作废，所以原文太绕就换一条更干净的原文，不要硬塞。
 """
 
@@ -129,6 +129,9 @@ async def run(body: dict) -> None:
     tool_trace: list[dict] = []
     scanner_results: list[dict] = []
     status, raw, failure = "FAILED", "", ""
+    # What the harness handed back, kept for the dump. An empty answer with no error is the one
+    # failure the log cannot otherwise explain, and the fields are what distinguishes the two causes.
+    outcome_keys: list[str] = []
     budget = int(body.get("maxIterations", 60))
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a2-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
@@ -147,10 +150,20 @@ async def run(body: dict) -> None:
             build_run_scanner(workspace, scanner_results),
         ]
 
+        # The platform sends `maxTokens` (`agentMaxTokens`). The fallback only applies to a hand
+        # run, and it has to clear the model's reasoning as well as the answer: on a reasoning
+        # model both come out of the same budget, so a cap sized for the answer alone returns an
+        # empty answer with no error.
+        #
+        # `timeout` is the harness's own per-call limit and its default is 60 s, which a reasoning
+        # model passes routinely -- the same request measured 36 s to 185 s. Left at 60 it fails as
+        # `FrameworkError: model call failed ... Request timed out`, which is not a fact about the
+        # package. The platform sends the role's deadline in milliseconds.
         model = init_model(
             "OpenAI", settings["model_name"], model_settings["apiKey"], model_settings["baseUrl"],
             temperature=float(body.get("temperature", 0.2)),
-            max_tokens=int(body.get("maxTokens", 6000)),
+            max_tokens=int(body.get("maxTokens", 32000)),
+            timeout=int(body.get("modelTimeoutMs", 600_000)) / 1000,
         )
         agent = create_explore_agent(
             model=model,
@@ -181,6 +194,7 @@ async def run(body: dict) -> None:
             "query": "检查诊断这个源工程。先调用 run_scanner 拿到确定性发现与覆盖率，再按需读取文件核实。最后按约定只输出一个 JSON 对象。",
         })
         raw = str(result.get("output", ""))
+        outcome_keys = sorted(result) if isinstance(result, dict) else []
         failure = ""
         try:
             parsed = parse_structured(raw)
@@ -211,6 +225,10 @@ async def run(body: dict) -> None:
         for secret in (model_settings.get("apiKey", ""),):
             if secret:
                 message = message.replace(secret, "[redacted]")
+        # The dump is written in `finally`, and it prints `failure`. Without this the one failure
+        # that is not a parse failure -- the loop itself raising -- is the one the log cannot
+        # explain: an empty output and no reason.
+        failure = message
         emit(protocol, {"result": {
             "stage": "A2",
             "assetDigest": body.get("assetDigest"),
@@ -223,8 +241,8 @@ async def run(body: dict) -> None:
         }})
     finally:
         write_agent_dump("a2", f"{status} budget={budget} toolRounds={len(tool_trace)} "
-                              f"scannerRuns={len(scanner_results)} error={failure!r} "
-                              f"outputChars={len(raw)}\n\n"
+                              f"scannerRuns={len(scanner_results)} outcome={outcome_keys} "
+                              f"error={failure!r} outputChars={len(raw)}\n\n"
                               f"--- rounds ---\n{json.dumps(tool_trace, ensure_ascii=False, indent=1)[:20000]}\n\n"
                               f"--- output ---\n{raw}")
         shutil.rmtree(workspace, ignore_errors=True)

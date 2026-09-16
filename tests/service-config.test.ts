@@ -1,7 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { configuredModelRole } from "../src/service/config.js";
+import { configuredModelRole, modelTimeoutMs } from "../src/service/config.js";
 
 afterEach(() => vi.unstubAllEnvs());
+
+describe("per-completion deadline", () => {
+  it("gives the question writer room to reason", () => {
+    // Measured: the same request to `deepseek-v4-flash` took 36 s, 147 s and 185 s on three
+    // consecutive runs, tracking how long the model chose to reason (~20k tokens on the slow ones).
+    // A 180 s ceiling sits inside that spread, so the stage fails intermittently and the failure
+    // reads as a timeout, which sounds like a hang.
+    expect(modelTimeoutMs("ANALYZER")).toBeGreaterThan(185_000);
+  });
+
+  it("lets an operator pin one, because the model behind a role can change", () => {
+    vi.stubEnv("FINANCE_EVAL_ANALYZER_TIMEOUT_MS", "90000");
+    expect(modelTimeoutMs("ANALYZER")).toBe(90_000);
+    vi.stubEnv("FINANCE_EVAL_ANALYZER_TIMEOUT_MS", "not a number");
+    expect(modelTimeoutMs("ANALYZER")).toBe(600_000);
+    vi.stubEnv("FINANCE_EVAL_ANALYZER_TIMEOUT_MS", "0");
+    expect(modelTimeoutMs("ANALYZER")).toBe(600_000);
+  });
+
+  it("reaches the adapter, not just the helper", () => {
+    vi.stubEnv("FINANCE_EVAL_ANALYZER_BASE_URL", "https://example.invalid/v1");
+    vi.stubEnv("FINANCE_EVAL_ANALYZER_API_KEY", "k");
+    vi.stubEnv("FINANCE_EVAL_ANALYZER_TIMEOUT_MS", "45000");
+    expect(configuredModelRole("ANALYZER").adapter?.adapterId).toBe("service-analyzer-openai-compatible-v1");
+    expect(configuredModelRole("ANALYZER").configured).toBe(true);
+  });
+});
 
 describe("Codex Judge configuration", () => {
   it("keeps the Codex default independent of the shared execution model", () => {

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { modelTimeoutMs, type ModelRole } from "./config.js";
 import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
 import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
@@ -126,6 +127,9 @@ export type MigrationAgentOptions = {
   modelId: string;
   providerId?: string;
   maxIterations?: number;
+  maxTokens?: number;
+  /** One model call inside the agent, not the whole run -- `timeoutMs` below is the run. */
+  modelTimeoutMs?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -134,6 +138,9 @@ const ENTRY: Record<AgentStage, string> = {
   A2: path.join("integrations", "openjiuwen", "analyze_agent.py"),
   A4: path.join("integrations", "openjiuwen", "migrate_agent.py"),
 };
+
+/** The model role each stage runs as. A2 inspects and diagnoses, A4 migrates. */
+const STAGE_ROLE: Record<AgentStage, ModelRole> = { A2: "ANALYZER", A4: "MIGRATION" };
 
 /**
  * How many ReAct iterations an agent gets.
@@ -151,6 +158,34 @@ export function agentIterations(stage: AgentStage): number {
   const configured = Number(process.env.FINANCE_EVAL_AGENT_MAX_ITERATIONS);
   if (Number.isFinite(configured) && configured > 0) return Math.floor(configured);
   return stage === "A2" ? 60 : 120;
+}
+
+/**
+ * How many tokens one model call inside the agent may produce.
+ *
+ * The budget has to cover the model's reasoning *and* its answer: on a reasoning model
+ * `reasoning_content` and `content` come out of the same `max_tokens`, so a cap that looks
+ * generous for the answer alone leaves nothing for the thinking in front of it. That is how A2
+ * failed -- asked for a whole analysis in one object, capped at 6000, it spent the budget reasoning
+ * and returned an empty answer with no error. Measured: 3 of 3 runs empty at 6000, 2 of 3 complete
+ * at 32000.
+ *
+ * It is read here rather than left to the agent's own default so that it can be raised where the
+ * failure is seen. The Python side reads `maxTokens` from the request; until this existed the
+ * platform never sent the field, so the only way to change it was to edit the agent's source.
+ *
+ * Two knobs, in order: the role's own, then one for both agents. Named by role rather than by
+ * stage because that is what the rest of the configuration is named by -- `FINANCE_EVAL_ANALYZER_*`
+ * and `FINANCE_EVAL_MIGRATION_*` already select the model, its endpoint and its deadline, and the
+ * budget belongs to the same sentence. The two jobs are different sizes -- A2 answers with an
+ * analysis, A4 writes whole programs -- so raising one should not force the other up with it.
+ */
+export function agentMaxTokens(stage: AgentStage): number {
+  for (const name of [`FINANCE_EVAL_${STAGE_ROLE[stage]}_MAX_TOKENS`, "FINANCE_EVAL_AGENT_MAX_TOKENS"]) {
+    const configured = Number(process.env[name]);
+    if (Number.isFinite(configured) && configured > 0) return Math.floor(configured);
+  }
+  return 32_000;
 }
 
 export class MigrationAgentUnavailable extends Error {
@@ -575,6 +610,11 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
     stage,
     model: { modelId: options.modelId, providerId: options.providerId ?? "service-execution" },
     maxIterations: options.maxIterations ?? agentIterations(stage),
+    maxTokens: options.maxTokens ?? agentMaxTokens(stage),
+    // The harness's own default is 60 s per model call, which a reasoning model passes routinely:
+    // measured, the same request ranged 36 s to 185 s. The role's deadline is the number that
+    // already means "how long one call for this role may take", so the agent gets that one.
+    modelTimeoutMs: options.modelTimeoutMs ?? modelTimeoutMs(STAGE_ROLE[stage]),
     ...request,
   });
 

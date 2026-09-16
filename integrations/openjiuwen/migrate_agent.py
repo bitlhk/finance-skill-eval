@@ -136,7 +136,10 @@ async def run(body: dict) -> None:
 
     originals = {k: base64.b64decode(v) for k, v in body["files"].items()}
     workspace = build_workspace({k: v.decode("utf-8") for k, v in originals.items()})
-    status, raw = "FAILED", ""
+    status, raw, failure = "FAILED", "", ""
+    # What the harness handed back, kept for the dump. An empty answer with no error is the one
+    # failure the log cannot otherwise explain, and the fields are what distinguishes the two causes.
+    outcome_keys: list[str] = []
     budget = int(body.get("maxIterations", 120))
     # The platform's own record of the compile and contract-test rounds. It used to ask the model to
     # report its rounds in the result JSON, which is the same mistake as asking it for line numbers:
@@ -161,10 +164,14 @@ async def run(body: dict) -> None:
             build_contract_test_tool(workspace, body.get("contract") or {}, tool_trace),
         ]
 
+        # The platform sends `maxTokens` (`agentMaxTokens`) and `modelTimeoutMs`
+        # (`modelTimeoutMs`); the fallbacks are for a hand run. The timeout matters because the
+        # harness's own default is 60 s per model call.
         model = init_model(
             "OpenAI", settings["model_name"], bound["apiKey"], bound["baseUrl"],
             temperature=float(body.get("temperature", 0.2)),
-            max_tokens=int(body.get("maxTokens", 8000)),
+            max_tokens=int(body.get("maxTokens", 32000)),
+            timeout=int(body.get("modelTimeoutMs", 300_000)) / 1000,
         )
         agent = create_code_agent(
             model=model,
@@ -197,6 +204,7 @@ async def run(body: dict) -> None:
             "最后按约定只输出一个 JSON 对象。"
         )})
         raw = str(result.get("output", ""))
+        outcome_keys = sorted(result) if isinstance(result, dict) else []
         failure = ""
         try:
             parsed = parse_structured(raw)
@@ -248,6 +256,10 @@ async def run(body: dict) -> None:
         for secret in (bound.get("apiKey", ""),):
             if secret:
                 message = message.replace(secret, "[redacted]")
+        # The dump is written in `finally`, and it prints `failure`. Without this the one failure
+        # that is not a parse failure -- the loop itself raising -- is the one the log cannot
+        # explain: an empty output and no reason.
+        failure = message
         emit(protocol, {"result": {
             "stage": "A4",
             "assetDigest": body.get("assetDigest"),
@@ -257,7 +269,8 @@ async def run(body: dict) -> None:
             "error": message,
         }})
     finally:
-        write_agent_dump("a4", f"{status} budget={budget} toolRounds={len(tool_trace)}\n\n"
+        write_agent_dump("a4", f"{status} budget={budget} toolRounds={len(tool_trace)} "
+                              f"outcome={outcome_keys} error={failure!r}\n\n"
                               f"--- rounds ---\n{json.dumps(tool_trace, ensure_ascii=False, indent=1)[:20000]}\n\n"
                               f"--- output ---\n{raw}")
         shutil.rmtree(workspace, ignore_errors=True)

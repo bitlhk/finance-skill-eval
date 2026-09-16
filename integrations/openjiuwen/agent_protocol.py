@@ -55,6 +55,14 @@ def not_json_reason(result: object, exc: Exception, budget: int) -> str:
         return f"agent 被中断，没有给出结果：{output.strip()[:200]}"[:600]
     if kind == "error":
         return f"agent 以错误结束，没有给出结果：{output.strip()[:200]}"[:600]
+    if not output.strip():
+        # Nothing came back and the loop did not say why. The result's fields are the one thing that
+        # separates "the model answered with nothing" from "the harness dropped the answer": a
+        # reasoning model that spends its whole output budget on `reasoning_content` finishes with
+        # an empty `content`, and that is fixed with a larger max_tokens, not a better prompt.
+        keys = sorted(result) if isinstance(result, dict) else []
+        return (f"agent 没有给出任何输出（空回答），harness 也没有报错。返回的字段：{keys}。"
+                "推理模型把整个输出预算用在 reasoning 上时会这样收尾")[:600]
     return f"结果不是约定的 JSON：{exc}"[:600]
 
 

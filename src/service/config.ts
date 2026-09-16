@@ -93,8 +93,31 @@ export function configuredModelRole(
         apiKey: environment.apiKey,
         baseUrl: environment.baseUrl,
         requestDefaults: z.record(z.unknown()).parse(JSON.parse(process.env[`FINANCE_EVAL_${role}_REQUEST_DEFAULTS`] ?? "{}")),
-        timeoutMs: role === "JUDGE" ? 240_000 : 180_000,
+        timeoutMs: modelTimeoutMs(role),
       })
       : null,
   };
+}
+
+/**
+ * How long one completion may take, per role.
+ *
+ * The question writer's budget is the one that was wrong. Writing a test set is the same request
+ * every time and the model's answer is not: measured over three consecutive runs against
+ * `deepseek-v4-flash`, it took 36 s when the model reasoned briefly and 185 s and 147 s when it
+ * reasoned for ~20k tokens. A 180 s ceiling sits inside that spread, so the stage fails on a
+ * schedule nobody can see -- and reads as a timeout, which sounds like a hang rather than a
+ * budget. Reasoning length is the model's call, not ours, so the ceiling has to clear the tail
+ * instead of the median.
+ *
+ * Each role can be pinned from the environment, which is what an operator needs when the model
+ * behind a role changes: the failure is intermittent, and the fix should not require a release.
+ */
+export function modelTimeoutMs(role: ModelRole): number {
+  const configuredMs = Number.parseInt(process.env[`FINANCE_EVAL_${role}_TIMEOUT_MS`] ?? "", 10);
+  if (Number.isFinite(configuredMs) && configuredMs > 0) return configuredMs;
+  if (role === "JUDGE") return 240_000;
+  if (role === "ANALYZER") return 600_000;
+  if (role === "MIGRATION") return 300_000;
+  return 180_000;
 }
