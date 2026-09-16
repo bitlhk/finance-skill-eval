@@ -69,6 +69,11 @@ it('says what is wrong instead of throwing when the service will not run', async
   const died = await startService({ worker, workspace, service: { start: ['node', 'dies.mjs'] } });
   expect(!died.ok && died.error).toContain('SERVICE_EXITED');
   expect(!died.ok && died.error).toContain('7');
+
+  // An allowed toolchain that is not installed arrives as an 'error' event rather than an exit
+  // code, and an unhandled one would take the whole platform process down.
+  const missing = await startService({ worker, workspace, service: { start: ['/nonexistent/uv', 'run', 'server.py'] } });
+  expect(!missing.ok && missing.error).toContain('SERVICE_FAILED_TO_START');
 });
 
 it('never picks a port something else is already on', async () => {

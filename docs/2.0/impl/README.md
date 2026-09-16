@@ -63,4 +63,5 @@ X-1 统一契约信封
 ## 卡点
 
 1. **回退生成器只产 Script/Python。** `MigrationCodeGenerator` 是 agent 不可用时的兜底，遇到 MCP 直接拒绝并说明；扩到 python/node MCP 是笔独立的账（但按最新决策，平台不该生成服务，所以这笔账要不要做存疑）。
-2. **三套骨架能跑通，但只在开发机上。** `scripts/verify-mcp-templates.mjs` 需要 `uv` / `node` / `mvn`，且 Python 与 Node 首次要联网取依赖；没有进 CI。
+2. **真模型那条只有开发机能跑。** `scripts/verify-real-agent-migration.mjs` 要模型密钥，按设计不进 CI。
+   骨架校验（`test:skeleton:mcp`）与浏览器回归（`test:ui:migration-v2`）都已经在 CI 里。

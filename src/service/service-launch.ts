@@ -130,14 +130,17 @@ export async function startService(input: {
   }
 
   const child = spawn(start[0]!, start.slice(1), { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  let stderr = '';
+  let stderr = '', spawnError: string | null = null;
   child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-4000); });
   child.stdout?.on('data', () => undefined);
+  // A command that cannot be executed at all -- the toolchain is missing -- arrives as an event,
+  // not as an exit code, and an unhandled one would take the process down with it.
+  child.once('error', error => { spawnError = `SERVICE_FAILED_TO_START: 启动命令 ${start.join(' ')} 无法执行：${error.message}`; });
   input.signal?.addEventListener('abort', () => { void terminate(child); }, { once: true });
 
-  const alive = (): string | null => child.exitCode === null
+  const alive = (): string | null => spawnError ?? (child.exitCode === null
     ? null
-    : `SERVICE_EXITED: 启动命令 ${start.join(' ')} 以退出码 ${child.exitCode} 结束${stderr.trim() ? `：${stderr.trim().slice(-600)}` : ''}`;
+    : `SERVICE_EXITED: 启动命令 ${start.join(' ')} 以退出码 ${child.exitCode} 结束${stderr.trim() ? `：${stderr.trim().slice(-600)}` : ''}`);
 
   try {
     const ready = await waitForPort(port, input.timeoutMs ?? READY_TIMEOUT_MS, alive);

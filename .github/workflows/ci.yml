@@ -19,6 +19,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # The platform starts delivered Python services with `uv run`, and the skeleton check needs
+      # it for the Python skeleton. Both are steps below.
+      - uses: astral-sh/setup-uv@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,6 +31,8 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
+      - name: Run the MCP skeletons the skill package hands the agent
+        run: pnpm test:skeleton:mcp
       - name: Compile native target (no live credentials or model calls)
         run: mvn -B -f examples/migration-native-host/pom.xml package
       - run: pnpm exec playwright install --with-deps chromium
