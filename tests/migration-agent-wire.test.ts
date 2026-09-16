@@ -43,6 +43,13 @@ it('takes the agent\'s own reason when it gives one',async()=>{
   expect(result.run.error).toBe('结果不是约定的 JSON：Expecting value');
 });
 
+it('does not invent a failure to explain for a run that produced its payload',async()=>{
+  // Quoting a successful run's output back as an error would be worse than saying nothing.
+  const result=await runStub('A2',{status:'PRODUCED',payload:{status:'PRODUCED'},rawOutput:'{"status":"PRODUCED"}'});
+  expect(result.status).toBe('PRODUCED');
+  expect(result.run.error).toBeUndefined();
+});
+
 it('passes that reason all the way out to the store, for both stages',async()=>{
   const files={'SKILL.md':new TextEncoder().encode('# t')};
   // Through the hand-offs the store actually calls: drop the reason at either seam and the reader

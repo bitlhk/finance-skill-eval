@@ -29,10 +29,13 @@ type WireResult<T> = {
  * A failed agent either names the reason on `error` or leaves it in what it printed. Reading only
  * `error` turned "the model answered in prose instead of JSON" into "no reason given" -- the same
  * loss as dropping the reason, since the printed output *is* the evidence for that failure.
+ *
+ * The fallback is only for a result that did not succeed: a run that produced its payload has no
+ * failure to explain, and quoting its output as one would invent an error that never happened.
  */
-function failureReason(wire: WireResult<unknown>): string {
+function failureReason(wire: WireResult<unknown>, produced: boolean): string {
   const said = String(wire.error ?? "").trim();
-  if (said) return said;
+  if (said || produced) return said;
   const tail = String(wire.rawOutput ?? "").trim().slice(-600);
   return tail ? `agent 没有说明失败原因，它的原始输出末尾是：${tail}` : "";
 }
@@ -530,7 +533,7 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
         // envelope below, and this is where the two meet.
         const wire = (JSON.parse(line) as { result?: WireResult<T> }).result ?? {};
         const status = String(wire.status ?? "").toUpperCase();
-        const reason = failureReason(wire);
+        const reason = failureReason(wire, status === "PRODUCED" || status === "ABSTAINED");
         resolve(stageEnvelope({
           assetDigest: String(wire.assetDigest ?? assetDigest),
           stageId: stage,
