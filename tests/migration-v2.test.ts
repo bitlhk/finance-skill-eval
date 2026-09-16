@@ -242,6 +242,37 @@ it('refuses to write a test set before the analysis it would be built from',asyn
   }finally{await app.close();}
 });
 
+it('abstains instead of shipping a placeholder when a Tool cannot be migrated faithfully',async()=>{
+  const data=await mkdtemp(path.join(os.tmpdir(),'migration-abstain-'));dirs.push(data);
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['tool/lookup.py'],portability:'RUNTIME_BOUND'})]),
+    // The honest answer when the business implementation is not in the package: say so.
+    migrationImplementer:async input=>({status:'ABSTAINED',
+      payload:{status:'ABSTAINED',tools:[{toolId:(input.tools[0] as {toolId:string}).toolId,status:'ABSTAINED',
+        reason:'业务实现在编译产物里，读不到源码',missing:['tool/orders.jar']}]},
+      files:{}})});
+  const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
+  try{
+    const archive={'skill/SKILL.md':SKILL_MD,'tool/lookup.py':'def lookup(account_id): return {}\n'};
+    const uploaded=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync(Object.fromEntries(Object.entries(archive).map(([name,value])=>[name,strToU8(value)]))))})).json();
+    const project=(await post('/api/migrations',{sourceAssetId:uploaded.assetId,name:'abstaining'})).json();
+    const inspection=(await post(`/api/migrations/${project.id}/inspect`)).json();
+    const tool=inspection.tools[0];
+    await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form:'MCP',baseAssetId:uploaded.assetId}});
+    const result=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});
+    expect(result.statusCode).toBe(409);
+    expect(result.json().message).toContain('无法忠实迁移');
+    // Named, so the reader knows which Tool to go and fix, and told what is missing.
+    expect(result.json().message).toContain(tool.toolId);
+    expect(result.json().message).toContain('读不到源码');
+    expect(result.json().message).toContain('tool/orders.jar');
+    // An abstention is a decision, so nothing is delivered: no candidate, no generated files.
+    const report=(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();
+    expect(report.project.candidate).toBeNull();
+    expect(report.project.portableGenerations??[]).toEqual([]);
+  }finally{await app.close();}
+});
+
 it('prepares a Python Script Tool from its pyproject before technical validation',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-pyproject-'));dirs.push(data);
   const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
