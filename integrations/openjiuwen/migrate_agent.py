@@ -99,10 +99,10 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
     "compilePassed": true, "contractPassed": true,
     "reason": "", "missing": []
   }],
-  "rounds": [{"round": 1, "toolId": "", "compile": "", "contract": "", "failure": ""}],
   "reason": "", "missing": []
 }
 整体 status 为 ABSTAINED 时，说明哪些 Tool 做不了。
+不要写 `rounds`：你调了哪些工具、编译和契约测试过了没有，平台自己记，不需要你复述。
 """
 
 
@@ -127,7 +127,7 @@ async def run(body: dict) -> None:
     originals = {k: base64.b64decode(v) for k, v in body["files"].items()}
     workspace = build_workspace({k: v.decode("utf-8") for k, v in originals.items()})
     status, raw = "FAILED", ""
-    budget = int(body.get("maxIterations", 25))
+    budget = int(body.get("maxIterations", 120))
     # The platform's own record of the compile and contract-test rounds. It used to ask the model to
     # report its rounds in the result JSON, which is the same mistake as asking it for line numbers:
     # a self-report is not evidence, and it is missing exactly when the run fails.

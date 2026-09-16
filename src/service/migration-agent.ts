@@ -134,6 +134,24 @@ const ENTRY: Record<AgentStage, string> = {
   A4: path.join("integrations", "openjiuwen", "migrate_agent.py"),
 };
 
+/**
+ * How many ReAct iterations an agent gets.
+ *
+ * A round is a model turn, not a tool call: a model that narrates what it is about to do spends a
+ * round without touching a tool, so the number has to fit a working style rather than a call count.
+ * Field runs on this repo's own acceptance fixture burned 15 rounds in A2 with a single scanner
+ * call, and 25 in A4 with three -- both are the platform failing a task that was going fine, and
+ * the fix is a bigger budget or a smaller task, never fewer words in the contract.
+ *
+ * The platform owns the number because the platform is the side that knows the task, and because
+ * the failure it prevents is only actionable if it can be raised.
+ */
+export function agentIterations(stage: AgentStage): number {
+  const configured = Number(process.env.FINANCE_EVAL_AGENT_MAX_ITERATIONS);
+  if (Number.isFinite(configured) && configured > 0) return Math.floor(configured);
+  return stage === "A2" ? 60 : 120;
+}
+
 export class MigrationAgentUnavailable extends Error {
   constructor(message: string) {
     super(message);
@@ -479,7 +497,7 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
   const body = JSON.stringify({
     stage,
     model: { modelId: options.modelId, providerId: options.providerId ?? "service-execution" },
-    maxIterations: options.maxIterations,
+    maxIterations: options.maxIterations ?? agentIterations(stage),
     ...request,
   });
 

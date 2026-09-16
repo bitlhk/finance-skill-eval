@@ -113,7 +113,7 @@ async def run(body: dict) -> None:
     tool_trace: list[dict] = []
     scanner_results: list[dict] = []
     status, raw = "FAILED", ""
-    budget = int(body.get("maxIterations", 15))
+    budget = int(body.get("maxIterations", 60))
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a2-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
         lang = "cn"
@@ -194,7 +194,9 @@ async def run(body: dict) -> None:
             "error": message,
         }})
     finally:
-        write_agent_dump("a2", f"{status} budget={budget} scannerRuns={len(scanner_results)}\n\n"
+        write_agent_dump("a2", f"{status} budget={budget} toolRounds={len(tool_trace)} "
+                              f"scannerRuns={len(scanner_results)}\n\n"
+                              f"--- rounds ---\n{json.dumps(tool_trace, ensure_ascii=False, indent=1)[:20000]}\n\n"
                               f"--- output ---\n{raw}")
         shutil.rmtree(workspace, ignore_errors=True)
 
