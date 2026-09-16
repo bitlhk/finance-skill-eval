@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
 import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
 
@@ -216,6 +217,43 @@ function asPortability(value: unknown): Portability {
  * package asks for enough of the line to identify it. */
 const MIN_SNIPPET = 8;
 
+/**
+ * The line where `snippet` starts inside `source`, or null when it is not there.
+ *
+ * Whitespace is the one thing not taken literally, and it is not a concession to laziness: an agent
+ * quoting a block reflows it. A field run turned a six-line `ToolResponse(...)` into the same
+ * tokens with a different indent and a blank line inserted; matching line by line dropped the
+ * claim, and with it that half of the baseline. Collapsing whitespace runs keeps every word and
+ * every mark of punctuation, in order, contiguous -- which is what "the agent read this" means. A
+ * quote that reorders, drops or invents a token still does not land, and neither does one that
+ * spans two unrelated places in the file.
+ */
+function seek(source: string, snippet: string): number | null {
+  let collapsed = "";
+  const origin: number[] = [];
+  let gap = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    if (/\s/u.test(character)) {
+      gap = true;
+      continue;
+    }
+    if (gap && collapsed) {
+      collapsed += " ";
+      origin.push(index);
+    }
+    gap = false;
+    collapsed += character;
+    origin.push(index);
+  }
+  const found = collapsed.indexOf(snippet.trim().replace(/\s+/gu, " "));
+  if (found < 0) return null;
+  const at = origin[found] ?? 0;
+  let line = 1;
+  for (let index = 0; index < at; index += 1) if (source[index] === "\n") line += 1;
+  return line;
+}
+
 const ENTRYPOINT_KINDS = ["PYTHON", "NODE"] as const;
 /**
  * Only an entrypoint that lands on a real file survives; the platform runs it.
@@ -224,9 +262,9 @@ const ENTRYPOINT_KINDS = ["PYTHON", "NODE"] as const;
  * the one thing it cannot work out for itself -- which file to run -- while the agent had named
  * the right file.
  */
-function entrypointOf(claim: AgentTool["entrypoint"], exists: (path: string) => boolean) {
-  const path = String(claim?.path ?? ""), kind = String(claim?.kind ?? "").toUpperCase();
-  if (!path || !exists(path)) return {};
+function entrypointOf(claim: AgentTool["entrypoint"], resolve: (path: string) => string | null) {
+  const path = resolve(String(claim?.path ?? "")), kind = String(claim?.kind ?? "").toUpperCase();
+  if (path === null) return {};
   if (!(ENTRYPOINT_KINDS as readonly string[]).includes(kind)) return {};
   return { entrypoint: { kind: kind as (typeof ENTRYPOINT_KINDS)[number], path } };
 }
@@ -250,9 +288,35 @@ export function toProjectInspection(
   scanner?: Record<string, unknown> | null,
   files: Record<string, string> = {},
 ): import("./migration-model.js").ProjectInspection {
+  /**
+   * The asset path behind a path the agent reported.
+   *
+   * The agent reads the package inside a workspace it was handed, and it names files the way it
+   * reached them -- an absolute `C:\...\Temp\finance-migration-ws-XXXX\skill\SKILL.md`. The asset
+   * key is the tail of that: the workspace mirrors the package, so the suffix is exact rather than
+   * a guess. A bare `skill/SKILL.md` (the other thing an agent writes) is already a key and passes
+   * through untouched. An ambiguous tail resolves to nothing: a claim that could be about either
+   * of two files is not a claim about one of them.
+   */
+  const assetPath = (target: string): string | null => {
+    if (files[target]) return target;
+    const flattened = target.replaceAll("\\", "/").replace(/^[A-Za-z]:/u, "");
+    if (files[flattened]) return flattened;
+    const segments = flattened.split("/").filter(Boolean);
+    for (let start = 0; start < segments.length; start += 1) {
+      const tail = segments.slice(start).join("/");
+      const hits = Object.keys(files).filter(key => key === tail || key.endsWith(`/${tail}`));
+      if (hits.length === 1) return hits[0] ?? null;
+      if (hits.length > 1) return null;
+    }
+    return null;
+  };
   // Every claim must land on a real file and on text that is really there. This is the check the
   // agent cannot perform on itself, so it stays here rather than moving into the prompt.
-  const linesOf = (target: string): string[] => (files[target] ? files[target].split(/\r?\n/u) : []);
+  const linesOf = (target: string): string[] => {
+    const key = assetPath(target);
+    return key ? (files[key] ?? "").split(/\r?\n/u) : [];
+  };
   const cited = (target: string, line: number, endLine = line, snippet?: string): boolean => {
     const lines = linesOf(target);
     if (!lines.length || !Number.isInteger(line) || line < 1 || line > lines.length) return false;
@@ -268,29 +332,36 @@ export function toProjectInspection(
    * dropped even though the text it quoted was right there. So the quoted text is what is trusted
    * and the line number is only a hint: a snippet that can be found is located, a snippet that
    * cannot be found means the claim is not evidence, and a bare line number is taken at its word.
+   *
+   * A quote may run over several lines (`seek` explains what is and is not taken literally), and
+   * the line that comes back is where it starts.
    */
-  const locate = (target: string, snippet?: string): number | null => {
-    const lines = linesOf(target);
-    const text = String(snippet ?? "").trim();
+  const locate = (target: string, snippet?: string): { path: string; line: number } | null => {
+    const key = assetPath(target);
+    const raw = key ? (files[key] ?? "") : "";
+    const text = String(snippet ?? "");
     // The quote is the only input. A line number from the agent is not a fallback: measured over
     // two runs with correct numbers in front of it, the agent placed all eight of its claims on a
     // line that does not contain the text it quoted. Trusting that would put a wrong location into
     // the baseline, which is worse than having none.
-    if (!lines.length || text.length < MIN_SNIPPET) return null;
-    const found = lines.findIndex(candidate => candidate.includes(text));
+    if (!key || !raw || text.trim().length < MIN_SNIPPET) return null;
     // First match: the guarantee is that the text is on the reported line, not that it is the
     // occurrence the author had in mind. A quote that appears twice cannot say which.
-    return found >= 0 ? found + 1 : null;
+    // The path comes back as the asset key: everything downstream reads the package, not the
+    // agent's workspace, and a temp directory in the record is both wrong and unstable.
+    const at = seek(raw, text);
+    return at === null ? null : { path: key, line: at };
   };
   const skillStatus = String(payload.skill?.status ?? "").toUpperCase();
   const skillFindings = (payload.skill?.findings ?? []).flatMap(entry => {
     const finding = entry as { code?: string; severity?: string; path?: string; line?: number; message?: string; suggestion?: string };
     if (!finding?.code) return [];
-    if (!cited(String(finding.path ?? ""), Number(finding.line ?? 0))) return [];
+    const path = assetPath(String(finding.path ?? ""));
+    if (path === null || !cited(path, Number(finding.line ?? 0))) return [];
     return [{
       code: String(finding.code),
       severity: severity(finding.severity),
-      path: String(finding.path ?? ""),
+      path,
       line: Number(finding.line ?? 1),
       message: String(finding.message ?? ""),
       suggestion: String(finding.suggestion ?? ""),
@@ -299,7 +370,13 @@ export function toProjectInspection(
   const tools = (payload.tools ?? []).flatMap(tool => {
     const name = String(tool.name ?? "").trim();
     if (!name) return [];
-    const sourcePaths = (tool.sourcePaths ?? []).map(String).filter(Boolean);
+    // Same convention as every other path the agent names: it read the file in its own workspace.
+    const sourcePaths = (tool.sourcePaths ?? []).flatMap(entry => {
+      const path = String(entry ?? "").trim();
+      if (!path) return [];
+      const key = assetPath(path);
+      return key === null ? [] : [key];
+    });
     // The language is read off the files, not taken from the agent's account of them: the
     // recommendation below is a platform rule, so its input has to be a fact.
     const language = languageOfSourcePaths(sourcePaths);
@@ -313,9 +390,9 @@ export function toProjectInspection(
     // it points at. A contract the agent cannot locate is reported as unread, not as a guess:
     // downstream compares the migration against this, so a fabricated one would be a straw man.
     const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("./migration-model.js").InspectionEvidence; schema: unknown } | null => {
-      const path = String(claim?.path ?? ""), at = locate(path, claim?.snippet);
+      const at = locate(String(claim?.path ?? ""), claim?.snippet);
       if (at === null) return null;
-      return { evidence: { path, line: at, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
+      return { evidence: { path: at.path, line: at.line, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
     };
     const input = contract("INPUT_CONTRACT", tool.input), output = contract("OUTPUT_CONTRACT", tool.output);
     return [{
@@ -328,20 +405,20 @@ export function toProjectInspection(
       inputSchema: input?.schema ?? null,
       outputSchema: output?.schema ?? null,
       samples: (tool.samples ?? []).flatMap(item => {
-        const path = String(item?.path ?? ""), at = locate(path, item?.snippet);
-        return at === null ? [] : [{ input: item?.input ?? {}, ...(item?.output === undefined ? {} : { output: item.output }), path, line: at }];
+        const at = locate(String(item?.path ?? ""), item?.snippet);
+        return at === null ? [] : [{ input: item?.input ?? {}, ...(item?.output === undefined ? {} : { output: item.output }), path: at.path, line: at.line }];
       }),
       // An entrypoint is a file the platform will actually run, so it has to exist. The old
       // rules matched a `scripts/` path pattern; that is how a wrong file got executed.
-      ...entrypointOf(tool.entrypoint, path => linesOf(path).length > 0),
+      ...entrypointOf(tool.entrypoint, path => (linesOf(path).length > 0 ? assetPath(path) : null)),
       // Uncited evidence is dropped, not downgraded: a claim that cannot be located
       // is not evidence.
       evidence: [
         ...(input ? [input.evidence] : []), ...(output ? [output.evidence] : []),
         ...(tool.evidence ?? []).flatMap(item => {
-          const path = String(item?.path ?? ""), snippet = String(item?.snippet ?? "").trim();
-          const at = locate(path, snippet);
-          return at === null ? [] : [{ path, line: at, kind: "AGENT", detail: snippet }];
+          const snippet = String(item?.snippet ?? "").trim();
+          const at = locate(String(item?.path ?? ""), snippet);
+          return at === null ? [] : [{ path: at.path, line: at.line, kind: "AGENT", detail: snippet }];
         }),
       ],
       findings: (tool.findings ?? []).flatMap(item => item?.code
@@ -361,7 +438,7 @@ export function toProjectInspection(
   // Coverage comes from the scanner, not from the agent's own account of itself.
   const incompleteFiles = Array.isArray(scanner?.coverage)
     ? (scanner.coverage as Array<{ path?: string; status?: string }>).flatMap(entry =>
-        entry?.path && entry.status && !/^(PARSED|OK)$/iu.test(entry.status)
+        entry?.path && entry.status && !SCAN_COMPLETE_STATUSES.includes(String(entry.status).toUpperCase())
           ? [{ path: String(entry.path), status: String(entry.status) }]
           : [])
     : [];

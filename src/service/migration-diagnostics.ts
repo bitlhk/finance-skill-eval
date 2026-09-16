@@ -10,6 +10,20 @@ import { configuredModelRole, type ConfiguredModelRole } from './config.js';
 export type Finding = {id:string;path:string;line:number;endLine:number;snippet:string;dependencyType:string;
   reason:string;impact:string;suggestion:string;confidence:string;layer:string;symbol?:string|null;
   source?:'STATIC'|'MODEL';verification?:'VERIFIED'};
+/**
+ * The coverage statuses that mean "the scanner saw this file".
+ *
+ * `TEXT_INSPECTED` is a file read as text, `AST_PARSED` a Python file that parsed; both complete.
+ * Everything else the scanner emits -- `PARSE_FAILED`, `LEXICAL_ONLY`, `UNSUPPORTED_LANGUAGE`,
+ * `SIZE_LIMIT`, `BINARY_NOT_PARSED` -- describes a file it did not fully see, and so does any
+ * status this list does not know: the gate exists to make a human look, so an unrecognised value
+ * must not open it.
+ *
+ * One list, because it used to be two. The second copy was written as `PARSED|OK`, which is not
+ * among the statuses the scanner emits, so every package came back partially analysed and the
+ * confirmation became a dialog with nothing behind it.
+ */
+export const SCAN_COMPLETE_STATUSES: readonly string[] = ['AST_PARSED','TEXT_INSPECTED'];
 export type Diagnosis = {
   schemaVersion:'migration-diagnosis.v1';assetId:string;digest:string;createdAt:string;
   status:'COMPLETE'|'PARTIAL';dependencyStatus:'EXPLICIT_BINDING'|'NO_BINDING_IN_CHECKED_SCOPE'|'UNKNOWN';

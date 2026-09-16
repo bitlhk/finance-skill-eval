@@ -1,4 +1,4 @@
-import type { Diagnosis } from './migration-diagnostics.js';
+import { SCAN_COMPLETE_STATUSES, type Diagnosis } from './migration-diagnostics.js';
 import type { ProjectInspection } from './migration-model.js';
 import { validateSkill } from './skill-validator.js';
 
@@ -18,7 +18,7 @@ import { validateSkill } from './skill-validator.js';
 export function inspectProject(input:{assetId:string;assetDigest:string;files:Record<string,string>;skillFile:string;diagnosis?:Diagnosis|null}):ProjectInspection{
   const skill=validateSkill(input.files,input.skillFile);
   const incompleteFiles=input.diagnosis?[...input.diagnosis.coverage
-    .filter(item=>!['AST_PARSED','TEXT_INSPECTED'].includes(item.status))
+    .filter(item=>!SCAN_COMPLETE_STATUSES.includes(item.status))
     .map(item=>({path:item.path,status:item.status})),
     ...input.diagnosis.findings.filter(item=>item.layer==='UNKNOWN').map(item=>({path:item.path,status:item.dependencyType}))
   ].filter((item,index,all)=>all.findIndex(other=>other.path===item.path&&other.status===item.status)===index):[];

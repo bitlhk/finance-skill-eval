@@ -80,10 +80,85 @@ it('keeps an entrypoint that names a real file even when the line is wrong', () 
   expect(inspect({ entrypoint: { kind: 'PYTHON', path: 'tool/nope.py', line: 1 } }).entrypoint).toBeUndefined();
 });
 
+it('reads a path the agent named from its own workspace', () => {
+  // The agent reads the package inside the workspace it was handed, so it names files the way it
+  // reached them. One field run said `C:\...\Temp\finance-migration-ws-XXXX\skill\SKILL.md` for
+  // every claim it made, none of them matched a key in `files`, and the entire baseline -- the
+  // thing A4 is compared against -- was dropped without a word.
+  const tool = inspect({ input: { description: '传入 account_id',
+    path: 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\finance-migration-ws-z2s82zu5\\skill\\SKILL.md',
+    snippet: '调用 `lookup`，传入 account_id' } });
+  expect(tool.evidence).toContainEqual({ path: 'skill/SKILL.md', line: 5, kind: 'INPUT_CONTRACT', detail: '传入 account_id' });
+});
+
+it('keeps a temp path out of what the platform records', () => {
+  const tool = inspect({ sourcePaths: ['C:\\Users\\Administrator\\AppData\\Local\\Temp\\ws-1\\tool\\lookup.py'],
+    entrypoint: { kind: 'PYTHON', path: 'C:\\Users\\Administrator\\AppData\\Local\\Temp\\ws-1\\tool\\lookup.py' } });
+  expect(tool.sourcePaths).toEqual(['tool/lookup.py']);
+  expect(tool.entrypoint).toEqual({ kind: 'PYTHON', path: 'tool/lookup.py' });
+});
+
+it('does not pick a file when the tail names two of them', () => {
+  // Two files with the same tail is a question the path cannot answer, and a baseline that points
+  // at the wrong one is worse than a missing entry.
+  const ambiguous = { ...FILES, 'other/SKILL.md': '另一份 SKILL.md。\n' };
+  const tool = toProjectInspection({ skill: { status: 'COMPLIANT', findings: [] },
+    tools: [{ name: 'lookup', input: { description: 'x', path: 'C:/ws/SKILL.md', snippet: '另一份 SKILL.md' } }] } as never,
+    'asset', 'a'.repeat(64), stableToolId, null, ambiguous).tools[0]!;
+  expect(tool.evidence.some(item => item.kind === 'INPUT_CONTRACT')).toBe(false);
+});
+
 it('refuses to synthesize a test input when the analysis found no sample', () => {
   // Deriving a sample from the Schema would be a guess built on a guess: the Schema is itself an
   // analysis reading. Better to say the call cannot be exercised.
   expect(contractSample({ samples: [{ input: { account_id: 'A10001' } }] })).toEqual({ input: { account_id: 'A10001' } });
   expect(contractSample({ samples: [] })).toEqual({ reason: '分析没有读出样例，无法构造调用输入' });
   expect(contractSample(undefined)).toEqual({ reason: '分析没有读出样例，无法构造调用输入' });
+});
+
+it('finds a block quote the agent reflowed', () => {
+  // Field run: the agent quoted a six-line ToolResponse(...) with a different indent and a blank
+  // line inserted between two of its lines. Every token was there; the formatting was not. Matching
+  // line by line dropped the claim and with it half the baseline.
+  const block = { 'tool/pay.py': 'def pay(subtotal):\n    return ToolResponse(content={\n        "status": "ok",\n        "total": "1.00",\n    })\n' };
+  const tool = toProjectInspection({ skill: { status: 'COMPLIANT', findings: [] }, tools: [{ name: 'pay',
+    output: { description: 'ok plus total', path: 'tool/pay.py',
+      snippet: 'return ToolResponse(content={\n\n        "status": "ok",\n\n        "total": "1.00",' } }] } as never,
+    'asset', 'a'.repeat(64), stableToolId, null, block).tools[0]!;
+  expect(tool.evidence).toContainEqual({ path: 'tool/pay.py', line: 2, kind: 'OUTPUT_CONTRACT', detail: 'ok plus total' });
+});
+
+it('still refuses a quote whose tokens do not match', () => {
+  // Whitespace is the only thing taken loosely. A token added, dropped or reordered is not a quote.
+  const tool = inspect({ input: { description: 'x', path: 'skill/SKILL.md',
+    snippet: '调用 lookup，传入 account_id 和 tenant_id' } });
+  expect(tool.evidence.some(item => item.kind === 'INPUT_CONTRACT')).toBe(false);
+});
+
+it('counts a file the scanner read as coverage, not as a gap', () => {
+  // The scanner says `TEXT_INSPECTED` for a file it read as text and `AST_PARSED` for Python it
+  // parsed -- both mean it saw the file. The gap check was written against `PARSED|OK`, which the
+  // scanner never emits, so every package came back partially analysed: A4's generation was
+  // refused, and the page asked a human to confirm a shortfall that did not exist. Nothing behind
+  // the dialog, on every run.
+  const analysis = toProjectInspection({ skill: { status: 'COMPLIANT', findings: [] }, tools: [] } as never,
+    'asset', 'a'.repeat(64), stableToolId,
+    { coverage: [{ path: 'skill/SKILL.md', status: 'TEXT_INSPECTED' },
+      { path: 'skill/tool.py', status: 'AST_PARSED' },
+      { path: 'skill/broken.py', status: 'PARSE_FAILED' },
+      { path: 'skill/big.bin', status: 'SIZE_LIMIT' }] }, FILES);
+  expect(analysis.staticAnalysis?.incompleteFiles).toEqual([
+    { path: 'skill/broken.py', status: 'PARSE_FAILED' },
+    { path: 'skill/big.bin', status: 'SIZE_LIMIT' },
+  ]);
+  expect(analysis.staticAnalysis?.status).toBe('PARTIAL');
+});
+
+it('treats a coverage status it does not know as a gap', () => {
+  // Fail-safe: the gate exists to make a human look, so a new status from the scanner must not
+  // open it by accident.
+  const analysis = toProjectInspection({ skill: { status: 'COMPLIANT', findings: [] }, tools: [] } as never,
+    'asset', 'a'.repeat(64), stableToolId,
+    { coverage: [{ path: 'skill/tool.py', status: 'SOMETHING_NEW' }] }, FILES);
+  expect(analysis.staticAnalysis?.incompleteFiles).toEqual([{ path: 'skill/tool.py', status: 'SOMETHING_NEW' }]);
 });
