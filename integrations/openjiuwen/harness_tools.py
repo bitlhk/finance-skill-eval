@@ -50,7 +50,36 @@ def shift_line_numbers(rendered: str, offset: int) -> str:
 
 
 class AbsoluteLineReadFileTool(ReadFileTool):
-    """`ReadFileTool` with line numbers that match the file."""
+    """`ReadFileTool` with line numbers that match the file, and a description that says so.
+
+    The harness's own description says only that results "come with line numbers". It never says
+    whose, and for a windowed read they were the window's -- so the one thing the agent needs to
+    know in order to quote a line was both unstated and, until the fix above, untrue.
+    """
+
+    _DESCRIPTION = {
+        "cn": (
+            "从本地文件系统读取文件。file_path 必须是绝对路径。"
+            "返回内容每行左侧的数字是**该行在文件中的行号**——要引用某一行就照抄它，不要自己数。"
+            "默认从文件开头读最多 2000 行；用 offset/limit 读大文件的某一段时，行号仍按文件编，不从 1 开始。"
+            "支持图片、PDF 和 Jupyter Notebook。只能读取文件，不能读取目录。"
+            "大文件请用 offset/limit 读取指定部分，或用 grep 搜索具体内容。"
+        ),
+        "en": (
+            "Read a file from the local filesystem. file_path must be an absolute path. "
+            "The number to the left of each line is that line's number in the file -- copy it when "
+            "citing a line rather than counting. By default, reads up to 2000 lines from the "
+            "beginning; with offset/limit the numbers still refer to the file, not to the window. "
+            "Supports images, PDFs, and Jupyter notebooks. Can read files only, not directories. "
+            "For large files, use offset/limit to read a specific portion, or use grep to search for specific content."
+        ),
+    }
+
+    def __init__(self, operation, language: str = "cn", agent_id: str | None = None,
+                 enable_image_multimodal: bool = True) -> None:
+        super().__init__(operation, language, agent_id, enable_image_multimodal)
+        self._card = self._card.model_copy(
+            update={"description": self._DESCRIPTION.get(language, self._DESCRIPTION["cn"])})
 
     async def _read_text(self, file_path: str, offset: int, limit: int, apply_size_cap: bool = True) -> str:
         rendered = await super()._read_text(file_path, offset, limit, apply_size_cap)
