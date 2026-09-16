@@ -51,10 +51,13 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
   **工具名不改**。Java 首期只用 JDK 17 标准库。
 - **SCRIPT**：写出**可直接运行的程序**，从 stdin 读一个 JSON object、**只**向 stdout 写一个 JSON value。
 
-交付时还要给三样：
+交付时还要给这几样：
 
 - **`start`：启动命令**。平台按它把服务起起来跑契约测试。**是 argv 数组，不是一整条 shell 字符串**，
   例如 `["uv","run","--no-project","server.py"]` 或 `["node","server.js"]`。
+- **启动命令必须走包内环境，不是你的环境。** 服务有依赖就用 `["uv","run","--no-project","server.py"]`
+  （或 `["node","server.js"]` 配好 `package.json`）；**裸 `python` / `node` 只在服务纯标准库时才对**——
+  你的环境里装了平台给的东西，**包的环境里没有**，在你的环境里起得来不代表在人家那里起得来。
 - **`prepare`：可选的一次性准备步骤**（装依赖、构建），必须先成功退出。装依赖就写这里，
   例如 `["npm","install","--omit=dev"]`。
 - **`changes`：接口改动**。你相对基线动了哪些入参出参，**每处都要写理由**。迁移必然做适配
