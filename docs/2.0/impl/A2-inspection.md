@@ -201,8 +201,9 @@ await target.reload_skills()
 - **拆**：`service-templates.md` 移进新包 `enterprise-migration-delivery`。原先它躺在判断包里，
   而判断包的 `description` 逐字是 A2 的活（"检查与判断依据……"），**一个字没提写服务**——
   于是 A2 每次都把这份用不上、且不该由它掌握的材料读进去。
-- **并**：A2 的 5 篇并成 `references/judgement-rules.md`。references 的意义是"按需只加载需要的"，
+- **并**：A2 的 5 篇并成**一份**，且直接放进 `SKILL.md`（192 行，远低于官方 500 行上限）。references 的意义是"按需只加载需要的"，
   可 A2 的活就是"读这个包、给出判断"，**5 篇它每次都要**——按需收益为零，只剩 5 次往返。
+  **而判断规则本身就是指令，不是"细节"**，所以它该在 `SKILL.md` 里；取材料因此从 2 次降到 **1 次**。
 - **合并顺带消掉一处矛盾**：`evidence-rules` 说"`line` 必须是真实行号"、`analysis-rules` 说"不要给行号"，
   分在两处读起来互相打架。真相是**两条路各管各的**（finding 带行号且平台核对；分析主张只给片段、行号平台算），
   并进一篇才讲得清。

@@ -52,7 +52,8 @@ integrations/openjiuwen/
 ├── analyze_agent.py    # 新增：A2 检查诊断 agent 入口
 └── migrate_agent.py    # 新增：A4 改造 agent 入口
 
-skills/enterprise-migration/   # 新增：企业规范技能包（见 §6.7）
+skills/enterprise-migration/   # 新增：A2 的判断依据（见 §6.7）
+skills/enterprise-migration-delivery/  # 新增：A4 的交付形态依据（见 §6.7）
 ```
 
 新增的两个 agent 入口是 `session.py` 的同类兄弟——同一套工具包装、事件上报、错误脱敏、进程隔离模式，差别只在系统提示词与工具集。三者**不复用同一个 session**：评估 agent 的"不执行写操作"等约束与 A4 需要的写工作区冲突。
@@ -244,7 +245,7 @@ ADMITTED
 
 每个 finding 包含 `code`、`severity`、`path`、`line`、`message` 和 `suggestion`。检查器只读，不执行上传代码。
 
-这些检查规则的依据来自**企业规范技能包**的 `skill-spec.md`（见 §6.7），由 A2 agent 按需读取；规则本身可独立更新，不需改动提示词。
+这些检查规则的依据来自**企业规范技能包** `enterprise-migration` 的 `SKILL.md` 第 ③ 节（见 §6.7），由 A2 agent 按需读取；规则本身可独立更新，不需改动提示词。
 
 ## 6. A2 检查诊断（agent）
 
@@ -353,9 +354,7 @@ agent 化之后，判据分成两处，边界必须守住：
 ```
 skills/
 ├── enterprise-migration/                # A2 检查判断用
-│   ├── SKILL.md                         # workflow + 索引
-│   └── references/
-│       └── judgement-rules.md           # 分析 / 合规 / 可移植性 / 形式建议 / 证据与弃权
+│   └── SKILL.md                         # 判断规则全文（192 行，见下）
 └── enterprise-migration-delivery/       # A4 改造交付用
     ├── SKILL.md
     └── references/
@@ -368,11 +367,11 @@ skills/
 
 **为什么把 A2 那五篇并成一篇**：references 的意义是"**按需**只加载需要的那份"，可 A2 的活就是"读这个包、给出判断"——**五篇它每次都要**，按需加载收益为零，只剩五次往返。并成一篇后取材料从 7 次降到 2 次（索引 + 正文），读的字节数不变。
 
-**合并同时消掉一处矛盾**：`evidence-rules` 写"`line` 必须是真实行号"，`analysis-rules` 写"不要给行号、由平台按原文定位"——分在两处读起来自相矛盾。真相是**两条路各管各的**：finding 带行号且平台会核对，分析主张只给片段、行号由平台算。并进一篇才能把这条并列讲清楚（见 `judgement-rules.md` 第 ① 节）。
+**合并同时消掉一处矛盾**：`evidence-rules` 写"`line` 必须是真实行号"，`analysis-rules` 写"不要给行号、由平台按原文定位"——分在两处读起来自相矛盾。真相是**两条路各管各的**：finding 带行号且平台会核对，分析主张只给片段、行号由平台算。并进一篇才能把这条并列讲清楚（见 `enterprise-migration/SKILL.md` 第 ① 节）。
 
 **判据按 workflow 分组，不按"文件数"分组**：agent 需要的是它那一类任务的完整规则，而不是能被选择性加载的碎片。
 
-**语言判据已定**：同语言优先 → 生态最接近 → 兜底（MCP 用 Java、Script 用 Python）；源语言不在支持范围则 `UNSUPPORTED`。实现在 `migration-model.ts` 的 `recommendLanguage()`，原则写进 `judgement-rules.md`，**目标语言集合不写进技能包**——那是平台能力，会随模板增减而变。
+**语言判据已定**：同语言优先 → 生态最接近 → 兜底（MCP 用 Java、Script 用 Python）；源语言不在支持范围则 `UNSUPPORTED`。实现在 `migration-model.ts` 的 `recommendLanguage()`，原则写进 `enterprise-migration/SKILL.md` 第 ⑤ 节，**目标语言集合不写进技能包**——那是平台能力，会随模板增减而变。
 
 ### 6.8 已核对的框架 API
 

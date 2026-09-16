@@ -23,7 +23,7 @@
 |A4-10 | ✅ | 去掉模型自写冒烟输入 | 删除 | 出题人、答题人、判卷人不能是同一个 |
 |A4-11 | ✅ | 交付启动命令 | 新建 | `start`（argv 数组）与可选 `prepare`（装依赖/构建）。**平台真的用它起服务**（`service-launch.ts`：挑空闲端口 → 导出 `PORT` → 等监听 → 验证 → 连进程树一起停），不是只记下来。`portable-candidate.ts` 只负责放置与路径安全，不拼启动方式 |
 |A4-12 | ✅ | 接口差异报告 | 新建 | `changes`（每一处改动 + 理由）+ `drift`（契约测试实测到的差异）随交付物上行，落进 `PortableGeneration` 并在生成步骤展示。**只是报告，不判通过与否** |
-|A4-13 | ✅ | 模板进技能包 | 改造 | 三套脚手架搬进技能包 `skills/enterprise-migration-delivery/references/service-templates.md` 当指导；判断规则在判断包 `skills/enterprise-migration/references/judgement-rules.md`（**A4 不挂载它**——判断阶段已经做完，且平台不给 A4 分类判断）。`portable-candidate.ts` 里已无模板。**三套骨架都由 `scripts/verify-mcp-templates.mjs` 从文档里读出来**编译/装依赖并跑（真实 MCP 客户端），否则"指导"没人执行，会烂掉 |
+|A4-13 | ✅ | 模板进技能包 | 改造 | 三套脚手架搬进技能包 `skills/enterprise-migration-delivery/references/service-templates.md` 当指导；判断规则在判断包 `skills/enterprise-migration/SKILL.md`（**A4 不挂载它**——判断阶段已经做完，且平台不给 A4 分类判断）。`portable-candidate.ts` 里已无模板。**三套骨架都由 `scripts/verify-mcp-templates.mjs` 从文档里读出来**编译/装依赖并跑（真实 MCP 客户端），否则"指导"没人执行，会烂掉 |
 
 ## 现状
 
