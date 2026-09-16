@@ -140,5 +140,5 @@ description: 根据已核验风险证据形成审核建议。
     } finally {
       await app.close();
     }
-  }, 45_000);
+  });
 });

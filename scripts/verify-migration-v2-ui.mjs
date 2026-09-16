@@ -111,7 +111,11 @@ const implementationFixture=async input=>{
 };
 
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),
-  accessToken:token,publicDemo:false,migrationAnalyzer,migrationImplementer:implementationFixture});
+  accessToken:token,publicDemo:false,migrationAnalyzer,migrationImplementer:implementationFixture,
+  // The question writer is the platform's, so it is stood in here: what this script checks is that
+  // the analysis reaches it and that the result is reachable from the page.
+  migrationSuite:async input=>({summary:`从分析生成：${input.tools.join('、')}`,
+    cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn'}]})});
 let browser;
 try{
   const mcpBase=await listen(mcp),mcpEndpoint=`${mcpBase}/mcp`;
@@ -164,6 +168,16 @@ try{
   await mcpCard.getByRole('button',{name:'试运行',exact:true}).click();
   await page.getByRole('heading',{name:'get_acceptance_order · 验证通过',exact:true}).waitFor();
   checks.push('script_and_mcp_technical_validation');
+
+  // The test set is written from the analysis, and a reader has to be able to reach it: generated
+  // here, listed with its questions, and offered as the content for the whole-Skill validation.
+  await page.getByRole('button',{name:'从分析生成测试集',exact:true}).click();
+  await expect(page.getByText('AI 生成 · 1 道题',{exact:true})).toBeVisible();
+  await expect(page.getByText('从分析生成：get_acceptance_order、calculate_acceptance_total',{exact:true})).toBeVisible();
+  await page.getByText('查看题目',{exact:true}).click();
+  await expect(page.getByText('查询订单 ORDER-001 的金额与审批状态',{exact:true})).toBeVisible();
+  await expect(page.getByRole('option',{name:/迁移测试集 · 1 道题/u})).toHaveCount(1);
+  checks.push('generated_test_set_visible_and_selectable');
 
   await page.getByRole('button',{name:'7 下载结果',exact:true}).click();
   const pending=page.waitForEvent('download');

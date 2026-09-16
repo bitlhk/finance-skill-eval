@@ -47,5 +47,5 @@ describe("wealth management professional value replay", () => {
       expect.objectContaining({ criterionId: "decision-changing-questions" }),
       expect.objectContaining({ criterionId: "decision-tradeoff-language" }),
     ]));
-  }, 30_000);
+  });
 });

@@ -31,5 +31,5 @@ describe("investment research replay", () => {
         expect.objectContaining({ criterionId: "balance-sheet-analysis" }),
         expect.objectContaining({ criterionId: "inventory-receivable-crosscheck" }),
       ]));
-  }, 30_000);
+  });
 });

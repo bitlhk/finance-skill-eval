@@ -257,4 +257,9 @@ OpenJiuwen 验证通过后，用户可以复用现有开发题、Judge、Optimiz
 
 混合 Tool 的公开业务用例覆盖正常订单、订单不存在、订单未批准和 Script Tool 输入异常；另保留一个不同金额的隐藏订单，防止只针对公开答案实现。
 
-运行 `pnpm test:ui:migration-v2` 可以使用真实本地服务和无界面 Chrome，重复验证页面上传、检查、迁移选择、完成版替换、Script/MCP 技术验证与 ZIP 下载。测试不会调用企业模型服务，也不会读取本机模型凭据。
+运行 `pnpm test:ui:migration-v2` 可以使用真实本地服务和无界面 Chrome，重复验证页面上传、检查、迁移选择、
+接口改动报告、从分析生成测试集、Script/MCP 技术验证与 ZIP 下载。测试不会调用企业模型服务，也不会读取本机模型凭据。
+
+运行 `pnpm test:skeleton:mcp` 会把技能包 `references/service-templates.md` 里的 Python / Node / Java 三套
+MCP 骨架**读出来**编译并起服务，用真实 MCP 客户端确认公布的 Schema 与源一致、调用打到业务方法。它需要
+`uv` / `node` / `mvn`，且 Python 与 Node 首次要联网取依赖——所以它现在只在开发机上跑，没进 CI。
