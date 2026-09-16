@@ -94,20 +94,40 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from migration_tools import build_contract_test_tool
 
-body = json.load(sys.stdin)
+def note(message):
+    sys.stderr.write(f"driver: {message}\\n")
+    sys.stderr.flush()
+
+# The request comes from a file, not stdin: under Node's execFile this child's stdin never reaches
+# EOF (verified with a plain sys.stdin.read(), with and without the input option), so a driver that
+# reads it blocks forever -- which in a verifier reads as "the whole script is slow".
+body = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 tool = build_contract_test_tool(Path(body["workspace"]), {body["toolId"]: body["contract"]}, [])
+note("invoking")
 result = asyncio.run(tool.invoke({"tool_id": body["toolId"], "start": body["start"],
                                   "prepare": body.get("prepare") or []}))
+note("returned")
 print(json.dumps(result, ensure_ascii=False))
 `;
 
 async function contractTest(workspace, contract, start, prepare) {
   const driver = path.join(workspace, 'contract-driver.py');
+  const request = path.join(workspace, 'contract-request.json');
   await writeFile(driver, CONTRACT_DRIVER);
-  const { stdout } = await execFileAsync(PYTHON, [driver, path.resolve('integrations/openjiuwen')], {
-    input: JSON.stringify({ workspace, toolId: TOOL_NAME, contract, start, prepare }),
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  await writeFile(request, JSON.stringify({ workspace, toolId: TOOL_NAME, contract, start, prepare }));
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(PYTHON, [driver, path.resolve('integrations/openjiuwen'), request], {
+      maxBuffer: 8 * 1024 * 1024,
+      // A gate that never returns is worse than one that fails: this is the only place the tool is
+      // executed outside a real A4 run, so a hang here would read as "the whole verifier is slow".
+      timeout: 240_000,
+      killSignal: 'SIGKILL',
+    }));
+  } catch (error) {
+    // `stderr` is where the driver says how far it got, and it is the only view into the hang.
+    throw new Error(`the contract tool did not return: ${error.message}\n${(error.stderr ?? '').slice(-2000)}`);
+  }
   const line = stdout.split('\n').map(part => part.trim()).filter(Boolean).reverse().find(part => part.startsWith('{'));
   if (!line) throw new Error(`the contract tool printed no result: ${stdout.slice(-500)}`);
   return JSON.parse(line);
@@ -144,14 +164,22 @@ async function verify(language, markdown) {
     server = spawn(start.program, start.args, { cwd: directory, env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     server.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-4000); });
+    // A cold start goes through `uv run`, which resolves and installs the skeleton's declared
+    // dependencies first; that is seconds of work before anything listens. The window has to cover
+    // it, and the failure has to carry what the service said -- otherwise a slow start, a missing
+    // package and a wrong port all read the same from here.
+    const READY_ATTEMPTS = 150;
+    const startedAt = Date.now();
     let result;
-    for (let attempt = 0; attempt < 60; attempt += 1) {
+    for (let attempt = 0; attempt < READY_ATTEMPTS; attempt += 1) {
       await new Promise(resolve => setTimeout(resolve, 500));
       if (server.exitCode !== null) throw new Error(`the server exited early with code ${server.exitCode}: ${stderr.trim()}`);
       result = await validateMcpTool({ endpoint: `http://127.0.0.1:${port}/mcp`, toolName: TOOL_NAME, arguments: ARGUMENTS });
       if (result.status === 'ready') break;
     }
-    if (result?.status !== 'ready') throw new Error(result?.error ?? 'the skeleton never became reachable');
+    if (result?.status !== 'ready')
+      throw new Error(`the skeleton never became reachable in ${Math.round((Date.now() - startedAt) / 1000)}s `
+        + `on PORT=${port}: ${result?.error ?? 'no reason given'}\n${stderr.trim().slice(-1500)}`);
 
     const advertised = result.tools.find(tool => tool.name === TOOL_NAME);
     if (!advertised) throw new Error(`advertised ${result.tools.map(tool => tool.name).join(',')} instead of ${TOOL_NAME}`);
@@ -163,6 +191,7 @@ async function verify(language, markdown) {
 
     // The same service again, this time the way A4 is judged on it. `prepare` is skipped: the
     // project is already installed/built above.
+    process.stdout.write(`      A4 contract gate\n`);
     const gate = await contractTest(root, {
       form: 'MCP', toolName: TOOL_NAME, inputSchema: INPUT_SCHEMA, sampleInput: ARGUMENTS,
     }, [start.program, ...start.args], null);
@@ -173,8 +202,12 @@ async function verify(language, markdown) {
       schema: advertised.inputSchema, contractGate: gate.passed };
   } finally {
     if (server && server.exitCode === null) {
-      if (process.platform === 'win32' && server.pid) execFileSync('taskkill.exe', ['/PID', String(server.pid), '/T', '/F'], { stdio: 'ignore' });
-      else server.kill();
+      // A process that is already gone needs no killing, and `taskkill` answers that with exit
+      // code 255 -- which, thrown from a `finally`, replaces whatever actually went wrong.
+      try {
+        if (process.platform === 'win32' && server.pid) execFileSync('taskkill.exe', ['/PID', String(server.pid), '/T', '/F'], { stdio: 'ignore' });
+        else server.kill();
+      } catch { /* already exited, or no longer ours to kill */ }
       await Promise.race([once(server, 'exit'), new Promise(resolve => setTimeout(resolve, 5000))]);
     }
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
