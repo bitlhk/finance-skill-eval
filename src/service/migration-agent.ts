@@ -177,6 +177,10 @@ function asPortability(value: unknown): Portability {
   const candidate = String(value ?? "").toUpperCase();
   return (PORTABILITIES as readonly string[]).includes(candidate) ? candidate as Portability : "UNKNOWN";
 }
+/** Shorter than this, a quote matches half the file and locates nothing; the rule in the skill
+ * package asks for enough of the line to identify it. */
+const MIN_SNIPPET = 8;
+
 const ENTRYPOINT_KINDS = ["PYTHON", "NODE"] as const;
 /**
  * Only an entrypoint that lands on a real file survives; the platform runs it.
@@ -230,15 +234,18 @@ export function toProjectInspection(
    * and the line number is only a hint: a snippet that can be found is located, a snippet that
    * cannot be found means the claim is not evidence, and a bare line number is taken at its word.
    */
-  const locate = (target: string, line: number, snippet?: string): number | null => {
+  const locate = (target: string, snippet?: string): number | null => {
     const lines = linesOf(target);
-    if (!lines.length) return null;
     const text = String(snippet ?? "").trim();
-    if (text) {
-      const found = lines.findIndex(candidate => candidate.includes(text));
-      return found >= 0 ? found + 1 : null;
-    }
-    return Number.isInteger(line) && line >= 1 && line <= lines.length ? line : null;
+    // The quote is the only input. A line number from the agent is not a fallback: measured over
+    // two runs with correct numbers in front of it, the agent placed all eight of its claims on a
+    // line that does not contain the text it quoted. Trusting that would put a wrong location into
+    // the baseline, which is worse than having none.
+    if (!lines.length || text.length < MIN_SNIPPET) return null;
+    const found = lines.findIndex(candidate => candidate.includes(text));
+    // First match: the guarantee is that the text is on the reported line, not that it is the
+    // occurrence the author had in mind. A quote that appears twice cannot say which.
+    return found >= 0 ? found + 1 : null;
   };
   const skillStatus = String(payload.skill?.status ?? "").toUpperCase();
   const skillFindings = (payload.skill?.findings ?? []).flatMap(entry => {
@@ -271,7 +278,7 @@ export function toProjectInspection(
     // it points at. A contract the agent cannot locate is reported as unread, not as a guess:
     // downstream compares the migration against this, so a fabricated one would be a straw man.
     const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("./migration-model.js").InspectionEvidence; schema: unknown } | null => {
-      const path = String(claim?.path ?? ""), at = locate(path, Number(claim?.line ?? 0), claim?.snippet);
+      const path = String(claim?.path ?? ""), at = locate(path, claim?.snippet);
       if (at === null) return null;
       return { evidence: { path, line: at, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
     };
@@ -286,7 +293,7 @@ export function toProjectInspection(
       inputSchema: input?.schema ?? null,
       outputSchema: output?.schema ?? null,
       samples: (tool.samples ?? []).flatMap(item => {
-        const path = String(item?.path ?? ""), at = locate(path, Number(item?.line ?? 0), item?.snippet);
+        const path = String(item?.path ?? ""), at = locate(path, item?.snippet);
         return at === null ? [] : [{ input: item?.input ?? {}, ...(item?.output === undefined ? {} : { output: item.output }), path, line: at }];
       }),
       // An entrypoint is a file the platform will actually run, so it has to exist. The old
@@ -298,7 +305,7 @@ export function toProjectInspection(
         ...(input ? [input.evidence] : []), ...(output ? [output.evidence] : []),
         ...(tool.evidence ?? []).flatMap(item => {
           const path = String(item?.path ?? ""), snippet = String(item?.snippet ?? "").trim();
-          const at = locate(path, Number(item?.line ?? 0), snippet);
+          const at = locate(path, snippet);
           return at === null ? [] : [{ path, line: at, kind: "AGENT", detail: snippet }];
         }),
       ],

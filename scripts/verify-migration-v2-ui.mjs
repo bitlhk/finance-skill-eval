@@ -46,15 +46,15 @@ const SKILL_MD='skill/SKILL.md',TOOL_SOURCE='tool/legacy_runtime_tools.py';
  */
 const analysis={status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
   {name:'get_acceptance_order',sourcePaths:[TOOL_SOURCE],language:'Python',portability:'RUNTIME_BOUND',
-    input:{description:'按订单号查询',schema:{type:'object',properties:{order_id:{type:'string'}},required:['order_id']},path:SKILL_MD,line:13},
-    output:{description:'返回订单的币种、金额与审批状态',schema:{type:'object',properties:{order_id:{type:'string'},currency:{type:'string'},subtotal:{type:'string'},tax_rate:{type:'string'},approved:{type:'boolean'}}},path:SKILL_MD,line:16},
-    samples:[{input:{order_id:'ORDER-001'},path:SKILL_MD,line:13}],
+    input:{description:'按订单号查询',schema:{type:'object',properties:{order_id:{type:'string'}},required:['order_id']},path:SKILL_MD,snippet:'Call `get_acceptance_order` with the exact order ID'},
+    output:{description:'返回订单的币种、金额与审批状态',schema:{type:'object',properties:{order_id:{type:'string'},currency:{type:'string'},subtotal:{type:'string'},tax_rate:{type:'string'},approved:{type:'boolean'}}},path:SKILL_MD,snippet:'Return the order ID, currency, subtotal, tax amount, and total'},
+    samples:[{input:{order_id:'ORDER-001'},path:SKILL_MD,snippet:'Call `get_acceptance_order` with the exact order ID'}],
     evidence:[],findings:[],recommendedForm:'MCP',
     recommendationReason:'注册在旧 Agent Runtime 里，需要一个可被不同环境调用的服务'},
   {name:'calculate_acceptance_total',sourcePaths:[TOOL_SOURCE],language:'Python',portability:'RUNTIME_BOUND',
-    input:{description:'用订单的小计与税率算总额',schema:{type:'object',properties:{subtotal:{type:'string'},tax_rate:{type:'string'}},required:['subtotal','tax_rate']},path:SKILL_MD,line:15},
-    output:{description:'返回小计、税额与合计',schema:{type:'object',properties:{status:{type:'string'},subtotal:{type:'string'},tax_rate:{type:'string'},tax_amount:{type:'string'},total:{type:'string'}}},path:SKILL_MD,line:16},
-    samples:[{input:{subtotal:'100.00',tax_rate:'0.06'},path:SKILL_MD,line:15}],
+    input:{description:'用订单的小计与税率算总额',schema:{type:'object',properties:{subtotal:{type:'string'},tax_rate:{type:'string'}},required:['subtotal','tax_rate']},path:SKILL_MD,snippet:'Call `calculate_acceptance_total` with the returned subtotal and tax rate'},
+    output:{description:'返回小计、税额与合计',schema:{type:'object',properties:{status:{type:'string'},subtotal:{type:'string'},tax_rate:{type:'string'},tax_amount:{type:'string'},total:{type:'string'}}},path:SKILL_MD,snippet:'Return the order ID, currency, subtotal, tax amount, and total'},
+    samples:[{input:{subtotal:'100.00',tax_rate:'0.06'},path:SKILL_MD,snippet:'Call `calculate_acceptance_total` with the returned subtotal and tax rate'}],
     evidence:[],findings:[],recommendedForm:'SCRIPT',
     recommendationReason:'纯计算，没有 runtime 依赖'},
 ]};

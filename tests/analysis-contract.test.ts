@@ -10,32 +10,46 @@ const inspect = (tool: Record<string, unknown>) =>
   toProjectInspection({ skill: { status: 'COMPLIANT', findings: [] }, tools: [{ name: 'lookup', ...tool }] } as never,
     'asset', 'a'.repeat(64), stableToolId, null, FILES).tools[0]!;
 
-it('accepts an input contract only where the analysis can point at it', () => {
-  const tool = inspect({ input: { description: '传入 account_id', path: 'skill/SKILL.md', line: 5 } });
+it('locates a contract where the text it quotes actually is', () => {
+  const tool = inspect({ input: { description: '传入 account_id', path: 'skill/SKILL.md', snippet: '调用 `lookup`，传入 account_id' } });
   expect(tool.evidence).toContainEqual({ path: 'skill/SKILL.md', line: 5, kind: 'INPUT_CONTRACT', detail: '传入 account_id' });
+});
+
+it('takes no location at all from a line number the analysis supplied', () => {
+  // Measured twice: with correct numbers in front of it, the agent put all eight of its claims on a
+  // line that does not contain the text it quoted. A number is not evidence, so it is not a
+  // fallback either -- the claim simply has no location, and therefore is not a contract.
+  const tool = inspect({ input: { description: '传入 account_id', schema: { type: 'object' }, path: 'skill/SKILL.md', line: 5 } });
+  expect(tool.inputSchema).toBeNull();
+  expect(tool.evidence.some(item => item.kind === 'INPUT_CONTRACT')).toBe(false);
+});
+
+it('refuses a quote too short to identify a line', () => {
+  const tool = inspect({ input: { description: '传入 account_id', path: 'skill/SKILL.md', snippet: '调' } });
+  expect(tool.evidence.some(item => item.kind === 'INPUT_CONTRACT')).toBe(false);
 });
 
 it('reports an unlocatable contract as unread rather than keeping the guess', () => {
   // The whole point of the citation: a contract the analysis cannot point at is not usable as a
   // baseline, and downstream compares the migration against it.
-  const tool = inspect({ input: { description: '大概是这个', schema: { type: 'object' }, path: 'skill/SKILL.md', line: 99 } });
+  const tool = inspect({ input: { description: '大概是这个', schema: { type: 'object' }, path: 'skill/SKILL.md', snippet: '这句话文件里没有' } });
   expect(tool.inputSchema).toBeNull();
   expect(tool.evidence.some(item => item.kind === 'INPUT_CONTRACT')).toBe(false);
 });
 
-it('keeps the schema only when its line is real', () => {
+it('keeps the schema only when its quote can be found', () => {
   const schema = { type: 'object', properties: { account_id: { type: 'string' } }, required: ['account_id'] };
-  const cited = inspect({ input: { schema, path: 'tool/lookup.py', line: 1 } });
+  const cited = inspect({ input: { schema, path: 'tool/lookup.py', snippet: 'def lookup(account_id):' } });
   expect(cited.inputSchema).toEqual(schema);
-  const uncited = inspect({ output: { schema, path: 'tool/lookup.py', line: 40 } });
+  const uncited = inspect({ output: { schema, path: 'tool/lookup.py', snippet: 'def something_else(' } });
   expect(uncited.outputSchema).toBeNull();
 });
 
 it('takes samples from the analysis and drops the ones it cannot locate', () => {
   const tool = inspect({
     samples: [
-      { input: { account_id: 'A10001' }, output: { currency: 'CNY' }, path: 'skill/SKILL.md', line: 5 },
-      { input: { account_id: 'NOPE' }, path: 'skill/SKILL.md', line: 42 },
+      { input: { account_id: 'A10001' }, output: { currency: 'CNY' }, path: 'skill/SKILL.md', snippet: '调用 `lookup`，传入 account_id' },
+      { input: { account_id: 'NOPE' }, path: 'skill/SKILL.md', snippet: '这一行不在文件里' },
     ],
   });
   expect(tool.samples).toEqual([{ input: { account_id: 'A10001' }, output: { currency: 'CNY' }, path: 'skill/SKILL.md', line: 5 }]);

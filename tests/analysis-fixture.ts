@@ -34,10 +34,12 @@ export function analyzedTool(input: {
     sourcePaths,
     language: input.language ?? 'Python',
     portability,
-    input: { description: '传入 account_id', schema: input.inputSchema ?? null, path: SKILL_FILE, line: 5 },
-    output: { description: '返回币种与账面余额', schema: input.outputSchema ?? null, path: SKILL_FILE, line: 6 },
-    ...(input.sample === undefined ? {} : { samples: [{ input: input.sample, path: SKILL_FILE, line: 5 }] }),
-    ...(input.entrypoint ? { entrypoint: { ...input.entrypoint, line: 1 } } : {}),
+    // Quoted, not counted: the platform locates a claim by this text, so the fixture quotes the
+    // lines of SKILL_MD that actually say these things.
+    input: { description: '传入 account_id', schema: input.inputSchema ?? null, path: SKILL_FILE, snippet: '调用 `lookup`，传入 account_id' },
+    output: { description: '返回币种与账面余额', schema: input.outputSchema ?? null, path: SKILL_FILE, snippet: '成功时返回币种与账面余额' },
+    ...(input.sample === undefined ? {} : { samples: [{ input: input.sample, path: SKILL_FILE, snippet: '调用 `lookup`，传入 account_id' }] }),
+    ...(input.entrypoint ? { entrypoint: input.entrypoint } : {}),
     evidence: [],
     findings: [],
     recommendedForm: input.form ?? (portability === 'PORTABLE_SCRIPT' ? 'SCRIPT' : 'MCP'),
