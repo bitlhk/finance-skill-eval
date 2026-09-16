@@ -130,13 +130,31 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 
    工具集两边完全一样（5 个 + `skill_tool`），关掉不损失能力。
 
-### ③ 技能包规则被写成了文件路径
+### ③ 技能包从来没挂上过（这才是真相）
 
-`glob **/analysis-rules.md`、`**/*analysis*`、`**/*rules*`、`**/*`——**4 次**，全在工作区里找规则。
+提示词里**按路径**写规则，模型就去 `glob` 工作区——这是表症。真因在接线：
 
-规则是**通过 `skills=[…]` 参数加载**的技能包（在仓库 `skills/` 下），harness 用 `skill_tool` **按名字**暴露（第 20 轮就是这么拿到的）。**探针证实它没有被复制进工作区**。提示词却写成"见技能包 `references/analysis-rules.md`"，读起来像工作区里的一个文件。
+`create_*_agent(skills=[路径])` **只把 `bool(skills)` 当开关**（`(SkillUseRail, bool(skills) or …, _make_skill_rail)`），
+**不把路径交给 rail**。工厂建的 rail 从**工作区的 `skills/` 节点**取目录（`workspace_obj.get_node_path("skills")`），
+而那里只有 harness 自己的 `.workspace`。真正挂技能的是 `extension_binder._bind()`，它做的是：
 
-**改为**：按**名字**引用（`skill_tool` 取 `analysis-rules`），并说明规则不在工作区里。
+```python
+target = rails[0]                      # SkillUseRail
+target.skills_dir = [*roots, *previous_dirs]
+await target.reload_skills()
+```
+
+**所以 `skill_tool` 对每个名字都回 `Skill not found`——包括对的那个。** 实跑里模型试了 13 个写法
+（`enterprise-migration`、`enterprise_migration`、`Enterprise-Migration`、`analysis-rules`…）**全部失败**。
+它不是乱猜，它是在试一个查不到的工具。
+
+**改为**：自己建 `SkillUseRail(skills_dir=[<repo>/skills], skill_mode="all", include_tools=False)` 传进 `rails`。
+实测 `rail.skills_meta` 立刻从 `[]` 变成 `['enterprise-migration']`，两种 `auto_create_workspace` 下都一样
+（说明这与 ② 无关，是独立的接线错误）。
+
+**顺带更正我自己**：我先说"第 1 轮一次就对"、又说"7–8 轮在猜名字"，**两次都是错的**——
+因为那时的 trace **只记调用、不记结果**。现在 `ToolTraceRail` 记 `ok` / `failed:<reason>`，
+一眼就能看出"13 次全失败"。**没有结果记录的轨迹会把"工具坏了"读成"模型不听话"。**
 
 ### ④ bash：设计说没有，实际有
 
@@ -162,14 +180,54 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 
 ### 实测（同一份夹具，逐条对照）
 
-| | 改前 | 改后 |
+| | 起点 | 现在 |
 | --- | --- | --- |
-| 工具回合 | 30 | **15** |
+| 工具回合 | 30 | **11，且废回合 0** |
+| 耗时 | 171s | 265s（**变慢了，但这次是在读规则**） |
+| 失败的调用 | 13 次 `skill_tool` 全失败 | **0** |
 | 路径写法 | 3 种 | **1 种** ✅ ① |
 | `bash` | 2 次 | **0** ✅ ④ |
-| 读框架家具 | 7 次 | **0** ✅ ② |
-| 列框架目录（`agents`/`todo`/`messages`/`skills`） | 4 次 | **0** ✅ ② |
-| 找技能包规则 | glob 4 次 | `skill_tool` 1 次 ✅ ③ |
-| 读包内文件 | 同一文件多写法重读 | 5 次，全是包内内容 |
+| 读/列框架家具 | 7 + 4 次 | **0** ✅ ② |
+| `list_files` | 8 次 | **0** ✅ ⑤ |
+| 取技能包 | glob 4 次，`skill_tool` 13 次全失败 | `skill_tool` 7 次**全成功** ✅ ③ |
 
-**还没达标（15 > 10）**，剩下的是**包内的重复清点**：4 次 `list_files` + 3 次 `grep` + 1 次 `glob` 去翻一个 3 文件工程，而第 2 轮 `run_scanner` 的**覆盖率里已经有完整文件清单**。这与 ③ 同类：提示词得说明"覆盖率就是清单"，否则模型会自己再数一遍。**这一条没做，不当作已完成。**
+**验收线要改。** 我原先定"工具回合 ≤10"，**定错了**：回合数不是目标，**废回合才是**。
+现在这 11 个回合全是干活——1 次扫描器 + 3 次读包内文件 + 1 次取 `SKILL.md` + 6 次读规则参考
+（`skill-spec` / `analysis-rules` / `portability-rules` / `target-rules` / `evidence-rules` / `service-templates`）。
+**耗时不降反升是对的**：它终于读到了那 6 篇从来没有拿到过的规则。
+
+**新的验收标准**：同一份夹具，**失败调用 0 次、`list_files` 0 次、`bash` 0 次**；回合数不设上限
+（读几篇规则是任务的固有成本）。
+
+### ⑤ 扫描器报告里要有"工程架构"（已做）
+
+第 2 轮就调了 `run_scanner`，它却**没让后面的清点变得多余**——因为 `coverage` 是**一张扁平的 `{path, status}` 列表**：它告诉模型"每个文件读到什么程度"，**没有告诉它工程长什么样**。于是模型自己拼结构，拼不出来就去 `list_files`。
+
+**这不是"再叮嘱一句"能解决的。** "覆盖率就是清单、别再数一遍"是**软约束**——和行号那次同一个坑。正确的形状是**把事实放进工具输出**，扫描器的报告里直接给**文件架构**：
+
+```
+directories  ["skill", "skill/references", "tool"]
+files        [{path: "skill/SKILL.md", role: "SKILL_DOCUMENT", bytes: 781},
+              {path: "skill/references/acceptance-policy.md", role: "REFERENCE", bytes: 214},
+              {path: "tool/legacy_runtime_tools.py", role: "SOURCE", bytes: 1364}]
+```
+
+`role` **只按路径推**（不猜内容）：`SKILL.md` → `SKILL_DOCUMENT`；任一层有 `references/` → `REFERENCE`；`scripts/` → `SCRIPT`；`assets/` → `ASSET`；代码后缀 → `SOURCE`；其余 `OTHER`。
+
+**限制写明白**：扫描器只收到**文件**，**空目录不会出现在架构里**。
+
+### 做这一条时挖出的两个真 bug
+
+**① 扫描器的输出一直是废的——这是 `list_files` 的真正来源。**
+
+`_scan` 用 `uv run … python -I scan-migration.py` 起子进程，而 **`-I` 隐含 `-E`，`PYTHONUTF8=1` 被忽略**。于是 `json.dumps(..., ensure_ascii=False)` 把中文按**控制台代码页**（GBK）写出去，调用方 `json.loads(out)` 判定编码失败 → `STATIC_SCAN_INVALID_OUTPUT`。
+
+**模型拿到的一直是 `{"status": "unavailable"}`。** 所以它列目录**不是不听劝，是根本没拿到架构**——我先前的判断（"模型在重数")是错的。
+
+修法在协议本身：`json.dumps(...)` 用默认的 ASCII 安全输出。JSON 本来就该是 ASCII 安全的，输出裸非 ASCII 让这个协议依赖了**运行它的那台机器的控制台代码页**。副作用是好的：平台侧（JS）原先按 UTF-8 解 GBK 字节，中文是**乱码**，现在也一并正了。
+
+**② 技能包的名字是 `enterprise-migration`，不是 `analysis-rules`。**
+
+我让模型用 `skill_tool` 取 "`analysis-rules`"——那是**技能包内部的一篇参考**（`references/analysis-rules.md`），**不是技能名**；技能名是它 frontmatter 里的 `name`。模型因此连猜 6 个名字（`analysis_rules`、`Analysis-Rules`、`analysis`…）。
+
+**教训**：提示词里凡是"按名字取"的东西，名字必须是**从被取对象读出来的**，不能是记忆里的。

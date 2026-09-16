@@ -27,7 +27,7 @@ logging.disable(logging.INFO)
 from pathlib import Path as _Path  # noqa: E402
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool, FilesystemOnlyRail, ToolTraceRail  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool, FilesystemOnlyRail, ToolTraceRail, skill_rail  # noqa: E402
 from migration_tools import build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
@@ -48,7 +48,9 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 3. 判断每个 Tool 的可移植性，并给出形式建议。
 
 第 2 件是**基线**——迁移要保留它，校验要拿它比对，出题要拿它当种子。
-怎么读，见**已加载的技能包 `analysis-rules`**——用 `skill_tool` 按名字取。
+怎么读，见**已加载的技能包 `enterprise-migration`**——用 `skill_tool` 按**这个名字**取
+（技能包名就是它 frontmatter 里的 `name`；`analysis-rules` 是它**内部的一篇参考** `references/analysis-rules.md`，
+不是技能名。名字写错会一直取不到，别试别的写法）。
 **它不在工作区里**（那是平台随 agent 一起加载的规则包，不是被检查的包），所以不要去文件系统里找它。
 要点：**优先读 Skill 文档对工具用法的描述**，
 而不是从实现代码里反推；输入、输出、样例**各自都要指到出处**。
@@ -66,8 +68,9 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 - 证据不足时**必须弃权**，不要猜。宁可少报也不要编。
 - 你只给**形式建议**（MCP 还是 Script）。实现语言由平台按固定判据算出，**不要给语言建议**：
   那取决于平台有哪些生成模板，工程里看不到这个信息。
-- 你可以调用 run_scanner 获取确定性发现与**覆盖率**。覆盖率是用来回答「我漏看了什么」的，
-  它比你自己读文件更可靠；覆盖率不全时，在 coverageGaps 里如实列出。
+- 你可以调用 run_scanner 获取确定性发现、**覆盖率**和**工程的文件架构**（`structure`：目录清单 +
+  每个文件的角色）。**架构就是"这个包由什么组成"的答案**——先看它，再决定读哪几个文件。
+  覆盖率回答的是另一个问题「我漏看了什么」；覆盖率不全时，在 coverageGaps 里如实列出。
 - 不要修改工作区里的任何文件。
 - **Skill 合规必须给结论**：读完 `SKILL.md` 就判 `COMPLIANT` 或 `NON_COMPLIANT`，每条 finding 都要落到
   「文件 + 行号 + 原文片段」。`UNKNOWN` 只有一个用法——**连 `SKILL.md` 都读不到**；那是弃权的情形，
@@ -152,7 +155,7 @@ async def run(body: dict) -> None:
             workspace=str(workspace),
             max_iterations=budget,
             language=lang,
-            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail()],
+            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail()],
             # `minimal` drops the WORKSPACE prompt section, which otherwise puts the harness's own
             # agent-home files (AGENT.md, SOUL.md, ...) in front of the model as things to read.
             # Field runs spent 7 rounds on them; they are not part of the package under inspection.

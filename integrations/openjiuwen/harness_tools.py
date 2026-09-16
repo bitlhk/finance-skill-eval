@@ -22,6 +22,11 @@ So: same tool, numbers that refer to the file.
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+#: The rule package the platform ships with the agents. Both agents read their judgement rules from
+#: it, and it is the reason `skill_rail` exists (see below).
+SKILL_PACKAGE = str(Path(__file__).resolve().parents[2] / "skills")
 
 from openjiuwen.core.single_agent.rail.base import AgentRail
 from openjiuwen.harness.rails.sys_operation_rail import SysOperationRail
@@ -88,6 +93,24 @@ class AbsoluteLineReadFileTool(ReadFileTool):
         return shift_line_numbers(rendered, max(0, int(offset)))
 
 
+def skill_rail():
+    """A `SkillUseRail` that is actually pointed at our skill package.
+
+    The factory's `skills=` argument only decides *whether* to mount this rail; it never tells the
+    rail where the package is -- the rail reads its directories from `skills_dir`, which the factory
+    fills from the *workspace's* `skills/` node. That directory holds the harness's own bookkeeping,
+    so `skill_tool` answered "Skill not found" for every name the agent tried, including the right
+    one, and the rules it was told to consult were never reachable.
+
+    Built here instead, with `skills_dir` set to the package the platform ships. `include_tools`
+    is off because the agents already assemble their own file tools (and `FilesystemOnlyRail`
+    declares the filesystem rail present, which is what that flag checks).
+    """
+    from openjiuwen.harness.rails.skills.skill_use_rail import SkillUseRail
+
+    return SkillUseRail(skills_dir=[SKILL_PACKAGE], skill_mode="all", include_tools=False)
+
+
 def _short(value, limit: int = 200) -> str:
     """One readable line for a tool's arguments, whatever shape they arrive in."""
     import json
@@ -125,6 +148,15 @@ class ToolTraceRail(AgentRail):
         args = getattr(inputs, "tool_args", None)
         if args:
             entry["args"] = _short(args)
+        # The outcome, because a call that failed explains the one after it: an agent that retries a
+        # name three ways is either guessing or reacting to an error, and the call list alone cannot
+        # tell those apart.
+        result = getattr(inputs, "tool_result", None)
+        outcome = getattr(result, "success", None)
+        if outcome is False:
+            entry["failed"] = _short(getattr(result, "error", "") or "no reason given", 160)
+        elif outcome is True:
+            entry["ok"] = True
         self.capture.append(entry)
 
     async def on_tool_exception(self, ctx) -> None:  # noqa: ANN001 - harness type

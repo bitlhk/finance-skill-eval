@@ -99,8 +99,9 @@ def build_run_scanner(workspace: Path, capture: list[dict[str, Any]] | None = No
 
     return _tool(
         "run_scanner",
-        "Run the repository static scanner over the workspace. Returns deterministic findings "
-        "plus per-file coverage. Read-only; never executes uploaded code.",
+        "Run the repository static scanner over the workspace. Returns deterministic findings, "
+        "per-file coverage, and `structure`: the package's directories and what each file is for. "
+        "Read-only; never executes uploaded code.",
         {"type": "object", "properties": {}, "additionalProperties": False},
         run_scanner,
     )
