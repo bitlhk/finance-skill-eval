@@ -26,8 +26,8 @@ logging.disable(logging.INFO)
 
 from pathlib import Path as _Path  # noqa: E402
 
-from agent_protocol import build_workspace, emit, parse_structured  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool  # noqa: E402
+from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
+from harness_tools import AbsoluteLineReadFileTool, ToolTraceRail  # noqa: E402
 from migration_tools import build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
@@ -112,6 +112,8 @@ async def run(body: dict) -> None:
     workspace = build_workspace({k: base64.b64decode(v).decode("utf-8") for k, v in body["files"].items()})
     tool_trace: list[dict] = []
     scanner_results: list[dict] = []
+    status, raw = "FAILED", ""
+    budget = int(body.get("maxIterations", 15))
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a2-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
         lang = "cn"
@@ -138,8 +140,9 @@ async def run(body: dict) -> None:
             tools=tools,
             sys_operation=sys_op,
             workspace=str(workspace),
-            max_iterations=int(body.get("maxIterations", 15)),
+            max_iterations=budget,
             language=lang,
+            rails=[ToolTraceRail(tool_trace)],
             # The judgement rules live in the skill package, not in this prompt, so
             # they can be revised without touching the agent.
             skills=[str(_Path(__file__).resolve().parents[2] / "skills")],
@@ -161,7 +164,7 @@ async def run(body: dict) -> None:
             raw = f"{raw}\n\n[parse failed: {exc}]"
             # This branch knows exactly what went wrong, so it has to say it. A FAILED with no
             # reason leaves the platform with nothing to report but a shrug.
-            failure = f"结果不是约定的 JSON：{exc}"[:600]
+            failure = not_json_reason(result, exc, budget)
 
         emit(protocol, {"result": {
             "stage": "A2",
@@ -191,6 +194,8 @@ async def run(body: dict) -> None:
             "error": message,
         }})
     finally:
+        write_agent_dump("a2", f"{status} budget={budget} scannerRuns={len(scanner_results)}\n\n"
+                              f"--- output ---\n{raw}")
         shutil.rmtree(workspace, ignore_errors=True)
 
 

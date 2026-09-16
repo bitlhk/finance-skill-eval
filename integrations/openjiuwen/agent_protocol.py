@@ -33,6 +33,52 @@ def build_workspace(files: dict[str, str]) -> Path:
     return root
 
 
+MAX_ITERATION_SENTINEL = "Max iterations reached without completion"
+
+
+def not_json_reason(result: object, exc: Exception, budget: int) -> str:
+    """Why there was no JSON to parse.
+
+    A ReAct loop that runs out of its iteration budget does not return a model answer at all: the
+    harness replaces it with a fixed sentence (`react_agent.py`), so the parse fails and every
+    reader downstream is told the model "did not answer in JSON". That names the symptom and hides
+    the cause, and the two have different fixes -- a bigger budget, or a cheaper task, versus
+    telling the model again what shape to answer in.
+    """
+    output = str(result.get("output", "")) if isinstance(result, dict) else ""
+    kind = str(result.get("result_type", "")) if isinstance(result, dict) else ""
+    if MAX_ITERATION_SENTINEL in output:
+        return (f"agent 用完了 {budget} 轮迭代预算也没有交付结果。这不是回答格式的问题："
+                f"Harness 在预算耗尽时不会返回模型回答，只回一句 {MAX_ITERATION_SENTINEL}。"
+                "请提高预算或把任务拆小")[:600]
+    if kind == "interrupt":
+        return f"agent 被中断，没有给出结果：{output.strip()[:200]}"[:600]
+    if kind == "error":
+        return f"agent 以错误结束，没有给出结果：{output.strip()[:200]}"[:600]
+    return f"结果不是约定的 JSON：{exc}"[:600]
+
+
+def write_agent_dump(name: str, content: str) -> None:
+    """Keep what the agent actually said, where whoever reads the failure can find it.
+
+    The failure message tells the reader to go and look at the agent's log, so there has to be one.
+    Off unless `FINANCE_EVAL_AGENT_DUMP` names a directory: this is the agent's own answer, and it
+    is written for an operator to read rather than into anything that ships.
+    """
+    import os
+
+    directory = os.environ.get("FINANCE_EVAL_AGENT_DUMP", "").strip()
+    if not directory:
+        return
+    try:
+        target = Path(directory)
+        target.mkdir(parents=True, exist_ok=True)
+        (target / f"{name}.txt").write_text(content, encoding="utf-8")
+    except OSError:
+        # A dump that cannot be written must never be the reason a run reports no result.
+        pass
+
+
 def _balanced_objects(text: str):
     """Yield every balanced {...} substring in order."""
     index = 0

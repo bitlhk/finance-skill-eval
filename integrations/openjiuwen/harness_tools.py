@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 
+from openjiuwen.core.single_agent.rail.base import AgentRail
 from openjiuwen.harness.tools import ReadFileTool
 
 # The numbered form is exactly `_cat_n`'s: right-aligned to width 6, a tab, then the line. Anchored
@@ -84,3 +85,32 @@ class AbsoluteLineReadFileTool(ReadFileTool):
     async def _read_text(self, file_path: str, offset: int, limit: int, apply_size_cap: bool = True) -> str:
         rendered = await super()._read_text(file_path, offset, limit, apply_size_cap)
         return shift_line_numbers(rendered, max(0, int(offset)))
+
+
+class ToolTraceRail(AgentRail):
+    """The platform's own record of what the agent did, round by round.
+
+    The trace used to be whatever the model wrote into its result JSON, which is the same mistake as
+    asking it for line numbers: a self-report is not evidence, and it is missing exactly when the run
+    fails. When a run burns its whole iteration budget the interesting question is *what it spent the
+    rounds on*, and only the harness knows that. So the harness is asked, through the lifecycle hook
+    that exists for it.
+    """
+
+    def __init__(self, capture: list[dict]) -> None:
+        self.capture = capture
+
+    async def after_tool_call(self, ctx) -> None:  # noqa: ANN001 - harness type
+        inputs = getattr(ctx, "inputs", None)
+        name = str(getattr(inputs, "tool_name", "") or "")
+        if not name or name == "compile_source" or name == "run_contract_test":
+            # Those two record themselves, with the outcome that matters (passed/failed and why).
+            return
+        self.capture.append({"tool": name})
+
+    async def on_tool_exception(self, ctx) -> None:  # noqa: ANN001 - harness type
+        inputs = getattr(ctx, "inputs", None)
+        name = str(getattr(inputs, "tool_name", "") or "")
+        detail = str(getattr(ctx, "exception", "") or "")
+        if name:
+            self.capture.append({"tool": name, "failed": True, "detail": detail[:600]})
