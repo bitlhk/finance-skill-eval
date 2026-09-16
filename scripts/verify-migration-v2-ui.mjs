@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
@@ -110,16 +110,39 @@ const implementationFixture=async input=>{
       'mcp-python/pyproject.toml':Buffer.from(pyproject).toString('base64')}};
 };
 
-const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),
+const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,
+  publicDirectory:path.resolve(process.env.MIGRATION_TEST_WEB_DIR||path.join(root,'web-dist')),
   accessToken:token,publicDemo:false,migrationAnalyzer,migrationImplementer:implementationFixture,
   // The question writer is the platform's, so it is stood in here: what this script checks is that
   // the analysis reaches it and that the result is reachable from the page.
   migrationSuite:async input=>({summary:`从分析生成：${input.tools.join('、')}`,
     cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn'}]})});
-let browser;
+let browser,proxy,page=null,failedAt=null;
 try{
   const mcpBase=await listen(mcp),mcpEndpoint=`${mcpBase}/mcp`;
-  const serviceUrl=await app.listen({host:'127.0.0.1',port:0});
+  let serviceUrl=await app.listen({host:'127.0.0.1',port:0});
+  // The private deployment is served under a subpath behind an SSO gateway that owns the
+  // Authorization header. Driving that shape needs a proxy in front, and it is the shape that
+  // ships -- the plain root path is the exception.
+  const prefix=process.env.MIGRATION_TEST_PREFIX;
+  if(prefix){
+    assert(/^\/[a-z-]+\/$/u.test(prefix));
+    const target=serviceUrl;
+    proxy=http.createServer((req,res)=>{
+      if(!req.url.startsWith(prefix)){res.statusCode=404;res.end();return;}
+      const forwarded={...req.headers};
+      if(process.env.MIGRATION_TEST_PRIVATE_GATEWAY==='true'){
+        forwarded.authorization=String(req.headers['x-migration-authorization']||'');
+        delete forwarded['x-migration-authorization'];
+      }
+      const upstream=http.request(new URL(req.url.slice(prefix.length-1),target),{method:req.method,headers:forwarded},response=>{
+        res.writeHead(response.statusCode,response.headers);response.pipe(res);
+      });
+      upstream.on('error',()=>{res.statusCode=502;res.end();});req.pipe(upstream);
+    });
+    await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+    serviceUrl=`http://127.0.0.1:${proxy.address().port}${prefix}`;
+  }
   const headers={authorization:`Bearer ${token}`,'content-type':'application/zip'};
   const legacyZip=await migrationArchive(path.join(root,'acceptance/openjiuwen-portability/legacy-skill'));
   const credentialPattern=/(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"'\n]{8,}["']/i;
@@ -130,7 +153,7 @@ try{
 
   browser=await chromium.launch({...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{}),headless:true});
   const context=await browser.newContext({acceptDownloads:true,viewport:{width:1440,height:1000}});
-  const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
+  page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(serviceUrl);
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button',{name:'进入工作区',exact:true}).click();
@@ -201,8 +224,15 @@ try{
   checks.push('validated_candidate_downloaded');
   assert.deepEqual(errors,[]);checks.push('no_browser_errors');
   process.stdout.write(`${JSON.stringify({mode:'REAL_SERVICE_HEADLESS_CHROME',checks},null,2)}\n`);
-}finally{
+}catch(error){failedAt=error;throw error;}finally{
+  // A browser check that fails in CI without a picture is a check nobody can act on.
+  if(browser&&failedAt){
+    const shot=await page?.screenshot().catch(()=>null);
+    if(shot){await mkdir(path.resolve('reports/migration-v2-ui'),{recursive:true}).catch(()=>undefined);
+      await writeFile(path.resolve('reports/migration-v2-ui/failure.png'),shot).catch(()=>undefined);}
+  }
   if(browser)await browser.close();
+  if(proxy){proxy.closeAllConnections();await close(proxy);}
   mcp.closeAllConnections();if(mcp.listening)await close(mcp);
   await app.close();await Promise.all([rm(data,{recursive:true,force:true}),rm(downloads,{recursive:true,force:true})]);
 }
