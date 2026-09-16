@@ -168,6 +168,38 @@ it('reports why the analysis agent did not finish, instead of calling it unavail
     expect(result.json().message).not.toContain('分析不可用');
   }finally{await app.close();}
 });
+it('takes the Skill verdict from the rules, not from the model that judges it twice',async()=>{
+  const data=await mkdtemp(path.join(os.tmpdir(),'migration-verdict-'));dirs.push(data);
+  const tool={name:'lookup',sourcePaths:['tool/lookup.py'],language:'Python',portability:'RUNTIME_BOUND',
+    input:{description:'',schema:null,path:'skill/SKILL.md',line:1},output:{description:'',schema:null,path:'skill/SKILL.md',line:1},
+    evidence:[],findings:[],recommendedForm:'SCRIPT',recommendationReason:'夹具'};
+  // The same package, and the agent calls it compliant. Asked again it will call it non-compliant:
+  // a verdict that flips is not a verdict, so the platform's own rules decide.
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:async()=>({status:'PRODUCED' as const,
+      payload:{status:'PRODUCED',skill:{status:'NON_COMPLIANT',findings:[]},tools:[tool]},
+      scanner:{scannerDigest:'a'.repeat(64),coverage:[]}})});
+  const headers={authorization:'Bearer test'};
+  try{
+    // `method` carries no description, and the rules count that as an error -- so a compliant Skill
+    // is what shows the agent being overruled in the permissive direction.
+    const compliant='---\nname: verdict-fixture\ndescription: 用来验证合规判定的归属。\n---\n调用 `lookup`，失败时说明原因。';
+    const zip=Buffer.from(zipSync({'skill/SKILL.md':strToU8(compliant),'tool/lookup.py':strToU8('def lookup(value): return value\n')}));
+    const asset=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
+    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'verdict'}})).json();
+    const inspection=(await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}})).json();
+    expect(inspection.skill.status).toBe('COMPLIANT');
+
+    // And the rules can veto the model the other way: a Skill with no description is an error
+    // whatever the agent thought of it.
+    const invalid=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},
+      payload:Buffer.from(zipSync({'skill/SKILL.md':strToU8('---\nname: no-description\n---\n调用 `lookup`。'),'tool/lookup.py':strToU8('def lookup(value): return value\n')}))})).json();
+    const second=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:invalid.assetId,name:'verdict-2'}})).json();
+    const checked=(await app.inject({method:'POST',url:`/api/migrations/${second.id}/inspect`,headers,payload:{}})).json();
+    expect(checked.skill.status).toBe('NON_COMPLIANT');
+    expect(checked.skill.findings.map((f:{code:string})=>f.code)).toContain('DESCRIPTION_REQUIRED');
+  }finally{await app.close();}
+});
 it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{
   const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});
   const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'test'});

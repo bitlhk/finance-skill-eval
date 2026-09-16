@@ -53,6 +53,8 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 ## 不动的
 
 - **证据裁决机制**——它是 agent 化后依然成立的**关键不变量**："模型的自由度在搜索上，不在什么算证据上"
+- **合规判定归规则**——模型报 findings，状态由 `validateSkill` 算。实跑两次，同一份包给过 COMPLIANT 也给过
+  NON_COMPLIANT，所以状态不能由它给；它的发现并入 findings 供人看
 - TS 侧的校验与摘要绑定
 
 ## 语言判据落在哪

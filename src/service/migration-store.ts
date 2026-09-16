@@ -17,6 +17,7 @@ import { generateCandidateFiles, versionedMethod, regenerationArchive } from './
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
+import { validateSkill } from './skill-validator.js';
 import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
 import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
@@ -141,6 +142,12 @@ export class MigrationStore {
       }catch{inspection=null;}
     }
     if(!inspection)return conflict('分析不可用：A2 agent 未产出工具与基线。静态规则不再猜测工具与输入输出，因此无法继续迁移。');
+    // The Skill verdict is the platform's, not the model's. Asked the same question twice, the
+    // agent answered COMPLIANT and NON_COMPLIANT about the same package -- and a compliance
+    // verdict that flips is not a verdict. The rules already exist (validateSkill, the same ones
+    // that judge the candidate); the agent's own findings are merged in as evidence for a human.
+    const byRules=validateSkill(files,asset.skillFile);
+    inspection.skill={status:byRules.status,findings:[...byRules.findings,...inspection.skill.findings]};
     value.inspection=inspection;
     // The baseline is a stage product, so it is recorded as one: what produced it and what it was
     // bound to. Without the binding there is no way to say later whether it still describes the

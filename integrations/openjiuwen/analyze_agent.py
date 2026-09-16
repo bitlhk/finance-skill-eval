@@ -57,6 +57,9 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 - 你可以调用 run_scanner 获取确定性发现与**覆盖率**。覆盖率是用来回答「我漏看了什么」的，
   它比你自己读文件更可靠；覆盖率不全时，在 coverageGaps 里如实列出。
 - 不要修改工作区里的任何文件。
+- **Skill 合规必须给结论**：读完 `SKILL.md` 就判 `COMPLIANT` 或 `NON_COMPLIANT`，每条 finding 都要落到
+  「文件 + 行号 + 原文片段」。`UNKNOWN` 只有一个用法——**连 `SKILL.md` 都读不到**；那是弃权的情形，
+  按弃权处理并说明缺什么，不要把 `UNKNOWN` 当成没细看的出口。
 
 最后**只输出一个 JSON 对象**，不要有其它文字：
 {

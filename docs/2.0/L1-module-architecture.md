@@ -299,6 +299,7 @@ else:
   - 逐 Tool 的 `recommendedForm` / `recommendedLanguage` / `recommendationReason`；
   写在**最终输出**里
 - **基线与分析结果都要落到证据上**：主张要带 **原文片段**，平台按原文在文件里定位（`locate()`），落不到的主张不成立。
+- **Skill 合规判定不由模型给**：模型报 findings（它擅长的是找问题），状态由平台的规则算（`validateSkill`，和判候选用的是同一套）。同一份包问两次模型，它给过 COMPLIANT 也给过 NON_COMPLIANT——**会翻的判定不是判定**。模型的发现并入 findings 列表供人看，但它不决定状态。
   **行号只是提示**——数行号是算术，agent 隔着工具读文件数不准，实测有过把 19 行文件引成第 25 行、整份基线全被丢掉的情况；
   抄原文才是它擅长的事，定位是平台擅长的事，各做各的
 - **弃权**：最终输出中 `status = ABSTAINED`，附 `reason` 与 `missing`。
