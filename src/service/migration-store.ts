@@ -310,7 +310,14 @@ export class MigrationStore {
     const tool=inspection.tools.find(item=>item.toolId===p.toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
     const generated=value.portableGenerations?.find(item=>item.toolId===tool.toolId);if(generated&&!generated.readyForValidation)return conflict('生成候选仍有待办，不能标记技术验证通过');
     const service=new TechnicalValidationService(),archive=await this.skills.readArchive(asset.assetId);
-    const result=tool.kind==='MCP'?await service.validateMcp({asset,tool,endpoint:p.endpoint??'',arguments:p.arguments,signal}):await service.validateScript({asset,archive,tool,request:p.request,signal});
+    // A Tool this platform migrated is one this platform starts: the deliverable declares the
+    // command, and that command being usable is exactly what raising the service proves. An
+    // endpoint is only for a Tool that was already an MCP server and has no deliverable at all.
+    const migrated=Boolean(generated?.start?.length)||Boolean(generated&&tool.kind==='MCP');
+    const result=tool.kind==='MCP'
+      ?await service.validateMcp({asset,tool,archive,arguments:p.arguments,signal,
+        ...(migrated?{service:{start:generated?.start,prepare:generated?.prepare}}:{endpoint:p.endpoint??''})})
+      :await service.validateScript({asset,archive,tool,request:p.request,signal});
     (value.technicalValidations??=[]).push(result);await writeJsonAtomic(this.file(id),value);return result;
   });}
   async technicalValidations(id:string){return (await this.get(id)).technicalValidations??[];}

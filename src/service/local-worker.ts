@@ -7,6 +7,25 @@ export type LocalWorkerRequest={requestId:string;program:string;args:string[];fi
 export type LocalWorkerResult={requestId:string;mode:'LOCAL_TRUSTED';startedAt:string;finishedAt:string;exitCode:number|null;timedOut:boolean;cancelled:boolean;stdout:string;stderr:string;outputTruncated:boolean};
 
 const allowedPrograms=new Set(['node','node.exe','python','python.exe','python3','python3.exe','uv','uv.exe','java','java.exe','javac','javac.exe']);
+/**
+ * Beyond one-shot runs: a delivered service has to be built before it starts, and that means a
+ * package manager -- `npm install` for Node, Maven for Java. Same trust model as the rest of this
+ * worker (argv only, never a shell string) and the same `LOCAL_TRUSTED` label on the result:
+ * enterprise code on an enterprise workstation, not a sandbox.
+ */
+const allowedServicePrograms=new Set([...allowedPrograms,'npm','npm.cmd','mvn','mvn.cmd']);
+
+/** A workspace that outlives one process, for anything that has to keep running while it is
+ * questioned. Same path rules as `run()`; the caller owns `dispose()`. */
+export type LocalWorkerWorkspace={
+  directory:string;
+  dispose():Promise<void>;
+};
+
+export function assertServiceProgram(program:string,allowed:Set<string>=allowedServicePrograms):void{
+  const executable=path.basename(program).toLowerCase();
+  if(!allowed.has(executable))throw new Error(`Worker program is not allowed to start a service: ${executable}`);
+}
 
 function safeRelative(value:string){
   const normalized=value.replaceAll('\\','/').replace(/^\.\//u,'');
@@ -15,7 +34,18 @@ function safeRelative(value:string){
 }
 
 export class LocalWorker{
-  constructor(private tempRoot=os.tmpdir(),private programs=allowedPrograms){}
+  constructor(private tempRoot=os.tmpdir(),private programs=allowedPrograms,private servicePrograms=allowedServicePrograms){}
+  /** Materialise files into a temp workspace that stays until `dispose()`. */
+  async open(files:Array<{path:string;content:Uint8Array}>):Promise<LocalWorkerWorkspace>{
+    const directory=await mkdtemp(path.join(this.tempRoot,'finance-migration-workspace-'));
+    try{
+      for(const file of files){const relative=safeRelative(file.path),target=path.resolve(directory,relative);
+        if(target!==directory&&!target.startsWith(directory+path.sep))throw new Error(`Unsafe worker path: ${file.path}`);
+        await mkdir(path.dirname(target),{recursive:true});await writeFile(target,file.content,{mode:0o600});}
+    }catch(error){await rm(directory,{recursive:true,force:true});throw error;}
+    return {directory,dispose:async()=>{await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:200});}};
+  }
+  assertServiceProgram(program:string):void{assertServiceProgram(program,this.servicePrograms);}
   async run(request:LocalWorkerRequest):Promise<LocalWorkerResult>{
     const executable=path.basename(request.program).toLowerCase();
     if(!this.programs.has(executable))throw new Error(`Worker program is not allowed: ${executable}`);

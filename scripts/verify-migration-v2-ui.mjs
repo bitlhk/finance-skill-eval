@@ -36,26 +36,7 @@ async function migrationArchive(directory){
   return Buffer.from(zipSync(files));
 }
 
-function listen(server){return new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${server.address().port}`));});}
 function close(server){return new Promise(resolve=>server.close(resolve));}
-
-// The migrated Tool, reached over MCP. Technical validation connects to whatever endpoint the
-// operator supplies, so a real migrated service is not needed for the UI path -- but it has to
-// answer the same way one would.
-const mcp=http.createServer(async(req,res)=>{
-  if(req.method==='DELETE'){res.statusCode=200;res.end();return;}
-  let raw='';for await(const chunk of req)raw+=chunk;
-  const body=raw?JSON.parse(raw):{};
-  if(body.method==='notifications/initialized'){res.statusCode=202;res.end();return;}
-  const result=body.method==='initialize'
-    ? {protocolVersion:'2025-06-18',serverInfo:{name:'migration-v2-ui-mcp',version:'1.0.0'},capabilities:{tools:{}}}
-    : body.method==='tools/list'
-      ? {tools:[{name:'get_acceptance_order',description:'Return a fixed order',inputSchema:{type:'object',properties:{order_id:{type:'string'}},required:['order_id']}}]}
-      : body.method==='tools/call'
-        ? {content:[{type:'text',text:'ORDER-001'}],structuredContent:{order_id:'ORDER-001',currency:'CNY',subtotal:'100.00',tax_rate:'0.06',approved:true}}
-        : {};
-  res.setHeader('content-type','application/json');res.end(JSON.stringify({jsonrpc:'2.0',id:body.id,result}));
-});
 
 const SKILL_MD='skill/SKILL.md',TOOL_SOURCE='tool/legacy_runtime_tools.py';
 
@@ -82,8 +63,7 @@ const scanner={scannerDigest:'a'.repeat(64),coverage:[{path:SKILL_MD,status:'PAR
 const migrationAnalyzer=async()=>({status:'PRODUCED',payload:analysis,scanner});
 
 const scriptSource='from decimal import Decimal, ROUND_HALF_UP\nimport json, sys\n\ndef calculate_acceptance_total(subtotal: str, tax_rate: str):\n    amount=Decimal(subtotal); rate=Decimal(tax_rate); tax=(amount*rate).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)\n    return {"status":"ok","subtotal":f"{amount:.2f}","tax_rate":f"{rate:.2f}","tax_amount":f"{tax:.2f}","total":f"{amount+tax:.2f}"}\n\nif __name__ == "__main__":\n    json.dump(calculate_acceptance_total(**json.load(sys.stdin)),sys.stdout)\n';
-const serviceSource='"""Migrated MCP service for the legacy runtime tools."""\nimport json, os\nfrom mcp.server.lowlevel import Server\nfrom mcp.server.streamable_http import StreamableHTTPServerTransport\n\nORDER_SCHEMA = {"type": "object", "properties": {"order_id": {"type": "string"}}, "required": ["order_id"]}\nORDERS = {"ORDER-001": {"order_id": "ORDER-001", "currency": "CNY", "subtotal": "100.00", "tax_rate": "0.06", "approved": True}}\n\nserver = Server("acceptance-orders")\n\n\n@server.list_tools()\nasync def list_tools():\n    return [{"name": "get_acceptance_order", "description": "Return a fixed order", "inputSchema": ORDER_SCHEMA}]\n\n\n@server.call_tool()\nasync def call_tool(name, arguments):\n    order = ORDERS.get(arguments.get("order_id"))\n    return [{"type": "text", "text": json.dumps(order or {"status": "unavailable"})}]\n\n\nif __name__ == "__main__":\n    transport = StreamableHTTPServerTransport(mcp_session_id=None)\n    server.run(transport, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))\n';
-const pyproject='[project]\nname = "acceptance-orders-mcp"\nversion = "0.1.0"\nrequires-python = ">=3.11"\ndependencies = ["mcp"]\n';
+const serviceSource='# /// script\n# requires-python = ">=3.11"\n# dependencies = ["mcp", "uvicorn"]\n# ///\nimport json\nimport os\n\nfrom mcp.server.lowlevel import Server\nfrom mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool\n\nTOOL_NAME = "get_acceptance_order"\nINPUT_SCHEMA = {"type": "object", "properties": {"order_id": {"type": "string"}}, "required": ["order_id"]}\nORDERS = {"ORDER-001": {"order_id": "ORDER-001", "currency": "CNY", "subtotal": "100.00", "tax_rate": "0.06", "approved": True}}\n\n\ndef execute(name, arguments):\n    return ORDERS.get(arguments.get("order_id")) or {"status": "unavailable"}\n\n\nasync def _list_tools(_context, _params) -> ListToolsResult:\n    return ListToolsResult(tools=[Tool(name=TOOL_NAME, description="Return a fixed order", inputSchema=INPUT_SCHEMA)])\n\n\nasync def _call_tool(_context, params: CallToolRequestParams) -> CallToolResult:\n    output = execute(params.name, dict(params.arguments or {}))\n    return CallToolResult(content=[TextContent(type="text", text=json.dumps(output, ensure_ascii=False))])\n\n\nserver = Server(name="acceptance-orders-mcp", version="0.1.0", on_list_tools=_list_tools, on_call_tool=_call_tool)\n\n\ndef main() -> None:\n    import uvicorn\n    port = int(os.environ.get("PORT", "8080"))\n    uvicorn.run(server.streamable_http_app(streamable_http_path="/mcp"), host="0.0.0.0", port=port)\n\n\nif __name__ == "__main__":\n    main()\n';
 
 /** What A4 delivers. The platform places these files; it does not write them. */
 const implementationFixture=async input=>{
@@ -94,8 +74,9 @@ const implementationFixture=async input=>{
       start:['uv','run','--no-project','scripts/calculate_acceptance_total.py'],
       changes:[],drift:[],compilePassed:true,contractPassed:true},
     get_acceptance_order:{toolId:idByName.get_acceptance_order,status:'PRODUCED',language:'python',
-      entrypoint:'mcp-python/server.py',files:['mcp-python/server.py','mcp-python/orders.py','mcp-python/pyproject.toml'],
-      start:['uv','run','--project','mcp-python','python','mcp-python/server.py'],
+      entrypoint:'mcp-python/server.py',files:['mcp-python/server.py'],
+      // Started by the platform, so it has to be a command that really works.
+      start:['uv','run','--no-project','mcp-python/server.py'],
       // A real adaptation, reported rather than hidden: the runtime wrapper is gone, so the Tool is
       // reached over MCP instead of being registered into the host process.
       changes:[{path:'order_id',change:'调用方式由 runtime 注册改为 MCP tools/call',reason:'旧 runtime 不可用，接口参数本身未变'}],
@@ -105,9 +86,7 @@ const implementationFixture=async input=>{
   return {status:'PRODUCED',
     payload:{status:'PRODUCED',tools:Object.values(byTool)},
     files:{'scripts/calculate_acceptance_total.py':Buffer.from(scriptSource).toString('base64'),
-      'mcp-python/server.py':Buffer.from(serviceSource).toString('base64'),
-      'mcp-python/orders.py':Buffer.from('# Tool adapters\n').toString('base64'),
-      'mcp-python/pyproject.toml':Buffer.from(pyproject).toString('base64')}};
+      'mcp-python/server.py':Buffer.from(serviceSource).toString('base64')}};
 };
 
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,
@@ -119,7 +98,6 @@ const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,
     cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn'}]})});
 let browser,proxy,page=null,failedAt=null;
 try{
-  const mcpBase=await listen(mcp),mcpEndpoint=`${mcpBase}/mcp`;
   let serviceUrl=await app.listen({host:'127.0.0.1',port:0});
   // The private deployment is served under a subpath behind an SSO gateway that owns the
   // Authorization header. Driving that shape needs a proxy in front, and it is the shape that
@@ -186,7 +164,9 @@ try{
   await scriptCard.getByRole('button',{name:'试运行',exact:true}).click();
   await page.getByRole('heading',{name:'calculate_acceptance_total · 验证通过',exact:true}).waitFor();
   const mcpCard=page.locator('article').filter({hasText:'get_acceptance_order'});
-  await mcpCard.getByLabel('共享 MCP 服务地址').fill(mcpEndpoint);
+  // Nothing to type: the platform starts the delivered service itself, and the page says so.
+  await expect(mcpCard.getByText('平台会按交付物的启动命令把服务起起来',{exact:false})).toBeVisible();
+  await expect(mcpCard.getByLabel('共享 MCP 服务地址')).toHaveCount(0);
   await mcpCard.getByLabel('试运行时传给工具的内容（JSON）').fill('{"order_id":"ORDER-001"}');
   await mcpCard.getByRole('button',{name:'试运行',exact:true}).click();
   await page.getByRole('heading',{name:'get_acceptance_order · 验证通过',exact:true}).waitFor();
@@ -212,8 +192,6 @@ try{
   assert(exported['skill/SKILL.md']);
   assert(exported['skill/scripts/calculate_acceptance_total.py']);
   assert(exported['mcp-python/server.py']);
-  assert(exported['mcp-python/orders.py']);
-  assert(exported['mcp-python/pyproject.toml']);
   assert(exported['skill/references/acceptance-policy.md']);
   assert(!exported['migration-manifest.json']);assert(!exported['migration-report.json']);
   const script=Buffer.from(exported['skill/scripts/calculate_acceptance_total.py']).toString();
@@ -233,6 +211,5 @@ try{
   }
   if(browser)await browser.close();
   if(proxy){proxy.closeAllConnections();await close(proxy);}
-  mcp.closeAllConnections();if(mcp.listening)await close(mcp);
   await app.close();await Promise.all([rm(data,{recursive:true,force:true}),rm(downloads,{recursive:true,force:true})]);
 }

@@ -1,7 +1,8 @@
 import { createHash,randomUUID } from 'node:crypto';
 import type { SkillAssetRecord } from './skill-store.js';
 import type { TechnicalValidation,ToolInspection } from './migration-model.js';
-import { LocalWorker } from './local-worker.js';
+import { LocalWorker,type LocalWorkerWorkspace } from './local-worker.js';
+import { startService,type Launchable } from './service-launch.js';
 import { validateMcpTool } from '../mcp-preflight.js';
 
 const digest=(values:unknown[])=>createHash('sha256').update(JSON.stringify(values)).digest('hex');
@@ -57,18 +58,56 @@ export class TechnicalValidationService{
       return {validationId,toolId:input.tool.toolId,assetId:input.asset.assetId,assetDigest:input.asset.artifactSha256,implementationDigest,casesDigest,mode:'LOCAL_TRUSTED',status:passed?'PASSED':'FAILED',startedAt,finishedAt:new Date().toISOString(),stages,error:passed?null:(result.stderr.trim()||'Script 技术验证未通过').slice(0,2000)};
     }catch(error){return this.failed(validationId,input.asset,input.tool.toolId,implementationDigest,casesDigest,'LOCAL_TRUSTED',startedAt,error instanceof Error?error.message:String(error));}
   }
-  async validateMcp(input:{asset:SkillAssetRecord;tool:ToolInspection;endpoint:string;arguments?:Record<string,unknown>;signal?:AbortSignal}):Promise<TechnicalValidation>{
-    const startedAt=new Date().toISOString(),validationId='technical-'+randomUUID(),implementationDigest=digest([input.tool.sourcePaths,input.endpoint]);
+  /**
+   * An MCP Tool's interface is what the service advertises, so validating it means starting the
+   * service and speaking MCP to it.
+   *
+   * When the Tool was migrated, the deliverable says how to start it (`start`, and `prepare` for
+   * the build step) -- and then the platform starts it, exactly as it runs a migrated Script's
+   * entrypoint. An endpoint an operator typed in is the fallback for a Tool that was already an
+   * MCP server and has no deliverable: connecting to that checks the protocol, but nothing about
+   * whether *our* service starts.
+   */
+  async validateMcp(input:{asset:SkillAssetRecord;tool:ToolInspection;archive?:Record<string,Uint8Array>;service?:Launchable;endpoint?:string;arguments?:Record<string,unknown>;signal?:AbortSignal}):Promise<TechnicalValidation>{
+    const startedAt=new Date().toISOString(),validationId='technical-'+randomUUID();
     const casesDigest=digest([input.arguments??{}]);
-    let url:URL;try{url=new URL(input.endpoint);}catch{return this.failed(validationId,input.asset,input.tool.toolId,implementationDigest,casesDigest,'MCP_HTTP',startedAt,'MCP endpoint 无效');}
-    if(!['127.0.0.1','localhost','::1'].includes(url.hostname))return this.failed(validationId,input.asset,input.tool.toolId,implementationDigest,casesDigest,'MCP_HTTP',startedAt,'首期只允许验证本机 MCP endpoint');
-    const result=await validateMcpTool({endpoint:url.toString(),toolName:input.tool.name,arguments:input.arguments,signal:input.signal});
-    const observed=result.tools.find(tool=>tool.name===input.tool.name),observedDigest=digest([input.tool.sourcePaths,input.endpoint,observed??null]);
-    const stages=[{name:'INITIALIZE_AND_LIST',passed:result.status==='ready',message:result.status==='ready'?`发现 ${result.tools.length} 个 Tool`:result.error??'初始化失败'},
-      {name:'INPUT_SCHEMA',passed:!!observed&&typeof observed.inputSchema==='object'&&observed.inputSchema!==null,message:observed?.inputSchema?'tools/list 返回了输入 Schema':'目标 Tool 没有可验证的输入 Schema'},
-      {name:'TOOLS_CALL',passed:result.status==='ready'&&result.callResult!==null,message:result.callResult!==null?'Tool 调用成功':'Tool 调用未完成'}];
-    const passed=stages.every(s=>s.passed);
-    return {validationId,toolId:input.tool.toolId,assetId:input.asset.assetId,assetDigest:input.asset.artifactSha256,implementationDigest:observedDigest,casesDigest,mode:'MCP_HTTP',status:passed?'PASSED':'FAILED',startedAt,finishedAt:new Date().toISOString(),stages,error:passed?null:result.error};
+    // `service` present means "this Tool is ours to start" -- even if the deliverable forgot the
+    // command, because then the answer is NO_START_COMMAND, not a fallback to an endpoint nobody
+    // was going to check the service against.
+    const launched=Boolean(input.service);
+    const implementationDigest=digest([input.tool.sourcePaths,input.service??input.endpoint??null]);
+    const failed=(mode:TechnicalValidation['mode'],error:string)=>this.failed(validationId,input.asset,input.tool.toolId,implementationDigest,casesDigest,mode,startedAt,error);
+
+    let endpoint=input.endpoint??'', mode:TechnicalValidation['mode']='MCP_HTTP', stop:(()=>Promise<void>)|null=null;
+    let workspace:LocalWorkerWorkspace|null=null;
+    if(launched){
+      if(!input.archive)return failed('LOCAL_TRUSTED','交付物声明了启动命令，但没有候选包可供启动');
+      mode='LOCAL_TRUSTED';
+      try{
+        workspace=await this.worker.open(Object.entries(input.archive).map(([path,content])=>({path,content})));
+        const started=await startService({worker:this.worker,workspace,service:input.service!,signal:input.signal});
+        if(!started.ok)return failed('LOCAL_TRUSTED',started.error);
+        endpoint=started.running.endpoint;stop=started.running.stop;
+      }catch(error){
+        await workspace?.dispose().catch(()=>undefined);
+        return failed('LOCAL_TRUSTED',error instanceof Error?error.message:String(error));
+      }
+    }
+    try{
+      let url:URL;try{url=new URL(endpoint);}catch{return failed(mode,mode==='LOCAL_TRUSTED'?'平台起的服务地址无效':'MCP endpoint 无效');}
+      if(!['127.0.0.1','localhost','::1'].includes(url.hostname))return failed(mode,'首期只允许验证本机 MCP endpoint');
+      const result=await validateMcpTool({endpoint:url.toString(),toolName:input.tool.name,arguments:input.arguments,signal:input.signal});
+      const observed=result.tools.find(tool=>tool.name===input.tool.name),observedDigest=digest([input.tool.sourcePaths,input.service??input.endpoint??null,observed??null]);
+      const stages=[{name:'PROCESS',passed:launched,message:launched?'交付物声明的启动命令已把服务起在 127.0.0.1':`连接操作者提供的 endpoint：${url.host}`},
+        {name:'INITIALIZE_AND_LIST',passed:result.status==='ready',message:result.status==='ready'?`发现 ${result.tools.length} 个 Tool`:result.error??'初始化失败'},
+        {name:'INPUT_SCHEMA',passed:!!observed&&typeof observed.inputSchema==='object'&&observed.inputSchema!==null,message:observed?.inputSchema?'tools/list 返回了输入 Schema':'目标 Tool 没有可验证的输入 Schema'},
+        {name:'TOOLS_CALL',passed:result.status==='ready'&&result.callResult!==null,message:result.callResult!==null?'Tool 调用成功':'Tool 调用未完成'}];
+      const passed=result.status==='ready'&&!!observed&&result.callResult!==null;
+      return {validationId,toolId:input.tool.toolId,assetId:input.asset.assetId,assetDigest:input.asset.artifactSha256,implementationDigest:observedDigest,casesDigest,mode,status:passed?'PASSED':'FAILED',startedAt,finishedAt:new Date().toISOString(),stages,error:passed?null:result.error};
+    }finally{
+      await stop?.().catch(()=>undefined);
+      await workspace?.dispose().catch(()=>undefined);
+    }
   }
   private failed(validationId:string,asset:SkillAssetRecord,toolId:string,implementationDigest:string,casesDigest:string,mode:TechnicalValidation['mode'],startedAt:string,error:string):TechnicalValidation{
     return {validationId,toolId,assetId:asset.assetId,assetDigest:asset.artifactSha256,implementationDigest,casesDigest,mode,status:'FAILED',startedAt,finishedAt:new Date().toISOString(),stages:[],error};
