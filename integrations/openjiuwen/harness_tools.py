@@ -24,9 +24,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-#: The rule package the platform ships with the agents. Both agents read their judgement rules from
-#: it, and it is the reason `skill_rail` exists (see below).
-SKILL_PACKAGE = str(Path(__file__).resolve().parents[2] / "skills")
+#: The skill library root, and the two skills in it. One skill per workflow -- A2 judges, A4
+#: delivers -- and each agent is given only its own (`skill_rail` below). Keeping the delivery
+#: material out of the judgement skill is the point: a skill's `description` is its trigger, and
+#: A2's says nothing about writing services.
+SKILL_ROOT = Path(__file__).resolve().parents[2] / "skills"
+SKILL_JUDGEMENT = "enterprise-migration"
+SKILL_DELIVERY = "enterprise-migration-delivery"
 
 from openjiuwen.core.single_agent.rail.base import AgentRail
 from openjiuwen.harness.rails.sys_operation_rail import SysOperationRail
@@ -93,22 +97,27 @@ class AbsoluteLineReadFileTool(ReadFileTool):
         return shift_line_numbers(rendered, max(0, int(offset)))
 
 
-def skill_rail():
-    """A `SkillUseRail` that is actually pointed at our skill package.
+def skill_rail(name: str):
+    """A `SkillUseRail` that offers exactly one skill -- the one this stage is allowed to read.
 
-    The factory's `skills=` argument only decides *whether* to mount this rail; it never tells the
-    rail where the package is -- the rail reads its directories from `skills_dir`, which the factory
-    fills from the *workspace's* `skills/` node. That directory holds the harness's own bookkeeping,
-    so `skill_tool` answered "Skill not found" for every name the agent tried, including the right
-    one, and the rules it was told to consult were never reachable.
+    Two things about the harness this has to work around, both verified against the source:
 
-    Built here instead, with `skills_dir` set to the package the platform ships. `include_tools`
-    is off because the agents already assemble their own file tools (and `FilesystemOnlyRail`
-    declares the filesystem rail present, which is what that flag checks).
+    * the factory's `skills=` argument only decides *whether* to mount this rail; it never tells the
+      rail where the library is. The rail reads `skills_dir`, which the factory fills from the
+      *workspace's* `skills/` node -- the harness's own bookkeeping -- so `skill_tool` answered
+      "Skill not found" for every name, including the right one, and the rules the agent was told to
+      consult were unreachable;
+    * `skills_dir` is a **library root**, not a skill: the loader walks the root's child directories
+      looking for `SKILL.md`. Passing the skill directory itself loads nothing, silently.
+
+    So: point it at the library, and select with `enabled_skills`, which is an allow-list by name.
+    `include_tools` is off because the agents already assemble their own file tools (and
+    `FilesystemOnlyRail` declares the filesystem rail present, which is what that flag checks).
     """
     from openjiuwen.harness.rails.skills.skill_use_rail import SkillUseRail
 
-    return SkillUseRail(skills_dir=[SKILL_PACKAGE], skill_mode="all", include_tools=False)
+    return SkillUseRail(skills_dir=[str(SKILL_ROOT)], skill_mode="all",
+                        enabled_skills=[name], include_tools=False)
 
 
 def _short(value, limit: int = 200) -> str:

@@ -23,7 +23,7 @@ const PYTHON = process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim()
  *
  * A skeleton that fails here is a doc bug, not a test bug: the agent will copy it.
  */
-const TEMPLATES = path.resolve('skills/enterprise-migration/references/service-templates.md');
+const TEMPLATES = path.resolve('skills/enterprise-migration-delivery/references/service-templates.md');
 const TOOL_NAME = 'lookup';
 const INPUT_SCHEMA = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false };
 const ARGUMENTS = { id: 'A10001' };

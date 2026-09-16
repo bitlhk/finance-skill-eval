@@ -129,10 +129,12 @@ def parse_structured(output: str) -> dict:
     candidates.extend(_balanced_objects(output))
 
     parsed: list[dict] = []
+    broken: str = ""
     for candidate in candidates:
         try:
             value = json.loads(candidate)
-        except ValueError:
+        except ValueError as exc:
+            broken = broken or str(exc)
             continue
         if isinstance(value, dict):
             parsed.append(value)
@@ -142,4 +144,10 @@ def parse_structured(output: str) -> dict:
             return value
     if parsed:
         return max(parsed, key=len)
+    if fenced and broken == "" and not candidates:
+        # A fenced block whose braces never balance: the answer *was* meant to be JSON and is
+        # malformed, which is a different problem from prose -- and the fix is different too.
+        raise ValueError("JSON_UNBALANCED: 围栏里的 JSON 括号不配对（多半是某个字符串没闭合）")
+    if broken:
+        raise ValueError(f"JSON_INVALID: {broken}")
     raise ValueError("NO_JSON_IN_OUTPUT")

@@ -26,7 +26,8 @@ sys.stdout = sys.stderr
 logging.disable(logging.INFO)
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool, FilesystemOnlyRail, ToolTraceRail, skill_rail  # noqa: E402
+from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_DELIVERY,
+                           ToolTraceRail, skill_rail)  # noqa: E402
 from migration_tools import build_compile_tool, build_contract_test_tool  # noqa: E402
 
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
@@ -55,8 +56,8 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
      这里给的 `start` 要和最后 JSON 里给的一致。
 5. 失败就按失败原因改，再回到 3。
 
-交付形态（骨架与硬要求见**已加载的技能包 `enterprise-migration`** 里的 `references/service-templates.md`
-——用 `skill_tool` 按 **`enterprise-migration`** 取，**名字写错会一直取不到，别试别的写法**；
+交付形态（骨架与硬要求见**已加载的技能包 `enterprise-migration-delivery`** 里的 `references/service-templates.md`
+——用 `skill_tool` 按 **`enterprise-migration-delivery`** 取，**名字写错会一直取不到，别试别的写法**；
 **它不在工作区里**，不要去文件系统找）：
 
 - **MCP**：自己写出**完整的 MCP 服务**——服务入口、工具适配、依赖清单、Dockerfile、README。
@@ -173,7 +174,7 @@ async def run(body: dict) -> None:
             workspace=str(workspace),
             max_iterations=budget,
             language=lang,
-            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail()],
+            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail(SKILL_DELIVERY)],
             # `minimal` drops the WORKSPACE prompt section: it advertises the harness's own
             # agent-home files (AGENT.md, SOUL.md, ...) as things to read, and they are not the
             # source project. It also keeps the scaffold out of the model's way.

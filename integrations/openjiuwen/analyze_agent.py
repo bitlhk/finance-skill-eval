@@ -27,7 +27,8 @@ logging.disable(logging.INFO)
 from pathlib import Path as _Path  # noqa: E402
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
-from harness_tools import AbsoluteLineReadFileTool, FilesystemOnlyRail, ToolTraceRail, skill_rail  # noqa: E402
+from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_JUDGEMENT,
+                           ToolTraceRail, skill_rail)  # noqa: E402
 from migration_tools import build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
@@ -49,10 +50,9 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 
 第 2 件是**基线**——迁移要保留它，校验要拿它比对，出题要拿它当种子。
 怎么读，见**已加载的技能包 `enterprise-migration`**——用 `skill_tool` 按**这个名字**取
-（技能包名就是它 frontmatter 里的 `name`；`analysis-rules` 是它**内部的一篇参考** `references/analysis-rules.md`，
-不是技能名。名字写错会一直取不到，别试别的写法）。
+（技能包名就是它 frontmatter 里的 `name`。名字写错会一直取不到，别试别的写法）。
 **它不在工作区里**（那是平台随 agent 一起加载的规则包，不是被检查的包），所以不要去文件系统里找它。
-要点：**优先读 Skill 文档对工具用法的描述**，
+**规则只有一份，整份读完再动手。** 要点：**优先读 Skill 文档对工具用法的描述**，
 而不是从实现代码里反推；输入、输出、样例**各自都要指到出处**。
 
 规则：
@@ -102,6 +102,8 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 `entrypoint` 是这个工具**要跑哪个文件**：Script 工具指可独立运行的程序，MCP 工具指服务入口。
 读不出来就整个省略——平台不会替你猜，猜出来的入口会去跑一个错的文件。
 status 为 ABSTAINED 时，reason 与 missing 必须说明缺什么。
+**`snippet` 是原文**，里面有引号或大括号时必须按 JSON 转义规则写好（`\"`、`\\`）——整份回答会因为
+一个没闭合的字符串而作废。原文太绕就换一条更干净的原文，不要硬塞。
 """
 
 
@@ -124,7 +126,7 @@ async def run(body: dict) -> None:
     workspace = build_workspace({k: base64.b64decode(v).decode("utf-8") for k, v in body["files"].items()})
     tool_trace: list[dict] = []
     scanner_results: list[dict] = []
-    status, raw = "FAILED", ""
+    status, raw, failure = "FAILED", "", ""
     budget = int(body.get("maxIterations", 60))
     try:
         sys_op = SysOperation(SysOperationCard(id=f"a2-{body.get('runId', 'run')}", mode=OperationMode.LOCAL))
@@ -155,7 +157,7 @@ async def run(body: dict) -> None:
             workspace=str(workspace),
             max_iterations=budget,
             language=lang,
-            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail()],
+            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail(SKILL_JUDGEMENT)],
             # `minimal` drops the WORKSPACE prompt section, which otherwise puts the harness's own
             # agent-home files (AGENT.md, SOUL.md, ...) in front of the model as things to read.
             # Field runs spent 7 rounds on them; they are not part of the package under inspection.
@@ -218,7 +220,8 @@ async def run(body: dict) -> None:
         }})
     finally:
         write_agent_dump("a2", f"{status} budget={budget} toolRounds={len(tool_trace)} "
-                              f"scannerRuns={len(scanner_results)}\n\n"
+                              f"scannerRuns={len(scanner_results)} error={failure!r} "
+                              f"outputChars={len(raw)}\n\n"
                               f"--- rounds ---\n{json.dumps(tool_trace, ensure_ascii=False, indent=1)[:20000]}\n\n"
                               f"--- output ---\n{raw}")
         shutil.rmtree(workspace, ignore_errors=True)

@@ -346,27 +346,33 @@ agent 化之后，判据分成两处，边界必须守住：
 
 两者共同填 `StageEnvelope.trace`。
 
-### 6.7 企业规范技能包
+### 6.7 技能包：按 workflow 分成两个
 
-A2 的判断依据以**框架技能包**形式提供，按需读取，不塞进系统提示。
+规范以**框架技能包**形式提供，agent 按需读取，不塞进系统提示。**一个包只描述一类任务**——A2 的"判断"和 A4 的"改造"是两条不同的 workflow，因此是两个包：
 
 ```
-skills/enterprise-migration/
-├── SKILL.md                    # 索引：什么时候读哪一份
-└── references/
-    ├── skill-spec.md           # 合规：SKILL.md、name/description、引用、目录卫生、凭据、失败处理
-    ├── portability-rules.md    # 可移植性：六个状态的判定条件 + 四条例外
-    ├── target-rules.md         # 形式与语言建议规则 + 授权/技术问题的边界
-    └── evidence-rules.md       # 证据与覆盖率判据
+skills/
+├── enterprise-migration/                # A2 检查判断用
+│   ├── SKILL.md                         # workflow + 索引
+│   └── references/
+│       └── judgement-rules.md           # 分析 / 合规 / 可移植性 / 形式建议 / 证据与弃权
+└── enterprise-migration-delivery/       # A4 改造交付用
+    ├── SKILL.md
+    └── references/
+        └── service-templates.md         # 服务与脚本的骨架 + 硬要求
 ```
 
-三块内容：
+**为什么拆**（2026-09-17）：`service-templates.md` 原先放在判断包里，而那个包的 `description` 只声明了"检查与判断依据……判断是否合规、可移植性如何、建议迁移成什么形式和语言"——**逐字是 A2 的活，没有一个字提到"写出可运行的服务"**。于是 A2 每次都会把这份它用不上、且**设计上不该由它掌握**的材料读进去（见 [A4-migration.md](impl/A4-migration.md)"交付形态"与"不给平台的分类判断"两侧的边界）。
 
-1. **企业 Skill 规范**——来自 `skill-specification.md`；
-2. **可移植性判据**——六个状态的判定条件，以及在代码里无法机械表达的那四条例外；
-3. **迁移建议规则**——形式建议、语言建议、授权边界。这部分判据目前在代码和文档里都不存在，需新写。
+实测代价：`service-templates.md` **364 行 / 14.5 KB，比 A2 那五篇加起来（183 行 / 10 KB）还大**；A2 一次跑的 11 个回合里 7 个是取技能材料，其中就有它。
 
-**语言判据已定**（原「便于转换的语言」待定项已解决）：同语言优先 → 生态最接近 → 兜底（MCP 用 Java、Script 用 Python）；源语言不在支持范围则 `UNSUPPORTED`。实现在 `migration-model.ts` 的 `recommendLanguage()`，原则写进 `target-rules.md`，**目标语言集合不写进技能包**——那是平台能力，会随模板增减而变。
+**为什么把 A2 那五篇并成一篇**：references 的意义是"**按需**只加载需要的那份"，可 A2 的活就是"读这个包、给出判断"——**五篇它每次都要**，按需加载收益为零，只剩五次往返。并成一篇后取材料从 7 次降到 2 次（索引 + 正文），读的字节数不变。
+
+**合并同时消掉一处矛盾**：`evidence-rules` 写"`line` 必须是真实行号"，`analysis-rules` 写"不要给行号、由平台按原文定位"——分在两处读起来自相矛盾。真相是**两条路各管各的**：finding 带行号且平台会核对，分析主张只给片段、行号由平台算。并进一篇才能把这条并列讲清楚（见 `judgement-rules.md` 第 ① 节）。
+
+**判据按 workflow 分组，不按"文件数"分组**：agent 需要的是它那一类任务的完整规则，而不是能被选择性加载的碎片。
+
+**语言判据已定**：同语言优先 → 生态最接近 → 兜底（MCP 用 Java、Script 用 Python）；源语言不在支持范围则 `UNSUPPORTED`。实现在 `migration-model.ts` 的 `recommendLanguage()`，原则写进 `judgement-rules.md`，**目标语言集合不写进技能包**——那是平台能力，会随模板增减而变。
 
 ### 6.8 已核对的框架 API
 

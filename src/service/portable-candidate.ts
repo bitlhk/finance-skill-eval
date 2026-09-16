@@ -25,7 +25,7 @@ export type PortableDiff={path:string;operation:'ADD'|'MODIFY';before:string;aft
  * reading rather than what the agent had built.
  *
  * The shapes the agent writes against are in the skill package:
- * `skills/enterprise-migration/references/service-templates.md`.
+ * `skills/enterprise-migration-delivery/references/service-templates.md`.
  */
 const pythonName=(name:string)=>identifier(name.toLowerCase().replace(/[^a-z0-9_]+/gu,'_').replace(/^_+|_+$/gu,'')||'tool','tool_');
 const nodeName=(name:string)=>identifier(name.toLowerCase().replace(/[^a-z0-9]+/gu,'-').replace(/^-+|-+$/gu,'')||'tool','tool-');
