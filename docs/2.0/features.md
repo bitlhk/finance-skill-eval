@@ -263,3 +263,8 @@ OpenJiuwen 验证通过后，用户可以复用现有开发题、Judge、Optimiz
 运行 `pnpm test:skeleton:mcp` 会把技能包 `references/service-templates.md` 里的 Python / Node / Java 三套
 MCP 骨架**读出来**编译并起服务，用真实 MCP 客户端确认公布的 Schema 与源一致、调用打到业务方法。它需要
 `uv` / `node` / `mvn`，且 Python 与 Node 首次要联网取依赖——所以它现在只在开发机上跑，没进 CI。
+
+运行 `node --env-file=.env.local scripts/verify-real-agent-migration.mjs` 会**用真模型**把 A2 分析 → A3 授权 →
+A4 交付 → 从分析生成测试集跑一遍，断言基线读出来了、交付物可试运行、测试集题目用得上分析里的工具。
+它要模型密钥，因此同样不进 CI——但前面那些打桩的检查都替代不了它：agent 数不准行号、模型连接会断，
+这两件事都是它第一个发现的。
