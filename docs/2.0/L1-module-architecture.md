@@ -268,7 +268,7 @@ create_explore_agent(
     skills           = [企业规范技能包],
     max_iterations   = 15,
     enable_task_loop = True,                       # TaskCompletionRail 生效的前提
-    search_via_bash  = False,                      # 用离散 GrepTool
+    search_via_bash  = False,                      # 用离散的 grep
 )
 ```
 
@@ -276,7 +276,8 @@ create_explore_agent(
 
 | 工具 | 来源 |
 | --- | --- |
-| `ReadFileTool` / `GrepTool` / `GlobTool` / `ListDirTool` | 框架公开类，直接构造 |
+| `ReadFileTool` / `GlobTool` / `ListDirTool` | 框架公开类，直接构造 |
+| `grep` | **本项目新增**——框架那个要起 shell，本平台起不来（见 §6.7） |
 | `run_scanner` | 本项目新增 |
 | **`BashTool` / `PowerShellTool` / `WriteFileTool` / `EditFileTool` —— 一概不给** | —— |
 
@@ -384,7 +385,7 @@ skills/
 | 完成信号 | `TaskCompletionRail` | `openjiuwen.harness.rails` |
 | 预算评估器 | `MaxRoundsEvaluator` / `TimeoutEvaluator` / `TokenBudgetEvaluator` / `CompletionPromiseEvaluator` | `openjiuwen.harness.schema.stop_condition` |
 | 工具调用韧性 | `ToolCallResilienceRail` | `openjiuwen.harness.rails.tool_call_resilience_rail`（**未从 `harness.rails` 再导出，必须走全路径**） |
-| 文件工具 | `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GlobTool` / `GrepTool` / `ListDirTool` | `openjiuwen.harness.tools` |
+| 文件工具 | `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GlobTool` / `ListDirTool` / ~~`GrepTool`~~ | `openjiuwen.harness.tools`（`GrepTool` **不用**，原因见 §6.7） |
 | 系统操作层 | `SysOperation` / `OperationMode` | `openjiuwen.core.sys_operation` |
 
 **核对时推翻了初稿的三处**：
@@ -394,6 +395,26 @@ skills/
 3. `SysOperationRail` **无法去掉 shell**——`BashTool` 无条件注册，`bash_deny_patterns` 只是拒绝名单。
 
 第 2、3 条直接改变了 A2/A4 的工具装配方式（见 §6.1、§8.0）。**harness 是活跃模块，小版本之间会增删——版本冻结后必须实测核对，不能照抄旧版本。**
+
+### 6.9 grep 自己实现，不走 shell
+
+A2 与 A4 用的是**本项目自己写的 `grep`**（`migration_tools.build_grep_tool`），不是 `openjiuwen.harness.tools.GrepTool`。
+
+**为什么不带框架那个**：`GrepTool` 把命令拼出来交给 `SysOperation.shell()`。Windows 上没有 `rg`，它就走 PowerShell 分支，拼出来的是一条**脚本**，第一个 token 是 `$ErrorActionPreference='SilentlyContinue';`；而 shell 的允许清单闸门只看 `command.split()[0]`，于是**每一次调用都被拒**，回给模型的是 `shell operation execution error`。三个分支实测对照：
+
+| 分支 | 命令第一个 token | 结果 |
+| --- | --- | --- |
+| 有 `rg` | `rg` | 允许清单里有 `rg`，能过 |
+| 无 `rg`，PowerShell | `$ErrorActionPreference='SilentlyContinue';` | **清单里永远不可能有这一条**，恒拒 |
+| 无 `rg`，cmd | `findstr` | 清单里没有 |
+
+**为什么不是放行 `powershell`**：`_check_allowlist` 只比对 `command.split()[0]`，而第一个 token 是脚本开头，**不是 `powershell`**——所以放行 `powershell` 也没用（实测确认过：清单里写了 `powershell`，那条命令依然过不去）。要让它过去只能放宽到"不做前缀检查"，那是把整个 shell 边界拆掉。
+
+**为什么不是装 `rg`**：那是给部署环境加前置条件，而 agent 本来就不该有 shell。自己读文件同时解决三件事——**不再有 shell / 不受 `os.name` 分叉 / 搜索锁死在工作区内**。
+
+**接口与输出形状照抄 `GrepTool`**（`pattern` / `path` / `output_mode` / `-i` / `-n` / `-A`/`-B`/`-C` / `glob` / `head_limit` / `offset`，输出行 `路径:行号:原文`），模型的既有习惯不用改。`multiline` 明确回绝（它确实需要 `rg`）；越界返回 `SEARCH_OUTSIDE_WORKSPACE`。
+
+`tests/agent-tool-wiring.test.ts` 盯着这条装配——换回框架的 `GrepTool` 会失败。
 
 ## 7. MigrationPlanner
 
@@ -474,7 +495,8 @@ create_code_agent(
 
 | 工具 | 来源 |
 | --- | --- |
-| `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GrepTool` / `GlobTool` / `ListDirTool` | 框架公开类，直接构造 |
+| `ReadFileTool` / `WriteFileTool` / `EditFileTool` / `GlobTool` / `ListDirTool` | 框架公开类，直接构造 |
+| `grep` | **本项目新增**，与 A2 同一个（见 §6.7） |
 | `compile_tool` / `run_contract_test` | 本项目新增 |
 | **`BashTool` / `PowerShellTool` / `CodeTool` —— 一概不给** | —— |
 

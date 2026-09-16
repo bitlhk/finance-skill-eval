@@ -178,7 +178,45 @@ await target.reload_skills()
 
 **回合数的验收标准**：同一份验收夹具，工具调用 **≤10**，序列里**不再出现 `bash`**、不出现同一文件的多种路径写法。达标与否用 `reports/probe-a2.mjs` 对照，不靠"这次模型表现好"。
 
-### 实测（同一份夹具，逐条对照）
+### ⑦ grep 自己实现，不走 shell（已做）
+
+`GrepTool` 是四个文件工具里**唯一走 shell 的**（其余三个走 `fs()`）：它拼一条命令行交给
+`SysOperation.shell().execute_cmd()`。实测三个分支：
+
+| 分支 | 完整命令的第一个 token | 默认允许清单 |
+| --- | --- | --- |
+| `rg`（装了 rg） | `rg` | ✅ |
+| `grep`（POSIX） | `grep` | ✅ |
+| **PowerShell（Windows 没装 rg）** | **`$ErrorActionPreference='SilentlyContinue';`** | ❌ **永远匹配不上** |
+
+Windows 那支**不是"跑 powershell 命令"，是把一段管道脚本交给 execute_cmd**，靠
+`_resolve_execution_plan` 在更晚的地方包成 `[powershell.exe, -NoProfile, -NonInteractive, -Command, <脚本>]`。
+而允许清单的检查在**包之前**，看到的就是那段脚本的开头——**任何程序名条目都匹配不上它**。
+
+**所以在本平台的默认配置下，`GrepTool` 是结构性不可用**：两个 agent 的每次 `grep` 都被
+`command not allowed by allowlist` 拒掉（实跑 1 次、复现 3 种 pattern 全部失败）。模型据此白扔回合，
+而且**丢掉了搜索能力**。
+
+**为什么不是"放行 powershell"**：清单匹配的是 `command.split()[0]`，**只能表达程序名**，不能表达
+"只允许 Select-String"；写上 `powershell` 等于放行任意 PowerShell。更关键的是——**对这条路它根本不生效**，
+因为该分支的第一个 token 不是 `powershell`。能生效的唯一配置写法是把那段 prologue 字面量抄进清单，
+那等于把 harness 的内部字符串搬进我们的配置，改一处就静默失效。
+
+**为什么不是"装 rg"**：能work（`rg` 在清单里），但平台就**默默依赖**每台机器都装了它，
+失败方式仍是"工具在、报错却指不到真因"。
+
+**改为**：自己实现 `build_grep_tool()`，**直接读文件、不做任何 shell 调用**。它同时消掉三件事：
+
+1. **不再有 shell**——"A2 只读、不含 shell"从**工具表**层面成立，落到**实现层**也成立（此前每次搜索都在偷偷执行命令）；
+2. **不受 `os.name` 分叉影响**——不再有"Linux 走 grep / Windows 走 PowerShell"的两种方言；
+3. **搜索范围锁在工作区内**——模型没法让它去翻宿主上别的目录（原来的实现只看允许清单，不看范围）。
+
+**接口与输出照抄 `GrepTool`**（`pattern` / `path` / `output_mode` / `-i` / `-n` / `-A` / `-B` / `-C` /
+`head_limit` / `offset` / `glob`；行形如 `相对路径:行号:原文`），这样**工具名不变、提示词不用改、
+模型对输出的预期不变**。`multiline` 与 `type` 沿用原实现的处理（前者要 rg，明确拒绝）。
+
+**限制写明白**：二进制/非 UTF-8 文件跳过（原实现也是这个语义）；单文件超 512KB 跳过——与扫描器同一档阈值。
+
 
 | | 起点 | 现在 |
 | --- | --- | --- |

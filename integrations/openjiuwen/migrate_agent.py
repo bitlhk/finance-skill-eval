@@ -28,7 +28,7 @@ logging.disable(logging.INFO)
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
 from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_DELIVERY,
                            ToolTraceRail, skill_rail)  # noqa: E402
-from migration_tools import build_compile_tool, build_contract_test_tool  # noqa: E402
+from migration_tools import build_compile_tool, build_contract_test_tool, build_grep_tool  # noqa: E402
 
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 
@@ -123,7 +123,7 @@ async def run(body: dict) -> None:
     from openjiuwen.core.sys_operation.sys_operation import SysOperationCard
     from openjiuwen.harness.subagents.code_agent import create_code_agent
     from openjiuwen.harness.tools import (
-        EditFileTool, GlobTool, GrepTool, ListDirTool, WriteFileTool,
+        EditFileTool, GlobTool, ListDirTool, WriteFileTool,
     )
 
     from model_config import resolve_model, request_settings
@@ -154,7 +154,7 @@ async def run(body: dict) -> None:
             AbsoluteLineReadFileTool(sys_op, lang, agent_id),
             WriteFileTool(sys_op, lang, agent_id),
             EditFileTool(sys_op, lang, agent_id),
-            GrepTool(sys_op, lang, agent_id),
+            build_grep_tool(workspace, tool_trace),
             GlobTool(sys_op, lang, agent_id),
             ListDirTool(sys_op, lang, agent_id),
             build_compile_tool(workspace, tool_trace),

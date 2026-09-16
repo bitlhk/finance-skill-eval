@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Callable
 
@@ -542,3 +543,170 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
         "drift": drift,
         "error": "",
     }
+
+
+# --------------------------------------------------------------------------
+# grep: read the files ourselves, because the harness's one shells out
+# --------------------------------------------------------------------------
+
+_MAX_FILE_BYTES = 512_000      # the same ceiling the scanner uses for one file
+_MAX_COLUMNS = 500
+_SKIP_DIRS = frozenset({".git", ".svn", ".hg", ".bzr", ".jj", ".sl", "__pycache__",
+                        "node_modules", ".venv", ".mypy_cache", ".pytest_cache"})
+# Deliberately small. The harness's own `type` filter needs ripgrep, which this platform does not have.
+_TYPE_SUFFIXES = {
+    "py": (".py",), "js": (".js", ".mjs", ".cjs"), "ts": (".ts", ".tsx"),
+    "java": (".java",), "md": (".md", ".mdx"), "json": (".json",),
+    "yaml": (".yaml", ".yml"), "sh": (".sh", ".bash"),
+}
+
+
+def _readable_files(root: Path, workspace: Path):
+    """Every text file under `root`, in path order, skipping what grep itself would skip."""
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if _SKIP_DIRS.intersection(path.relative_to(workspace).parts):
+            continue
+        try:
+            if path.stat().st_size > _MAX_FILE_BYTES:
+                continue
+            yield path, path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            # Binary or unreadable: grep would call it binary and move on.
+            continue
+
+
+def _hits(pattern, text: str, *, mode: str, before: int, after: int):
+    """Matching line numbers, or -- in content mode -- (line, is_match) pairs including context."""
+    lines = text.splitlines()
+    matched = [index for index, line in enumerate(lines) if pattern.search(line)]
+    if mode != "content":
+        return matched
+    wanted: dict[int, bool] = {}
+    for index in matched:
+        wanted[index] = True
+        for neighbour in range(max(0, index - before), min(len(lines), index + after + 1)):
+            wanted.setdefault(neighbour, False)
+    return sorted(wanted.items())
+
+
+def build_grep_tool(workspace: Path, capture: list[dict[str, Any]] | None = None) -> LocalFunction:
+    """Search the workspace by reading it -- no shell, and no way out of the workspace.
+
+    The harness's `GrepTool` builds a command line and hands it to `SysOperation.shell()`. On Windows
+    without ripgrep that command is a PowerShell *pipeline script*, and the shell's allowlist gate
+    reads the command's first token -- so it sees the script's opening statement and refuses every
+    call. Installing rg would paper over it, and the shell would still be inside an agent whose whole
+    point is that it has none.
+
+    The inputs and the output shape match the tool it replaces, so the agent's habits still hold.
+    """
+    root = workspace.resolve()
+
+    async def grep(pattern: str = "", path: str = "", output_mode: str = "content", **options: Any) -> dict[str, Any]:
+        if not pattern:
+            return {"error": "pattern is required"}
+        mode = str(output_mode or "content")
+        if mode not in {"content", "files_with_matches", "count"}:
+            return {"error": "output_mode must be one of: content, files_with_matches, count"}
+        if options.get("multiline"):
+            return {"error": "multiline search requires ripgrep (rg) to be installed"}
+
+        target = Path(path).resolve() if path else root
+        # The boundary is the workspace itself, not a permission list: nothing outside it is searchable.
+        if target != root and root not in target.parents:
+            return {"error": f"SEARCH_OUTSIDE_WORKSPACE: {path}"}
+        if not target.exists():
+            return {"error": f"path does not exist: {path}"}
+
+        try:
+            flags = re.IGNORECASE if (options.get("-i") or options.get("ignore_case")) else 0
+            compiled = re.compile(pattern, flags)
+        except re.error as error:
+            return {"error": f"invalid pattern: {error}"}
+
+        suffixes = _TYPE_SUFFIXES.get(str(options.get("type") or "").lower())
+        globs = [item.strip() for item in str(options.get("glob") or "").split(",") if item.strip()]
+        before = int(options.get("-B") or options.get("-C") or options.get("context") or 0)
+        after = int(options.get("-A") or options.get("-C") or options.get("context") or 0)
+        numbered = options.get("-n", True) is not False
+
+        base = target if target.is_dir() else target.parent
+        files = [target] if target.is_file() else list(_readable_files(target, root))
+        lines: list[str] = []
+        matched_files = 0
+        total = 0
+
+        for file_path, text in files:
+            relative = file_path.relative_to(root).as_posix()
+            if suffixes and not relative.endswith(suffixes):
+                continue
+            if globs and not any(fnmatch(relative, item) or fnmatch(file_path.name, item) for item in globs):
+                continue
+            found = _hits(compiled, text, mode=mode, before=before, after=after)
+            if not found:
+                continue
+            matched_files += 1
+            shown = file_path.relative_to(base).as_posix() if target.is_dir() else file_path.name
+            if mode == "files_with_matches":
+                lines.append(shown)
+                continue
+            if mode == "count":
+                total += len(found)
+                lines.append(f"{shown}:{len(found)}")
+                continue
+            body = text.splitlines()
+            for index, is_match in found:
+                if is_match:
+                    total += 1
+                prefix = f"{index + 1}:" if numbered else ""
+                lines.append(f"{shown}:{prefix}{body[index][:_MAX_COLUMNS]}")
+
+        offset = int(options.get("offset") or 0)
+        limit = options.get("head_limit")
+        window = lines[offset:]
+        applied = None
+        if limit is not None:
+            window = window[: int(limit)]
+            applied = int(limit)
+        content = "\n".join(window)
+        data: dict[str, Any] = {
+            "stdout": content, "stderr": "", "exit_code": 0 if lines else 1, "mode": mode,
+            "appliedOffset": offset or None, "appliedLimit": applied, "content": content,
+            "filenames": list(window) if mode == "files_with_matches" else [],
+            "numFiles": len(window) if mode == "files_with_matches" else matched_files,
+            "count": total,
+        }
+        if mode == "content":
+            data["numLines"] = len(window)
+        elif mode == "count":
+            data["numMatches"] = total
+        if capture is not None:
+            capture.append({"tool": "grep", "pattern": pattern[:80], "mode": mode,
+                            "files": matched_files, "matches": total})
+        return data
+
+    return _tool(
+        "grep",
+        "Search the workspace with a regular expression. Reads the files directly -- no shell, and the "
+        "search cannot leave the workspace. Arguments as usual: `pattern`, `path`, `output_mode` "
+        "(content | files_with_matches | count), `-i`, `-n`, `-A`/`-B`/`-C`, `glob`, `head_limit`, "
+        "`offset`. Output lines look like `path:line:text`.",
+        {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regular expression to search for."},
+                "path": {"type": "string", "description": "File or directory to search. Defaults to the workspace."},
+                "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"]},
+                "glob": {"type": "string", "description": "Comma-separated filename patterns to include."},
+                "-i": {"type": "boolean", "description": "Case-insensitive."},
+                "-n": {"type": "boolean", "description": "Show line numbers (default true)."},
+                "-A": {"type": "integer"}, "-B": {"type": "integer"}, "-C": {"type": "integer"},
+                "head_limit": {"type": "integer"}, "offset": {"type": "integer"},
+            },
+            "required": ["pattern"],
+            "additionalProperties": True,
+        },
+        grep,
+    )
