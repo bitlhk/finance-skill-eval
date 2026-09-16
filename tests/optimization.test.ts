@@ -24,7 +24,7 @@ describe("bounded candidate generation", () => {
     expect(() => candidateFiles(files, [{ path, content: "x" }], "candidate")).toThrow();
   });
   it("does not let optimizer change Skill identity", () => {
-    expect(() => candidateFiles(files, [{ path: "SKILL.md", content: files["SKILL.md"].replace("test-skill", "other-skill") }], "candidate")).toThrow(/identity/);
+    expect(() => candidateFiles(files, [{ path: "SKILL.md", content: files["SKILL.md"].replace("test-skill", "other-skill") }], "candidate")).toThrow(/身份/);
   });
   it("loads holdout independently of development cases", async () => {
     const pack = await loadEvalPack("packs/finance/wealth-online/eval.yaml");

@@ -40,18 +40,18 @@ export function candidateFiles(files: Record<string, string>, changes: Array<{ p
   const seen = new Set<string>();
   for (const change of changes) {
     if (!(change.path === "SKILL.md" || /^references\/[a-zA-Z0-9_/-]+\.md$/u.test(change.path)) || change.path.includes("..") || seen.has(change.path)) {
-      throw new Error("Candidate edits may only change SKILL.md and reference Markdown files");
+      throw new Error("候选只能修改 SKILL.md 与 references 下的 Markdown");
     }
     seen.add(change.path); next[change.path] = change.content;
   }
   const match = next["SKILL.md"]?.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/u);
-  if (!match) throw new Error("Candidate requires valid Skill frontmatter");
+  if (!match) throw new Error("候选需要合法的 Skill frontmatter");
   const original = files["SKILL.md"]?.match(/^---\s*\n([\s\S]*?)\n---/u);
   const identity = original ? parse(original[1]!) : null;
   const metadata = parse(match[1]!);
-  if (!identity?.name || metadata?.name !== identity.name) throw new Error("Optimizer cannot change Skill identity");
+  if (!identity?.name || metadata?.name !== identity.name) throw new Error("优化器不能改变 Skill 身份");
   next["SKILL.md"] = `---\n${stringify({ ...metadata, name: identity.name, version })}---\n\n${match[2]}`;
-  if (Object.values(next).reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 240000) throw new Error("Candidate package exceeds text budget");
+  if (Object.values(next).reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 240000) throw new Error("候选包超出文本大小上限");
   return next;
 }
 
@@ -69,7 +69,7 @@ export class OptimizationManager {
       executionModel:configuration.executionModel??configuredModelRole('EXECUTION').model,judgeModel:configuredModelRole('JUDGE').model});
   }
   async get(id: string): Promise<Optimization> {
-    if (!/^opt-[a-f0-9-]+$/u.test(id)) throw new Error("Invalid optimization id");
+    if (!/^opt-[a-f0-9-]+$/u.test(id)) throw new Error("优化记录 ID 不合法");
     const item = await readJson<Optimization>(path.join(this.directory, `${id}.json`));
     if (["diagnosing", "validating", "reevaluating"].includes(item.status) && !this.active.has(id)) {
       item.status = "failed"; item.error = "Service restarted; candidate was not adopted"; await this.save(item);

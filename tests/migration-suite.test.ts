@@ -25,7 +25,7 @@ it('separates development/holdout, forbids foreign project suites and unrelated 
   const result=await post(`/api/migrations/${p2.id}/validate`,{pair:'AB',dataSnapshot:'fixture',permissionBasis:'fixture',sourceProjectRef:'fixture',dependencyLockRef:'fixture',
    configuration:{preparationId:suite.json().preparationId,runtime:{type:'runtime_http',environmentId:'missing'},executionModel:{providerId:'fixture',modelId:'fixture'},
     leftVariant:variant(a),rightVariant:variant(b),runtimeBindings:{left:{environmentId:'missing',skillAssetId:a.assetId},right:{environmentId:'missing',skillAssetId:b.assetId}}}});
-  expect(result.statusCode).toBe(409);expect(result.json().message).toMatch(/owned/);
+  expect(result.statusCode).toBe(409);expect(result.json().message).toContain('属于本次迁移');
   expect((await post(`/api/migrations/${p2.id}/optimized-candidate`,{optimizationId:'opt-0000'})).statusCode).toBe(409);
   const report=(await app.inject({url:`/api/migrations/${p1.id}/report`,headers})).json();
   expect(report.suites[0].cases).toHaveLength(1);expect(report.suites[0].holdoutCases).toHaveLength(1);

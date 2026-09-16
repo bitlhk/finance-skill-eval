@@ -45,7 +45,7 @@ it('batch intake isolates failures, preserves content and bounds count without e
 it('does not silently select one Skill from a multi-Skill ZIP',async()=>{
   const dir=await mkdtemp(path.join(os.tmpdir(),'multi-skill-'));
   try{const store=new SkillStore(dir);await store.initialize();
-    await expect(store.uploadZip(Buffer.from(zipSync({'SKILL.md':strToU8('one'),'nested/SKILL.md':strToU8('two')})))).rejects.toThrow('multiple Skills');
+    await expect(store.uploadZip(Buffer.from(zipSync({'SKILL.md':strToU8('one'),'nested/SKILL.md':strToU8('two')})))).rejects.toThrow('多个 Skill 入口');
     expect(await store.list()).toHaveLength(0);
   }finally{await rm(dir,{recursive:true,force:true});}
 });
@@ -67,7 +67,7 @@ it('imports a migration ZIP without judging its layout',async()=>{
     // 凭据文件不在导入时拒绝；导出侧才是关卡
     expect((await store.uploadMigrationZip(Buffer.from(zipSync({'skill/SKILL.md':strToU8('ok'),'tool/.env':strToU8('TOKEN=secret')})))).skillFile).toBe('skill/SKILL.md');
     // 安全限制仍然生效
-    await expect(store.uploadMigrationZip(Buffer.alloc(0))).rejects.toThrow('between 1 byte and 8 MB');
+    await expect(store.uploadMigrationZip(Buffer.alloc(0))).rejects.toThrow('8 MB');
     await expect(store.uploadMigrationZip(Buffer.from(zipSync({'skill/../escape.md':strToU8('x')})))).rejects.toThrow(/Unsafe|path/u);
   }finally{await rm(dir,{recursive:true,force:true});}
 });

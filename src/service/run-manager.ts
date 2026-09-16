@@ -101,7 +101,7 @@ export class EvaluationRunManager {
     const existing = this.options.jobs.get(jobId);
     if (!existing) throw new Error(`Unknown evaluation run: ${jobId}`);
     if (!["failed", "cancelled", "interrupted"].includes(existing.status)) {
-      throw new Error("Only failed, cancelled or interrupted runs can be retried");
+      throw new Error("只有失败、已取消或已中断的运行可以重试");
     }
     return this.create(existing.configuration, existing.questionSet);
   }
@@ -158,14 +158,14 @@ export class EvaluationRunManager {
         judgeModel: judge.model,
       });
     }
-    if (!pack) throw new Error("Evaluation Pack is unavailable");
+    if (!pack) throw new Error("评测题集不可用");
     const selected = configuration.selectedCaseIds.length
       ? pack.cases.filter(evalCase => configuration.selectedCaseIds.includes(evalCase.caseId))
       : [...pack.cases];
-    if (selected.length === 0) throw new Error("No evaluation cases were selected");
+    if (selected.length === 0) throw new Error("没有选择任何评测用例");
     if (configuration.includeHoldout) {
       const holdout = pack.holdoutCases;
-      if (!Array.isArray(holdout) || !holdout.length) throw new Error("This Eval Pack has no frozen holdout cases");
+      if (!Array.isArray(holdout) || !holdout.length) throw new Error("这个评测题集没有冻结的留出题");
       selected.push(...holdout.map(item => evalCaseSchema.parse(item)));
     }
     const executionModel = configuration.executionModel
@@ -228,7 +228,7 @@ export class EvaluationRunManager {
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
         const environment = await this.options.environments.get(binding.environmentId);
-        if (!environment || environment.type !== 'runtime_http') throw new Error('Migration Runtime environment unavailable');
+        if (!environment || environment.type !== 'runtime_http') throw new Error('迁移 Runtime 环境不可用');
         const executablePaths=[...new Set((configuration.runtimeToolBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]))];
         const resolveSkill = await this.skillResolver(binding.skillAssetId, true, nativeTransportAllowed(environment.endpoint),executablePaths);
         await resolveSkill(pack.variants[side]);
@@ -242,25 +242,25 @@ export class EvaluationRunManager {
     }
     if (configuration.runtime.type === "replay") {
       if (!pack.cases.every(evalCase => Boolean(evalCase.replay))) {
-        throw new Error("Selected cases do not provide frozen replay evidence");
+        throw new Error("所选用例没有提供冻结的回放证据");
       }
       return new ReplayRuntimeAdapter(pack);
     }
     const resolveSkill = await this.skillResolver(configuration.skillAssetId);
     if (configuration.runtime.type === "direct_model") {
       const execution = configuredModelRole("EXECUTION");
-      if (!execution.adapter) throw new Error("Execution model is not configured on this service");
+      if (!execution.adapter) throw new Error("本服务未配置执行模型");
       if (!configuration.skillAssetId) {
-        throw new Error("Direct model runtime requires an uploaded Skill asset");
+        throw new Error("直连模型运行需要先上传 Skill 资产");
       }
       if (pack.cases.some(evalCase => evalCase.requiredTools.length > 0)) {
-        throw new Error("This test requires tools; select an Agent Runtime HTTP environment");
+        throw new Error("这个测试需要工具，请选择 Agent Runtime HTTP 环境");
       }
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
     const environment = await this.options.environments.get(configuration.runtime.environmentId);
     if (!environment || environment.type !== "runtime_http") {
-      throw new Error("Selected Agent Runtime HTTP environment is unavailable");
+      throw new Error("所选的 Agent Runtime HTTP 环境不可用");
     }
     const descriptor = await this.environmentDescriptor(
       environment,
@@ -322,7 +322,7 @@ export class EvaluationRunManager {
       return new DeterministicRubricJudge();
     }
     const judge = configuredModelRole("JUDGE");
-    if (!judge.adapter) throw new Error("Judge model is not configured on this service");
+    if (!judge.adapter) throw new Error("本服务未配置阅卷模型");
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
       :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);

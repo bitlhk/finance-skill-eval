@@ -33,7 +33,7 @@ it('checks pair bindings before scheduling and retains declared conditions and s
     expect(run.suiteSnapshot?.packFingerprint).toBe(run.packFingerprint);
     expect(saved.assessment).toBe('NOT_VALIDATED');
     expect((await migrations.report(project.id)).experiments[0]!.evidence).toBe('NOT_COMPLETE');
-    await expect(migrations.validate(project.id,{...plan,pair:'BC'})).rejects.toThrow('asset binding');
+    await expect(migrations.validate(project.id,{...plan,pair:'BC'})).rejects.toThrow('绑定');
     expect(create).toHaveBeenCalledOnce();
   } finally {await rm(dir,{recursive:true,force:true});}
 });
