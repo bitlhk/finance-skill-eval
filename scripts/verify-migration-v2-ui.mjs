@@ -42,11 +42,26 @@ const mcp=http.createServer(async(req,res)=>{
   res.setHeader('content-type','application/json');res.end(JSON.stringify({jsonrpc:'2.0',id:body.id,result}));
 });
 
-const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),accessToken:token,publicDemo:false});
-let browser;
+const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.resolve(process.env.MIGRATION_TEST_WEB_DIR||'web-dist'),accessToken:token,publicDemo:false});
+let browser,proxy;
 try{
   const mcpBase=await listen(mcp),mcpEndpoint=`${mcpBase}/mcp`;
-  const serviceUrl=await app.listen({host:'127.0.0.1',port:0});
+  let serviceUrl=await app.listen({host:'127.0.0.1',port:0});
+  const prefix=process.env.MIGRATION_TEST_PREFIX;
+  if(prefix){
+    assert(/^\/[a-z-]+\/$/.test(prefix));const target=serviceUrl;
+    proxy=http.createServer((req,res)=>{
+      if(!req.url.startsWith(prefix)){res.writeHead(404);res.end();return;}
+      const forwarded={...req.headers};
+      if(process.env.MIGRATION_TEST_PRIVATE_GATEWAY==='true'){
+        forwarded.authorization=String(req.headers['x-migration-authorization']||'');
+        delete forwarded['x-migration-authorization'];
+      }
+      const upstream=http.request(new URL(req.url.slice(prefix.length-1),target),{method:req.method,headers:forwarded},response=>{res.writeHead(response.statusCode,response.headers);response.pipe(res);});
+      upstream.on('error',()=>{res.writeHead(502);res.end();});req.pipe(upstream);
+    });
+    serviceUrl=(await listen(proxy))+prefix;
+  }
   const headers={authorization:`Bearer ${token}`,'content-type':'application/zip'};
   const completedZip=await archive(path.join(root,'acceptance/openjiuwen-portability/skill'));
   const credentialPattern=/(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"'\n]{8,}["']/i;
@@ -57,7 +72,7 @@ try{
   const completed=(await app.inject({method:'POST',url:'/api/skills/upload',headers,payload:completedZip})).json();
   assert.equal(completed.version,'2.0.0');
 
-  const executablePath=process.env.CHROMIUM_PATH||'C:\\Progra~1\\Google\\Chrome\\Application\\chrome.exe';
+  const executablePath=process.env.CHROMIUM_PATH;
   browser=await chromium.launch({executablePath,headless:true});
   const context=await browser.newContext({acceptDownloads:true,viewport:{width:1440,height:1000}});
   const page=await context.newPage(),errors=[];page.on('pageerror',error=>errors.push(error.message));
@@ -103,9 +118,12 @@ try{
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
   checks.push('validated_candidate_downloaded');
   assert.deepEqual(errors,[]);checks.push('no_browser_errors');
+  await page.setViewportSize({width:390,height:900});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));checks.push('mobile_no_overflow');
   process.stdout.write(`${JSON.stringify({mode:'REAL_SERVICE_HEADLESS_CHROME',checks},null,2)}\n`);
 }finally{
   if(browser)await browser.close();
+  if(proxy){proxy.closeAllConnections();await close(proxy);}
   mcp.closeAllConnections();if(mcp.listening)await close(mcp);
   await app.close();await Promise.all([rm(data,{recursive:true,force:true}),rm(downloads,{recursive:true,force:true})]);
 }

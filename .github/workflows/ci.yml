@@ -36,4 +36,4 @@ jobs:
       - name: Private subpath build
         run: VITE_PRIVATE_WORKSPACE=true pnpm exec vite build --base=/migration/ --outDir=../web-dist-private
       - name: Authenticated synthetic browser regression
-        run: MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-ui.mjs reports/migration-ui
+        run: FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS=1 MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs
