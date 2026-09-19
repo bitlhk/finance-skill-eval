@@ -1,7 +1,7 @@
 import { mkdtemp,readFile,readdir,rm,writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach,expect,it } from 'vitest';
+import { afterEach,expect,it,vi } from 'vitest';
 import { strToU8,unzipSync,zipSync } from 'fflate';
 import { validateSkill } from '../src/service/skill-validator.js';
 import { SKILL_MD, analysisFixture, analyzedTool, implementationFixture, inspectionFixture, toolFixture } from './analysis-fixture.js';
@@ -13,7 +13,7 @@ import { generatePortableCandidate } from '../src/service/portable-candidate.js'
 import { MigrationCodeGenerator } from '../src/service/migration-code-generator.js';
 
 const dirs:string[]=[];
-afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
+afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
 const INCOMPLETE_PY='import json\ndef lookup(value):\n    return {"value": value}\n';
 const COMPLETE_PY='import json,sys\ndef lookup(value):\n    return {"value": value}\nif __name__ == "__main__": json.dump(lookup(json.load(sys.stdin)), sys.stdout)\n';
 // The path this test exercises reuses a Script that is already executable, so no model may be
@@ -98,6 +98,7 @@ it('packages model-migrated Runtime code with its real business implementation i
 });
 
 it('uses a migration model for Runtime-bound code and validates the returned complete entrypoint',async()=>{
+  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const skill='---\nname: model-migration\ndescription: 测试模型迁移。\n---\n调用 `lookup`。',runtime='from vendor.runtime import Result\ndef lookup(value): return Result(value)';
   const archive={'skill/SKILL.md':strToU8(skill),'tool/runtime.py':strToU8(runtime)};
   const inspection=inspectionFixture([toolFixture({toolId:'lookup-id',name:'lookup',sourcePaths:['tool/runtime.py'],language:'Python',portability:'RUNTIME_BOUND'})]);
@@ -115,6 +116,7 @@ it('refuses semantic migration when no migration model is configured',async()=>{
 });
 
 it('runs a trusted one-shot job with JSON IO and always cleans its directory',async()=>{
+  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const root=await mkdtemp(path.join(os.tmpdir(),'local-worker-test-'));dirs.push(root);
   const worker=new LocalWorker(root),script='let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(JSON.stringify({ok:JSON.parse(s).value})));';
   const result=await worker.run({requestId:'test',program:'node',args:['tool.js'],files:[{path:'tool.js',content:Buffer.from(script)}],stdin:'{"value":7}'});
@@ -280,6 +282,7 @@ it('abstains instead of shipping a placeholder when a Tool cannot be migrated fa
 });
 
 it('prepares a Python Script Tool from its pyproject before technical validation',async()=>{
+  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-pyproject-'));dirs.push(data);
   const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
     migrationAnalyzer:analysisFixture([analyzedTool({name:'project_tool',sourcePaths:['scripts/project_tool.py'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',

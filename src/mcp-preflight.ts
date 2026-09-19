@@ -156,6 +156,8 @@ export async function validateMcpTool(input:{endpoint:string;toolName:string;arg
     const tools=toolListSchema.parse(listed.payload.result??{}).tools.map(tool=>({name:tool.name,...(tool.description?{description:tool.description}:{}),...('inputSchema' in tool?{inputSchema:tool.inputSchema}:{}),...('outputSchema' in tool?{outputSchema:tool.outputSchema}:{})}));
     if(!tools.some(tool=>tool.name===input.toolName))throw new Error(`MCP tool not found: ${input.toolName}`);
     const called=await rpc({...input,id:3,method:'tools/call',params:{name:input.toolName,arguments:input.arguments??{}},sessionId,protocolVersion});
+    const result=z.object({isError:z.boolean().optional(),content:z.array(z.unknown())}).passthrough().parse(called.payload.result);
+    if(result.isError)throw new Error('MCP tool returned isError=true');
     return {status:'ready',protocolVersion:info.protocolVersion??null,serverName:info.serverInfo?.name??null,tools,elapsedMs:Date.now()-startedAt,error:null,callResult:called.payload.result??null};
   }catch(error){return {status:'failed',protocolVersion:null,serverName:null,tools:[],elapsedMs:Date.now()-startedAt,error:error instanceof Error?error.message:String(error),callResult:null};}
   finally{if(sessionId)await fetch(input.endpoint,{method:'DELETE',signal:AbortSignal.timeout(3000),headers:{'mcp-session-id':sessionId,'mcp-protocol-version':protocolVersion,...input.headers}}).then(r=>r.body?.cancel()).catch(()=>undefined);}

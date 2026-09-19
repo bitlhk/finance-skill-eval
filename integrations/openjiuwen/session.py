@@ -12,6 +12,7 @@ import uuid
 from importlib.metadata import version as _package_version
 
 from model_config import resolve_model, request_settings
+from script_process import run_script
 
 try:
     _runtime_version = _package_version("openjiuwen")
@@ -121,18 +122,12 @@ async def run(body):
                             command = [str(uv_executable), "run", "--no-project", "--python", "3.11", "python", "-I", str(_target)]
                     else:
                         command = ["node", str(_target)]
-                    process = await asyncio.create_subprocess_exec(*command, cwd=root_path,
-                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
                     try:
-                        stdout, stderr = await asyncio.wait_for(process.communicate(json.dumps(kwargs).encode()), 45)
+                        returncode, stdout, stderr = await run_script(command, root_path, json.dumps(kwargs).encode())
                     except TimeoutError as exc:
-                        process.kill()
-                        await process.wait()
                         raise RuntimeError("Script Tool timed out") from exc
-                    if process.returncode != 0:
-                        raise RuntimeError(stderr.decode(errors="replace")[:400] or f"exit {process.returncode}")
-                    if len(stdout) > 262144:
-                        raise RuntimeError("Script Tool output exceeds limit")
+                    if returncode != 0:
+                        raise RuntimeError(stderr.decode(errors="replace")[:400] or f"exit {returncode}")
                     return json.loads(stdout)
                 card = ToolCard(id=f"tool-{len(tools)}", name=spec["name"], description=f"Local Script Tool {spec['name']}",
                                 input_params=spec.get("inputSchema") or {"type": "object"}, idempotent=True)

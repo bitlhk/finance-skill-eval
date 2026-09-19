@@ -28,8 +28,10 @@ jobs:
           java-version: '21'
           cache: maven
       - run: pnpm install --frozen-lockfile
+      - run: python -m pip install uv==0.12.13
       - run: pnpm check
       - run: pnpm test
+      - run: python -m unittest integrations.openjiuwen.test_script_process
       - run: pnpm build
       - name: Run the MCP skeletons the skill package hands the agent
         run: pnpm test:skeleton:mcp
