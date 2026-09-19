@@ -17,6 +17,7 @@ function safeRelative(value:string){
 export class LocalWorker{
   constructor(private tempRoot=os.tmpdir(),private programs=allowedPrograms){}
   async run(request:LocalWorkerRequest):Promise<LocalWorkerResult>{
+    if(process.env.FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS!=='1')throw new Error('Local script execution is disabled; enable only in a trusted local workspace');
     const executable=path.basename(request.program).toLowerCase();
     if(!this.programs.has(executable))throw new Error(`Worker program is not allowed: ${executable}`);
     request.signal?.throwIfAborted();
@@ -28,12 +29,18 @@ export class LocalWorker{
         await mkdir(path.dirname(target),{recursive:true});await writeFile(target,file.content,{mode:0o600});}
       const args=request.args.map(arg=>arg.replaceAll('\\','/'));
       return await new Promise<LocalWorkerResult>((resolve,reject)=>{
-        const child=spawn(request.program,args,{cwd:directory,stdio:['pipe','pipe','pipe'],windowsHide:true});
+        const env:NodeJS.ProcessEnv={HOME:directory,USERPROFILE:directory,TMPDIR:directory,TEMP:directory,TMP:directory};
+        for(const key of ['PATH','SystemRoot','WINDIR','LANG','LC_ALL'])if(process.env[key])env[key]=process.env[key];
+        const child=spawn(request.program,args,{cwd:directory,env,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe'],windowsHide:true});
+        const killTree=()=>{if(!child.pid)return;try{if(process.platform==='win32')spawn('taskkill',['/pid',String(child.pid),'/T','/F'],{stdio:'ignore'}).on('error',()=>child.kill());else process.kill(-child.pid,'SIGKILL');}catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')child.kill('SIGKILL');}};
         let stdout='',stderr='',timedOut=false,cancelled=false,truncated=false,settled=false;
-        const append=(current:string,chunk:unknown)=>{const next=current+String(chunk);if(Buffer.byteLength(next)>limit){truncated=true;return next.slice(0,limit);}return next;};
+        const append=(current:string,chunk:unknown)=>{const next=current+String(chunk);if(Buffer.byteLength(next)>limit){truncated=true;killTree();return Buffer.from(next).subarray(0,limit).toString();}return next;};
         child.stdout.on('data',chunk=>{stdout=append(stdout,chunk);});child.stderr.on('data',chunk=>{stderr=append(stderr,chunk);});
-        const timer=setTimeout(()=>{timedOut=true;child.kill('SIGKILL');},request.timeoutMs??30_000);
-        const abort=()=>{cancelled=true;child.kill('SIGKILL');};request.signal?.addEventListener('abort',abort,{once:true});
+        const timer=setTimeout(()=>{timedOut=true;killTree();},request.timeoutMs??30_000);
+        const abort=()=>{cancelled=true;killTree();};request.signal?.addEventListener('abort',abort,{once:true});
+        if(request.signal?.aborted)abort();
+        child.once('exit',killTree);
+        child.stdin.on('error',()=>{});
         child.on('error',error=>{if(settled)return;settled=true;clearTimeout(timer);request.signal?.removeEventListener('abort',abort);reject(error);});
         child.on('close',code=>{if(settled)return;settled=true;clearTimeout(timer);request.signal?.removeEventListener('abort',abort);resolve({requestId:request.requestId,mode:'LOCAL_TRUSTED',startedAt,finishedAt:new Date().toISOString(),exitCode:code,timedOut,cancelled,stdout,stderr,outputTruncated:truncated});});
         child.stdin.end(request.stdin??'');

@@ -41,6 +41,8 @@ async def execute(request: Request):
         if server["endpoint"] not in cfg.get("mcp", {}):
             raise HTTPException(400, "MCP endpoint is not registered in this worker")
     for tool in (body.get("environment") or {}).get("scriptTools", []):
+        if os.environ.get("FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS") != "1":
+            raise HTTPException(403, "Local script execution is disabled")
         if tool.get("kind") not in ("PYTHON", "NODE") or not tool.get("name") or not tool.get("path"):
             raise HTTPException(400, "Invalid local Script Tool binding")
     if body.get("schemaVersion") != "finance.skill-eval.runtime-request.v1":

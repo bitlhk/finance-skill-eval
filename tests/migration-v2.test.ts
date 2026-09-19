@@ -1,7 +1,7 @@
 import { mkdtemp,readFile,readdir,rm,writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach,expect,it } from 'vitest';
+import { afterEach,expect,it,vi } from 'vitest';
 import { strToU8,unzipSync,zipSync } from 'fflate';
 import { validateSkill } from '../src/service/skill-validator.js';
 import { inspectProject } from '../src/service/tool-inspector.js';
@@ -11,7 +11,7 @@ import { findMissingRequiredTools } from '../src/service/run-manager.js';
 import { createEvaluationService } from '../src/service/server.js';
 
 const dirs:string[]=[];
-afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
+afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
 
 it('checks the enterprise Skill baseline without treating tool language as compliance',()=>{
   const files={'account-balance/SKILL.md':'---\nname: account-balance\ndescription: 查询余额，用户询问账户资金时使用。\n---\n调用 `get_balance`。失败时不要编造。\n'};
@@ -56,6 +56,7 @@ it('requires one migration choice per tool and groups MCP choices',()=>{
 });
 
 it('runs a trusted one-shot job with JSON IO and always cleans its directory',async()=>{
+  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const root=await mkdtemp(path.join(os.tmpdir(),'local-worker-test-'));dirs.push(root);
   const worker=new LocalWorker(root),script='let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.stdout.write(JSON.stringify({ok:JSON.parse(s).value})));';
   const result=await worker.run({requestId:'test',program:'node',args:['tool.js'],files:[{path:'tool.js',content:Buffer.from(script)}],stdin:'{"value":7}'});
@@ -124,6 +125,7 @@ it('exports v2 evidence states and upgrades legacy projects without changing his
 });
 
 it('prepares a Python Script Tool from its pyproject before technical validation',async()=>{
+  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-pyproject-'));dirs.push(data);
   const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
