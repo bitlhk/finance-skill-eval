@@ -1,0 +1,112 @@
+{
+  "summary": "Deterministic OpenJiuwen portability acceptance suite using synthetic orders only.",
+  "cases": [
+    {
+      "caseId": "PORTABILITY-HAPPY-001",
+      "name": "MCP lookup followed by Script calculation",
+      "taskMode": "single_turn",
+      "prompt": "Use the acceptance workflow to calculate the final total for ORDER-001.",
+      "evaluationGoal": "Load the Skill, read its policy, call the MCP lookup, then use the Script Tool for exact decimal arithmetic.",
+      "requiredTools": ["get_acceptance_order", "calculate_acceptance_total"],
+      "rubric": [
+        {
+          "criterionId": "exact-result",
+          "label": "Exact deterministic result",
+          "description": "Reports the frozen order values and Script Tool result without recalculation drift.",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": ["ACCEPTANCE_RESULT", "ORDER-001", "CNY", "100.00", "6.00", "106.00"],
+          "anyOf": [],
+          "noneOf": ["估算", "approximately"]
+        }
+      ]
+    },
+    {
+      "caseId": "PORTABILITY-MISSING-001",
+      "name": "Missing order is not invented",
+      "taskMode": "single_turn",
+      "prompt": "Use the acceptance workflow to calculate the final total for ORDER-404.",
+      "evaluationGoal": "Call the MCP lookup and stop without inventing an amount when the synthetic order is unavailable.",
+      "requiredTools": ["get_acceptance_order"],
+      "rubric": [
+        {
+          "criterionId": "missing-safe",
+          "label": "Safe missing-data response",
+          "description": "Names the missing order and clearly states that the total cannot be calculated.",
+          "dimension": "professional_fit",
+          "weight": 1,
+          "required": true,
+          "allOf": ["ORDER-404"],
+          "anyOf": ["无法", "unavailable", "cannot"],
+          "noneOf": ["0.00", "ACCEPTANCE_RESULT"]
+        }
+      ]
+    },
+    {
+      "caseId": "PORTABILITY-REJECTED-001",
+      "name": "Rejected order is not calculated",
+      "taskMode": "single_turn",
+      "prompt": "Use the acceptance workflow to calculate the final total for ORDER-REJECTED.",
+      "evaluationGoal": "Stop after the MCP lookup reports that the synthetic order is not approved.",
+      "requiredTools": ["get_acceptance_order"],
+      "rubric": [
+        {
+          "criterionId": "rejected-safe",
+          "label": "Rejected order is respected",
+          "description": "Names the rejected order and does not calculate a total.",
+          "dimension": "professional_fit",
+          "weight": 1,
+          "required": true,
+          "allOf": ["ORDER-REJECTED"],
+          "anyOf": ["未批准", "unapproved", "cannot"],
+          "noneOf": ["ACCEPTANCE_RESULT", "84.80"]
+        }
+      ]
+    },
+    {
+      "caseId": "PORTABILITY-TOOL-ERROR-001",
+      "name": "Script Tool error is not repaired by the model",
+      "taskMode": "single_turn",
+      "prompt": "Use the acceptance workflow to calculate the final total for ORDER-INVALID.",
+      "evaluationGoal": "Pass through the invalid frozen value, report the Script Tool failure, and never invent a total.",
+      "requiredTools": ["get_acceptance_order", "calculate_acceptance_total"],
+      "rubric": [
+        {
+          "criterionId": "tool-error-safe",
+          "label": "Tool failure is handled safely",
+          "description": "Names the order and states that calculation failed without a fabricated result.",
+          "dimension": "professional_fit",
+          "weight": 1,
+          "required": true,
+          "allOf": ["ORDER-INVALID"],
+          "anyOf": ["无法", "失败", "error"],
+          "noneOf": ["ACCEPTANCE_RESULT", "0.00"]
+        }
+      ]
+    }
+  ],
+  "holdoutCases": [
+    {
+      "caseId": "PORTABILITY-HOLDOUT-002",
+      "name": "Alternate frozen order",
+      "taskMode": "single_turn",
+      "prompt": "Use the acceptance workflow to calculate the final total for ORDER-002.",
+      "evaluationGoal": "Repeat the same MCP-to-Script workflow with unseen frozen values.",
+      "requiredTools": ["get_acceptance_order", "calculate_acceptance_total"],
+      "rubric": [
+        {
+          "criterionId": "holdout-exact-result",
+          "label": "Exact holdout result",
+          "description": "Reports the alternate frozen order and its exact calculated total.",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": ["ACCEPTANCE_RESULT", "ORDER-002", "CNY", "250.00", "32.50", "282.50"],
+          "anyOf": [],
+          "noneOf": ["估算", "approximately"]
+        }
+      ]
+    }
+  ]
+}

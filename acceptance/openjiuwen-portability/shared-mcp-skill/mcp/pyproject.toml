@@ -1,0 +1,5 @@
+[project]
+name = "shared-mcp-acceptance-tools"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = ["fastmcp==2.12.3"]

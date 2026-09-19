@@ -1,0 +1,23 @@
+caseId: PORTABILITY-MISSING-001
+name: 订单不存在时停止处理
+taskMode: single_turn
+prompt: Use the acceptance workflow to calculate the final total for ORDER-404.
+evaluationGoal: 调用 MCP 查询订单；订单不存在时停止，不编造金额，也不调用计算工具。
+requiredTools:
+  - get_acceptance_order
+rubric:
+  - criterionId: missing-order-safe
+    label: 不编造缺失订单
+    description: 明确说明订单不可用，且不给出虚构的计算结果。
+    dimension: professional_fit
+    weight: 1
+    required: true
+    allOf:
+      - ORDER-404
+    anyOf:
+      - 无法
+      - unavailable
+      - cannot
+    noneOf:
+      - ACCEPTANCE_RESULT
+      - "0.00"

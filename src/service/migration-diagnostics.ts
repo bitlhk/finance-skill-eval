@@ -27,7 +27,10 @@ const aiSchema=z.strictObject({summary:z.string().max(5000),suggestions:z.array(
 
 async function parsePython(root:string,files:Record<string,string>):Promise<Pick<Diagnosis,'findings'|'coverage'|'declarations'>> {
   return new Promise((resolve,reject)=>{
-    const child=spawn('python3',['-I',path.join(root,'scripts/scan-migration.py')],{stdio:['pipe','pipe','pipe']});
+    const configured=process.env.FINANCE_EVAL_PYTHON;
+    const program=configured??(process.platform==='win32'?'uv':'python3');
+    const args=configured||process.platform!=='win32'?['-I',path.join(root,'scripts/scan-migration.py')]:['run','--no-project','--python','3.11','python','-I',path.join(root,'scripts/scan-migration.py')];
+    const child=spawn(program,args,{stdio:['pipe','pipe','pipe'],windowsHide:true,env:{...process.env,PYTHONUTF8:'1'}});
     let out='',err='';let settled=false;
     const fail=(error:Error)=>{if(settled)return;settled=true;clearTimeout(timer);child.kill('SIGKILL');reject(error);};
     const timer=setTimeout(()=>fail(new Error('STATIC_SCAN_TIMEOUT')),15000);
@@ -35,7 +38,7 @@ async function parsePython(root:string,files:Record<string,string>):Promise<Pick
     child.stdout.on('data',chunk=>{out+=chunk;if(out.length>8*1024*1024)fail(new Error('STATIC_SCAN_OUTPUT_LIMIT'));});
     child.stderr.on('data',chunk=>{if(err.length<4000)err+=chunk;});
     child.on('close',code=>{if(settled)return;settled=true;clearTimeout(timer);
-      if(code!==0){reject(new Error('STATIC_SCAN_FAILED'));return;}
+      if(code!==0){reject(new Error(`STATIC_SCAN_FAILED${err.trim()?`: ${err.trim().slice(0,500)}`:''}`));return;}
       try{resolve(JSON.parse(out));}catch{reject(new Error('STATIC_SCAN_INVALID_OUTPUT'));}
     });
     child.stdin.end(JSON.stringify({files}));
@@ -75,6 +78,10 @@ export class MigrationDiagnostics {
       return existing;
     }
     const parsed=await parsePython(this.root,files);
+    for(const [file,source] of Object.entries(files).filter(([name])=>name.toLowerCase().endsWith('skill.md'))){
+      for(const hit of source.matchAll(/自动注入|自动加载|auto.?inject/giu))if(!parsed.findings.some(f=>f.path===file&&f.dependencyType==='RESOURCE_INJECTION'))
+        parsed.findings.push({id:'pending',path:file,line:source.slice(0,hit.index).split(/\r?\n/u).length,endLine:source.slice(0,hit.index).split(/\r?\n/u).length,snippet:source.split(/\r?\n/u)[source.slice(0,hit.index).split(/\r?\n/u).length-1]??'',dependencyType:'RESOURCE_INJECTION',reason:'方法约定资源由宿主自动注入',impact:'目标 Host 必须显式实现相同资源加载与可见性',suggestion:'区分模型可见资料与 Tool 专用配置',confidence:'HIGH',layer:'HOST'});
+    }
     parsed.findings=parsed.findings.map((f,i)=>({...f,id:`finding-${i+1}`}));
     const coverage=[...parsed.coverage,...skipped];
     const incomplete=skipped.length>0||parsed.findings.some(f=>f.layer==='UNKNOWN');

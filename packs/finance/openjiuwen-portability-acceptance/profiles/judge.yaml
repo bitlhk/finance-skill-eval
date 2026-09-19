@@ -1,0 +1,18 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: openjiuwen-portability-acceptance-judge-v1
+version: 1.0.0
+reviewerLabel: 可移植性验收 Judge
+domainInstructions: 只判断两侧是否都完成相同的固定工具链路并给出精确结果，不评价文风。
+dimensions:
+  - id: professional_fit
+    label: 工具链路遵循度
+    description: 是否按 Skill 要求使用固定工具链路。
+  - id: business_completeness
+    label: 固定结果正确性
+    description: MCP 与 Script Tool 的固定数据、计算结果和输出标记是否完整一致。
+  - id: clarity
+    label: 输出清晰度
+    description: 固定字段是否清楚可读。
+  - id: actionability
+    label: 验收可判定性
+    description: 输出是否足以直接判定验收结果。

@@ -18,9 +18,13 @@ export type McpPreflightResult = {
   status: "ready" | "failed";
   protocolVersion: string | null;
   serverName: string | null;
-  tools: Array<{ name: string; description?: string }>;
+  tools: Array<{ name: string; description?: string; inputSchema?:unknown; outputSchema?:unknown }>;
   elapsedMs: number;
   error: string | null;
+};
+
+export type McpToolValidationResult = McpPreflightResult & {
+  callResult: unknown | null;
 };
 
 function parseMcpPayload(text: string): unknown {
@@ -43,10 +47,11 @@ async function rpc(input: {
   id: number;
   sessionId?: string | null;
   protocolVersion?: string;
+  signal?:AbortSignal;
 }): Promise<{ payload: z.infer<typeof jsonRpcResponseSchema>; sessionId: string | null }> {
   const response = await fetch(input.endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(12_000),
+    signal: input.signal?AbortSignal.any([input.signal,AbortSignal.timeout(12_000)]):AbortSignal.timeout(12_000),
     headers: {
       accept: "application/json, text/event-stream",
       "content-type": "application/json",
@@ -109,6 +114,8 @@ export async function preflightMcpServer(input: {
     const tools = toolListSchema.parse(listed.payload.result ?? {}).tools.map(tool => ({
       name: tool.name,
       ...(tool.description ? { description: tool.description } : {}),
+      ...('inputSchema' in tool?{inputSchema:tool.inputSchema}:{}),
+      ...('outputSchema' in tool?{outputSchema:tool.outputSchema}:{}),
     }));
     return {
       status: "ready",
@@ -134,4 +141,24 @@ export async function preflightMcpServer(input: {
       } }).then(response => response.body?.cancel()).catch(() => undefined);
     }
   }
+}
+
+export async function validateMcpTool(input:{endpoint:string;toolName:string;arguments?:Record<string,unknown>;headers?:Record<string,string>;signal?:AbortSignal}):Promise<McpToolValidationResult>{
+  const startedAt=Date.now();let sessionId:string|null=null,protocolVersion='2025-06-18';
+  try{
+    const initialized=await rpc({...input,id:1,method:'initialize',params:{protocolVersion,capabilities:{},clientInfo:{name:'finance-skill-eval',version:'0.4.0'}}});
+    sessionId=initialized.sessionId;
+    const info=z.object({protocolVersion:z.string().optional(),serverInfo:z.object({name:z.string().optional()}).optional()}).passthrough().parse(initialized.payload.result??{});
+    protocolVersion=info.protocolVersion??protocolVersion;
+    const notification=await fetch(input.endpoint,{method:'POST',signal:input.signal?AbortSignal.any([input.signal,AbortSignal.timeout(12000)]):AbortSignal.timeout(12000),headers:{accept:'application/json, text/event-stream','content-type':'application/json','mcp-protocol-version':protocolVersion,...(sessionId?{'mcp-session-id':sessionId}:{}),...input.headers},body:JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})});
+    if(!notification.ok)throw new Error(`MCP initialization notification failed: HTTP ${notification.status}`);await notification.body?.cancel();
+    const listed=await rpc({...input,id:2,method:'tools/list',params:{},sessionId,protocolVersion});
+    const tools=toolListSchema.parse(listed.payload.result??{}).tools.map(tool=>({name:tool.name,...(tool.description?{description:tool.description}:{}),...('inputSchema' in tool?{inputSchema:tool.inputSchema}:{}),...('outputSchema' in tool?{outputSchema:tool.outputSchema}:{})}));
+    if(!tools.some(tool=>tool.name===input.toolName))throw new Error(`MCP tool not found: ${input.toolName}`);
+    const called=await rpc({...input,id:3,method:'tools/call',params:{name:input.toolName,arguments:input.arguments??{}},sessionId,protocolVersion});
+    const result=z.object({isError:z.boolean().optional(),content:z.array(z.unknown())}).passthrough().parse(called.payload.result);
+    if(result.isError)throw new Error('MCP tool returned isError=true');
+    return {status:'ready',protocolVersion:info.protocolVersion??null,serverName:info.serverInfo?.name??null,tools,elapsedMs:Date.now()-startedAt,error:null,callResult:called.payload.result??null};
+  }catch(error){return {status:'failed',protocolVersion:null,serverName:null,tools:[],elapsedMs:Date.now()-startedAt,error:error instanceof Error?error.message:String(error),callResult:null};}
+  finally{if(sessionId)await fetch(input.endpoint,{method:'DELETE',signal:AbortSignal.timeout(3000),headers:{'mcp-session-id':sessionId,'mcp-protocol-version':protocolVersion,...input.headers}}).then(r=>r.body?.cancel()).catch(()=>undefined);}
 }

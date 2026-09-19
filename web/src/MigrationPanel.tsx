@@ -1,200 +1,92 @@
-import { useEffect, useState } from 'react';
-import { ArrowRightLeft, Download, Play, RefreshCw, Save, ChevronRight, FileCode2, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import type { Catalog, SkillAsset, EvaluationJob } from './types';
+import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, ChevronRight, Download, FileCode2, Play, RefreshCw, Save, ShieldAlert } from 'lucide-react';
+import type { Catalog, EvaluationJob, SkillAsset } from './types';
 import { OptimizationPanel } from './OptimizationPanel';
 import { downloadApi } from './api-path';
 import './migration.css';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
-type Project={id:string;name:string;source:SkillAsset;candidate:SkillAsset|null;candidateNotes:string;
-  simulationProfile?:string;
-  generation?:{candidateDigest:string;diff:Array<{path:string;operation:string;before:string;after:string}>}};
-type Diagnosis={status:string;dependencyStatus:string;digest:string;
-  frameworks?:string[];plan?:Array<{category:string;findingIds:string[];problem:string;change:string;impact:string}>;
-  coverage:Array<{path:string;status:string}>;findings:Array<{id:string;path:string;line:number;snippet:string;
-    dependencyType:string;reason:string;impact:string;suggestion:string;confidence:string;layer:string}>;
-  ai:{status:string;summary?:string;error?:string;retryable:boolean;suggestions?:Array<{findingId:string;explanation:string;nextStep:string}>}};
 type Api=<T>(url:string,init?:RequestInit)=>Promise<T>;
-type MigrationReport={verification?:{originalBaseline:string;targetExecution:string;candidateChanged:boolean;
-  missingSource:Array<{path:string;line:number;reason:string}>;targetGaps:string[]};suites?:Array<{preparationId:string;summary:string}|null>;experiments:Array<{jobId:string;pair:string;execution:string;evidence:string;
-  professionalAcceptance:string;migrationAcceptance:string;candidateDigest:string}>;
-  professionalReview?:{decision:string;notes:string;candidateDigest:string}|null;
-  targetRuns?:Array<{id:string;candidateDigest:string;status:string;error?:string;cases:Array<{caseId:string;label:string;passed:boolean;evidence:{output:string;status:string;error:string|null;metadata:Record<string,unknown>;toolCalls:Array<{name:string;status:string}>}}>}>};
-type TargetInfo={available:boolean;message?:string;target?:{modelId:string;version:string;profiles:Record<string,{label:string;skillId:string;schemaBasis:string;tools:Array<{name:string;description?:string;inputSchema:unknown;outputSchema:unknown}>;cases:Array<{caseId:string;label:string;expect:string}>}>}};
-const steps=[{index:1,label:'依赖诊断'},{index:2,label:'生成迁移版本'},{index:3,label:'运行验证'},{index:5,label:'导出'}];
-export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}:{catalog:Catalog;api:Api;uploadedAsset?:SkillAsset|null;onUpload?:()=>void;refreshKey?:number}) {
-  const [projects,setProjects]=useState<Project[]>([]),[project,setProject]=useState<Project|null>(null);
-  const [listView,setListView]=useState(true),[summaries,setSummaries]=useState<Record<string,string>>({});
-  const [frameworks,setFrameworks]=useState<Record<string,string>>({});
-  const [source,setSource]=useState(''),[candidate,setCandidate]=useState(''),[notes,setNotes]=useState('');
-  const [step,setStep]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const [analysis,setAnalysis]=useState<unknown>(null),[report,setReport]=useState<MigrationReport|null>(null);
-  const [diagnosis,setDiagnosis]=useState<Diagnosis|null>(null),[target,setTarget]=useState(''),[intent,setIntent]=useState('portable_method_and_adapters');
-  const [nativeTarget,setNativeTarget]=useState<TargetInfo|null>(null),[simulation,setSimulation]=useState(''),[ack,setAck]=useState(false);
-  const [diagnosticRefresh,setDiagnosticRefresh]=useState(0);
-  const [draft,setDraft]=useState(''),[draftBase,setDraftBase]=useState('');
-  const [suiteText,setSuiteText]=useState(''),[optimizationJob,setOptimizationJob]=useState<EvaluationJob|null>(null);
-  const [suites,setSuites]=useState<Array<{preparationId:string;summary:string}>>([]);
-  const [pair,setPair]=useState('AB'),[left,setLeft]=useState(''),[right,setRight]=useState('');
-  const [pack,setPack]=useState(''),[model,setModel]=useState('');
-  const [data,setData]=useState(''),[permissions,setPermissions]=useState(''),[original,setOriginal]=useState(''),[lock,setLock]=useState('');
-  const [reviewNotes,setReviewNotes]=useState(''),[reviewDecision,setReviewDecision]=useState('NEEDS_CHANGES');
-  useEffect(()=>{api<Project[]>('/api/migrations').then(setProjects).catch(e=>setError(String(e)));if(refreshKey)setListView(true);},[api,refreshKey]);
-  useEffect(()=>{api<TargetInfo>('/api/migrations/target').then(setNativeTarget).catch(()=>setNativeTarget({available:false,message:'目标环境暂不可用'}));},[api]);
-  useEffect(()=>{setSimulation(project?.simulationProfile??'');setAck(false);},[project?.id,project?.simulationProfile]);
-  useEffect(()=>{if(!project||step!==3)return;let stopped=false;let timer:ReturnType<typeof setTimeout>;
-    const poll=async()=>{try{const next=await api<MigrationReport>(`/api/migrations/${project.id}/report`);if(stopped)return;setReport(next);timer=setTimeout(poll,2000);}catch(e){if(!stopped)setError(String(e));}};
-    void poll();return()=>{stopped=true;clearTimeout(timer);};},[project?.id,step,api]);
-  useEffect(()=>{if(!uploadedAsset)return;let disposed=false;setBusy(true);setError('');
-    api<Project>('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:uploadedAsset.assetId,name:uploadedAsset.displayName+'迁移'})})
-      .then(p=>{if(!disposed){update(p);setListView(false);setDiagnosis(null);setStep(1);}}).catch(e=>{if(!disposed)setError(String(e));}).finally(()=>{if(!disposed)setBusy(false);});
-    return()=>{disposed=true;};
-  },[uploadedAsset,api]);
-  useEffect(()=>{if(!project)return;let disposed=false;let timer:ReturnType<typeof setTimeout>;
-    const load=async()=>{try{const d=await api<Diagnosis>(`/api/migrations/${project.id}/diagnosis`);
-      if(disposed)return;setDiagnosis(d);if(d.ai.status==='RUNNING')timer=setTimeout(load,1500);
-    }catch(e){if(!disposed)setError(String(e));}};void load();
-    return()=>{disposed=true;clearTimeout(timer);};
-  },[project?.id,api,diagnosticRefresh]);
-  async function act(fn:()=>Promise<void>) {if(busy)return;setBusy(true);setError('');try{await fn();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
+type Action='MIGRATE_TO_MCP'|'MIGRATE_TO_SCRIPT';
+type Finding={code:string;severity:'ERROR'|'WARNING'|'INFO';path:string;line:number;message:string;suggestion?:string};
+type Tool={toolId:string;name:string;sourcePaths:string[];language:string|null;kind:string;portability:string;recommendedAction:Action;findings:Finding[];evidence:Array<{path:string;line:number;detail:string}>;entrypoint?:{kind:string;path?:string}};
+type Inspection={assetId:string;assetDigest:string;skill:{status:string;findings:Finding[]};tools:Tool[]};
+type Decision={toolId:string;action:Action;reason:string;baseAssetId:string};
+type Plan={baseAssetId:string;generationAllowed:boolean;items:Array<{toolId:string;toolName:string;action:Action;generator:string;blockingReasons:string[]}>};
+type Generation={toolId:string;toolName:string;action:Action;readyForValidation:boolean;todo:string[]};
+type Validation={validationId:string;toolId:string;assetDigest:string;status:'PASSED'|'FAILED';current?:boolean;error:string|null;stages:Array<{name:string;passed:boolean;message:string}>};
+type Diff={path:string;operation:'ADD'|'MODIFY';before:string;after:string};
+type Experiment={jobId:string;pair:string;execution:string;evidence:string;candidateDigest:string;report:EvaluationJob['report']};
+type Project={schemaVersion?:string;id:string;name:string;source:SkillAsset;candidate:SkillAsset|null;candidateNotes:string;inspection?:Inspection;decisions?:Decision[];portableGenerations?:Generation[];portableGenerationDiff?:Diff[]};
+type Report={project:Project;inspection:Inspection|null;decisions:Decision[];migrationPlan:Plan|null;portableGenerationDiff:Diff[];technicalValidations:Validation[];experiments:Experiment[];verification:{targetExecution:string}};
+
+const stages=['选择 Skill','查看问题','选择迁移方式','生成迁移结果','验证能否运行','验证实际效果','下载结果'];
+const actionLabels:Record<Action,string>={MIGRATE_TO_MCP:'放入 MCP 服务',MIGRATE_TO_SCRIPT:'改成 Python 脚本'};
+const portabilityLabels:Record<string,string>={PORTABLE_MCP:'通过 MCP 提供，可在不同运行环境中调用',PORTABLE_SCRIPT:'使用独立脚本，可在不同运行环境中执行',RUNTIME_BOUND:'仍依赖原来的运行框架，需要迁移后才能跨平台使用',INCOMPLETE:'没有找到完整的工具实现',UNSUPPORTED:'这种实现目前无法自动处理',UNKNOWN:'暂时无法判断实现方式'};
+const completedToolLabels:Record<string,string>={PORTABLE_MCP:'迁移方式：共享 MCP 服务',PORTABLE_SCRIPT:'迁移方式：独立 Python 脚本'};
+const skillStatusLabels:Record<string,string>={COMPLIANT:'Skill 已通过必要检查，可以继续',NON_COMPLIANT:'Skill 中有问题需要先处理',UNKNOWN:'暂时无法完成 Skill 检查'};
+const executionLabels:Record<string,string>={completed:'运行完成',failed:'运行失败',queued:'等待运行',preparing:'正在准备',running:'正在运行',judging:'正在检查结果',MISSING:'没有找到运行记录'};
+const evidenceLabels:Record<string,string>={HTTP_LOADED_DIGEST_CHECKED:'已确认运行的是本次生成的 Skill',NOT_COMPLETE:'运行证据还不完整'};
+const validationLabels:Record<string,string>={PASSED:'验证通过',FAILED:'验证失败',NOT_VALIDATED:'尚未验证',NOT_RUN:'尚未运行',RUNNING:'正在验证'};
+const stageLabels:Record<string,string>={PROCESS:'脚本能够正常结束',OUTPUT_LIMIT:'输出大小正常',STRUCTURED_OUTPUT:'返回了可读取的 JSON',INITIALIZE_AND_LIST:'能够连接服务并找到工具',INPUT_SCHEMA:'工具说明中包含输入格式',TOOLS_CALL:'工具调用成功'};
+const suggestedAction=(tool:Tool):Action=>['MIGRATE_TO_MCP','MIGRATE_TO_SCRIPT'].includes(tool.recommendedAction)?tool.recommendedAction:tool.portability==='PORTABLE_MCP'?'MIGRATE_TO_MCP':'MIGRATE_TO_SCRIPT';
+
+export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}:{catalog:Catalog;api:Api;uploadedAsset?:SkillAsset|null;onUpload?:()=>void;refreshKey?:number}){
+  const [projects,setProjects]=useState<Project[]>([]),[project,setProject]=useState<Project|null>(null),[report,setReport]=useState<Report|null>(null);
+  const [listView,setListView]=useState(true),[stage,setStage]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [sourceId,setSourceId]=useState(''),[decisions,setDecisions]=useState<Record<string,{action:Action;reason:string}>>({});
+  const [replacementId,setReplacementId]=useState('');
+  const [toolInputs,setToolInputs]=useState<Record<string,string>>({}),[toolEndpoints,setToolEndpoints]=useState<Record<string,string>>({});
+  const [environmentId,setEnvironmentId]=useState(''),[packId,setPackId]=useState(''),[modelKey,setModelKey]=useState('');
+  const [dataRef,setDataRef]=useState('本次迁移验证数据'),[permissionRef,setPermissionRef]=useState('企业内部可信验证权限');
+  const [projectRef,setProjectRef]=useState('当前迁移工程'),[lockRef,setLockRef]=useState('候选包内依赖锁');
+  const [optimizationJob,setOptimizationJob]=useState<EvaluationJob|null>(null);
+  const [downloadStarted,setDownloadStarted]=useState(false);
+  const inspection=report?.inspection??project?.inspection??null,currentAsset=project?.candidate??project?.source;
+  const currentValidations=useMemo(()=>report?.technicalValidations.filter(v=>v.current!==false&&v.assetDigest===currentAsset?.artifactSha256)??[],[report,currentAsset]);
+  const openJiuwenEnvironments=catalog.environments.filter(e=>e.type==='runtime_http'&&e.runtimeType==='openjiuwen');
+  const validationRunning=report?.experiments.some(item=>['queued','preparing','running','judging'].includes(item.execution))??false;
+
+  useEffect(()=>{void api<Project[]>('/api/migrations').then(setProjects).catch(e=>setError(String(e)));if(refreshKey)setListView(true);},[api,refreshKey]);
+  useEffect(()=>{if(!uploadedAsset)return;void run(async()=>{const p=await post<Project>('',{sourceAssetId:uploadedAsset.assetId,name:`${uploadedAsset.displayName} 迁移`});select(p);setListView(false);await inspectProject(p);});},[uploadedAsset]);
+  useEffect(()=>{if(project)void loadReport(project);},[project?.id]);
+  useEffect(()=>{if(!project||!validationRunning)return;const timer=window.setInterval(()=>void loadReport(project).catch(error=>setError(error instanceof Error?error.message:String(error))),2000);return()=>window.clearInterval(timer);},[project?.id,validationRunning]);
+
+  async function run(fn:()=>Promise<void>){if(busy)return;setBusy(true);setError('');try{await fn();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
   const post=<T,>(suffix:string,body:unknown={})=>api<T>(`/api/migrations${suffix}`,{method:'POST',body:JSON.stringify(body)});
-  useEffect(()=>{let disposed=false;setSuites([]);setOptimizationJob(null);if(project)void api<MigrationReport>(`/api/migrations/${project.id}/report`).then(r=>{if(!disposed)setSuites((r.suites??[]).filter((s):s is {preparationId:string;summary:string}=>!!s));}).catch(e=>{if(!disposed)setError(String(e));});return()=>{disposed=true;};},[project?.id,api]);
-  function select(p:Project|null){setProject(p);setCandidate(p?.candidate?.assetId??'');setNotes(p?.candidateNotes??'');setAnalysis(null);setDiagnosis(null);setReport(null);setDraft('');setDraftBase('');setPack('');setStep(p?1:0);}
-  function update(p:Project){setProject(p);setSource(p.source.assetId);setCandidate(p.candidate?.assetId??'');setProjects(old=>[p,...old.filter(x=>x.id!==p.id)]);}
-  const candidateOptions=project?.candidate&&!catalog.uploadedSkills.some(a=>a.assetId===project.candidate?.assetId)
-    ? [...catalog.uploadedSkills,project.candidate]:catalog.uploadedSkills;
-  const environments=catalog.environments.filter(e=>e.type==='runtime_http');
-  useEffect(()=>{if(!listView)return;let cancelled=false;setSummaries({});for(const p of projects)void api<MigrationReport>(`/api/migrations/${p.id}/report`).then(r=>{if(!cancelled)setSummaries(s=>({...s,[p.id]:r.verification?.targetExecution??'NOT_RUN'}));}).catch(()=>{if(!cancelled)setSummaries(s=>({...s,[p.id]:'UNAVAILABLE'}));});return()=>{cancelled=true;};},[listView,projects,api]);
-  useEffect(()=>{if(!listView)return;let cancelled=false;for(const p of projects)void api<Diagnosis>(`/api/migrations/${p.id}/diagnosis`).then(d=>{if(!cancelled)setFrameworks(s=>({...s,[p.id]:d.frameworks?.join('、')||(d.dependencyStatus==='NO_BINDING_IN_CHECKED_SCOPE'?'已检查范围无框架绑定':'依赖待确认')}));}).catch(()=>{});return()=>{cancelled=true;};},[listView,projects,api]);
-  const findingGroups=Object.values((diagnosis?.findings??[]).reduce<Record<string,Diagnosis['findings']>>((groups,f)=>{
-    (groups[f.dependencyType]??=[]).push(f);return groups;
-  },{}));
-  async function compare(){
-    if(!project?.candidate)return;
-    const selectedModel=catalog.models.find(m=>JSON.stringify([m.providerId,m.modelId])===model);
-    if(!selectedModel)throw new Error('请选择同一个执行模型');
-    const assets=pair==='AB'?[project.source,project.candidate]:pair==='BC'?[project.candidate,project.candidate]:[project.source,project.candidate];
-    const variant=(a:SkillAsset)=>({mode:'skill_version',skillId:a.skillId,version:a.version,artifactSha256:a.artifactSha256});
-    await post(`/${project.id}/validate`,{pair,dataSnapshot:data,permissionBasis:permissions,sourceProjectRef:original,dependencyLockRef:lock,
-      configuration:{...(pack.startsWith('prep:')?{preparationId:pack.slice(5)}:{packId:pack}),runtime:{type:'runtime_http',environmentId:left},judgeMode:'model',
-        executionModel:{providerId:selectedModel.providerId,modelId:selectedModel.modelId,parameters:selectedModel.parameters},
-        leftVariant:variant(assets[0]!),rightVariant:variant(assets[1]!),
-        runtimeBindings:{left:{environmentId:left,skillAssetId:assets[0]!.assetId},right:{environmentId:pair==='AB'?left:right,skillAssetId:assets[1]!.assetId}}}});
-    setReport(await api(`/api/migrations/${project.id}/report`));setStep(3);
-  }
-  async function download(){
-    if(!project)return;
-    await downloadApi(`/api/migrations/${project.id}/export`,`${project.id}-draft.zip`);
-  }
-  if(listView)return <section className="migration-panel"><header><h2>迁移项目</h2><div>{onUpload&&<button className="button primary" onClick={onUpload}>导入 Skill</button>}<button className="button secondary" onClick={()=>{select(null);setSource('');setListView(false);setStep(0);}}>新建迁移</button></div></header>{error&&<p role="alert">{error}</p>}
-    <div className="migration-project-list">{projects.map(p=><article className="migration-project" key={p.id}>
-      <strong>{p.name}</strong><span>{p.source.displayName} · {p.source.version}</span>
-      <span>识别框架：{frameworks[p.id]??'读取诊断中'}</span>
-      <span>处理状态：{p.candidate?'已生成迁移版本':frameworks[p.id]?'诊断已读取，待处理':'读取诊断中'}</span>
-      <span>目标：{p.simulationProfile?'OpenJiuwen · 模拟端口':'客户工具待接线'}</span><span>候选：{p.candidate?.version??'尚未生成'}</span>
-      <span>验证：{({PASSED:'模拟执行通过',RUNNING:'验证中',FAILED:'验证失败',INTERRUPTED:'运行中断',NOT_RUN:'未验证',UNAVAILABLE:'状态读取失败',LOADING:'读取状态中'} as Record<string,string>)[summaries[p.id]??'LOADING']??summaries[p.id]}</span>
-      <span>资产更新：{new Date((p.candidate??p.source).createdAt).toLocaleString('zh-CN')}</span>
-      <div><button className="button secondary" onClick={()=>{select(p);setListView(false);}}>继续处理</button>
-        <button className="button secondary" disabled={busy||!p.candidate} onClick={()=>void act(async()=>downloadApi(`/api/migrations/${p.id}/export`,`${p.id}-migration.zip`))}><Download size={16}/>导出</button></div>
-    </article>)}</div>{!projects.length&&<p>暂无迁移项目</p>}</section>;
-  return <section className="migration-panel">
-    <button className="button secondary" disabled={busy} onClick={()=>setListView(true)}>返回项目列表</button>
-    <header><h2>{project?.name??'新建迁移'}</h2><span className="state-tag">{report?.verification?.targetExecution==='PASSED'?'模拟执行通过':project?.candidate?'候选待验证':project?'依赖诊断':'待上传'}</span></header>
-    <label>已有项目<select value={project?.id??''} onChange={e=>select(projects.find(p=>p.id===e.target.value)??null)} disabled={busy}><option value="">新建迁移</option>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-    <nav aria-label="迁移步骤">{steps.map((s,i)=><button key={s.index} className={step===s.index?'active':''} aria-current={step===s.index?'step':undefined} disabled={busy||!project} onClick={()=>{setStep(s.index);if(project&&s.index===5)void act(async()=>setReport(await api(`/api/migrations/${project.id}/report`)));}}>{i+1} {s.label}</button>)}</nav>
-    {error&&<p role="alert">{error}</p>}
-    {busy&&<p role="status">正在处理，请稍候…</p>}
-    {step===0&&<div>{onUpload&&<button className="button primary" disabled={busy} onClick={onUpload}><FileCode2 size={16}/>上传并诊断</button>}
-      <label>原始 Skill<select value={source} onChange={e=>setSource(e.target.value)} disabled={busy||!!project}><option value="">选择已导入资产</option>{catalog.uploadedSkills.map(a=><option key={a.assetId} value={a.assetId}>{a.displayName}@{a.version}</option>)}</select></label>{project?<p>{project.source.displayName} · {project.source.version}</p>:<button className="button primary" disabled={!source||busy} onClick={()=>void act(async()=>{const asset=catalog.uploadedSkills.find(a=>a.assetId===source)!;update(await post<Project>('',{sourceAssetId:source,name:asset.displayName+'迁移'}));setStep(1);})}><ArrowRightLeft size={16}/>开始诊断</button>}</div>}
-    {step===1&&project&&<div>
-      <h3>{!diagnosis?'正在分析文件':diagnosis.dependencyStatus==='EXPLICIT_BINDING'?'发现框架或宿主绑定':diagnosis.dependencyStatus==='UNKNOWN'?'材料不完整，暂不能判断全部依赖':'已检查范围未发现框架绑定'}</h3>
-      {diagnosis&&<><div className="diagnostic-summary"><span><CheckCircle2 size={17}/>已检查 {diagnosis.coverage.length} 个文件</span><span><AlertTriangle size={17}/>{diagnosis.findings.filter(f=>f.layer==='UNKNOWN').length} 项材料缺口</span><span>业务正文保留</span></div>
-        <p>AI 解释：{({RUNNING:'生成中',COMPLETE:'已生成（辅助建议）',NOT_CONFIGURED:'模型未配置',FAILED:'生成失败'} as Record<string,string>)[diagnosis.ai.status]}</p>
-        {diagnosis.ai.summary&&<p>{diagnosis.ai.summary}</p>}{diagnosis.ai.error&&<p role="status">{diagnosis.ai.error}</p>}
-        {diagnosis.ai.retryable&&<button className="button secondary" disabled={busy} onClick={()=>void act(async()=>{
-          setDiagnosis(await post(`/${project.id}/diagnose`));setDiagnosticRefresh(n=>n+1);
-        })}><RefreshCw size={16}/>重试 AI 解释</button>}
-        {diagnosis.findings.length===0?<p>静态检查未发现绑定；尚未进行原生运行验证。</p>:findingGroups.map(group=>{const f=group[0]!;return <article className="diagnostic-finding" key={f.dependencyType}>
-          <h4>{f.reason}</h4><p>{f.impact}</p><p><strong>处理建议：</strong>{f.suggestion}</p>
-          <small>{f.layer==='HOST'?'宿主适配':f.layer==='BUSINESS'?'业务待确认':f.layer==='FORMAT'?'可规范化':f.layer==='UNKNOWN'?'需补材料':'代码需审阅'} · {group.length} 处证据</small>
-          <details><summary>查看文件与行号</summary>{group.map(item=><div key={item.id}><p>{item.path}:{item.line} · {item.confidence}</p><pre>{item.snippet}</pre>
-            {diagnosis.ai.suggestions?.filter(s=>s.findingId===item.id).map(s=><p key={s.findingId}>AI 建议：{s.explanation} {s.nextStep}</p>)}</div>)}</details>
-        </article>;})}
-        <details><summary>检查覆盖度</summary>{diagnosis.coverage.map(f=><p key={f.path}>{f.path} · {f.status}</p>)}</details>
-      </>}
-      {diagnosis?.plan&&<section><h3>迁移方案</h3>{['AUTOMATIC','OWNER_CONFIRMATION','ENGINEERING'].map(category=><details key={category} open={category==='AUTOMATIC'}><summary>{{AUTOMATIC:'可自动处理',OWNER_CONFIRMATION:'需要客户确认',ENGINEERING:'需要工程补齐'}[category]} · {diagnosis.plan!.filter(p=>p.category===category).length}</summary>{diagnosis.plan!.filter(p=>p.category===category).map((p,i)=><article key={i}><strong>{p.problem}</strong><p>拟改动：{p.change}</p><p>影响：{p.impact}</p></article>)}</details>)}</section>}
-      <button className="button primary" disabled={busy||!diagnosis} onClick={()=>setStep(2)}>生成迁移方案<ChevronRight size={16}/></button>
-    </div>}
-    {step===2&&project&&<div>
-      <label>执行方式<select value={simulation} onChange={e=>{setSimulation(e.target.value);setAck(false);}} disabled={busy}><option value="">生成可交接草稿 · 客户工具待接线</option>{Object.entries(nativeTarget?.target?.profiles??{}).filter(([,p])=>p.skillId===project.source.skillId).map(([id,p])=><option key={id} value={id}>{p.label} · OpenJiuwen</option>)}</select></label>
-      {!simulation&&<p>本方法可先生成和导出。接入开发者需补齐工具实现、输入输出声明与可信权限，完成前不会执行上传代码，也不会借用其他 Skill 的模拟工具。</p>}
-      {!nativeTarget?.available&&<p role="status">{nativeTarget?.message??'正在检查目标环境'}</p>}
-      {simulation&&nativeTarget?.target?.profiles[simulation]&&<article className="diagnostic-finding"><h3>示例工具与资源映射</h3><p>OpenJiuwen {nativeTarget.target.version} · 模型 {nativeTarget.target.modelId} · 示例数据</p><p>以下是已登记的模拟端口，不是对客户原实现的恢复。业务口径仍需客户确认。</p>
-        {nativeTarget.target.profiles[simulation]!.tools.map(t=><div key={t.name}><p>{t.description??t.name} · 只读示例工具</p><details><summary>输入、结果与工具标识</summary><pre>{JSON.stringify({tool:t.name,input:t.inputSchema,output:t.outputSchema},null,2)}</pre></details></div>)}
-        <details><summary>资源可见性约定</summary><p>声明为方法上下文的资源进入模型；工具专用配置仅由工具读取。存在缺失或路径歧义时不自动补文件。</p></details>
-        <label><input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)}/>确认仅验证方法结构与模拟数据，接受上述映射；不作为原生等价或专业验收。</label>
-      </article>}
-      {!simulation&&<>
-      <div className="migration-fields"><label>目标运行环境<select value={target} onChange={e=>setTarget(e.target.value)} disabled={busy}><option value="">OpenJiuwen · 先生成待接线草稿</option>{environments.filter(e=>e.runtimeType==='openjiuwen').map(e=><option key={e.environmentId} value={e.environmentId}>{e.name}</option>)}</select></label>
-        <label>迁移意图<select value={intent} onChange={e=>setIntent(e.target.value)} disabled={busy}><option value="portable_method_and_adapters">保留业务方法，提取中立声明与薄适配</option><option value="preserve_business_method">保留业务方法，生成接线审阅草稿</option></select></label></div>
-      </>}
-      <button className={project.candidate&&project.generation?.candidateDigest===project.candidate.artifactSha256?'button secondary':'button primary'} disabled={busy||!diagnosis||!!simulation&&!ack} onClick={()=>void act(async()=>{
-        const p=await post<Project>(`/${project.id}/generate`,{runtime:'openjiuwen',...(!simulation&&target?{environmentId:target}:{}),intent,baseAssetId:(project.candidate??project.source).assetId,...(simulation?{simulationProfile:simulation,acknowledgeSimulation:true}:{})});
-        update(p);setNotes(p.candidateNotes);setAnalysis(null);setDraft('');setReport(null);
-      })}><FileCode2 size={16}/>{project.candidate?'保留修改并重新生成':'生成迁移版本'}</button>
-      {project.generation&&<><h3>生成时文件变更</h3><p>{project.simulationProfile?'候选已生成，等待目标执行验证。旧框架入口仅保留归档，不由目标 Host 执行。':'适配草稿尚未在本项目中编译或接入 Host，原业务语义未改写。'}</p>
-        {project.generation.candidateDigest!==project.candidate?.artifactSha256&&<p role="status">当前候选已手工修改，以下保留生成时的差异，不代表当前全部改动。</p>}
-        {project.generation.diff.map(f=><details key={f.path}><summary>{f.operation==='ADD'?'新增':'修改'} · {f.path}</summary><div className="migration-fields"><pre>{f.before||'原包无此文件'}</pre><pre>{f.after}</pre></div></details>)}</>}
-      <details><summary>手工编辑与已有候选</summary><button className="button secondary" disabled={busy} onClick={()=>void act(async()=>{
-      const result=await post<{source:string;candidate:string|null;project:Project}>(`/${project.id}/analyze`);
-      setAnalysis(result);setDraft(result.candidate??result.source);setDraftBase((result.project.candidate??result.project.source).assetId);
-    })}><RefreshCw size={16}/>检查文件与待补材料</button>
-      <label>规范化候选<select value={candidate} disabled={busy} onChange={e=>setCandidate(e.target.value)}><option value="">选择单独导入的新版本</option>{candidateOptions.filter(a=>a.assetId!==project.source.assetId).map(a=><option key={a.assetId} value={a.assetId}>{a.displayName}@{a.version}</option>)}</select></label>
-      <label>改写依据与未解决依赖<textarea value={notes} disabled={busy} onChange={e=>setNotes(e.target.value)} rows={4}/></label><button className="button primary" disabled={busy||!candidate||!notes.trim()} onClick={()=>void act(async()=>update(await post<Project>(`/${project.id}/candidates`,{assetId:candidate,notes})))}><Save size={16}/>保存候选引用</button>
-      {analysis!=null&&<><div className="migration-fields"><div><h4>原版本 · 只读</h4><pre>{(analysis as {source:string}).source}</pre></div><label>迁移版本 · 可编辑<textarea rows={14} value={draft} onChange={e=>setDraft(e.target.value)} disabled={busy}/></label></div>
-      <button className="button secondary" disabled={busy||!draft.trim()||!notes.trim()} onClick={()=>void act(async()=>{
-        const next=await post<Project>(`/${project.id}/drafts`,{source:draft,notes,baseAssetId:draftBase,autoVersion:true});
-        update(next);setDraftBase(next.candidate!.assetId);setCandidate(next.candidate!.assetId);setAck(false);setReport(null);
-      })}><Save size={16}/>保存为新版本</button>
-      <details><summary>依赖盘点</summary><pre>{JSON.stringify(analysis,null,2)}</pre></details></>}</details>
-      <button className={project.candidate?'button primary':'button secondary'} disabled={busy||!project.candidate} onClick={()=>void act(async()=>{setReport(await api(`/api/migrations/${project.id}/report`));setStep(3);})}>下一步：运行验证<ChevronRight size={16}/></button></div>}
-    {step===3&&project&&<div><h3>OpenJiuwen 运行验证</h3><p>当前版本：{project.candidate?.version??'尚未生成'} · {report?.verification?.targetExecution==='PASSED'?'目标通过，原环境效果对比待补':'当前版本尚未通过目标验证'}</p>
-      {report?.verification?.candidateChanged&&<p>当前版本有修改，请先<button className="button secondary" onClick={()=>setStep(2)}>返回映射确认</button>保留修改并重新生成，然后验证。</p>}
-      {project.simulationProfile&&<article className="diagnostic-finding"><h3>目标执行验证 · 示例数据</h3><p>使用当前候选包运行；不代表与原环境效果等价或专业验收完成。</p>
-        <ul>{nativeTarget?.target?.profiles[project.simulationProfile]?.cases.map(c=><li key={c.caseId}>{c.label}：{c.expect==='denied'?'应拒绝，模型与业务读取均为零':'应调用映射的只读工具并返回结果'}</li>)}</ul>
-        <button className={report?.verification?.targetExecution==='PASSED'?'button secondary':'button primary'} disabled={busy||!project.candidate||report?.verification?.candidateChanged||report?.targetRuns?.some(r=>r.status==='RUNNING')} onClick={()=>void act(async()=>{await post(`/${project.id}/verify-target`,{baseAssetId:project.candidate!.assetId});setReport(await api(`/api/migrations/${project.id}/report`));})}><Play size={16}/>开始验证</button>
-        {report?.targetRuns?.map(r=><article key={r.id} className="migration-result"><h4>{r.candidateDigest===project.candidate?.artifactSha256?'当前候选':'旧版本（不能用于当前验收）'} · {({RUNNING:'正在运行',PASSED:'模拟目标执行通过',FAILED:'验证失败',INTERRUPTED:'运行中断'} as Record<string,string>)[r.status]??r.status}</h4>{r.error&&<p role="alert">{r.error}</p>}{r.cases.map(c=><details key={c.caseId}><summary>{c.label} · {c.passed?'检查通过':'检查未通过'}</summary><div className="migration-answer"><ReactMarkdown remarkPlugins={[remarkGfm]}>{c.evidence.output||c.evidence.error||'无输出'}</ReactMarkdown></div><p>工具：{c.evidence.toolCalls.map(t=>`${t.name} (${t.status})`).join('、')||'未调用'}</p><details><summary>加载与执行证据</summary><pre>{JSON.stringify(c.evidence.metadata,null,2)}</pre></details></details>)}</article>)}
-      </article>}
-      <button className="button secondary" disabled={busy} onClick={()=>void act(async()=>setReport(await api(`/api/migrations/${project.id}/report`)))}><RefreshCw size={16}/>检查验证条件</button>
-      <button className={report?.verification?.targetExecution==='PASSED'||!project.simulationProfile?'button primary':'button secondary'} disabled={busy||!project.candidate} onClick={()=>void act(async()=>{setReport(await api(`/api/migrations/${project.id}/report`));setStep(5);})}>下一步：导出<ChevronRight size={16}/></button>
-      {report?.verification&&<details><summary>原环境对比与工程缺口</summary><p>原始基线：未完成原生验证 · OpenJiuwen 目标：{({NOT_RUN:'未运行',RUNNING:'运行中',PASSED:'模拟执行通过（非原生等价）',FAILED:'验证失败',INTERRUPTED:'中断'} as Record<string,string>)[report.verification.targetExecution]??report.verification.targetExecution}</p>{report.verification.candidateChanged&&<p role="alert">候选已修改，旧版本验证不能用于当前版本。</p>}
-        <h4>原工程负责人需补充</h4>{report.verification.missingSource.length?report.verification.missingSource.map((f,i)=><p key={i}>{f.path}:{f.line} · {f.reason}</p>):<p>未发现静态材料缺口；仍需原工程启动方式、运行结果和同条件测试数据。</p>}
-        <h4>本项目接入开发需完成</h4>{report.verification.targetGaps.map(f=><p key={f}>{f}</p>)}</details>}
-      <details><summary>专业复核记录</summary><p>管理员记录的复核意见独立于模型评分，不会自动证明原环境等价或正式发布资格。</p>{report?.professionalReview&&<p>当前版本意见：{report.professionalReview.decision==='ACCEPTED'?'接受':'需修改'} · {report.professionalReview.notes}</p>}<label>复核结论<select value={reviewDecision} onChange={e=>setReviewDecision(e.target.value)}><option value="NEEDS_CHANGES">需修改</option><option value="ACCEPTED">接受当前专业结果</option></select></label><label>复核依据<textarea value={reviewNotes} onChange={e=>setReviewNotes(e.target.value)}/></label><button className="button secondary" disabled={busy||!project.candidate||!reviewNotes.trim()} onClick={()=>void act(async()=>{await post(`/${project.id}/review`,{baseAssetId:project.candidate!.assetId,decision:reviewDecision,notes:reviewNotes});setReport(await api(`/api/migrations/${project.id}/report`));setReviewNotes('');})}>记录当前版本意见</button></details>
-      <details><summary>工程对照配置（已有兼容 Runtime）</summary><p>使用同一输入、可比数据与权限，尽量保持模型参数相同；比较业务结论、关键事实和工具行为，而非逐字匹配。环境差异仍需记录。</p><div className="migration-fields"><label>对照阶段<select value={pair} disabled={busy} onChange={e=>setPair(e.target.value)}><option>AB</option><option>BC</option><option>AC</option></select></label><label>固定题集<select value={pack} onChange={e=>setPack(e.target.value)}><option value="">选择题集</option>{suites.map(s=><option key={s.preparationId} value={'prep:'+s.preparationId}>{s.summary}</option>)}{catalog.evalPacks.filter(p=>p.targetSkillId===project.source.skillId).map(p=><option key={p.packId} value={p.packId}>{p.targetSkillId} / {p.packId}</option>)}</select></label>
-      <label>左侧 Runtime<select value={left} onChange={e=>setLeft(e.target.value)}><option value="">选择原环境</option>{environments.map(e=><option value={e.environmentId} key={e.environmentId}>{e.name}</option>)}</select></label><label>右侧 Runtime<select disabled={pair==='AB'} value={pair==='AB'?left:right} onChange={e=>setRight(e.target.value)}><option value="">选择目标环境</option>{environments.map(e=><option value={e.environmentId} key={e.environmentId}>{e.name}</option>)}</select></label>
-      <label>共同执行模型<select value={model} onChange={e=>setModel(e.target.value)}><option value="">选择模型</option>{catalog.models.map(m=><option value={JSON.stringify([m.providerId,m.modelId])} key={m.providerId+':'+m.modelId} disabled={!!m.availability&&m.availability!=='ready'}>{m.label??m.modelId}</option>)}</select></label></div>
-      <details><summary>冻结条件与工程依据</summary><label>原工程提交 / 入口<input value={original} onChange={e=>setOriginal(e.target.value)}/></label><label>原依赖锁引用<input value={lock} onChange={e=>setLock(e.target.value)}/></label><label>数据快照引用<input value={data} onChange={e=>setData(e.target.value)}/></label><label>等价授权依据<input value={permissions} onChange={e=>setPermissions(e.target.value)}/></label></details>
-      <p>AB 比较方法；BC 比较包含 Harness 的执行栈；AC 复核最终差异。填写引用不等于原生工程或授权已核验。</p>
-      <details><summary>项目试卷</summary><label>试卷 JSON<textarea rows={8} value={suiteText} onChange={e=>setSuiteText(e.target.value)}/></label><button className="button secondary" disabled={busy||!suiteText.trim()} onClick={()=>void act(async()=>{
-        const suite=await post<{preparationId:string;summary:string}>(`/${project.id}/suites`,JSON.parse(suiteText));
-        setSuites(old=>[...old,suite]);setPack('prep:'+suite.preparationId);setSuiteText('');
-      })}><Save size={16}/>冻结新试卷</button></details>
-      <button className="button primary" disabled={busy||!project.candidate||!left||(!right&&pair!=='AB')||!pack||!model||!original||!lock||!data||!permissions} onClick={()=>void act(compare)}><Play size={16}/>运行成对实验</button></details></div>}
-    {step===3&&project&&<div><button className="button secondary" disabled={busy} onClick={()=>void act(async()=>setReport(await api(`/api/migrations/${project.id}/report`)))}><RefreshCw size={16}/>刷新运行结果</button>
-      {report?.experiments.map(run=><article className="migration-result" key={run.jobId}><h3>{run.pair} · {run.execution}</h3>
-        <dl><dt>运行编号</dt><dd>{run.jobId}</dd><dt>加载证据</dt><dd>{run.evidence}</dd><dt>专业验收</dt><dd>{run.professionalAcceptance}</dd><dt>迁移验收</dt><dd>{run.migrationAcceptance}</dd></dl>
-        {['queued','running','preparing','evaluating'].includes(run.execution)&&<button className="button secondary" disabled={busy} onClick={()=>void act(async()=>{
-          await api(`/api/runs/${run.jobId}/cancel`,{method:'POST'});setReport(await api(`/api/migrations/${project.id}/report`));
-        })}>取消实验</button>}
-        {run.execution==='completed'&&<button className="button secondary" disabled={busy||!!project.generation} onClick={()=>void act(async()=>{setOptimizationJob(await api(`/api/runs/${run.jobId}`));setStep(4);})}>查看评价并优化</button>}</article>)}
-      <details><summary>完整实验记录</summary><pre>{report?JSON.stringify(report,null,2):'尚未读取结果'}</pre></details></div>}
-    {step===4&&project&&<div><h3>表达优化（可选）</h3><p>当前候选尚未取得原生迁移验证。优化不能代替迁移验证，也不是导出草稿的前置条件。</p>
-      {optimizationJob&&<OptimizationPanel job={optimizationJob} migrationId={project.id} onCandidate={()=>void act(async()=>{
-        const next=await api<Project>(`/api/migrations/${project.id}`);update(next);setNotes(next.candidateNotes);setOptimizationJob(null);setReport(await api(`/api/migrations/${project.id}/report`));
-      })}/>}
-      <button className="button secondary" onClick={()=>setStep(5)}>跳过优化<ChevronRight size={16}/></button></div>}
-    {step===5&&project&&<div><h3>导出迁移包</h3><p>{report?.verification?.targetExecution==='PASSED'?'当前候选已通过目标运行验证；原环境等价及专业结果仍未验收。':'当前候选未通过目标运行验证，将导出待接线或待验证草稿。'}</p><button className="button primary" disabled={busy||!project.candidate} onClick={()=>void act(download)}><Download size={16}/>下载迁移包</button><p>包含方法、资源、适配草稿、变更清单与验证范围。默认不含完整模型回答或测试报文；分享前请检查自行上传的方法与资源是否包含私有数据。不是正式发布或已验证 Domain Pack。</p></div>}
+  async function loadReport(p=project!){const next=await api<Report>(`/api/migrations/${p.id}/report`);setReport(next);setProject(next.project);setProjects(old=>[next.project,...old.filter(x=>x.id!==next.project.id)]);seedDecisions(next.inspection,next.decisions);}
+  function seedDecisions(value:Inspection|null|undefined,saved:Decision[]=[]){if(value)setDecisions(Object.fromEntries(value.tools.map(t=>{const d=saved.find(x=>x.toolId===t.toolId),action=d&&['MIGRATE_TO_MCP','MIGRATE_TO_SCRIPT'].includes(d.action)?d.action:suggestedAction(t);return [t.toolId,{action,reason:''}]})));}
+  function select(p:Project){setProject(p);setReport(null);setOptimizationJob(null);const ready=!!p.candidate&&!!p.inspection&&p.inspection.tools.every(tool=>['PORTABLE_MCP','PORTABLE_SCRIPT'].includes(tool.portability));setStage(ready?4:p.inspection?2:1);}
+  async function inspectProject(p=project!){await post(`/${p.id}/inspect`);await loadReport(p);setStage(1);}
+  async function create(){const asset=catalog.uploadedSkills.find(a=>a.assetId===sourceId);if(!asset)throw new Error('请选择原始 Skill 工程');const p=await post<Project>('',{sourceAssetId:sourceId,name:`${asset.displayName} 迁移`});select(p);await inspectProject(p);}
+  async function upgrade(){if(!project)return;const next=await post<Project>(`/${project.id}/upgrade`);select(next);await inspectProject(next);}
+  async function saveDecisions(){if(!project||!inspection)return;for(const tool of inspection.tools){const d=decisions[tool.toolId];if(!d)throw new Error(`请选择 ${tool.name} 的迁移方式`);await api(`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,{method:'PUT',body:JSON.stringify({action:d.action,baseAssetId:inspection.assetId})});}await loadReport();setStage(3);}
+  async function generate(){if(!project||!inspection)return;const next=await post<Project>(`/${project.id}/generate`,{baseAssetId:inspection.assetId});setProject(next);await loadReport(next);}
+  async function adoptCompletedCandidate(){if(!project||!replacementId)return;const next=await post<Project>(`/${project.id}/candidates`,{assetId:replacementId,notes:'人工完成 Tool 实现后重新导入的候选。'});setReplacementId('');setProject(next);await inspectProject(next);}
+  async function validateTool(tool:Tool){if(!project||!currentAsset)return;let request:unknown={};try{request=JSON.parse(toolInputs[tool.toolId]||'{}');}catch{throw new Error(`${tool.name} 的测试输入不是有效 JSON`);}await post(`/${project.id}/validate/technical`,{toolId:tool.toolId,baseAssetId:currentAsset.assetId,request,arguments:request,endpoint:toolEndpoints[tool.toolId]||undefined});await loadReport();}
+  async function validateOpenJiuwen(){if(!project?.candidate)throw new Error('请先生成候选');const selected=catalog.models.find(m=>JSON.stringify([m.providerId,m.modelId])===modelKey);if(!selected)throw new Error('请选择执行模型');const a=project.candidate,variant={mode:'skill_version',skillId:a.skillId,version:a.version,artifactSha256:a.artifactSha256};await post(`/${project.id}/validate/openjiuwen`,{pair:'BC',dataSnapshot:dataRef,permissionBasis:permissionRef,sourceProjectRef:projectRef,dependencyLockRef:lockRef,configuration:{packId,runtime:{type:'runtime_http',environmentId},judgeMode:'model',executionModel:{providerId:selected.providerId,modelId:selected.modelId,parameters:selected.parameters},leftVariant:variant,rightVariant:variant,runtimeBindings:{left:{environmentId,skillAssetId:a.assetId},right:{environmentId,skillAssetId:a.assetId}}}});await loadReport();}
+  async function download(){if(project){setDownloadStarted(false);await downloadApi(`/api/migrations/${project.id}/export`,`${project.id}-migration.zip`);setDownloadStarted(true);}}
+
+  if(listView)return <section className="migration-panel"><header><div><h2>Skill 迁移</h2><p>找出不能跨平台使用的工具，选择迁移方式，并验证迁移后的 Skill。</p></div><div>{onUpload&&<button className="button primary" onClick={onUpload}>导入 Skill 包</button>}<button className="button secondary" onClick={()=>{setListView(false);setProject(null);setReport(null);setStage(0);}}>新建迁移</button></div></header>{error&&<p role="alert">{error}</p>}<div className="migration-project-list">{projects.map(p=><article className="migration-project" key={p.id}><strong>{p.name}</strong><span>{p.source.displayName} · {p.source.version}</span><span>{p.schemaVersion==='finance.skill-migration.v2'?'当前版本':'旧版迁移记录'}</span><span>迁移结果：{p.candidate?.version??'尚未生成'}</span><div><button className="button secondary" onClick={()=>{select(p);setListView(false);}}>继续处理</button><button className="button secondary" disabled={!p.candidate} onClick={()=>void run(()=>downloadApi(`/api/migrations/${p.id}/export`,`${p.id}-migration.zip`))}><Download size={16}/>下载结果</button></div></article>)}</div>{!projects.length&&<p>还没有迁移记录。</p>}</section>;
+
+  return <section className="migration-panel"><button className="button secondary" onClick={()=>setListView(true)}>返回迁移列表</button><header><div><h2>{project?.name??'新建迁移'}</h2><p>{currentAsset?`${currentAsset.displayName} · ${currentAsset.version}`:'选择要迁移的 Skill 包'}</p></div><div>{project?.schemaVersion==='finance.skill-migration.v0.1'&&<button className="button primary" disabled={busy} onClick={()=>void run(upgrade)}>使用新版流程继续</button>}</div></header>
+    <nav aria-label="迁移步骤">{stages.map((label,index)=><button key={label} className={stage===index?'active':''} disabled={busy||index>0&&!project} onClick={()=>setStage(index)}>{index+1} {label}</button>)}</nav>{error&&<p role="alert">{error}</p>}{busy&&<p role="status">正在处理，请稍候…</p>}
+    {stage===0&&<ImportStep catalog={catalog} sourceId={sourceId} setSourceId={setSourceId} onUpload={onUpload} busy={busy} create={()=>void run(create)}/>}
+    {stage===1&&project&&<InspectionStep inspection={inspection} completedCandidate={!!project.candidate&&!!inspection&&inspection.tools.every(tool=>['PORTABLE_MCP','PORTABLE_SCRIPT'].includes(tool.portability))} busy={busy} inspect={()=>void run(()=>inspectProject())} next={target=>setStage(target)}/>}
+    {stage===2&&project&&inspection&&<DecisionStep inspection={inspection} decisions={decisions} setDecisions={setDecisions} plan={report?.migrationPlan??null} busy={busy} save={()=>void run(saveDecisions)}/>}
+    {stage===3&&project&&<CandidateStep project={project} report={report} assets={catalog.uploadedSkills} replacementId={replacementId} setReplacementId={setReplacementId} adopt={()=>void run(adoptCompletedCandidate)} busy={busy} generate={()=>void run(generate)} next={()=>setStage(4)}/>}
+    {stage===4&&project&&inspection&&<ValidationStep inspection={inspection} project={project} report={report} currentValidations={currentValidations} toolInputs={toolInputs} setToolInputs={setToolInputs} toolEndpoints={toolEndpoints} setToolEndpoints={setToolEndpoints} validateTool={t=>void run(()=>validateTool(t))} environments={openJiuwenEnvironments} environmentId={environmentId} setEnvironmentId={setEnvironmentId} packs={catalog.evalPacks.filter(p=>p.targetSkillId===project.source.skillId)} packId={packId} setPackId={setPackId} models={catalog.models} modelKey={modelKey} setModelKey={setModelKey} refs={{dataRef,permissionRef,projectRef,lockRef}} setRefs={{setDataRef,setPermissionRef,setProjectRef,setLockRef}} validateOpenJiuwen={()=>void run(validateOpenJiuwen)} busy={busy} next={()=>setStage(5)}/>}
+    {stage===5&&project&&<div><h3>验证 Skill 的实际效果</h3><p>用固定的测试内容检查迁移后的 Skill 是否仍能正确完成任务。</p>{report?.experiments.map(x=><article className="migration-result" key={x.jobId}><h4>{executionLabels[x.execution]??x.execution}</h4><p>{evidenceLabels[x.evidence]??'运行记录待确认'}。</p>{x.report?.summary.headline&&<p><strong>整体结果：</strong>{x.report.summary.headline}</p>}{x.report?.cases.map(c=><section className="diagnostic-finding" key={c.caseId}><h4>{c.name||c.caseId}</h4><p><strong>测试内容：</strong>{c.prompt}</p><p><strong>执行结果：</strong>{c.right.status==='completed'?'已完成':'未完成'}{c.judge?.summary?`；${c.judge.summary}`:''}</p><details><summary>查看迁移后 Skill 的实际回答</summary><pre>{c.right.output||c.right.error||'没有返回内容'}</pre></details></section>)}{x.execution==='completed'&&<button className="button secondary" onClick={()=>void run(async()=>setOptimizationJob(await api(`/api/runs/${x.jobId}`)))}>进一步查看和优化</button>}</article>)}{optimizationJob&&<OptimizationPanel job={optimizationJob} migrationId={project.id} onCandidate={()=>void run(()=>loadReport())}/>}<button className="button primary" onClick={()=>setStage(6)}>进入下载<ChevronRight size={16}/></button></div>}
+    {stage===6&&project&&<div><h3>下载迁移结果</h3><p>下载包中包含迁移后的 Skill、工具工程和验证记录。还没有完成验证时，文件会明确标为草稿。</p>{project.schemaVersion==='finance.skill-migration.v0.1'&&<p>这是旧版迁移记录，建议先切换到新版流程重新验证。</p>}<button className="button primary" disabled={busy||!project.candidate} onClick={()=>void run(download)}><Download size={16}/>下载迁移后的 Skill 包</button>{downloadStarted&&<p role="status"><CheckCircle2 size={16}/>下载已开始，请在浏览器的下载记录中查看文件。</p>}</div>}
   </section>;
 }
+
+function ImportStep({catalog,sourceId,setSourceId,onUpload,busy,create}:{catalog:Catalog;sourceId:string;setSourceId:(v:string)=>void;onUpload?:()=>void;busy:boolean;create:()=>void}){return <div><h3>选择需要迁移的 Skill 包</h3><p>系统只读取文件来检查问题，不会运行其中的代码，也不会修改原文件。</p>{onUpload&&<button className="button secondary" onClick={onUpload}><FileCode2 size={16}/>上传 ZIP</button>}<label>已上传的 Skill<select value={sourceId} onChange={e=>setSourceId(e.target.value)}><option value="">请选择</option>{catalog.uploadedSkills.map(a=><option value={a.assetId} key={a.assetId}>{a.displayName}@{a.version}</option>)}</select></label><button className="button primary" disabled={!sourceId||busy} onClick={create}>检查这个 Skill<ChevronRight size={16}/></button></div>}
+function InspectionStep({inspection,completedCandidate,busy,inspect,next}:{inspection:Inspection|null;completedCandidate:boolean;busy:boolean;inspect:()=>void;next:(stage:number)=>void}){return <div><h3>检查结果</h3><p>{inspection?skillStatusLabels[inspection.skill.status]??'Skill 检查已完成':'尚未检查'}。</p>{inspection?.skill.findings.length?<FindingList values={inspection.skill.findings}/>:<p><CheckCircle2 size={16}/>没有发现需要修改的内容。</p>}<h3>{completedCandidate?'工具迁移情况':'需要处理的工具'}</h3>{completedCandidate&&<p><CheckCircle2 size={16}/>工具迁移已完成。接下来可以逐个试运行，确认迁移后的工具能够正常工作。</p>}{inspection?.tools.map(tool=><article className="diagnostic-finding" key={tool.toolId}><h4>{tool.name}</h4><p>{completedCandidate?(completedToolLabels[tool.portability]??'迁移已完成'):(portabilityLabels[tool.portability]??'已完成检查')}。</p>{!completedCandidate&&<p>建议迁移为：{actionLabels[suggestedAction(tool)]}。</p>}{tool.findings.length>0&&<FindingList values={tool.findings}/>}<details><summary>查看文件位置和检查依据</summary><p>相关文件：{tool.sourcePaths.join('、')||'没有找到实现文件'}</p>{tool.evidence.map((e,i)=><p key={i}>{e.path} 第 {e.line} 行：{e.detail}</p>)}</details></article>)}{inspection&&!inspection.tools.length&&<p>这个 Skill 没有调用工具，不需要做工具迁移。</p>}<button className="button secondary" disabled={busy} onClick={inspect}><RefreshCw size={16}/>重新检查</button><button className="button primary" disabled={!inspection} onClick={()=>next(completedCandidate?4:2)}>{completedCandidate?'开始验证':'选择迁移方式'}<ChevronRight size={16}/></button></div>}
+function DecisionStep({inspection,decisions,setDecisions,plan,busy,save}:{inspection:Inspection;decisions:Record<string,{action:Action;reason:string}>;setDecisions:React.Dispatch<React.SetStateAction<Record<string,{action:Action;reason:string}>>>;plan:Plan|null;busy:boolean;save:()=>void}){return <div><h3>为每个工具选择迁移方式</h3><p>选择 MCP 的工具会合并到这个 Skill 的同一个 MCP 服务中，不会为每个工具单独创建服务。</p>{inspection.tools.map(tool=>{const d=decisions[tool.toolId]??{action:suggestedAction(tool),reason:''};return <article className="diagnostic-finding" key={tool.toolId}><h4>{tool.name}</h4><p>{portabilityLabels[tool.portability]??'这个工具需要迁移'}。</p><label>迁移方式<select value={d.action} onChange={e=>setDecisions(old=>({...old,[tool.toolId]:{...d,action:e.target.value as Action}}))}><option value="MIGRATE_TO_MCP">放入 MCP 服务</option><option value="MIGRATE_TO_SCRIPT">改成 Python 脚本</option></select></label><p>{d.action==='MIGRATE_TO_MCP'?'适合多个 Tool 共用服务、需要被不同系统调用的情况。':'适合一次性本机任务，安装依赖和命令行调试更方便。'}</p></article>})}<button className="button primary" disabled={busy} onClick={save}><Save size={16}/>确认并生成方案</button>{plan&&<PlanSummary plan={plan}/>}</div>}
+function CandidateStep({project,report,assets,replacementId,setReplacementId,adopt,busy,generate,next}:{project:Project;report:Report|null;assets:SkillAsset[];replacementId:string;setReplacementId:(v:string)=>void;adopt:()=>void;busy:boolean;generate:()=>void;next:()=>void}){const diffs=report?.portableGenerationDiff??project.portableGenerationDiff??[];return <div><h3>生成迁移结果</h3>{report?.migrationPlan&&<PlanSummary plan={report.migrationPlan}/>}<button className="button primary" disabled={busy||!report?.migrationPlan?.generationAllowed} onClick={generate}><FileCode2 size={16}/>{project.candidate?'重新生成迁移结果':'生成迁移后的 Skill 包'}</button>{project.portableGenerations?.map(g=><article className="diagnostic-finding" key={g.toolId}><h4>{g.toolName} · {actionLabels[g.action]}</h4><p>{g.readyForValidation?'工具已经可以试运行。':'已生成工具工程，还需要接入原有业务代码。'}</p>{g.todo.map(t=><p key={t}>下一步：{t}</p>)}</article>)}{diffs.length>0&&<details><summary>查看具体改了哪些文件</summary>{diffs.map(d=><details key={d.path}><summary>{d.operation==='ADD'?'新增':'修改'} · {d.path}</summary><div className="migration-fields"><pre>{d.before||'原 Skill 中没有这个文件'}</pre><pre>{d.after}</pre></div></details>)}</details>}<details><summary>上传已经补完业务代码的版本</summary><p>把生成的工具工程补充完整后，重新打包上传。系统会再次检查这个版本。</p><label>已上传的新版本<select value={replacementId} onChange={e=>setReplacementId(e.target.value)}><option value="">请选择</option>{assets.filter(a=>a.assetId!==project.source.assetId&&a.assetId!==project.candidate?.assetId).map(a=><option value={a.assetId} key={a.assetId}>{a.displayName}@{a.version}</option>)}</select></label><button className="button secondary" disabled={busy||!replacementId} onClick={adopt}>使用这个版本并重新检查</button></details><button className="button primary" disabled={!project.candidate} onClick={next}>验证能否运行<ChevronRight size={16}/></button></div>}
+
+type ValidationProps={inspection:Inspection;project:Project;report:Report|null;currentValidations:Validation[];toolInputs:Record<string,string>;setToolInputs:React.Dispatch<React.SetStateAction<Record<string,string>>>;toolEndpoints:Record<string,string>;setToolEndpoints:React.Dispatch<React.SetStateAction<Record<string,string>>>;validateTool:(tool:Tool)=>void;environments:Catalog['environments'];environmentId:string;setEnvironmentId:(v:string)=>void;packs:Catalog['evalPacks'];packId:string;setPackId:(v:string)=>void;models:Catalog['models'];modelKey:string;setModelKey:(v:string)=>void;refs:{dataRef:string;permissionRef:string;projectRef:string;lockRef:string};setRefs:{setDataRef:(v:string)=>void;setPermissionRef:(v:string)=>void;setProjectRef:(v:string)=>void;setLockRef:(v:string)=>void};validateOpenJiuwen:()=>void;busy:boolean;next:()=>void};
+function ValidationStep(p:ValidationProps){return <div><h3>逐个试运行工具</h3><p><ShieldAlert size={16}/>这里只运行企业内部可信代码。每次运行结束都会清理临时文件。</p>{p.inspection.tools.map(tool=>{const latest=p.currentValidations.filter(v=>v.toolId===tool.toolId).at(-1),generation=p.project.portableGenerations?.find(g=>g.toolId===tool.toolId),action=p.project.decisions?.find(d=>d.toolId===tool.toolId)?.action;return <article className="diagnostic-finding" key={tool.toolId}><h4>{tool.name} · {latest?validationLabels[latest.status]: '尚未验证'}</h4>{generation&&!generation.readyForValidation&&<p role="alert">请先补完这个工具的业务代码，再上传新版本进行验证。</p>}{(tool.kind==='MCP'||action==='MIGRATE_TO_MCP')&&<label>共享 MCP 服务地址<input value={p.toolEndpoints[tool.toolId]??''} placeholder="http://127.0.0.1:端口/mcp" onChange={e=>p.setToolEndpoints(old=>({...old,[tool.toolId]:e.target.value}))}/></label>}<label>试运行时传给工具的内容（JSON）<textarea rows={3} value={p.toolInputs[tool.toolId]??'{}'} onChange={e=>p.setToolInputs(old=>({...old,[tool.toolId]:e.target.value}))}/></label><button className="button secondary" disabled={p.busy||generation?.readyForValidation===false} onClick={()=>p.validateTool(tool)}><Play size={16}/>试运行</button>{latest&&<details><summary>查看验证详情</summary>{latest.stages.map(s=><p key={s.name}>{s.passed?'成功':'失败'}：{stageLabels[s.name]??s.message}</p>)}{latest.error&&<p role="alert">失败原因：{latest.error}</p>}</details>}</article>})}<h3>在 OpenJiuwen 中验证整个 Skill</h3><p>所有工具都试运行成功后，再检查完整任务能否得到正确结果。</p><div className="migration-fields"><label>OpenJiuwen 环境<select value={p.environmentId} onChange={e=>p.setEnvironmentId(e.target.value)}><option value="">请选择</option>{p.environments.map(e=><option value={e.environmentId} key={e.environmentId}>{e.name}</option>)}</select></label><label>测试内容<select value={p.packId} onChange={e=>p.setPackId(e.target.value)}><option value="">请选择</option>{p.packs.map(x=><option value={x.packId} key={x.packId}>{x.packId}</option>)}</select></label><label>使用的模型<select value={p.modelKey} onChange={e=>p.setModelKey(e.target.value)}><option value="">请选择</option>{p.models.map(m=><option value={JSON.stringify([m.providerId,m.modelId])} key={`${m.providerId}:${m.modelId}`}>{m.label??m.modelId}</option>)}</select></label></div><details><summary>查看本次验证使用的数据和权限</summary><label>测试数据<input value={p.refs.dataRef} onChange={e=>p.setRefs.setDataRef(e.target.value)}/></label><label>运行权限<input value={p.refs.permissionRef} onChange={e=>p.setRefs.setPermissionRef(e.target.value)}/></label><label>Skill 来源<input value={p.refs.projectRef} onChange={e=>p.setRefs.setProjectRef(e.target.value)}/></label><label>依赖版本<input value={p.refs.lockRef} onChange={e=>p.setRefs.setLockRef(e.target.value)}/></label></details><button className="button primary" disabled={p.busy||!p.environmentId||!p.packId||!p.modelKey||!p.project.candidate} onClick={p.validateOpenJiuwen}><Play size={16}/>开始完整验证</button>{p.report?.experiments.map(x=><p key={x.jobId}>{executionLabels[x.execution]??x.execution}；{evidenceLabels[x.evidence]??'验证记录待确认'}</p>)}<button className="button secondary" onClick={p.next}>查看实际效果<ChevronRight size={16}/></button></div>}
+
+function FindingList({values}:{values:Finding[]}){return <div>{values.map((f,i)=>{const documentLevel=f.code==='FAILURE_HANDLING_UNCLEAR',prefix=f.severity==='ERROR'?'需要修改':f.severity==='WARNING'?'建议检查':'可以进一步完善',text=documentLevel?'补充工具调用失败、信息不足或请求被拒绝时的处理方式。':f.severity==='INFO'&&f.suggestion?f.suggestion:`${f.message}${f.suggestion?` ${f.suggestion}`:''}`;return <p role={f.severity==='ERROR'?'alert':undefined} key={`${f.code}-${i}`}>{prefix}：{text}<small>{documentLevel?`（涉及文件：${f.path}）`:`（位置：${f.path} 第 ${f.line} 行）`}</small></p>})}</div>}
+function PlanSummary({plan}:{plan:Plan}){const mcpCount=plan.items.filter(item=>item.action==='MIGRATE_TO_MCP').length;return <article className="diagnostic-finding"><h4>迁移方案</h4>{plan.items.map(item=><p key={item.toolId}>{item.toolName}：{actionLabels[item.action]??'请重新选择迁移方式'}{item.blockingReasons.length?`（${item.blockingReasons.join('、')}）`:''}</p>)}{mcpCount>0&&<p>{mcpCount} 个选择 MCP 的工具会放进同一个 MCP 服务。</p>}<p>{plan.generationAllowed?'迁移方式已选好，可以生成结果。':'请先为每个工具选择迁移方式。'}</p></article>}

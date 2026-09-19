@@ -46,9 +46,9 @@ it('target state uses actual current-run evidence; bad digest fails, retry and r
     const generated=(await post(`/api/migrations/${project.id}/generate`,{...input,acknowledgeSimulation:true})).json();expect(generated.candidate).toBeTruthy();
     const verify=()=>post(`/api/migrations/${project.id}/verify-target`,{baseAssetId:generated.candidate.assetId});
     const report=async()=>(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();
-    const wait=async()=>{for(let i=0;i<200;i++){const r=await report();if(r.verification.targetExecution!=='RUNNING')return r;await new Promise(r=>setTimeout(r,10));}throw new Error('timeout');};
-    expect((await verify()).statusCode).toBe(200);expect((await wait()).verification.targetExecution).toBe('FAILED');expect(delayedSnapshot).toBe(true);
-    bad=false;expect((await verify()).statusCode).toBe(200);expect((await wait()).verification.targetExecution).toBe('PASSED');expect((await report()).targetRuns).toHaveLength(2);expect(calls).toBe(3);
+    const wait=async(runId:string)=>{for(let i=0;i<400;i++){const r=await report(),current=r.targetRuns.find((item:{id:string})=>item.id===runId);if(current&&current.status!=='RUNNING')return r;await new Promise(r=>setTimeout(r,10));}throw new Error('timeout');};
+    const first=await verify();expect(first.statusCode).toBe(200);expect((await wait(first.json().id)).verification.targetExecution).toBe('FAILED');expect(delayedSnapshot).toBe(true);
+    bad=false;const second=await verify();expect(second.statusCode).toBe(200);expect((await wait(second.json().id)).verification.targetExecution).toBe('PASSED');expect((await report()).targetRuns).toHaveLength(2);expect(calls).toBe(3);
     const analysis=(await post(`/api/migrations/${project.id}/analyze`,{})).json();
     expect((await post(`/api/migrations/${project.id}/drafts`,{source:analysis.candidate+'\nNew wording.',notes:'edit',baseAssetId:generated.candidate.assetId,autoVersion:true})).statusCode).toBe(200);
     expect((await report()).verification.targetExecution).toBe('NOT_RUN');expect((await verify()).statusCode).toBe(409);
@@ -60,8 +60,8 @@ it('target state uses actual current-run evidence; bad digest fails, retry and r
     const nextAnalysis=(await post(`/api/migrations/${project.id}/analyze`,{})).json();
     expect(nextAnalysis.candidate).toContain('New wording.');expect(nextAnalysis.source).not.toContain('New wording.');
     expect((await report()).professionalReview).toBeNull();
-    expect((await post(`/api/migrations/${project.id}/verify-target`,{baseAssetId:regenerated.candidate.assetId})).statusCode).toBe(200);
-    expect((await wait()).verification.targetExecution).toBe('PASSED');
+    const third=await post(`/api/migrations/${project.id}/verify-target`,{baseAssetId:regenerated.candidate.assetId});expect(third.statusCode).toBe(200);
+    expect((await wait(third.json().id)).verification.targetExecution).toBe('PASSED');
     const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});expect(exported.statusCode).toBe(200);
     const exportedFiles=unzipSync(exported.rawPayload),manifest=JSON.parse(Buffer.from(exportedFiles['migration-manifest.json']!).toString());
     expect(manifest.state).toBe('TARGET_VERIFIED_CANDIDATE');

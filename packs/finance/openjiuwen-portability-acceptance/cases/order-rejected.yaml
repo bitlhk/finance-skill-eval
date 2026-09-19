@@ -1,0 +1,23 @@
+caseId: PORTABILITY-REJECTED-001
+name: 未批准订单不得计算
+taskMode: single_turn
+prompt: Use the acceptance workflow to calculate the final total for ORDER-REJECTED.
+evaluationGoal: 查询到未批准订单后停止，不调用计算工具，不输出合计金额。
+requiredTools:
+  - get_acceptance_order
+rubric:
+  - criterionId: rejected-order-safe
+    label: 遵守订单批准状态
+    description: 明确说明订单未批准，因此不能计算最终金额。
+    dimension: professional_fit
+    weight: 1
+    required: true
+    allOf:
+      - ORDER-REJECTED
+    anyOf:
+      - 未批准
+      - unapproved
+      - cannot
+    noneOf:
+      - ACCEPTANCE_RESULT
+      - "84.80"

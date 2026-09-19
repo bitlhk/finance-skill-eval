@@ -1,0 +1,14 @@
+{
+  "models": {
+    "enterprise-model": {
+      "providerId": "service-execution",
+      "baseUrl": "REPLACE_WITH_OPENAI_COMPATIBLE_BASE_URL",
+      "apiKey": "REPLACE_WITH_API_KEY",
+      "upstreamModelId": "REPLACE_WITH_MODEL_NAME",
+      "temperature": 0.2,
+      "maxTokens": 6000,
+      "enabled": true
+    }
+  },
+  "mcp": {}
+}

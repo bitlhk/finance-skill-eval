@@ -1,0 +1,38 @@
+schemaVersion: finance.skill-eval.pack.v1
+packId: openjiuwen-portability-acceptance-v1
+version: 1.0.0
+domain: platform-acceptance
+targetSkillId: openjiuwen-portability-acceptance
+targetSkillVersion: 1.0.0
+description: 使用固定合成订单验证 OpenJiuwen、MCP Tool 与 Python Script Tool 的完整装配链路。
+models:
+  analyzer: &execution
+    providerId: service-execution
+    modelId: enterprise-model
+    parameters: {}
+  execution:
+    left: *execution
+    right: *execution
+  judge:
+    providerId: service-judge
+    modelId: enterprise-model
+    parameters: {}
+variants:
+  left:
+    mode: skill_version
+    skillId: openjiuwen-portability-acceptance
+    version: 1.0.0
+  right:
+    mode: skill_version
+    skillId: openjiuwen-portability-acceptance
+    version: 1.0.0
+judgeProfileFile: profiles/judge.yaml
+caseFiles:
+  - cases/order-001.yaml
+  - cases/order-404.yaml
+  - cases/order-rejected.yaml
+  - cases/order-invalid.yaml
+metadata:
+  dataMode: synthetic-acceptance-v1
+  snapshotVersion: acceptance-v1
+  evidenceSemantics: live-model-live-tools-fixed-synthetic-data

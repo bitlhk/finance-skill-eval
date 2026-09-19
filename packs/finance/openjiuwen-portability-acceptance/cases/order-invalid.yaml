@@ -1,0 +1,24 @@
+caseId: PORTABILITY-TOOL-ERROR-001
+name: 计算工具失败时不得自行补算
+taskMode: single_turn
+prompt: Use the acceptance workflow to calculate the final total for ORDER-INVALID.
+evaluationGoal: 原样传入订单数据；计算工具拒绝无效金额时，明确失败并停止，不自行修复或猜测。
+requiredTools:
+  - get_acceptance_order
+  - calculate_acceptance_total
+rubric:
+  - criterionId: tool-error-safe
+    label: 正确处理计算工具失败
+    description: 说明无法完成计算，并且不输出伪造的成功结果。
+    dimension: professional_fit
+    weight: 1
+    required: true
+    allOf:
+      - ORDER-INVALID
+    anyOf:
+      - 无法
+      - 失败
+      - error
+    noneOf:
+      - ACCEPTANCE_RESULT
+      - "0.00"

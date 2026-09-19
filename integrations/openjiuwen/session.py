@@ -7,11 +7,21 @@ import os
 from pathlib import Path
 import sys
 import time
+import tempfile
 import uuid
 from model_config import resolve_model, request_settings
+from script_process import run_script
 
 protocol = sys.stdout
 sys.stdout = sys.stderr
+
+# Local MCP endpoints must never be routed through an enterprise HTTP proxy.
+for proxy_bypass_key in ("NO_PROXY", "no_proxy"):
+    proxy_bypass = [item.strip() for item in os.environ.get(proxy_bypass_key, "").split(",") if item.strip()]
+    for local_host in ("127.0.0.1", "localhost"):
+        if local_host not in proxy_bypass:
+            proxy_bypass.append(local_host)
+    os.environ[proxy_bypass_key] = ",".join(proxy_bypass)
 
 
 def emit(value):
@@ -70,6 +80,52 @@ async def run(body):
         try:
             required = set(body["case"].get("requiredTools", []))
             found = set()
+            files = skill.get("files", {}) if skill else {}
+            script_root = stack.enter_context(tempfile.TemporaryDirectory(prefix="finance-openjiuwen-script-"))
+            root_path = Path(script_root).resolve()
+            for name, content in files.items():
+                target = (root_path / name.replace("\\", "/")).resolve()
+                if root_path not in target.parents:
+                    raise ValueError("Unsafe Script Tool path")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            for spec in (body.get("environment") or {}).get("scriptTools", []):
+                if spec["name"] not in required:
+                    continue
+                if spec["name"] in found:
+                    raise ValueError(f"Ambiguous Tool: {spec['name']}")
+                target = (root_path / spec["path"].replace("\\", "/")).resolve()
+                if root_path not in target.parents or not target.is_file():
+                    raise ValueError(f"Script Tool entry is unavailable: {spec['name']}")
+                async def script_call(_target=target, _kind=spec["kind"], **kwargs):
+                    if _kind == "PYTHON":
+                        uv_name = "uv.exe" if os.name == "nt" else "uv"
+                        uv_executable = Path(sys.executable).with_name(uv_name)
+                        if not uv_executable.is_file():
+                            raise RuntimeError("The OpenJiuwen environment does not contain uv")
+                        project = _target.parent
+                        while project != root_path and not (project / "pyproject.toml").is_file():
+                            project = project.parent
+                        if (project / "pyproject.toml").is_file():
+                            command = [str(uv_executable), "run", "--project", str(project)]
+                            if (project / "uv.lock").is_file():
+                                command.append("--locked")
+                            command += ["python", "-I", str(_target)]
+                        else:
+                            command = [str(uv_executable), "run", "--no-project", "--python", "3.11", "python", "-I", str(_target)]
+                    else:
+                        command = ["node", str(_target)]
+                    try:
+                        returncode, stdout, stderr = await run_script(command, root_path, json.dumps(kwargs).encode())
+                    except TimeoutError as exc:
+                        raise RuntimeError("Script Tool timed out") from exc
+                    if returncode != 0:
+                        raise RuntimeError(stderr.decode(errors="replace")[:400] or f"exit {returncode}")
+                    return json.loads(stdout)
+                card = ToolCard(id=f"tool-{len(tools)}", name=spec["name"], description=f"Local Script Tool {spec['name']}",
+                                input_params=spec.get("inputSchema") or {"type": "object"}, idempotent=True)
+                tools.append(LocalFunction(card, wrap(spec["name"], script_call)))
+                found.add(spec["name"])
             for server in (body.get("environment") or {}).get("mcpServers", []):
                 selected = set(server["toolNames"]) & required
                 if not selected:
@@ -95,8 +151,7 @@ async def run(body):
                                     input_params=spec.inputSchema, idempotent=True)
                     tools.append(LocalFunction(card, wrap(spec.name, factory(client, spec.name))))
             if required - found:
-                raise ValueError(f"Missing MCP tools: {', '.join(sorted(required - found))}")
-            files = skill.get("files", {}) if skill else {}
+                raise ValueError(f"Missing tools: {', '.join(sorted(required - found))}")
             async def read_file(path: str):
                 name = path.removeprefix("./")
                 if name not in files:
@@ -156,7 +211,7 @@ async def run(body):
                                     "modelBinding": {"providerId": body["model"]["providerId"], "upstreamModelId": model_settings["model_name"],
                                                      "providerLabel": model.get("providerLabel"), "requestParameters": model_settings},
                                     "referenceFilesRead": reference_reads,
-                                    "toolEvidence": source_digests, "sessionIsolation": "process", "dataMode": ",".join(sorted({config["mcp"][s["endpoint"]].get("dataMode", "external-mcp") for s in (body.get("environment") or {}).get("mcpServers", [])}))}}})
+                                    "toolEvidence": source_digests, "sessionIsolation": "process", "dataMode": ",".join(sorted({config["mcp"][s["endpoint"]].get("dataMode", "external-mcp") for s in (body.get("environment") or {}).get("mcpServers", [])} | ({"local-script"} if (body.get("environment") or {}).get("scriptTools") else set())))}}})
 
 
 if __name__ == "__main__":

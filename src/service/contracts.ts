@@ -26,6 +26,10 @@ export const createEnvironmentSchema = z.strictObject({
 
 export const runConfigurationSchema = z.strictObject({
   runtimeBindings: z.strictObject({left:runtimeSideSchema, right:runtimeSideSchema}).optional(),
+  runtimeToolBindings: z.strictObject({
+    left:z.array(z.strictObject({name:z.string().min(1),path:z.string().min(1),kind:z.enum(['PYTHON','NODE']),filePaths:z.array(z.string().min(1)).max(200).default([]),inputSchema:z.unknown().optional()})).max(32),
+    right:z.array(z.strictObject({name:z.string().min(1),path:z.string().min(1),kind:z.enum(['PYTHON','NODE']),filePaths:z.array(z.string().min(1)).max(200).default([]),inputSchema:z.unknown().optional()})).max(32),
+  }).optional(),
   packId: z.string().min(1).optional(),
   preparationId: z.string().min(1).optional(),
   runtime: z.discriminatedUnion("type", [

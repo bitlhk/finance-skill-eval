@@ -32,8 +32,9 @@ type RunManagerOptions = {
 export function findMissingRequiredTools(
   requiredTools: string[],
   mcpServers: RuntimeEnvironmentDescriptor["mcpServers"] = [],
+  scriptTools: RuntimeEnvironmentDescriptor["scriptTools"] = [],
 ): string[] {
-  const availableTools = new Set(mcpServers.flatMap(server => server.toolNames));
+  const availableTools = new Set([...mcpServers.flatMap(server => server.toolNames),...scriptTools.map(tool=>tool.name)]);
   return requiredTools.filter(toolName => !availableTools.has(toolName));
 }
 
@@ -188,7 +189,7 @@ export class EvaluationRunManager {
     };
   }
 
-  private async skillResolver(assetId: string | undefined, strict = false, neutral = false) {
+  private async skillResolver(assetId: string | undefined, strict = false, neutral = false, executablePaths:string[] = []) {
     const assets = await this.options.skills.list();
     return async (variant: EvalPack["variants"]["left"]) => {
       if (variant.mode !== "skill_version") return null;
@@ -196,19 +197,26 @@ export class EvaluationRunManager {
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
       const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
-      let canonicalArchive:string|undefined;
+      let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined;
+      const files=await this.options.skills.readFiles(asset.assetId);
       if (strict) {
-        const archive=await this.options.skills.readArchive(asset.assetId);
-        const readable=await this.options.skills.readFiles(asset.assetId);
+        archive=await this.options.skills.readArchive(asset.assetId);
         if(neutral)canonicalArchive=canonicalNeutralArchive(archive,asset.artifactSha256);
-        else if (Object.keys(readable).length!==asset.fileCount) throw new Error('Migration dependency mapping required: Runtime payload cannot silently omit uploaded files');
+        else for(const [name,bytes] of Object.entries(archive)){
+          try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
+          catch{throw new Error(`Migration dependency mapping required for non-text file: ${name}`);}
+        }
       }
+      if(executablePaths.length){archive??=await this.options.skills.readArchive(asset.assetId);for(const name of executablePaths){
+        const bytes=archive[name];if(!bytes)throw new Error(`Bound Script Tool file is unavailable: ${name}`);
+        try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{throw new Error(`Bound Script Tool must be UTF-8 text: ${name}`);}
+      }}
       return {
         skillId: asset.skillId,
         version: asset.version,
         artifactSha256: asset.artifactSha256,
         instructions: await this.options.skills.readSource(asset.assetId),
-        files: await this.options.skills.readFiles(asset.assetId),
+        files,
         ...(canonicalArchive?{canonicalArchive}:{}),
       };
     };
@@ -220,12 +228,13 @@ export class EvaluationRunManager {
         const binding = configuration.runtimeBindings![side];
         const environment = await this.options.environments.get(binding.environmentId);
         if (!environment || environment.type !== 'runtime_http') throw new Error('Migration Runtime environment unavailable');
-        const resolveSkill = await this.skillResolver(binding.skillAssetId, true, nativeTransportAllowed(environment.endpoint));
+        const executablePaths=[...new Set((configuration.runtimeToolBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]))];
+        const resolveSkill = await this.skillResolver(binding.skillAssetId, true, nativeTransportAllowed(environment.endpoint),executablePaths);
         await resolveSkill(pack.variants[side]);
         return new HttpRuntimeAdapter({adapterId:`http-runtime:${environment.environmentId}`, endpoint:environment.endpoint,
           headers:this.options.environments.headers(environment), resolveSkill, requireLoadedDigest:true,
           timeoutMs:configuration.timeoutMs,
-          environment:await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))])});
+          environment:await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeToolBindings?.[side]??[])});
       };
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
@@ -268,6 +277,7 @@ export class EvaluationRunManager {
   private async environmentDescriptor(
     runtimeEnvironment: EnvironmentRecord,
     requiredTools: string[],
+    scriptTools:NonNullable<RuntimeEnvironmentDescriptor['scriptTools']>=[],
   ): Promise<RuntimeEnvironmentDescriptor> {
     const mcpServers = [];
     for (const environmentId of requiredTools.length ? runtimeEnvironment.mcpEnvironmentIds : []) {
@@ -291,7 +301,8 @@ export class EvaluationRunManager {
         credentialEnv: environment.credentialEnv,
       });
     }
-    const missingTools = findMissingRequiredTools(requiredTools, mcpServers);
+    const selectedScripts=scriptTools.filter(tool=>requiredTools.includes(tool.name));
+    const missingTools = findMissingRequiredTools(requiredTools, mcpServers,selectedScripts);
     if (missingTools.length > 0) {
       throw new Error(`Required MCP tools are unavailable: ${missingTools.join(", ")}`);
     }
@@ -299,6 +310,7 @@ export class EvaluationRunManager {
       environmentId: runtimeEnvironment.environmentId,
       requiredToolNames: requiredTools,
       mcpServers,
+      scriptTools:selectedScripts,
     };
   }
 
