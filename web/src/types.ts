@@ -82,15 +82,7 @@ export type Preparation = {
   createdAt: string;
 };
 
-export type Environment = {
-  environmentId: string;
-  name: string;
-  type: "mcp_streamable_http" | "runtime_http";
-  runtimeType: "openjiuwen" | "ea" | "generic_http" | null;
-  endpoint: string;
-  credentialEnv: string | null;
-  mcpEnvironmentIds: string[];
-};
+export type Environment = Omit<import('../../src/shared/contracts/environment').EnvironmentRecord, 'createdAt' | 'updatedAt'>;
 
 export type EnvironmentInspection = {
   status: "ready" | "failed";

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { KeyedQueue } from '../shared/keyed-queue.js';
 import { z } from 'zod';
 import { zipSync, strToU8 } from 'fflate';
 import { fingerprint, type EvalPack } from '../contracts.js';
@@ -58,12 +59,12 @@ const conflict = (message:string):never => {throw Object.assign(new Error(messag
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
-  private chain:Promise<unknown> = Promise.resolve();
+  private readonly mutations = new KeyedQueue();
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore) {}
   async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
-  async verifyTarget(id:string,input:unknown){return this.serial(async()=>{
+  async verifyTarget(id:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
     if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请刷新后验证');
     if(!value.simulationProfile||value.generation?.candidateDigest!==value.candidate.artifactSha256)return conflict('请先审阅映射并生成当前候选；修改后需重新审阅');
@@ -75,13 +76,13 @@ export class MigrationStore {
     if (!/^migration-[a-f0-9-]+$/.test(id)) throw Object.assign(new Error('Invalid migration id'),{statusCode:400});
     return path.join(this.root,'migrations',id+'.json');
   }
-  private serial<T>(fn:()=>Promise<T>):Promise<T> {
-    const p=this.chain.then(fn); this.chain=p.catch(()=>{}); return p;
+  private serial<T>(id:string, fn:()=>Promise<T>):Promise<T> {
+    return this.mutations.run(id, fn);
   }
   async list() {return Promise.all((await listJsonFiles(path.join(this.root,'migrations'))).map(f=>readJson<Migration>(f)));}
   async get(id:string):Promise<Migration> {return readJson<Migration>(this.file(id));}
   async create(input:unknown) {
-    const value=await this.serial(async()=>{
+    const value=await this.serial("create",async()=>{
     const p=createSchema.parse(input), source=await this.skills.get(p.sourceAssetId);
     if (!source) return conflict('Source Skill unavailable');
     const existing=(await this.list()).find(item=>item.source.artifactSha256===source.artifactSha256&&item.name===p.name);
@@ -96,14 +97,17 @@ export class MigrationStore {
     const legacy=await this.get(id),asset=legacy.candidate??legacy.source;
     if(legacy.schemaVersion==='finance.skill-migration.v2')return legacy;
     const upgraded=await this.create({sourceAssetId:asset.assetId,name:`${legacy.name} 2.0`});
-    if(upgraded.legacySourceProjectId!==legacy.id){upgraded.legacySourceProjectId=legacy.id;await writeJsonAtomic(this.file(upgraded.id),upgraded);}
-    return upgraded;
+    return this.serial(upgraded.id,async()=>{
+      const current=await this.get(upgraded.id);
+      if(current.legacySourceProjectId!==legacy.id){current.legacySourceProjectId=legacy.id;await writeJsonAtomic(this.file(current.id),current);}
+      return current;
+    });
   }
   async diagnose(id:string,retry=false){const value=await this.get(id);
     if(!this.diagnostics)return conflict('Diagnostic service unavailable');
     return this.diagnostics.diagnose(value.source,retry);
   }
-  async inspect(id:string){return this.serial(async()=>{
+  async inspect(id:string){return this.serial(id,async()=>{
     const value=await this.get(id),asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const files:Record<string,string>={};
     for(const [name,bytes] of Object.entries(archive))try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
@@ -115,7 +119,7 @@ export class MigrationStore {
   async inspection(id:string){const value=await this.get(id),asset=value.candidate??value.source;
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return this.inspect(id);return value.inspection;
   }
-  async decide(id:string,toolId:string,input:unknown){return this.serial(async()=>{
+  async decide(id:string,toolId:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({action:z.enum(['MIGRATE_TO_MCP','MIGRATE_TO_SCRIPT']),targetLanguage:z.string().min(1).max(40).optional(),reason:z.string().min(1).max(1000).optional(),baseAssetId:z.string().min(1)}).parse(input);
     const value=await this.get(id),asset=value.candidate??value.source;
     if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新检查结果后重新确认');
@@ -129,7 +133,7 @@ export class MigrationStore {
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
     return buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);
   }
-  private async generatePortable(id:string,input:unknown){return this.serial(async()=>{
+  private async generatePortable(id:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({baseAssetId:z.string().min(1)}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
     if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新生成');
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
@@ -146,7 +150,7 @@ export class MigrationStore {
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await writeJsonAtomic(this.file(id),value);return value;
   });}
-  async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.serial(async()=>{
+  async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.serial(id,async()=>{
     const p=z.strictObject({toolId:z.string().min(1),baseAssetId:z.string().min(1),request:z.unknown().optional(),endpoint:z.string().url().optional(),arguments:z.record(z.unknown()).optional()}).parse(input);
     const value=await this.get(id),asset=value.candidate??value.source;if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新验证');
     const inspection=value.inspection;if(!inspection)return conflict('请先完成 Tool 检查');
@@ -190,7 +194,7 @@ export class MigrationStore {
     if(input&&typeof input==='object'&&'runtime' in input)return this.generateLegacy(id,input);
     return this.generatePortable(id,input);
   }
-  private async generateLegacy(id:string,input:unknown){return this.serial(async()=>{
+  private async generateLegacy(id:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({runtime:z.enum(['openjiuwen']),environmentId:z.string().optional(),
       intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string(),simulationProfile:z.string().optional(),acknowledgeSimulation:z.literal(true).optional()}).parse(input);
     const value=await this.get(id);
@@ -221,7 +225,7 @@ export class MigrationStore {
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await writeJsonAtomic(this.file(id),value);return value;
   });}
-  async candidate(id:string,input:unknown) {return this.serial(async()=>{
+  async candidate(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=candidateSchema.parse(input), value=await this.get(id), candidate=await this.skills.get(p.assetId);
     if (!candidate || candidate.artifactSha256===value.source.artifactSha256) return conflict('Import a separate versioned candidate; source remains immutable');
     if (candidate.version===value.source.version) return conflict('Candidate must use a new version');
@@ -230,7 +234,7 @@ export class MigrationStore {
     (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
     await writeJsonAtomic(this.file(id),value); return value;
   });}
-  async draft(id:string,input:unknown) {return this.serial(async()=>{
+  async draft(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=draftSchema.parse(input), value=await this.get(id), base=value.candidate??value.source;
     if (p.baseAssetId!==base.assetId) return conflict('Candidate changed; reload before editing');
     const files=await this.skills.readArchive(base.assetId);
@@ -256,20 +260,20 @@ export class MigrationStore {
       unresolved:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>f.dependencyType)??['DIAGNOSIS_NOT_RUN'],
       analysisMode:'STATIC_INVENTORY_NOT_DEPENDENCY_VALIDATION', uploadedScriptsExecuted:false};
   }
-  async review(id:string,input:unknown){return this.serial(async()=>{
+  async review(id:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({baseAssetId:z.string(),decision:z.enum(['ACCEPTED','NEEDS_CHANGES']),notes:z.string().min(1).max(2000)}).parse(input);
     const value=await this.get(id);
     if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请对当前版本重新记录专业复核');
     (value.reviews??=[]).push({candidateDigest:value.candidate.artifactSha256,decision:p.decision,notes:p.notes,recordedAt:new Date().toISOString(),source:'PRIVATE_ADMIN_RECORDED'});
     await writeJsonAtomic(this.file(id),value);return value;
   });}
-  async createSuite(id:string,input:unknown) {return this.serial(async()=>{
+  async createSuite(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=manualPreparationSchema.parse(input),value=await this.get(id);
     if (!this.preparations) return conflict('Preparation store unavailable');
     const suite=await this.preparations.create({skill:value.source,summary:p.summary,cases:p.cases,holdoutCases:p.holdoutCases,source:'manual'});
     (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
   });}
-  async optimize(id:string,input:unknown) {return this.serial(async()=>{
+  async optimize(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.get(id);
     if (!this.optimizers || !value.candidate) return conflict('Optimizer or candidate unavailable');
     if(value.generation)return conflict('生成候选需先完成原生迁移验证；当前 Host 适配验收尚未完成，暂不进入表达优化');
@@ -287,7 +291,7 @@ export class MigrationStore {
     (value.optimizations??=[]).push({optimizationId:item.optimizationId,sourceJobId:p.jobId,baseAssetId:value.candidate.assetId,candidateDigest:value.candidate.artifactSha256});
     await writeJsonAtomic(this.file(id),value);return item;
   });}
-  async adoptOptimization(id:string,input:unknown) {return this.serial(async()=>{
+  async adoptOptimization(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=z.strictObject({optimizationId:z.string().min(1)}).parse(input),value=await this.get(id);
     const link=value.optimizations?.find(o=>o.optimizationId===p.optimizationId);
     if (!link || !this.optimizers || value.candidate?.assetId!==link.baseAssetId) return conflict('Optimization is unrelated or its base candidate has changed');
@@ -299,7 +303,7 @@ export class MigrationStore {
     // Adoption is a local candidate choice, not migration or business acceptance.
     await writeJsonAtomic(this.file(id),value);return value;
   });}
-  async validate(id:string,input:unknown) {return this.serial(async()=>{
+  async validate(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=planSchema.parse(input), value=await this.get(id), c=value.candidate;
     if (!c || !p.configuration.runtimeBindings) return conflict('Candidate and per-side bindings are required');
     let pack=p.configuration.packId ? this.catalog.get(p.configuration.packId):null;
