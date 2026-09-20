@@ -55,7 +55,7 @@ describe("standalone evaluation service", () => {
         }),
       ]));
       expect(catalog.json().models).toEqual(expect.arrayContaining([
-        expect.objectContaining({ modelId: "glm-5.2" }),
+        expect.objectContaining({ modelId: "enterprise-model", availability: "ready" }),
       ]));
 
       const mcpEnvironment = await app.inject({

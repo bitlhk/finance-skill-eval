@@ -49,9 +49,10 @@ export function analyzedTool(input: {
 
 /** A stand-in A2: it returns an analysis payload, which still goes through the citation checks. */
 export function analysisFixture(tools: Array<Record<string, unknown>>, scanner?: Record<string, unknown> | null): MigrationAnalyzer {
-  return async () => ({
+  return async input => ({
     status: 'PRODUCED' as const,
-    payload: { status: 'PRODUCED', skill: { status: 'COMPLIANT', findings: [] }, tools },
+    payload: { status: 'PRODUCED', skill: { status: 'COMPLIANT', findings: [] }, tools,
+      dependencyAnalysis:{dependencies:[],chains:tools.map(tool=>{const source=(tool.sourcePaths as string[]|undefined)?.find(p=>input.files[p]);const path=source??SKILL_FILE;const text=Buffer.from(input.files[path]??[]).toString('utf8');return {toolName:tool.name,nodes:[{id:'fixture-entry',title:'Fixture business operation',detail:'Recorded test contract',dependencyKeys:[],evidence:[{path,snippet:text.slice(0,200)}]}],edges:[]}})} },
     // Generation is gated on the scanner having run, so a fixture that expects to generate
     // reports a clean coverage by default.
     scanner: scanner === undefined ? { scannerDigest: 'a'.repeat(64), coverage: [] } : scanner,
@@ -75,6 +76,7 @@ export function implementationFixture(specs: Array<{
       status: 'PRODUCED',
       payload: {
         status: 'PRODUCED',
+        runtimeToolConfig:(input.deliveryContract as any)?.runtimeToolConfigTemplate.runtimeToolConfig,
         tools: specs.flatMap(spec => {
           const toolId = idByName[spec.tool];
           return toolId ? [{
@@ -83,6 +85,7 @@ export function implementationFixture(specs: Array<{
             ...(spec.start ? { start: spec.start } : {}), ...(spec.prepare ? { prepare: spec.prepare } : {}),
             ...(spec.changes ? { changes: spec.changes } : {}), ...(spec.drift ? { drift: spec.drift } : {}),
             ...(spec.reason ? { reason: spec.reason } : {}),
+            runtimeBindings:((input.contract as any)?.[toolId]?.dependencies??[]).filter((d:any)=>d.owner==='RUNTIME'&&d.action==='INJECT').map((d:any)=>({key:d.key,header:d.binding?.name})),
             compilePassed: true, contractPassed: true,
           }] : [];
         }),

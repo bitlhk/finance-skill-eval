@@ -21,6 +21,7 @@ export type MigrationSuiteGenerator = (input: {
   skillSource: string;
   /** The Tools the analysis found. A question may not require a Tool outside this list. */
   tools: string[];
+  documentedInputs?:Array<{toolName:string;input:unknown}>;
   maximumCases?: number;
   generationId: string;
   signal?: AbortSignal;
@@ -55,7 +56,7 @@ export function baselineBrief(inspection: ProjectInspection): string {
 
 /** The analyzer role must be configured; there is no rules fallback for writing questions. */
 export async function generateSuiteWithAnalyzer(
-  input: { skillId: string; skillSource: string; tools: string[]; maximumCases?: number; generationId: string; signal?: AbortSignal },
+  input: { skillId: string; skillSource: string; tools: string[]; documentedInputs?:Array<{toolName:string;input:unknown}>; maximumCases?: number; generationId: string; signal?: AbortSignal },
   model: () => ConfiguredModelRole,
 ): Promise<{ summary: string; cases: EvalCase[] }> {
   const role = model();
@@ -70,6 +71,7 @@ export async function generateSuiteWithAnalyzer(
     signal: input.signal,
     caseDesignContext: {
       allowedTools: input.tools,
+      documentedInputs:input.documentedInputs,
       supportedTaskModes: ['single_turn'],
       // A seed is a business object and a task scope, not a question to copy: the writer still has
       // to produce its own task. The tool's own usage line is the honest seed the analysis has.

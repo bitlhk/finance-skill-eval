@@ -1,0 +1,12 @@
+[
+  {
+    "id": "E1",
+    "category": "meal",
+    "amount": "120.00"
+  },
+  {
+    "id": "E2",
+    "category": "taxi",
+    "amount": "80.00"
+  }
+]

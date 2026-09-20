@@ -2,7 +2,7 @@ import { mkdtemp,rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8,zipSync } from 'fflate';
-import { afterEach,expect,it } from 'vitest';
+import { afterEach,expect,it,vi } from 'vitest';
 import { loadEvalPack } from '../src/eval-pack.js';
 import { buildMigrationPlan } from '../src/service/migration-model.js';
 import { MigrationDiagnostics } from '../src/service/migration-diagnostics.js';
@@ -16,7 +16,7 @@ import type { EvalPackCatalog } from '../src/service/catalog.js';
 import { analysisFixture,analyzedTool,implementationFixture } from './analysis-fixture.js';
 
 const dirs:string[]=[];
-afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
+afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
 
 const LOOKUP_PY='import json,sys\ndef lookup(value): return {"value": value}\nif __name__ == "__main__": json.dump(lookup(json.load(sys.stdin)),sys.stdout)\n';
 const OPTIMIZED_LOOKUP_PY='import json,sys\ndef lookup(value): return {"value": value, "checked": True}\nif __name__ == "__main__": json.dump(lookup(json.load(sys.stdin)),sys.stdout)\n';
@@ -34,6 +34,7 @@ const OPTIMIZED_LOOKUP_PY='import json,sys\ndef lookup(value): return {"value": 
  * what is under test here is what this store does with its result.
  */
 it('carries a migration from baseline to adopted optimization and retires the evidence for the candidate it replaced',async()=>{
+  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-chain-'));dirs.push(data);
   const skills=new SkillStore(data);await skills.initialize();
   const pack=await loadEvalPack('packs/finance/wealth-online/eval.yaml');
@@ -64,7 +65,8 @@ it('carries a migration from baseline to adopted optimization and retires the ev
       const path=Object.keys(input.files).find(name=>/(^|\/)lookup\.py$/u.test(name))??'tool/scripts/lookup.py';
       return await analysisFixture([analyzedTool({name:'lookup',sourcePaths:[path],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path}})])(input);
     },
-    implementationFixture([{tool:'lookup',entrypoint:'scripts/lookup.py',language:'python',files:{'scripts/lookup.py':LOOKUP_PY}}]));
+    implementationFixture([{tool:'lookup',entrypoint:'scripts/lookup.py',language:'python',files:{'scripts/lookup.py':LOOKUP_PY}}]),
+    undefined,{environment:(id:string)=>environments.get(id)} as never);
 
   const upload=async(files:Record<string,string>)=>{
     const zip=Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([name,content])=>[name,strToU8(content)]))));

@@ -54,6 +54,8 @@ export const evalCaseSchema = z.strictObject({
   prompt: z.string().min(1),
   evaluationGoal: z.string().min(1),
   requiredTools: z.array(z.string().min(1)).default([]),
+  /** Availability and invocation are different: stop-early cases may forbid later tools. */
+  toolExpectations:z.strictObject({mustSucceed:z.array(z.string().min(1)),mustNotCall:z.array(z.string().min(1)).default([])}).optional(),
   rubric: z.array(rubricCriterionSchema).min(1),
   replay: z.strictObject({
     evidenceFile: z.string().min(1),
@@ -151,13 +153,16 @@ export const judgeDimensionResultSchema = z.strictObject({
   reason: z.string().min(1),
 });
 
+export const goalAssessmentSchema=z.strictObject({verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),checks:z.array(z.strictObject({criterion:z.string().min(1),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),evidence:z.string()})).min(1)});
 export const judgeResultSchema = z.strictObject({
+  serviceComparison:z.strictObject({verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),checks:z.array(z.strictObject({criterion:z.string().min(1),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),originalEvidence:z.string(),candidateEvidence:z.string()})).min(1)}).optional(),
+  goalAssessment:goalAssessmentSchema.optional(),
   winner: z.enum(["left", "right", "tie"]),
   confidence: z.enum(["low", "medium", "high"]),
   summary: z.string().min(1),
-  dimensions: z.array(judgeDimensionResultSchema).length(4),
+  dimensions: z.array(judgeDimensionResultSchema).max(4),
   reviewerLabel: z.string().min(1),
-});
+}).refine(result=>result.goalAssessment||result.serviceComparison?result.dimensions.length===0:result.dimensions.length===4,{message:'目标评估和服务对比不使用维度分数；常规评估必须包含四个维度'}).refine(result=>!(result.goalAssessment&&result.serviceComparison),{message:'目标评估与服务对比不能同时出现'});
 
 export const evaluationScenarioSeedSchema = z.strictObject({
   seedId: z.string().min(1),

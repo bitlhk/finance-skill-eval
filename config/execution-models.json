@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "finance.skill-eval.execution-models.v1",
+  "defaultModelId": "enterprise-model",
+  "models": [
+    {
+      "providerId": "service-execution",
+      "modelId": "enterprise-model",
+      "label": "DeepSeek V4 Flash",
+      "providerLabel": "企业模型服务",
+      "parameters": {},
+      "availability": "ready",
+      "statusNote": "由部署环境的 Runtime 模型绑定提供服务"
+    }
+  ]
+}

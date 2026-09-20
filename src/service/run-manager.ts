@@ -20,6 +20,9 @@ import type { PreparationStore } from "./preparation-store.js";
 import type { SkillStore } from "./skill-store.js";
 import { canonicalNeutralArchive, nativeTransportAllowed } from './neutral-archive.js';
 import { CandidateAssessmentRuntimeAdapter } from '../candidate-assessment-runtime.js';
+import {ModelGoalJudge} from '../goal-judge.js';
+import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
+import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -28,14 +31,16 @@ type RunManagerOptions = {
   environments: EnvironmentStore;
   jobs: EvaluationJobStore;
   maxConcurrentRuns: number;
+  resolveMigrationRuntime?:(runtimeId:string)=>Promise<EnvironmentRecord|null>;
+  resolveServiceEnvironment?:(reference:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string},toolNames:string[])=>Promise<Record<string,string>>;
 };
 
 export function findMissingRequiredTools(
   requiredTools: string[],
   mcpServers: RuntimeEnvironmentDescriptor["mcpServers"] = [],
-  scriptTools: RuntimeEnvironmentDescriptor["scriptTools"] = [],
+  commandScripts: RuntimeEnvironmentDescriptor["commandScripts"] = [],
 ): string[] {
-  const availableTools = new Set([...mcpServers.flatMap(server => server.toolNames),...scriptTools.map(tool=>tool.name)]);
+  const availableTools = new Set([...mcpServers.flatMap(server => server.toolNames),...commandScripts.map(tool=>tool.name)]);
   return requiredTools.filter(toolName => !availableTools.has(toolName));
 }
 
@@ -202,7 +207,7 @@ export class EvaluationRunManager {
       const files=await this.options.skills.readFiles(asset.assetId);
       if (strict) {
         archive=await this.options.skills.readArchive(asset.assetId);
-        if(neutral)canonicalArchive=canonicalNeutralArchive(archive,asset.artifactSha256);
+        if(neutral&&archive['migration-generated/neutral-contract.json'])canonicalArchive=canonicalNeutralArchive(archive,asset.artifactSha256);
         else for(const [name,bytes] of Object.entries(archive)){
           try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
           catch{throw new Error(`Migration dependency mapping required for non-text file: ${name}`);}
@@ -227,17 +232,37 @@ export class EvaluationRunManager {
     if (configuration.runtimeBindings) {
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
-        const environment = await this.options.environments.get(binding.environmentId);
-        if (!environment || environment.type !== 'runtime_http') throw new Error('迁移 Runtime 环境不可用');
-        const executablePaths=[...new Set((configuration.runtimeToolBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]))];
+        const environment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
+        if (!environment || environment.type !== 'runtime_http') throw new Error('本地迁移 Runtime 不可用');
+        const services=await Promise.all((configuration.runtimeMcpBindings?.[side]??[]).map(async service=>{
+          const {environmentReference,...launch}=service;
+          if(!environmentReference)return launch;
+          if(!nativeTransportAllowed(environment.endpoint)||!this.options.resolveServiceEnvironment)throw new Error('服务配置仅可发送至受信任的 Runtime');
+          if(environmentReference.assetDigest!==service.assetDigest)throw new Error('服务配置与候选资产不一致');
+          return {...launch,environment:await this.options.resolveServiceEnvironment(environmentReference,service.toolNames)};
+        }));
+        if(services.some(service=>pack.variants[side].mode!=='skill_version'||service.assetDigest!==(pack.variants[side] as {artifactSha256?:string}).artifactSha256))throw new Error('Candidate MCP asset digest does not match the bound Skill');
+        const plugins=configuration.runtimeHarnessBindings?.[side]??[];
+        if(plugins.some(plugin=>pack.variants[side].mode!=='skill_version'||plugin.assetDigest!==(pack.variants[side] as {artifactSha256?:string}).artifactSha256))throw new Error('Harness plugin asset digest does not match the bound Skill');
+        const executablePaths=[...new Set([...(configuration.runtimeCommandBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]),...services.flatMap(service=>service.filePaths),...plugins.flatMap(plugin=>plugin.filePaths)])];
         const resolveSkill = await this.skillResolver(binding.skillAssetId, true, nativeTransportAllowed(environment.endpoint),executablePaths);
         await resolveSkill(pack.variants[side]);
+        const descriptor=await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,configuration.runtimeHarnessBindings?.[side]);
+        if(configuration.runtimeToolConfig){
+          if(!nativeTransportAllowed(environment.endpoint))throw new Error('执行上下文仅可发送至受信任的 Runtime');
+          descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
+        }
         return new HttpRuntimeAdapter({adapterId:`http-runtime:${environment.environmentId}`, endpoint:environment.endpoint,
           headers:this.options.environments.headers(environment), resolveSkill, requireLoadedDigest:true,
           timeoutMs:configuration.timeoutMs,
-          environment:await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeToolBindings?.[side]??[])});
+          environment:descriptor});
       };
       if(configuration.evaluationMode==='candidate_assessment')return makeSide('right');
+      if(configuration.evaluationMode==='service_comparison'){
+        const variant=pack.variants.left;
+        if(variant.mode!=='skill_version'||!variant.artifactSha256)throw Error('原服务对比缺少源资产绑定');
+        return new SideRuntimeAdapter({left:new OriginalServiceRuntimeAdapter(configuration.originalService!,variant.artifactSha256),right:await makeSide('right')});
+      }
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
     if (configuration.runtime.type === "replay") {
@@ -246,7 +271,8 @@ export class EvaluationRunManager {
       }
       return new ReplayRuntimeAdapter(pack);
     }
-    const resolveSkill = await this.skillResolver(configuration.skillAssetId);
+    const resolveSkill = await this.skillResolver(configuration.skillAssetId, false, false,
+      (configuration.runtimeHarnessBindings?.right??[]).flatMap(plugin=>plugin.filePaths));
     if (configuration.runtime.type === "direct_model") {
       const execution = configuredModelRole("EXECUTION");
       if (!execution.adapter) throw new Error("本服务未配置执行模型");
@@ -265,7 +291,12 @@ export class EvaluationRunManager {
     const descriptor = await this.environmentDescriptor(
       environment,
       [...new Set(pack.cases.flatMap(evalCase => evalCase.requiredTools))],
+      [],[],false,configuration.runtimeHarnessTools,configuration.runtimeHarnessBindings?.right,
     );
+    if(configuration.runtimeToolConfig){
+      if(!nativeTransportAllowed(environment.endpoint))throw new Error('执行上下文仅可发送至受信任的 Runtime');
+      descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
+    }
     return new HttpRuntimeAdapter({
       adapterId: `http-runtime:${environment.environmentId}`,
       endpoint: environment.endpoint,
@@ -279,10 +310,17 @@ export class EvaluationRunManager {
   private async environmentDescriptor(
     runtimeEnvironment: EnvironmentRecord,
     requiredTools: string[],
-    scriptTools:NonNullable<RuntimeEnvironmentDescriptor['scriptTools']>=[],
+    commandScripts:NonNullable<RuntimeEnvironmentDescriptor['commandScripts']>=[],
+    candidateMcpServices:NonNullable<RuntimeEnvironmentDescriptor['candidateMcpServices']>=[],
+    exposeAllCandidateTools=false,
+    harnessToolNames:NonNullable<RuntimeEnvironmentDescriptor['harnessToolNames']>=[],
+    candidateHarnessPlugins:NonNullable<RuntimeEnvironmentDescriptor['candidateHarnessPlugins']>=[],
   ): Promise<RuntimeEnvironmentDescriptor> {
+    const candidateNames=new Set([...candidateMcpServices.flatMap(service=>service.toolNames),...candidateHarnessPlugins.flatMap(plugin=>plugin.toolNames)]);
+    const scriptNames=new Set(commandScripts.map(tool=>tool.name));
+    const externalRequired=requiredTools.filter(name=>!candidateNames.has(name)&&!scriptNames.has(name)&&!harnessToolNames.includes(name as typeof harnessToolNames[number])&&name!=='skill_tool');
     const mcpServers = [];
-    for (const environmentId of requiredTools.length ? runtimeEnvironment.mcpEnvironmentIds : []) {
+    for (const environmentId of externalRequired.length ? runtimeEnvironment.mcpEnvironmentIds : []) {
       const environment = await this.options.environments.get(environmentId);
       if (!environment || environment.type !== "mcp_streamable_http") {
         throw new Error(`MCP environment is unavailable: ${environmentId}`);
@@ -293,7 +331,7 @@ export class EvaluationRunManager {
       }
       const toolNames = preflight.tools
         .map(tool => tool.name)
-        .filter(toolName => requiredTools.includes(toolName));
+        .filter(toolName => externalRequired.includes(toolName));
       if (toolNames.length === 0) continue;
       mcpServers.push({
         serverId: environment.environmentId,
@@ -303,16 +341,20 @@ export class EvaluationRunManager {
         credentialEnv: environment.credentialEnv,
       });
     }
-    const selectedScripts=scriptTools.filter(tool=>requiredTools.includes(tool.name));
-    const missingTools = findMissingRequiredTools(requiredTools, mcpServers,selectedScripts);
+    const selectedScripts=commandScripts.filter(tool=>exposeAllCandidateTools||requiredTools.includes(tool.name));
+    const missingTools = findMissingRequiredTools(requiredTools.filter(name=>!candidateNames.has(name)&&!harnessToolNames.includes(name as typeof harnessToolNames[number])&&name!=='skill_tool'), mcpServers,selectedScripts);
     if (missingTools.length > 0) {
       throw new Error(`Required MCP tools are unavailable: ${missingTools.join(", ")}`);
     }
     return {
       environmentId: runtimeEnvironment.environmentId,
       requiredToolNames: requiredTools,
+      harnessToolNames,
+      candidateHarnessPlugins,
+      ...(exposeAllCandidateTools?{availableToolNames:[...new Set([...scriptNames,...candidateNames])]}:{}),
       mcpServers,
-      scriptTools:selectedScripts,
+      commandScripts:selectedScripts,
+      candidateMcpServices:candidateMcpServices.filter(service=>exposeAllCandidateTools||service.toolNames.some(name=>requiredTools.includes(name))),
     };
   }
 
@@ -323,6 +365,8 @@ export class EvaluationRunManager {
     }
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("本服务未配置阅卷模型");
+    if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
+    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
       :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);

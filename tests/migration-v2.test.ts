@@ -25,6 +25,7 @@ const unreachableMigrationModel=()=>({configured:true,model:{providerId:'test',m
 it('checks the enterprise Skill baseline without treating tool language as compliance',()=>{
   const files={'account-balance/SKILL.md':'---\nname: account-balance\ndescription: 查询余额，用户询问账户资金时使用。\n---\n调用 `get_balance`。失败时不要编造。\n'};
   expect(validateSkill(files,'account-balance/SKILL.md')).toEqual({status:'COMPLIANT',findings:[]});
+  expect(validateSkill({'temporary-upload-folder/SKILL.md':files['account-balance/SKILL.md']!},'temporary-upload-folder/SKILL.md').findings).toEqual([]);
   const invalid=validateSkill({'bad/SKILL.md':'---\nname: Bad_Name\n---\nUse C:\\private\\tool.py'},'bad/SKILL.md');
   expect(invalid.status).toBe('NON_COMPLIANT');
   expect(invalid.findings.map(f=>f.code)).toEqual(expect.arrayContaining(['NAME_INVALID','DESCRIPTION_REQUIRED','ABSOLUTE_PATH']));
@@ -49,7 +50,7 @@ it('requires one migration choice per tool and groups MCP choices',()=>{
   const decisions=[{toolId:byName.mcp_tool!.toolId,form:'MCP' as const,reason:'共享服务',baseAssetId:'a',decidedAt:'now'},
     {toolId:byName.bound_tool!.toolId,form:'SCRIPT' as const,reason:'本地任务',baseAssetId:'a',decidedAt:'now'}];
   const plan=buildMigrationPlan(inspection,decisions,'a');
-  expect(plan.generationAllowed).toBe(true);expect(plan.items.map(i=>i.generator)).toEqual(['SCRIPT_TOOL','MCP_SERVICE']);
+  expect(plan.generationAllowed).toBe(true);expect(plan.items.map(i=>i.generator)).toEqual(['COMMAND_SCRIPT','MCP_SERVICE']);
   expect(buildMigrationPlan(inspection,[decisions[0]!], 'a').generationAllowed).toBe(false);
 });
 
@@ -168,7 +169,7 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
       // The fixtures are Python; asking for MCP/Java is the cross-language rewrite this
       // model produces, so it has to be named rather than inferred.
       expect((await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form,...(form==='MCP'?{language:'java'}:{}),baseAssetId:uploaded.assetId}})).statusCode).toBe(200);}
-    const plan=(await app.inject({url:`/api/migrations/${project.id}/plan`,headers})).json();expect(plan.generationAllowed).toBe(true);expect(new Set(plan.items.map((i:{generator:string})=>i.generator))).toEqual(new Set(['SCRIPT_TOOL','MCP_SERVICE']));
+    const plan=(await app.inject({url:`/api/migrations/${project.id}/plan`,headers})).json();expect(plan.generationAllowed).toBe(true);expect(new Set(plan.items.map((i:{generator:string})=>i.generator))).toEqual(new Set(['COMMAND_SCRIPT','MCP_SERVICE']));
     const generated=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});expect(generated.statusCode).toBe(200);
     const candidate=generated.json().candidate;expect(candidate.assetId).not.toBe(uploaded.assetId);
     const report=(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();
@@ -309,7 +310,7 @@ it('blocks partially analyzed source until it is explicitly acknowledged and re-
     // The scanner's coverage rides along with the analysis; it is what says "this file was not read".
     migrationAnalyzer:async()=>({status:'PRODUCED',payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
       analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py','tool/vendor/opaque.js'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',
-        entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}})]},
+        entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}})],dependencyAnalysis:{dependencies:[],chains:[{toolName:'script_tool',nodes:[{id:'entry',title:'Script entry',detail:'Source implementation is readable; vendor coverage is acknowledged separately',dependencyKeys:[],evidence:[{path:'tool/scripts/script_tool.py',snippet:'def script_tool(value): return {"value": value}'}]}],edges:[]}]}},
       scanner:{scannerDigest:'a'.repeat(64),coverage:[{path:'skill/SKILL.md',status:'PARSED'},{path:'tool/vendor/opaque.js',status:'UNSUPPORTED_LANGUAGE'}]}})});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
   try{

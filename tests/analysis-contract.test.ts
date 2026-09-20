@@ -116,16 +116,14 @@ it('refuses to synthesize a test input when the analysis found no sample', () =>
   expect(contractSample(undefined)).toEqual({ reason: '分析没有读出样例，无法构造调用输入' });
 });
 
-it('finds a block quote the agent reflowed', () => {
-  // Field run: the agent quoted a six-line ToolResponse(...) with a different indent and a blank
-  // line inserted between two of its lines. Every token was there; the formatting was not. Matching
-  // line by line dropped the claim and with it half the baseline.
+it('refuses a block quote with invented blank lines', () => {
+  // Normalize line endings, but preserve the source text. Inserted blank lines are not a source quote.
   const block = { 'tool/pay.py': 'def pay(subtotal):\n    return ToolResponse(content={\n        "status": "ok",\n        "total": "1.00",\n    })\n' };
   const tool = toProjectInspection({ skill: { status: 'COMPLIANT', findings: [] }, tools: [{ name: 'pay',
     output: { description: 'ok plus total', path: 'tool/pay.py',
       snippet: 'return ToolResponse(content={\n\n        "status": "ok",\n\n        "total": "1.00",' } }] } as never,
     'asset', 'a'.repeat(64), stableToolId, null, block).tools[0]!;
-  expect(tool.evidence).toContainEqual({ path: 'tool/pay.py', line: 2, kind: 'OUTPUT_CONTRACT', detail: 'ok plus total' });
+  expect(tool.evidence.some(item => item.kind === 'OUTPUT_CONTRACT')).toBe(false);
 });
 
 it('still refuses a quote whose tokens do not match', () => {

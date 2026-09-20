@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, createConnection } from 'node:net';
 import path from 'node:path';
+import {validateServiceEnvironment} from './service-environment.js';
 import type { LocalWorker, LocalWorkerWorkspace } from './local-worker.js';
 
 /**
@@ -106,6 +107,7 @@ export async function startService(input: {
   worker: LocalWorker;
   workspace: LocalWorkerWorkspace;
   service: Launchable;
+  environment?: Record<string,string>;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<{ ok: true; running: RunningService } | { ok: false; error: string }> {
@@ -119,12 +121,14 @@ export async function startService(input: {
   }
 
   const port = await freePort();
-  const env = { ...process.env, PORT: String(port), PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' };
+  const environment=validateServiceEnvironment(input.environment??{});
+  const protect=(message:string)=>Object.keys(environment).length?'MCP 服务启动失败，请检查服务配置与实现。原始错误未保留以保护配置值。':message;
+  const env = { ...process.env, ...environment, PORT: String(port), PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' };
   const directory = input.workspace.directory;
 
   if (prepare.length) {
     let prepared: Awaited<ReturnType<typeof runToCompletion>>;
-    try { prepared = await runToCompletion({ program: prepare[0]!, args: prepare.slice(1) }, directory, env, PREPARE_TIMEOUT_MS); }
+    try { prepared = await runToCompletion({ program: prepare[0]!, args: prepare.slice(1) }, directory, { ...process.env, PORT:String(port), PYTHONUTF8:'1', PYTHONUNBUFFERED:'1' }, PREPARE_TIMEOUT_MS); }
     catch (error) { return { ok: false, error: `PREPARE_FAILED: ${error instanceof Error ? error.message : String(error)}` }; }
     if (prepared.exitCode !== 0) return { ok: false, error: `PREPARE_FAILED: ${(prepared.stderr || prepared.stdout || `exit ${prepared.exitCode}`).trim().slice(0, 1200)}` };
   }
@@ -144,21 +148,22 @@ export async function startService(input: {
 
   const alive = (): string | null => spawnError ?? (child.exitCode === null
     ? null
-    : `SERVICE_EXITED: 启动命令 ${start.join(' ')} 以退出码 ${child.exitCode} 结束${stderr.trim() ? `：${stderr.trim().slice(-600)}` : ''}`);
+    : protect(`SERVICE_EXITED: 启动命令 ${start.join(' ')} 以退出码 ${child.exitCode} 结束${stderr.trim() ? `：${stderr.trim().slice(-600)}` : ''}`));
 
   try {
     const ready = await waitForPort(port, input.timeoutMs ?? READY_TIMEOUT_MS, alive);
-    if (!ready) return {
+    if (!ready) {await terminate(child);input.signal?.removeEventListener('abort',abort);return {
       ok: false,
-      error: `SERVICE_DID_NOT_START: 启动命令 ${start.join(' ')} 在 ${Math.round((input.timeoutMs ?? READY_TIMEOUT_MS) / 1000)}s 内没有监听 PORT=${port}${stderr.trim() ? `：${stderr.trim().slice(-600)}` : ''}`,
-    };
+      error: protect(`SERVICE_DID_NOT_START: 启动命令 ${start.join(' ')} 在 ${Math.round((input.timeoutMs ?? READY_TIMEOUT_MS) / 1000)}s 内没有监听 PORT=${port}${stderr.trim() ? `：${stderr.trim().slice(-600)}` : ''}`),
+    };}
   } catch (error) {
     await terminate(child);
+    input.signal?.removeEventListener('abort',abort);
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 
   // The endpoint is the platform's own convention, and the deliverable is told about it.
-  return { ok: true, running: { endpoint: `http://127.0.0.1:${port}/mcp`, port, stop: () => terminate(child), stderr: () => stderr } };
+  return { ok: true, running: { endpoint: `http://127.0.0.1:${port}/mcp`, port, stop: async () => {input.signal?.removeEventListener('abort',abort);await terminate(child);}, stderr: () => Object.keys(environment).length?'':stderr } };
 }
 
 /** Resolve the service directory a delivered `start` should run in, if the files imply one. */

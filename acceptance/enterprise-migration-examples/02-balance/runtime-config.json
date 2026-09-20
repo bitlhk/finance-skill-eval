@@ -1,0 +1,38 @@
+{
+  "context": {
+    "user": {
+      "type": "object",
+      "value": {
+        "id": "U001",
+        "tenantId": "T001"
+      }
+    },
+    "serviceUrl": {
+      "type": "string",
+      "value": "http://127.0.0.1:4327",
+      "sensitive": false
+    },
+    "appKey": {
+      "type": "string",
+      "env": "DEMO_APP_KEY"
+    }
+  },
+  "providers": {
+    "businessAuth": {
+      "implementation": "demo_sdk",
+      "inputs": {
+        "user": "context.user",
+        "appKey": "context.appKey"
+      }
+    }
+  },
+  "tools": {
+    "get_balance": {
+      "contextBindings": {
+        "X-User": "context.user",
+        "X-Service-Url": "context.serviceUrl"
+      },
+      "authProvider": "businessAuth"
+    }
+  }
+}

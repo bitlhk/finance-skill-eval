@@ -27,8 +27,6 @@ export function validateSkill(files:Record<string,string>,skillFile:string):Skil
   if(!description)findings.push(finding('DESCRIPTION_REQUIRED','ERROR',skillFile,1,'缺少 Skill description。','说明 Skill 做什么以及什么时候使用。'));
   else if(description.length>1024)findings.push(finding('DESCRIPTION_TOO_LONG','ERROR',skillFile,1,'Skill description 超过 1024 个字符。','缩短描述。'));
   const root=skillFile.includes('/')?skillFile.slice(0,skillFile.lastIndexOf('/')):'';
-  const folder=root.split('/').filter(Boolean).at(-1);
-  if(folder&&folder!=='skill'&&name&&folder!==name)findings.push(finding('DIRECTORY_NAME_MISMATCH','WARNING',skillFile,1,'Skill 目录名与 name 不一致。','将目录名调整为与 name 一致。'));
   const prefix=root?`${root}/`:'';
   const scoped=root?Object.keys(files).filter(file=>file!==skillFile&&file.startsWith(prefix)):[];
   for(const file of scoped){

@@ -17,7 +17,10 @@ def emit(protocol, value: dict) -> None:
     protocol.flush()
 
 
-def build_workspace(files: dict[str, str]) -> Path:
+ANALYSIS_TEXT_EXTENSIONS = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".css", ".sql", ".sh", ".ps1", ".ini", ".cfg", ".rst"}
+
+
+def build_workspace(files: dict[str, str | bytes], *, normalize_text: bool = False) -> Path:
     """Materialise the request's files into a disposable directory.
 
     The harness agents scaffold their own home (AGENT.md, memory/, todo/ ...) into
@@ -29,7 +32,24 @@ def build_workspace(files: dict[str, str]) -> Path:
         if root not in target.parents:
             raise ValueError(f"Unsafe workspace path: {name}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        # Normalize only recognized UTF-8 text in the analysis copy. Binary assets stay byte-exact.
+        text = content if isinstance(content, str) else None
+        if normalize_text and target.suffix.lower() in ANALYSIS_TEXT_EXTENSIONS:
+            if text is None:
+                try:
+                    text = content.decode("utf-8")
+                    if "\x00" in text:
+                        text = None
+                except UnicodeDecodeError:
+                    pass
+            if text is not None:
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+                target.write_text(text, encoding="utf-8", newline="\n")
+                continue
+        if isinstance(content, bytes):
+            target.write_bytes(content)
+        else:
+            target.write_text(content, encoding="utf-8")
     return root
 
 

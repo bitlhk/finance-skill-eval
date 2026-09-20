@@ -62,11 +62,29 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 
 - **MCP**：自己写出**完整的 MCP 服务**——服务入口、工具适配、依赖清单、Dockerfile、README。
   平台不会替你生成任何一部分。硬要求：Streamable HTTP 在 `/mcp`；端口读 `PORT` 环境变量；
-  `tools/list` **原样公布基线里的输入 Schema**（不要从函数签名反推）；`tools/call` 返回 JSON 文本；
-  **工具名不改**。Java 首期只用 JDK 17 标准库。
-- **SCRIPT**：写出**可直接运行的程序**，从 stdin 读一个 JSON object、**只**向 stdout 写一个 JSON value。
+  Python 新生成服务必须使用独立包 fastmcp==2.14.7 的 FastMCP（from fastmcp import FastMCP），不使用 mcp.lowlevel.Server 或 mcp.server.fastmcp。
+  用具名业务函数、类型注解和必要的 Pydantic 约束定义工具，再实际 tools/list 核对基线 Schema；不要为了 Schema 回退到低层 Server。
+  `tools/call` 返回的 JSON 文本与源业务结果一致；
+  **工具名不改**。Schema 仅描述业务参数，隐式身份和凭证必须移出 Schema 并说明改动。Java 首期只用 JDK 17 标准库。
+- **SCRIPT**：写出通过通用 command 执行的完整程序，首版业务输入仍从 stdin 读取 JSON、stdout 返回 JSON。它不是独立注册的业务工具。执行时 cwd 是独立 workspace，Skill 包可能位于其他目录；入口使用 Runtime 给出的绝对路径。包内资源基于 __file__（Node 使用 import.meta.url）定位，业务文件与相对输出路径基于 cwd。不能写死部署绝对路径，不能假设 cwd 是源工程或 Skill 根目录。
+- Tool 的 runtime 依赖与业务参数分开：SCRIPT 通过通用 command 执行，不注册为独立工具，也不支持额外 Runtime 注入；需要 Runtime 上下文或凭证的实现必须使用 MCP，并从每次 HTTP 请求的声明 header 读取。不要把凭证或上下文加入模型输入 Schema，不建立或切换执行身份。
+- 上述 MCP/SCRIPT 决策仅适用于业务工具。deliveryContract.harness.requirements 是已诊断的 Harness 能力，不要把它们变成业务 MCP 或 Skill 脚本。
+- Harness 只做接入适配：保留原工具名、入参、返回值、错误及行为，不映射、改名或替换为 OpenJiuwen 内置能力，即使名称或功能相近。保留源实现并复制到独立插件的 implementation/，OpenJiuwen 包装类放在 adapter/；只改原 Runtime 注册和依赖访问部分，不重写业务逻辑，不修改 Skill 的原工具调用名称。
+- 每个 Harness 插件放在 runtime-plugins/<插件>/，交付 manifest.json、原实现、包装层、依赖清单和 README。manifest.json 使用 {"packageType":"plugin","id":"...","tools":[{"file":"adapter/tool.py","class":"OriginalNameTool"}]}。包装类继承框架 Tool，无参数构造，ToolCard.name 是原工具名、input_params 保留源契约，实现 invoke 和 stream 并委托原实现。其他语言原实现保留其语言，包装层必须说明实际调用协议，不能凭空假设 stdin/stdout 协议。
+- 锁定版本的导入是 `from openjiuwen.core.foundation.tool import Tool, ToolCard`，不存在 openjiuwen.tool。ToolCard 要填写稳定 id、原名 name 和 input_params。方法必须是 `async def invoke(self, inputs: dict, **kwargs)` 和异步生成器 `async def stream(self, inputs: dict, **kwargs)`；业务参数在 inputs 中，不在 kwargs.arguments 中。以 deliveryContract.harness.pluginApi 为准，不猜其他版本的 API。
+- Tool.invoke 的 kwargs 会收到 session，但 Session 不等于原业务身份或凭证。缺失上下文、SDK 或接入接口要明确列出，不伪造、不加进业务参数，不使用可变全局身份。当前文件插件加载器不会自动注入这些依赖。
+- 每个 Harness 工具调用 run_contract_test：tool_id 为 harness:<原工具名>，entrypoint 为插件 manifest.json。先 compile_source 编译交付的 Python 包装层和适用的原实现。加载失败就修复或诚实报告未完成；没有源调用样例时只验证插件加载，callExecuted=false，不编造调用数据或宣称行为测试通过。
+- tools 中 migrationContract.dependencies 给出源码诊断的契约、移出逻辑及注入方式，只包含声明，不包含真实测试值。保留 Tool 所需的鉴权解析与业务逻辑；Runtime 内部用于获取凭证的 user/SDK 不应整体成为 Tool 依赖。
+- 有必需的 Runtime 注入依赖时，run_contract_test 会明确标记实际调用待验证；仍需完成编译及可检查的接口契约，不索要真实凭证、不伪造值、不因测试值缺失弃权，也不宣称业务链路通过。
+
+交付的依赖必须按诊断 library 分类处理：STANDARD_LIBRARY 不安装同名 PyPI/npm 包，也不向用户索要源码；PACKAGE 保留已确认的包名和版本约束，写入 PEP723/pyproject.toml/package.json 等交付依赖声明，使用包内环境启动，不能借用模型工作区全局安装的包；CUSTOM_SDK 保留原实现与契约。实际安装、导入与调用以平台测试结果为准，诊断声明不代表已安装。
 
 交付时还要给这几样：
+
+- 对 SERVICE_ENV 依赖返回工具级 serviceEnvironment:[{key,name}]，与诊断声明严格一致。在 MCP 服务中读取 os.environ / process.env 的声明变量，按原消费类型解析；禁止写死地址、将配置放入请求 Header 或业务参数、索要真实值或伪造默认地址。必需变量缺失时在实际业务调用前明确报配置错误；tools/list 不调用业务接口、不要求真实配置即可公布契约。由平台启动时传入实际值，不额外交付身份接入代码。
+- 对 MCP 的 HTTP_HEADER 依赖明确返回 runtimeBindings，每项 key/header 必须与 migrationContract.dependencies 中实际消费的 HTTP_HEADER 声明对应。实现必须从当前请求 Header 读取并按声明解析，不能新增默认测试身份或凭证。
+- 顶层 runtimeToolConfig 使用 deliveryContract.runtimeToolConfigTemplate.runtimeToolConfig。它是没有真实值的环境变量绑定模板，不要重定义依赖，不要把 auth SDK 放到 Tool。未确定类型等问题保留在 unresolved，不猜测。
+- Skill 调用业务流程继续遵循源工程；平台会根据最终打包位置追加执行指引及配置模板。不要把你当前的代码生成工作区路径写入交付文件。
 
 - **`start`：启动命令**。平台按它把服务起起来跑契约测试。**是 argv 数组，不是一整条 shell 字符串**，
   例如 `["uv","run","--no-project","server.py"]` 或 `["node","server.js"]`。
@@ -104,10 +122,22 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
     "language": "",
     "start": ["argv", "数组"],
     "prepare": ["argv", "数组"],
+    "runtimeBindings": [{"key":"按调用依赖 key","header":"消费的 Header 名"}],
+    "serviceEnvironment": [{"key":"服务配置依赖 key","name":"声明的环境变量名"}],
     "changes": [{"path": "入参或出参的名字", "change": "改成了什么", "reason": "为什么必须改"}],
     "drift": [{"where": "inputSchema", "baseline": {}, "observed": {}}],
     "compilePassed": true, "contractPassed": true,
     "reason": "", "missing": []
+  }],
+  "runtimeToolConfig": {"context":{},"providers":{},"tools":{}},
+  "harnessPlugins": [{
+    "status":"PRODUCED", "toolNames":["原工具名"],
+    "manifestPath":"runtime-plugins/插件/manifest.json",
+    "files":["runtime-plugins/插件/manifest.json","runtime-plugins/插件/implementation/original.py","runtime-plugins/插件/adapter/tool.py"],
+    "implementationFiles":["runtime-plugins/插件/implementation/original.py"],
+    "adapterFiles":["runtime-plugins/插件/adapter/tool.py"],
+    "dependencies":[], "compilePassed":true, "contractPassed":true,
+    "callExecuted":false, "runtimeDependenciesPending":[]
   }],
   "reason": "", "missing": []
 }
@@ -196,10 +226,12 @@ async def run(body: dict) -> None:
 
         decisions = json.dumps(body.get("decisions") or [], ensure_ascii=False)
         contracts = json.dumps(body.get("tools") or [], ensure_ascii=False)
+        delivery = json.dumps(body.get("deliveryContract") or {}, ensure_ascii=False)
         result = await agent.invoke({"query": (
             "按下面的逐 Tool 决策完成迁移，并让每个 Tool 通过编译与契约测试。\n"
             f"逐 Tool 决策：{decisions}\n"
             f"源 Tool 描述（含源契约 schema）：{contracts}\n"
+            f"平台交付与加载契约：{delivery}\n"
             "先用 read/grep 读源实现，再写实现，然后调 compile_source 和 run_contract_test，失败就改。"
             "最后按约定只输出一个 JSON 对象。"
         )})
@@ -210,6 +242,29 @@ async def run(body: dict) -> None:
             parsed = parse_structured(raw)
             status = "ABSTAINED" if str(parsed.get("status", "")).upper() == "ABSTAINED" else "PRODUCED"
             payload = parsed
+            for plugin in payload.get('harnessPlugins', []):
+                compilation = {}
+                for record in tool_trace:
+                    if record.get('tool') == 'compile_source':
+                        for path in record.get('files', []):
+                            compilation[path] = record.get('passed') is True
+                sources = [path for path in plugin.get('files', [])
+                    if path.endswith(('.py', '.java', '.js'))]
+                plugin['compilePassed'] = bool(sources) and all(compilation.get(path) is True for path in sources)
+                tests = [r for r in tool_trace if r.get('tool') == 'run_contract_test'
+                    and r.get('toolId') in ['harness:' + name for name in plugin.get('toolNames', [])]]
+                latest = {r['toolId']:r for r in tests}
+                plugin['contractPassed'] = bool(plugin.get('toolNames')) and all(
+                    latest.get('harness:'+name, {}).get('passed') is True for name in plugin.get('toolNames', []))
+                plugin['callExecuted'] = plugin['contractPassed'] and all(
+                    latest.get('harness:'+name, {}).get('callExecuted') is True for name in plugin.get('toolNames', []))
+            for tool in payload.get("tools", []):
+                observations = [r for r in tool_trace if r.get("tool") == "run_contract_test"
+                                and r.get("toolId") == tool.get("toolId") and r.get("passed")]
+                if observations:
+                    latest = observations[-1]
+                    tool["runtimeDependenciesPending"] = latest.get("runtimeDependenciesPending", [])
+                    tool["callExecuted"] = latest.get("callExecuted", True)
         except (ValueError, json.JSONDecodeError) as exc:
             status = "FAILED"
             payload = {}

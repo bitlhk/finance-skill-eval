@@ -1,0 +1,7 @@
+{
+  "allowedCategories": [
+    "meal",
+    "taxi"
+  ],
+  "mealLimit": "150.00"
+}

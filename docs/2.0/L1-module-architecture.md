@@ -234,7 +234,7 @@ ADMITTED
 ### 检查
 
 - 单一 `SKILL.md`；
-- `name`、`description` 和目录名规则；
+- `name`、`description` 规则；
 - 迁移上传包内 `SKILL.md` 的准确大小写、标准子目录，以及脚本只能位于 `scripts/`；
 - 引用文件存在；
 - Tool 使用说明可识别；

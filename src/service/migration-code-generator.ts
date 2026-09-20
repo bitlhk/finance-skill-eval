@@ -4,6 +4,8 @@ import { recommendLanguage, type ProjectInspection, type ToolDecision } from './
 import { LocalWorker } from './local-worker.js';
 
 export type GeneratedToolImplementation={
+  callExecuted?:boolean;runtimeDependenciesPending?:string[];
+  runtimeBindings?:Array<{key:string;header:string}>;
   language:'python'|'java'|'node';sourcePath:string;source:string;additionalFiles:Array<{path:string;content:string}>;dependencies:string[];
   /** How to start it. The agent wrote the code, so it is the one that knows. `prepare` is an
    * optional one-shot step (install dependencies, build); `start` is the long-running one. */

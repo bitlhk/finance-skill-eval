@@ -158,7 +158,10 @@ def structure_of(files):
 
 
 if __name__ == '__main__':
-    data = json.load(sys.stdin)
+    # This is a UTF-8 JSON subprocess protocol, independent of the Windows code page.
+    # -I ignores PYTHONUTF8; decoding the text stream with the host locale can even corrupt
+    # JSON delimiters next to Chinese characters in nested dependency declarations.
+    data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
     # ASCII-safe on purpose. `ensure_ascii=False` put the findings' Chinese on stdout raw, which
     # made this protocol depend on the *console codepage* of whoever ran it: the callers spawn this
     # with `python -I`, and `-I` implies `-E`, so PYTHONUTF8=1 is ignored and the bytes came out in

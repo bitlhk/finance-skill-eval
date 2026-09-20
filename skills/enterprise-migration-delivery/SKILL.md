@@ -6,6 +6,10 @@ version: 1.0.0
 
 # 企业 Skill 迁移：交付形态
 
+Tool 的实现边界遵循 [企业级 Runtime 无关 Skill 规范第 6 节](../../docs/2.0/skill-specification.md#6-tool-怎样做到与-runtime-无关)：可以解析、校验和使用 Runtime 注入的鉴权信息，不负责建立、选择或切换执行身份。业务入参与运行时依赖分开；声明实际消费的依赖，不统一 Credential 类型，不把凭证获取链路整体搬入工具。以下交付规则不改变这一边界。
+
+凭证与调用上下文由 Runtime 通过声明的独立通道注入，不进入模型可填写的业务参数。HTTP 可以使用请求 header；MCP 和脚本的映射须由具体调用契约明确，不强制使用 header 或 headers 字段。注入按调用隔离，不能依赖共享连接或可变全局状态中的身份。Tool 只读取必要内容，按下游契约构造请求，不无差别透传上下文。阶段处理与传输映射设计见 [迁移中的依赖识别与处理](../../docs/2.0/impl/migration-dependency-handling.md)。
+
 这是**改造阶段**的依据：决定已经做完了（形式由人定、语言由平台算），这里只回答"交付出来的东西要长成什么样才能被平台起起来并调用"。
 
 **判断类规则不在这里。** 合规怎么判、可移植性属于哪个状态、该建议 MCP 还是 Script——那些是检查判断阶段的事，属于另一个技能包。改造阶段拿到的是已经作出的决定，不是要重新做的判断。
@@ -24,3 +28,29 @@ version: 1.0.0
 2. **接口动了哪里**：相对基线改了哪些入参出参，每处都要给理由——迁移必然做适配，有理由的改动是正常的。
 
 接口与基线的差异只进报告，不参与通过与否。判通过与否的是**起得来、工具有、调得通**。
+
+## 当前平台交付契约
+
+Script 通过通用 command 执行，不注册为独立业务 Tool，也不支持额外 Runtime 上下文或凭证注入。执行 cwd 是 workspace，Skill 可以在其他目录；脚本使用 Runtime 给出的绝对路径。包内资源基于 __file__ 或 import.meta.url 定位，相对业务文件及产物位于 workspace。不要在交付代码中写死平台部署路径。
+
+业务服务地址、固定超时等 SERVICE_ENV 配置由 MCP 服务从声明的环境变量读取，只在对应子进程启动时提供；工具级 serviceEnvironment 的 key/name 与诊断一致，不写死值、不转成 Header 或业务参数。tools/list 不访问业务接口、不要求真实配置；必需配置缺失时业务调用前明确失败。
+
+MCP 通过每次请求 Header 消费上下文和最终 Credential，业务 Schema 不包含这些隐式依赖；Runtime 负责身份和凭证获取 SDK。交付 JSON 的 runtimeBindings 必须与诊断 key/header 对应，顶层 runtimeToolConfig 确认平台提供的无实际值模板。未知 Provider、类型或企业接入信息不得猜测。平台根据最终包路径生成 Skill 执行指引和包根目录的 runtime-tool-config.template.json；模板的环境变量由执行方提供，不代表实际调用已经通过。
+
+新生成的 Python MCP 服务使用独立包 `fastmcp==2.14.7`，入口导入 `from fastmcp import FastMCP`。通过具名业务函数、类型注解与必要的 Pydantic 约束定义工具，实际发现 Schema 后与基线核对；差异明确记录原因。当前请求的 Header 通过 `fastmcp.server.dependencies.get_http_headers` 读取，不缓存身份，不新增 MCP 鉴权门槛，不将凭证放入函数的业务参数。依赖和启动命令由交付包声明，不依赖平台或 openJiuwen 的安装环境。
+
+## Harness 接入适配
+
+诊断识别的 Runtime Harness 不属于业务工具决策，不转换成 Skill 脚本或业务 MCP。交付独立的 `runtime-plugins/<插件>/` 工程：保留源实现并放在 implementation/，目标 Runtime 包装层放在 adapter/，附框架原生 manifest.json、必要依赖清单及 README。
+
+只适配原 Runtime 注册及依赖访问方式。工具名称、原业务入参、返回值、错误语义和行为保持不变，不因目标 Runtime 有相近内置工具而改名、映射或替换；Skill 中的原工具名称保持不变。包装层委托原实现，不将完整原逻辑重新实现成另一个内置工具。其他 Runtime 接入时替换包装层，复用原实现和工具契约。
+
+当前目标是锁定的 OpenJiuwen 0.1.17.post1：清单 tools 用 file/class 指定包装层；类无参数构造，实例为 Tool，ToolCard.name 为原名，input_params 保留原 Schema，实现 invoke 和 stream。Session 由 Runtime 传入 kwargs，但不会自动获得原 Runtime 的业务身份或凭证。缺失的上下文、SDK 和接入能力明确报告，不伪造，不塞进模型参数，不缓存全局身份。
+
+交付 JSON 的 harnessPlugins 声明 toolNames、manifestPath、files、implementationFiles、adapterFiles、dependencies、compilePassed、contractPassed、callExecuted 及 runtimeDependenciesPending。资产摘要由平台打包后绑定，不由 Agent 填写。必须先 compile_source，再以 tool_id=harness:<原名>、entrypoint=manifest.json 调用 run_contract_test 实际加载。无源样例时记录加载通过、callExecuted=false；不得把加载成功等同于原行为对比通过。
+
+锁定版本插件 API 以 deliveryContract.harness.pluginApi 为准：导入 `openjiuwen.core.foundation.tool` 中的 Tool、ToolCard，提供 ToolCard.id。invoke 是 `async def invoke(self, inputs: dict, **kwargs)`，stream 是异步生成器。原业务入参位于 inputs，Runtime session 位于 kwargs；不能使用其他版本的导入路径或 kwargs.arguments。
+
+## 库依赖分类
+
+诊断 SDK 依赖通过 library 区分 STANDARD_LIBRARY、PACKAGE、CUSTOM_SDK、UNKNOWN，并引用真实 import。标准库由平台运行环境清单核对，不能将本地同名模块标为标准库，也不要求用户上传源码。第三方包声明实际发行名和依赖清单路径，引用声明原文；已声明不等于已安装或导入成功。企业自定义 SDK 仍需实际源码或契约。迁移保留第三方包的版本约束，写入交付依赖清单并通过包内环境运行；不安装标准库的同名第三方包，不借用模型工作区全局安装环境。

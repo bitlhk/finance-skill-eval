@@ -35,7 +35,8 @@ export function normalizeSkillPackage(archive:Record<string,Uint8Array>,skillFil
   const prefix=root?`${root}/`:'';
   const scoped=Object.entries(archive).filter(([name])=>!root||name.startsWith(prefix));
   const output:Record<string,Uint8Array>={},used=new Set<string>(),moves:Array<{from:string;to:string}>=[];
-  const originalSource=archive[skillFile]?Buffer.from(archive[skillFile]!).toString('utf8'):'';
+  if(!archive[skillFile])throw Object.assign(new Error(`迁移输入缺少原始 Skill 指令：${skillFile}`),{statusCode:409});
+  const originalSource=Buffer.from(archive[skillFile]!).toString('utf8');
   for(const [name,content] of scoped){
     if(name===skillFile)continue;
     const relative=root?name.slice(prefix.length):name;
@@ -51,12 +52,13 @@ export function normalizeSkillPackage(archive:Record<string,Uint8Array>,skillFil
     if(wanted!==relative)moves.push({from:relative,to:wanted});
   }
   const {metadata,body}=splitSkill(originalSource);
+  if(!body.trim())throw Object.assign(new Error('原始 Skill 正文为空，不能用通用模板替代业务流程'),{statusCode:409});
   const fallback=slug(skillId,'migrated-skill');
   metadata.name=slug(typeof metadata.name==='string'?metadata.name:skillId,fallback);
   metadata.version=version;
   const existingDescription=typeof metadata.description==='string'?metadata.description.trim():'';
   metadata.description=(existingDescription||`Migrated Skill ${metadata.name}. Review the instructions and use the packaged tools when applicable.`).slice(0,1024);
-  let normalizedBody=body||'Use the packaged resources and tools to complete the requested task. If required information or a tool is unavailable, report the limitation clearly.';
+  let normalizedBody=body;
   for(const move of moves)normalizedBody=replacePath(normalizedBody,move.from,move.to);
   normalizedBody=normalizedBody.replace(/(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"'\n]+["']/giu,'credential must be supplied by the runtime environment');
   normalizedBody=normalizedBody.replace(/`((?:scripts|references|assets)\/[^`]+)`/gu,(whole,requested:string)=>{

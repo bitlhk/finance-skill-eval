@@ -65,6 +65,7 @@ export function buildSuggestions(
   cases: EvaluationCaseReport[],
 ): SkillOptimizationSuggestion[] {
   const suggestions: SkillOptimizationSuggestion[] = [];
+  if(pack.metadata.assessmentMode==='natural_language')return suggestions;
   for (const result of cases) {
     const evalCase = pack.cases.find(item => item.caseId === result.caseId);
     if (!evalCase) continue;
@@ -133,7 +134,11 @@ export function buildReport(input: {
       leftWins,
       rightWins,
       ties,
-      headline: unavailable === input.cases.length
+      headline: input.cases.some(c=>c.judge?.serviceComparison||c.left.metadata.baselineService)
+        ? `原服务对比：${input.cases.filter(c=>c.judge?.serviceComparison?.verdict==='PASS').length}/${input.cases.length} 条通过`
+        : input.pack.metadata.assessmentMode==='natural_language'
+        ? `业务目标评估：${input.cases.filter(c=>c.judge?.goalAssessment?.verdict==='PASS').length}/${input.cases.length} 条通过`
+        : unavailable === input.cases.length
         ? "左右输出已完成，专业 Judge 暂未形成可用结论"
         : leftWins === rightWins
           ? `本轮对比持平：左右各胜 ${leftWins} 题${ties ? `，${ties} 题持平` : ""}`
@@ -173,26 +178,30 @@ function formatOutput(value: string): string {
 }
 
 export function renderHtmlReport(report: EvaluationReport): string {
+  const serviceMode=report.cases.some(item=>item.judge?.serviceComparison||item.left.metadata.baselineService);
+  const goalsMode=serviceMode||report.cases.some(item=>item.judge?.goalAssessment);
+  const assessment=(item:EvaluationReport['cases'][number])=>item.judge?.serviceComparison??item.judge?.goalAssessment;
   const caseSections = report.cases.map(item => {
     const judge = item.judge;
+    const isService=!!judge?.serviceComparison||!!item.left.metadata.baselineService;
     return `
     <section class="case">
       <header>
         <div><span class="case-id">${escapeHtml(item.caseId)}</span><h2>${escapeHtml(item.name)}</h2></div>
-        <strong class="winner">${judge?.winner === "right" ? "右侧更优" : judge?.winner === "left" ? "左侧更优" : judge ? "表现持平" : "Judge 暂不可用"}</strong>
+        <strong class="winner">${judge?.serviceComparison?.verdict ?? judge?.goalAssessment?.verdict ?? (judge?.winner === "right" ? "右侧更优" : judge?.winner === "left" ? "左侧更优" : judge ? "表现持平" : "Judge 暂不可用")}</strong>
       </header>
       <p class="goal">${escapeHtml(item.evaluationGoal)}</p>
       <details><summary>本轮题目</summary><pre>${escapeHtml(item.prompt)}</pre></details>
       <div class="columns">
-        <article><h3>左侧</h3><pre>${escapeHtml(formatOutput(item.left.output))}</pre></article>
-        <article><h3>右侧</h3><pre>${escapeHtml(formatOutput(item.right.output))}</pre></article>
+        <article><h3>${isService?'原服务':'左侧'}</h3><pre>${escapeHtml(formatOutput(item.left.output))}</pre></article>
+        <article><h3>${isService?'迁移后 Skill':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output))}</pre></article>
       </div>
       <div class="judge">
-        <h3>金融专业评价</h3>
+        <h3>${isService?'原服务对比':judge?.goalAssessment?'业务目标评估':'金融专业评价'}</h3>
         <p>${escapeHtml(judge?.summary ?? item.judgeError ?? "未形成评价")}</p>
-        <table><thead><tr><th>维度</th><th>左</th><th>右</th><th>判断依据</th></tr></thead><tbody>
+        ${judge?.serviceComparison?judge.serviceComparison.checks.map(check=>`<article><h4>${escapeHtml(check.criterion)} · ${check.verdict}</h4><p>${escapeHtml(check.reason)}</p><p>原服务依据：${escapeHtml(check.originalEvidence)}</p><p>迁移后依据：${escapeHtml(check.candidateEvidence)}</p></article>`).join(''):judge?.goalAssessment?judge.goalAssessment.checks.map(check=>`<article><h4>${escapeHtml(check.criterion)} · ${check.verdict}</h4><p>${escapeHtml(check.reason)}</p><blockquote>${escapeHtml(check.evidence)}</blockquote></article>`).join(''):`<table><thead><tr><th>维度</th><th>左</th><th>右</th><th>判断依据</th></tr></thead><tbody>
           ${(judge?.dimensions ?? []).map(dimension => `<tr><td>${escapeHtml(dimension.label)}</td><td>${dimension.leftScore}</td><td>${dimension.rightScore}</td><td>${escapeHtml(dimension.reason)}</td></tr>`).join("")}
-        </tbody></table>
+        </tbody></table>`}
       </div>
     </section>`;
   }).join("");
@@ -202,8 +211,8 @@ export function renderHtmlReport(report: EvaluationReport): string {
 <style>
   :root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#172026;background:#f5f7f8}body{margin:0}main{max-width:1480px;margin:0 auto;padding:32px}h1,h2,h3,p{margin-top:0}.hero{background:#fff;border-top:5px solid #007d6e;padding:28px;border-bottom:1px solid #dce3e5}.eyebrow,.case-id{font-size:12px;font-weight:700;color:#007d6e;text-transform:uppercase}.summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#dce3e5;border:1px solid #dce3e5;margin:24px 0}.metric{background:#fff;padding:18px}.metric b{font-size:26px;display:block;margin-top:5px}.case{background:#fff;border:1px solid #dce3e5;margin:20px 0;padding:24px}.case>header{display:flex;justify-content:space-between;gap:20px;align-items:start}.winner{color:#007d6e}.goal{color:#52636b}.columns{display:grid;grid-template-columns:1fr 1fr;gap:16px}.columns article{min-width:0;border-top:3px solid #9aa9af;padding-top:12px}.columns article:last-child{border-color:#007d6e}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;background:#f7f9f9;padding:16px;max-height:520px;overflow:auto}.judge{margin-top:18px;border-top:1px solid #dce3e5;padding-top:18px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;border-bottom:1px solid #e4e9eb;padding:10px;vertical-align:top}th{background:#f4f7f7}.meta{color:#61727a;font-size:13px}@media(max-width:900px){main{padding:16px}.summary,.columns{grid-template-columns:1fr}.case{padding:16px}}
 </style></head><body><main>
-  <section class="hero"><div class="eyebrow">Finance Skill Eval</div><h1>${escapeHtml(report.pack.targetSkillId)} 专业能力对比</h1><p>${escapeHtml(report.summary.headline)}</p><div class="meta">左：${escapeHtml(variantLabel(report.variants.left))} · 右：${escapeHtml(variantLabel(report.variants.right))} · Pack ${escapeHtml(report.pack.packId)}@${escapeHtml(report.pack.version)}</div></section>
-  <section class="summary"><div class="metric">右侧胜出<b>${report.summary.rightWins}</b></div><div class="metric">左侧胜出<b>${report.summary.leftWins}</b></div><div class="metric">持平<b>${report.summary.ties}</b></div><div class="metric">案例数<b>${report.cases.length}</b></div></section>
+  <section class="hero"><div class="eyebrow">Finance Skill Eval</div><h1>${escapeHtml(report.pack.targetSkillId)} ${serviceMode?'原服务对比':goalsMode?'业务目标评估':'专业能力对比'}</h1><p>${escapeHtml(report.summary.headline)}</p><div class="meta">${serviceMode?'原服务（源资产关联）':'左'}：${escapeHtml(variantLabel(report.variants.left))} · ${serviceMode?'迁移候选':'右'}：${escapeHtml(variantLabel(report.variants.right))} · Pack ${escapeHtml(report.pack.packId)}@${escapeHtml(report.pack.version)}</div></section>
+  <section class="summary">${goalsMode?(['PASS','FAIL','INDETERMINATE'] as const).map((verdict,index)=>`<div class="metric">${['通过','不通过','无法判定'][index]}<b>${report.cases.filter(item=>assessment(item)?.verdict===verdict).length}</b></div>`).join('')+`<div class="metric">执行或评估失败<b>${report.cases.filter(item=>!assessment(item)||!!item.judgeError||item.right.status!=='completed'||(serviceMode&&item.left.status!=='completed')).length}</b></div>`:`<div class="metric">右侧胜出<b>${report.summary.rightWins}</b></div><div class="metric">左侧胜出<b>${report.summary.leftWins}</b></div><div class="metric">持平<b>${report.summary.ties}</b></div><div class="metric">案例数<b>${report.cases.length}</b></div>`}</section>
   ${report.questionSet ? `<p class="meta">AI 题集 · ${escapeHtml(report.questionSet.model.modelId)} · ${escapeHtml(report.questionSet.fingerprint)}</p>` : ""}
   ${caseSections}
   <p class="meta">Report fingerprint: ${report.reportFingerprint}</p>

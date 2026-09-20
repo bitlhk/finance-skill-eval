@@ -4,7 +4,7 @@ version: 1.0.0
 domain: risk-review
 targetSkillId: transfer-risk-review
 targetSkillVersion: 0.1.0
-description: 真实模型与只读工具执行；risk-review 固定模拟业务快照，非生产验收。
+description: 真实模型与只读工具执行；risk-review 模拟业务数据，非生产验收。
 models:
   analyzer: &a1
     providerId: service-execution
@@ -25,7 +25,7 @@ variants:
     mode: skill_version
     skillId: transfer-risk-review
     version: 0.1.0
-    artifactSha256: 729bda4db177a44ad5e07f8d92adfec7194b23409e1113eb5b7a6867c9bbed9a
+    artifactSha256: 755090b0283f883107e2b99235da373094bf1e39e3564af3c622ed72609e77be
 judgeProfileFile: profiles/judge.yaml
 caseFiles:
   - cases/1.yaml
@@ -36,6 +36,7 @@ metadata:
   dataMode: synthetic-snapshot
   snapshotVersion: roles-demo-v1
   sourceSkill: finance-agent-harness/domain-packs/risk/internal-control/skills/transfer-risk-review
-  evidenceSemantics: live-model-live-tools-synthetic-business-data
+  sourceAuthor: ""
+  evidenceSemantics: live-model-synthetic-business-data
 holdoutCaseFiles:
   - cases/4.yaml

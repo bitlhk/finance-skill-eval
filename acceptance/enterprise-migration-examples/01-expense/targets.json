@@ -1,0 +1,39 @@
+[
+  {
+    "caseId": "EXPENSE-OK",
+    "input": {
+      "claim_id": "EXP-001"
+    },
+    "expected": {
+      "claim_id": "EXP-001",
+      "total": "200.00",
+      "violations": [],
+      "compliant": true
+    }
+  },
+  {
+    "caseId": "EXPENSE-VIOLATION",
+    "input": {
+      "claim_id": "EXP-002"
+    },
+    "expected": {
+      "claim_id": "EXP-002",
+      "total": "230.00",
+      "violations": [
+        "E3",
+        "E4"
+      ],
+      "compliant": false
+    }
+  },
+  {
+    "caseId": "EXPENSE-MISSING",
+    "input": {
+      "claim_id": "EXP-404"
+    },
+    "expected": {
+      "claim_id": "EXP-404",
+      "error": "CLAIM_NOT_FOUND"
+    }
+  }
+]

@@ -1,3 +1,4 @@
+import {SourceEvidenceValidator} from "./source-evidence.js";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -20,7 +21,7 @@ export type AgentStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
 
 /** The result line the agent process writes. Framing, not a stage product. */
 type WireResult<T> = {
-  assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
+  workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory; assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
   scanner?: Record<string, unknown> | null; trace?: { rounds: Array<Record<string, unknown>> };
   elapsedMs?: number; modelId?: string; error?: string; rawOutput?: string;
 };
@@ -45,6 +46,8 @@ function failureReason(wire: WireResult<unknown>, produced: boolean): string {
 /** What the agent produced, beyond the envelope's own binding and status. */
 export type AgentPayload<T> = {
   judgement: T;
+  /** Trusted process metadata, never read from the model judgement. */
+  workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory;
   /** A4: the files it wrote. */
   files?: Record<string, string>;
   /** A2: the static scanner's own result, when the agent ran it. */
@@ -62,11 +65,12 @@ export type AgentResult<T = Record<string, unknown>> = StageEnvelope<AgentPayloa
  * as a faceless "analysis unavailable", which tells whoever has to act on it nothing at all.
  */
 export type MigrationAnalysis =
-  | { status: "PRODUCED"; payload: unknown; scanner?: Record<string, unknown> | null }
-  | { status: "ABSTAINED"; reason: string; missing: string[] }
+  | { status: "PRODUCED"; payload: unknown; workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory; scanner?: Record<string, unknown> | null }
+  | { status: "ABSTAINED"; reason: string; missing: string[]; payload?:unknown;workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory;scanner?:Record<string,unknown>|null }
   | { status: "FAILED"; reason: string };
 export type MigrationAnalyzer = (input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
+  supplements?:import('./migration-dependencies.js').AnalysisSupplement[];
 }) => Promise<MigrationAnalysis | null>;
 
 /**
@@ -76,19 +80,21 @@ export type MigrationAnalyzer = (input: {
  *
  * `null` means only one thing now: this platform is not set up to run the agent at all.
  */
-export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array> }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
+export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array>;supplements?:import('./migration-dependencies.js').AnalysisSupplement[] }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
   if (!migrationAgentEnabled()) return null;
-  const result = await runMigrationAgent<{ reason?: string; missing?: string[] }>("A2", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
+  let result:AgentResult<{reason?:string;missing?:string[]}>;
+  try{result=await runMigrationAgent("A2",{...input,files:encodeArchive(input.files)},options)}catch(error){return {status:"FAILED",reason:error instanceof MigrationAgentUnavailable?error.message:"A2 执行失败，请查看平台日志"}}
   if (result?.status === "ABSTAINED") return {
     status: "ABSTAINED",
     reason: String(result.payload.judgement?.reason ?? "").trim() || "分析 agent 没有说明弃权原因",
     missing: (result.payload.judgement?.missing ?? []).map(String).filter(Boolean),
+    workspaceRoot:result.payload.workspaceRoot,libraryInventory:result.payload.libraryInventory,payload:result.payload.judgement,scanner:result.payload.scanner,
   };
   if (result?.status !== "PRODUCED") return {
     status: "FAILED",
     reason: String(result?.run?.error ?? "").trim() || "分析 agent 没有产出结果，也没有说明原因",
   };
-  return { status: "PRODUCED", payload: result.payload.judgement, scanner: result.payload.scanner ?? null };
+  return { status: "PRODUCED", workspaceRoot:result.payload.workspaceRoot,libraryInventory:result.payload.libraryInventory,payload: result.payload.judgement, scanner: result.payload.scanner ?? null };
 }
 
 /**
@@ -103,16 +109,17 @@ export type MigrationImplementation =
   | { status: "FAILED"; reason: string };
 export type MigrationImplementer = (input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
-  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;
+  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;deliveryContract?:Record<string,unknown>;
 }) => Promise<MigrationImplementation | null>;
 
 /** The real implementer: run the A4 agent. Injectable for the same reason as the analyzer. */
 export async function implementWithAgent(input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
-  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;
+  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;deliveryContract?:Record<string,unknown>;
 }, options: MigrationAgentOptions): Promise<MigrationImplementation | null> {
   if (!migrationAgentEnabled()) return null;
-  const result = await runMigrationAgent<{ tools?: unknown[] }>("A4", { ...input, files: encodeArchive(input.files) }, options).catch(() => null);
+  let result:AgentResult<{tools?:unknown[]}>;
+  try{result=await runMigrationAgent("A4",{...input,files:encodeArchive(input.files)},options)}catch(error){return {status:"FAILED",reason:error instanceof MigrationAgentUnavailable?error.message:"A4 执行失败，请查看平台日志"}}
   if (result?.status !== "PRODUCED" && result?.status !== "ABSTAINED") return {
     status: "FAILED",
     reason: String(result?.run?.error ?? "").trim() || "迁移 agent 没有产出结果，也没有说明原因",
@@ -239,6 +246,7 @@ type AgentTool = {
   evidence?: Array<{ path?: string; line?: number; snippet?: string }>;
   findings?: Array<{ code?: string; severity?: string; path?: string; line?: number; message?: string }>;
   recommendedForm?: string; recommendationReason?: string;
+  scriptSecurity?:{safe?:boolean;evidence?:AgentClaim[]};
 };
 
 const PORTABILITIES = ["PORTABLE_MCP", "PORTABLE_SCRIPT", "RUNTIME_BOUND", "INCOMPLETE", "UNSUPPORTED", "UNKNOWN"] as const;
@@ -251,43 +259,6 @@ function asPortability(value: unknown): Portability {
 /** Shorter than this, a quote matches half the file and locates nothing; the rule in the skill
  * package asks for enough of the line to identify it. */
 const MIN_SNIPPET = 8;
-
-/**
- * The line where `snippet` starts inside `source`, or null when it is not there.
- *
- * Whitespace is the one thing not taken literally, and it is not a concession to laziness: an agent
- * quoting a block reflows it. A field run turned a six-line `ToolResponse(...)` into the same
- * tokens with a different indent and a blank line inserted; matching line by line dropped the
- * claim, and with it that half of the baseline. Collapsing whitespace runs keeps every word and
- * every mark of punctuation, in order, contiguous -- which is what "the agent read this" means. A
- * quote that reorders, drops or invents a token still does not land, and neither does one that
- * spans two unrelated places in the file.
- */
-function seek(source: string, snippet: string): number | null {
-  let collapsed = "";
-  const origin: number[] = [];
-  let gap = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index]!;
-    if (/\s/u.test(character)) {
-      gap = true;
-      continue;
-    }
-    if (gap && collapsed) {
-      collapsed += " ";
-      origin.push(index);
-    }
-    gap = false;
-    collapsed += character;
-    origin.push(index);
-  }
-  const found = collapsed.indexOf(snippet.trim().replace(/\s+/gu, " "));
-  if (found < 0) return null;
-  const at = origin[found] ?? 0;
-  let line = 1;
-  for (let index = 0; index < at; index += 1) if (source[index] === "\n") line += 1;
-  return line;
-}
 
 const ENTRYPOINT_KINDS = ["PYTHON", "NODE"] as const;
 /**
@@ -316,7 +287,9 @@ function severity(value: unknown): "ERROR" | "WARNING" | "INFO" {
  * normalised here so downstream code keeps one representation.
  */
 export function toProjectInspection(
-  payload: { skill?: { status?: string; findings?: unknown[] }; tools?: AgentTool[] },
+  payload: { skill?: { status?: string; findings?: unknown[] }; tools?: AgentTool[];
+    runtimeCapabilities?:Array<{name:string;reason:string;usageContract:string;targetCapability?:string|null;
+      consumerTools?:string[];evidence:Array<{path:string;snippet:string}>}> },
   assetId: string,
   assetDigest: string,
   stableToolId: (name: string, paths: string[]) => string,
@@ -348,16 +321,17 @@ export function toProjectInspection(
   };
   // Every claim must land on a real file and on text that is really there. This is the check the
   // agent cannot perform on itself, so it stays here rather than moving into the prompt.
+  const validator=new SourceEvidenceValidator(files);
   const linesOf = (target: string): string[] => {
     const key = assetPath(target);
-    return key ? (files[key] ?? "").split(/\r?\n/u) : [];
+    return key ? (validator.text(key) ?? "").split("\n") : [];
   };
   const cited = (target: string, line: number, endLine = line, snippet?: string): boolean => {
     const lines = linesOf(target);
     if (!lines.length || !Number.isInteger(line) || line < 1 || line > lines.length) return false;
     if (endLine < line || endLine > lines.length) return false;
     if (!snippet) return true;
-    return lines.slice(line - 1, endLine).join("\n").includes(String(snippet).trim());
+    const key=assetPath(target);return !!key&&validator.containsAtLines(key,String(snippet).trim(),line,endLine);
   };
   /**
    * Where a claim actually lands.
@@ -368,7 +342,7 @@ export function toProjectInspection(
    * and the line number is only a hint: a snippet that can be found is located, a snippet that
    * cannot be found means the claim is not evidence, and a bare line number is taken at its word.
    *
-   * A quote may run over several lines (`seek` explains what is and is not taken literally), and
+   * A quote may run over several lines (only newline conventions are normalized), and
    * the line that comes back is where it starts.
    */
   const locate = (target: string, snippet?: string): { path: string; line: number } | null => {
@@ -384,8 +358,8 @@ export function toProjectInspection(
     // occurrence the author had in mind. A quote that appears twice cannot say which.
     // The path comes back as the asset key: everything downstream reads the package, not the
     // agent's workspace, and a temp directory in the record is both wrong and unstable.
-    const at = seek(raw, text);
-    return at === null ? null : { path: key, line: at };
+    const at = validator.find(key,text);
+    return at === null ? null : { path: key, line: at.line };
   };
   const skillStatus = String(payload.skill?.status ?? "").toUpperCase();
   const skillFindings = (payload.skill?.findings ?? []).flatMap(entry => {
@@ -402,9 +376,25 @@ export function toProjectInspection(
       suggestion: String(finding.suggestion ?? ""),
     }];
   });
+  const runtimeCapabilities:import('./migration-model.js').RuntimeHarnessCapability[]=[];
+  for(const claim of payload.runtimeCapabilities??[]){
+    if(!claim||typeof claim.name!=='string'||!claim.name.trim()||typeof claim.reason!=='string'||!claim.reason.trim()
+      ||typeof claim.usageContract!=='string'||!claim.usageContract.trim()||!Array.isArray(claim.evidence))continue;
+    const evidence=claim.evidence.flatMap(item=>{
+      if(!item||typeof item.path!=='string'||typeof item.snippet!=='string')return [];
+      const at=locate(item.path,item.snippet);
+      return at?[{...at,kind:'RUNTIME_HARNESS',detail:item.snippet}]:[];
+    });
+    // An unsupported claim must not remove a tool from migration.
+    if(!evidence.length||evidence.length!==claim.evidence.length||runtimeCapabilities.some(c=>c.name===claim.name.trim()))continue;
+    runtimeCapabilities.push({name:claim.name.trim(),owner:'RUNTIME_HARNESS',migrationAction:'DO_NOT_MIGRATE',blocking:false,
+      reason:claim.reason,usageContract:claim.usageContract,targetCapability:typeof claim.targetCapability==='string'?claim.targetCapability:null,
+      testAvailability:'UNCHECKED',consumerTools:Array.isArray(claim.consumerTools)?claim.consumerTools.filter((name):name is string=>typeof name==='string'):[],evidence});
+  }
   const tools = (payload.tools ?? []).flatMap(tool => {
     const name = String(tool.name ?? "").trim();
     if (!name) return [];
+    if(runtimeCapabilities.some(capability=>capability.name===name))return [];
     // Same convention as every other path the agent names: it read the file in its own workspace.
     const sourcePaths = (tool.sourcePaths ?? []).flatMap(entry => {
       const path = String(entry ?? "").trim();
@@ -466,6 +456,7 @@ export function toProjectInspection(
         }]
         : []),
       recommendedForm: form,
+      scriptInjectionEvidence:tool.scriptSecurity?.safe?(tool.scriptSecurity.evidence??[]).flatMap(claim=>{const at=locate(String(claim.path??''),claim.snippet);return at?[{path:at.path,line:at.line,kind:'SCRIPT_INJECTION_SECURITY',detail:String(claim.snippet)}]:[]}):[],
       recommendedLanguage: recommendLanguage(form, language),
       recommendationReason: String(tool.recommendationReason ?? "").trim(),
     }];
@@ -495,6 +486,7 @@ export function toProjectInspection(
       findings: skillFindings,
     },
     tools,
+    runtimeCapabilities,
     scriptsExecuted: false,
   };
 }
@@ -514,8 +506,9 @@ export function contractSample(tool: { samples?: Array<{ input: unknown }> } | u
 }
 
 type AgentGeneration = {
+  runtimeBindings?:Array<{key:string;header:string}>;
   toolId?: string; status?: string; entrypoint?: string; files?: string[];
-  language?: string; compilePassed?: boolean; contractPassed?: boolean;
+  language?: string; compilePassed?: boolean; contractPassed?: boolean;runtimeDependenciesPending?:string[];callExecuted?:boolean;
   /** How to start the thing it just built. A Script's entrypoint is run directly. `prepare` is
    * the optional one-shot step before it (install, build). */
   start?: string[];prepare?: string[];
@@ -567,17 +560,20 @@ export function toGeneratedImplementations(
       source,
       additionalFiles,
       dependencies: [],
+      ...(typeof tool.callExecuted==='boolean'?{callExecuted:tool.callExecuted}:{}),
+      ...(Array.isArray(tool.runtimeDependenciesPending)?{runtimeDependenciesPending:tool.runtimeDependenciesPending.filter((name):name is string=>typeof name==='string')}:{}),
+      ...(tool.runtimeBindings?{runtimeBindings:tool.runtimeBindings}:{}),
       smokeInput: {},
       ...(Array.isArray(tool.start) && tool.start.length ? { start: tool.start.map(String) } : {}),
       ...(Array.isArray(tool.prepare) && tool.prepare.length ? { prepare: tool.prepare.map(String) } : {}),
       ...(Array.isArray(tool.drift) && tool.drift.length ? { drift: tool.drift } : {}),
       ...(Array.isArray(tool.changes) && tool.changes.length ? { changes: tool.changes } : {}),
       generatedBy: toolNameById[toolId] ?? toolId,
-      explanation: tool.reason?.trim() || "由 A4 迁移 agent 生成并通过编译与契约测试。",
+      explanation: tool.reason?.trim() || (tool.callExecuted === false ? "由 A4 迁移 agent 生成并完成静态或接口契约检查，实际调用待验证。" : "由 A4 迁移 agent 生成并通过编译与契约测试。"),
       attempts: 1,
       checks: tool.compilePassed === false ? [] : [
         compileCheck,
-        { name: "JSON_SMOKE" as const, passed: true as const, message: tool.contractPassed === false ? "契约测试未通过" : "契约测试通过（输入输出形状）" },
+        { name: "JSON_SMOKE" as const, passed: true as const, message: tool.callExecuted===false?"静态或接口契约检查完成，实际调用尚未执行；需准备测试依赖后验证":tool.contractPassed === false ? "契约测试未通过" : "契约测试通过（输入输出形状）" },
       ],
     };
   }
@@ -676,6 +672,8 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
           status: status === "PRODUCED" || status === "ABSTAINED" ? status : "FAILED",
           payload: {
             judgement: (wire.payload ?? {}) as T,
+            ...(wire.libraryInventory?{libraryInventory:wire.libraryInventory}:{}),
+            ...(typeof wire.workspaceRoot==="string"?{workspaceRoot:wire.workspaceRoot}:{}),
             ...(wire.files ? { files: wire.files } : {}),
             ...(wire.scanner ? { scanner: wire.scanner } : {}),
           },

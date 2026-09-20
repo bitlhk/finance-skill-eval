@@ -19,12 +19,21 @@ import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
 import { validateSkill } from './skill-validator.js';
 import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
+import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from './migration-delivery-contract.js';
+import {harnessDeliveryContract,toGeneratedHarnessPlugins,type HarnessPluginDeclaration} from './migration-harness.js';
+import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,probeBusinessInterface,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
 import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { baselineBrief,generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
+import {originalServiceFingerprint} from '../original-service-runtime.js';
 import { stageEnvelope,staleAgainst } from './stage-envelope.js';
-import { TechnicalValidationService } from './technical-validation.js';
+import { TechnicalValidationService,pythonCommand } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
+import { assessMigrationAcceptance } from './migration-acceptance.js';
+import {simpleMigrationSuiteSchema,simpleMigrationCases,normalizeOriginalServiceSuite} from './simple-migration-suite.js';
+import {MigrationSupplements,supplementFiles} from './migration-supplements.js';
+import {analyzeDependencies,validateDependencyData,type Supplement} from './migration-dependencies.js';
+import type {LocalMigrationRuntimeCatalog} from './local-migration-runtimes.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
@@ -34,7 +43,7 @@ const draftSchema = z.strictObject({
   autoVersion:z.boolean().optional(),
 });
 const planSchema = z.strictObject({
-  pair:z.enum(['AB','BC','AC']), configuration:runConfigurationSchema,
+  pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
   dataSnapshot:z.string().min(1).max(300), permissionBasis:z.string().min(1).max(1000),
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
@@ -45,8 +54,8 @@ type Migration = {
   candidateHistory?:Array<{asset:SkillAssetRecord;notes:string;recordedAt:string;kind?:'migration'|'optimization'}>;
   suiteIds?:string[];
   optimizations?:Array<{optimizationId:string;sourceJobId:string;baseAssetId:string;candidateDigest:string}>;
-  runs:Array<{jobId:string; pair:'AB'|'BC'|'AC'; candidateDigest:string; comparisonFingerprint:string; packFingerprint:string;
-    declaredPlan?:z.infer<typeof planSchema>;suiteSnapshot?:EvalPack}>;
+  runs:Array<{jobId:string; pair:'AB'|'BC'|'AC'|'SC'; candidateDigest:string; comparisonFingerprint:string; packFingerprint:string;
+    declaredPlan?:z.infer<typeof planSchema>;suiteSnapshot?:EvalPack;runtimeConfigurationDigest?:string}>;
   assessment:'NOT_VALIDATED';
   targetRuns?:string[];
   simulationProfile?:string;
@@ -54,10 +63,13 @@ type Migration = {
   generation?:{candidateDigest:string;target:{runtime:string;environmentId?:string;intent:string};
     diff:Array<{path:string;operation:string;before:string;after:string}>;generatedAt:string};
   inspection?:ProjectInspection;
+  /** Immutable A2 grounding for questions; candidate inspection must not replace it. */
+  sourceInspection?:ProjectInspection;
   /** The A2 product as a stage product: its binding is what says which asset it describes. */
   analysis?:import('./stage-envelope.js').StageEnvelope<ProjectInspection>;
   decisions?:ToolDecision[];
   portableGenerations?:PortableGeneration[];
+  harnessPlugins?:HarnessPluginDeclaration[];
   portableGenerationDiff?:PortableDiff[];
   technicalValidations?:TechnicalValidation[];
 };
@@ -75,7 +87,8 @@ export class MigrationStore {
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
-    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER'))) {}
+    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
+    private migrationRuntimes?:LocalMigrationRuntimeCatalog) {}
   async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
   async verifyTarget(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
@@ -117,8 +130,12 @@ export class MigrationStore {
     if(!this.diagnostics)return conflict('静态诊断服务不可用');
     return this.diagnostics.diagnose(value.source,retry);
   }
-  async inspect(id:string){return this.serial(async()=>{
-    const value=await this.get(id),asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
+  async inspect(id:string,sourceOnly=false){return this.serial(async()=>{
+    const value=await this.get(id),asset=sourceOnly?value.source:value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
+    const originalFiles:Record<string,string>={};for(const [name,bytes] of Object.entries(archive))try{originalFiles[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{}
+    const materials=new MigrationSupplements(this.root),record=await materials.get(id);
+    const supplementItems=asset.assetId===value.source.assetId?record.items:[];
+    for(const item of supplementItems)for(const [file,bytes] of Object.entries(item.files??{}))archive[file]=Buffer.from(bytes,'base64');
     const files:Record<string,string>={};
     for(const [name,bytes] of Object.entries(archive))try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
 
@@ -127,18 +144,20 @@ export class MigrationStore {
     // judgement, and every rule that tried to do it by pattern-matching invented something the
     // source never declared. Without an analysis there is no baseline, so there is nothing to
     // migrate against -- better to say that than to hand the flow a guess.
-    const agent=await this.analyzer({assetDigest:asset.artifactSha256,runId:id,files:archive}).catch(()=>null);
+    const currentDependencies=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
+    const agent=await this.analyzer({assetDigest:asset.artifactSha256,runId:id,files:archive,
+      supplements:supplementItems.map(item=>({dependencyId:item.dependencyId,key:currentDependencies.find(d=>d.id===item.dependencyId)?.key??item.dependencyId,kind:item.kind,provided:true,paths:Object.keys(item.files??{})}))}).catch(()=>null);
     // An abstention is the agent's judgement, so it is reported as one: whoever reads this gets the
     // agent's own account of what it could not read, not a generic "unavailable".
-    if(agent?.status==='ABSTAINED')return conflict(
+    if(agent?.status==='ABSTAINED'&&!agent.payload)return conflict(
       `分析 agent 判定这个工程无法完成分析：${agent.reason}${agent.missing.length?`（缺 ${agent.missing.join('、')}）`:''}。请补齐后重新检查。`);
     if(agent?.status==='FAILED')return conflict(`分析 agent 没有跑完：${agent.reason}。这是执行问题不是工程问题，请重试或查看 agent 日志。`);
     let inspection:ProjectInspection|null=null;
-    if(agent?.status==='PRODUCED'){
+    if(agent?.status==='PRODUCED'||agent?.status==='ABSTAINED'){
       try{
         const candidate=toProjectInspection(agent.payload as never,asset.assetId,asset.artifactSha256,stableToolId,agent.scanner??null,files);
         // An inspection with neither tools nor a skill verdict carries no information.
-        if(candidate.tools.length||candidate.skill.status!=='UNKNOWN')inspection=candidate;
+        if(candidate.tools.length||candidate.runtimeCapabilities?.length||candidate.skill.status!=='UNKNOWN')inspection=candidate;
       }catch{inspection=null;}
     }
     if(!inspection)return conflict('分析不可用：A2 agent 未产出工具与基线。静态规则不再猜测工具与输入输出，因此无法继续迁移。');
@@ -146,17 +165,96 @@ export class MigrationStore {
     // agent answered COMPLIANT and NON_COMPLIANT about the same package -- and a compliance
     // verdict that flips is not a verdict. The rules already exist (validateSkill, the same ones
     // that judge the candidate); the agent's own findings are merged in as evidence for a human.
-    const byRules=validateSkill(files,asset.skillFile);
-    inspection.skill={status:byRules.status,findings:[...byRules.findings,...inspection.skill.findings]};
+    const byRules=validateSkill(originalFiles,asset.skillFile);
+    const agentSkillFindings=inspection.skill.findings.filter(finding=>finding.code!=='DIRECTORY_NAME_MISMATCH'&&!/(?:目录名|文件夹名).{0,20}(?:name|名称)|(?:name|名称).{0,20}(?:目录名|文件夹名)/iu.test(`${finding.message} ${finding.suggestion}`));
+    inspection.skill={status:byRules.status,findings:[...byRules.findings,...agentSkillFindings]};
+    inspection.dependencyAnalysis=analyzeDependencies(agent!.payload,inspection,files,supplementItems,record.revision,materials.digest(record),agent?.status==='PRODUCED'||agent?.status==='ABSTAINED'?agent.workspaceRoot:undefined,agent?.status==='PRODUCED'||agent?.status==='ABSTAINED'?agent.libraryInventory:undefined);
+    if(agent?.status==='ABSTAINED'){inspection.dependencyAnalysis.status='PARTIAL';inspection.dependencyAnalysis.reason=agent.reason}
+    for(const tool of inspection.tools){if(inspection.dependencyAnalysis.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT')){tool.recommendedForm='MCP';tool.recommendedLanguage=recommendLanguage('MCP',tool.language);tool.recommendationReason='此实现需要 Runtime 上下文或凭证注入，应迁移为 MCP 服务；Script command 不支持额外注入。'}}
+    if(asset.assetId===value.source.assetId)value.sourceInspection=structuredClone(inspection);
+    if(sourceOnly&&value.candidate){await writeJsonAtomic(this.file(id),value);return inspection}
     value.inspection=inspection;
     // The baseline is a stage product, so it is recorded as one: what produced it and what it was
     // bound to. Without the binding there is no way to say later whether it still describes the
     // asset it was written for (L1 §3.5 rule 1).
-    value.analysis=stageEnvelope({assetDigest:asset.artifactSha256,stageId:'A2',producer:'AGENT',status:'PRODUCED',
+    value.analysis=stageEnvelope({assetDigest:asset.artifactSha256,stageId:'A2',producer:'AGENT',status:agent?.status==='ABSTAINED'?'ABSTAINED':'PRODUCED',
+      inputDigests:{supplements:materials.digest(record)},
       payload:inspection});
     value.decisions=(value.decisions??[]).filter(decision=>decision.baseAssetId===asset.assetId&&value.inspection!.tools.some(tool=>tool.toolId===decision.toolId));
     await writeJsonAtomic(this.file(id),value);return value.inspection;
   });}
+  async dependencyData(id:string,dependencyId:string){
+    const value=await this.get(id),dependency=value.sourceInspection?.dependencyAnalysis?.dependencies.find(d=>d.id===dependencyId);
+    if(!dependency||!['DATA','CONFIG'].includes(dependency.kind))return conflict('当前诊断中不存在此数据项');
+    if(dependency.owner==='RUNTIME'){const config=await new MigrationRuntimeConfig(this.root).get(id);return {provided:dependencyId in config.values,value:config.values[dependencyId]??null}}
+    const item=(await new MigrationSupplements(this.root).get(id)).items.find(s=>s.dependencyId===dependencyId);
+    return {provided:!!item,value:item?.value??null};
+  }
+  async runtimeConfiguration(id:string){
+    const value=await this.get(id),config=await new MigrationRuntimeConfig(this.root).get(id),deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
+    return {revision:config.revision,dependencies:deps.filter(d=>d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({dependencyId:d.id,provided:d.id in config.values,valid:d.id in config.values&&!validateDependencyData(config.values[d.id],d.schema).length})),checks:config.checks.map(check=>({...check,current:check.configurationDigest===configurationDigest(config,deps)&&check.assetDigest===(check.kind==='GENERATED_TOOL'?(value.candidate??value.source):value.source).artifactSha256}))};
+  }
+  async saveRuntimeDependency(id:string,dependencyId:string,input:unknown){return this.serial(async()=>{
+    const p=z.strictObject({revision:z.number().int().nonnegative(),value:z.unknown()}).parse(input);
+    if(!Object.prototype.hasOwnProperty.call(p,'value'))return conflict('请提供测试数据');
+    const value=await this.get(id),dep=value.sourceInspection?.dependencyAnalysis?.dependencies.find(d=>d.id===dependencyId);
+    if(!dep||dep.owner!=='RUNTIME'||dep.action!=='INJECT')return conflict('当前诊断没有这项可注入的运行时依赖');
+    const config=await new MigrationRuntimeConfig(this.root).save(id,dep,p.value,p.revision);return {revision:config.revision};
+  });}
+  async resolveRuntimeDependencies(reference:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string}){
+    const value=await this.get(reference.migrationId),config=await new MigrationRuntimeConfig(this.root).get(reference.migrationId),deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
+    if(!value.candidate||value.candidate.artifactSha256!==reference.assetDigest||config.revision!==reference.revision||configurationDigest(config,deps)!==reference.configurationDigest)return conflict('测试运行依赖或候选已变化，请重新配置验证');
+    return migrationExecutionConfig(deps,config.values,value.inspection?.tools??[]);
+  }
+  async resolveServiceEnvironment(reference:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string},toolNames:string[]){
+    const value=await this.get(reference.migrationId),config=await new MigrationRuntimeConfig(this.root).get(reference.migrationId),deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
+    if(!value.candidate||value.candidate.artifactSha256!==reference.assetDigest||config.revision!==reference.revision||configurationDigest(config,deps)!==reference.configurationDigest)return conflict('服务配置或候选已变化，请重新验证');
+    const tools=value.inspection?.tools??[];
+    if(toolNames.some(name=>!tools.some(tool=>tool.name===name)))return conflict('服务配置关联了未知工具');
+    const ids=tools.filter(tool=>toolNames.includes(tool.name)).map(tool=>tool.toolId);
+    return serviceEnvironment(deps.filter(dep=>dep.toolIds.some(id=>ids.includes(id))),config.values);
+  }
+  async checkBusinessConnection(id:string,input:unknown,signal?:AbortSignal){return this.serial(async()=>{
+    const p=z.strictObject({toolId:z.string(),endpoint:z.string().url(),method:z.enum(['GET','HEAD']),confirmReadOnly:z.literal(true),revision:z.number().int().nonnegative()}).parse(input);
+    const value=await this.get(id),inspection=value.sourceInspection;
+    if(!inspection?.tools.some(t=>t.toolId===p.toolId))return conflict('请先完成源工具诊断');
+    const store=new MigrationRuntimeConfig(this.root),config=await store.get(id);if(config.revision!==p.revision)return conflict('测试配置已变化，请刷新');
+    const deps=inspection.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(p.toolId))??[];
+    const injection=runtimeInjection(deps,config.values,'HTTP_HEADER');if(injection.missing.length)return conflict(`请先提供测试依赖：${injection.missing.join('、')}`);
+    const result=await probeBusinessInterface(p.endpoint,p.method,injection.headers,signal);
+    return store.check(id,{...result,toolId:p.toolId,kind:'BUSINESS_INTERFACE',configurationDigest:configurationDigest(config,inspection.dependencyAnalysis?.dependencies),assetDigest:value.source.artifactSha256});
+  });}
+  async supplementDependency(id:string,dependencyId:string,input:unknown){return this.serial(async()=>{
+    const parsed=z.strictObject({revision:z.number().int().nonnegative(),value:z.unknown()}).parse(input);
+    if(!Object.prototype.hasOwnProperty.call(parsed,'value'))return conflict('请提供数据');
+    return this.saveDependency(id,dependencyId,parsed.revision,{value:parsed.value});
+  });}
+  async uploadDependency(id:string,dependencyId:string,revision:number,filename:string,bytes:Buffer){return this.serial(async()=>{
+    const files=supplementFiles(dependencyId,filename,bytes);
+    return this.saveDependency(id,dependencyId,revision,{files,filename});
+  });}
+  async explainDependency(id:string,dependencyId:string,input:unknown){return this.serial(async()=>{
+    const p=z.strictObject({revision:z.number().int().nonnegative(),explanation:z.string().trim().min(1).max(16000)}).parse(input);
+    const previous=(await new MigrationSupplements(this.root).get(id)).items.find(s=>s.dependencyId===dependencyId);
+    const path=`.diagnosis-supplements/${dependencyId}/dependency-contract.md`;
+    return this.saveDependency(id,dependencyId,p.revision,{files:{...previous?.files,[path]:Buffer.from(p.explanation,'utf8').toString('base64')},filename:previous?.filename??'dependency-contract.md'},true);
+  });}
+  private async saveDependency(id:string,dependencyId:string,revision:number,content:Partial<Supplement>,explanation=false){
+    const value=await this.get(id),diagnostic=value.sourceInspection?.dependencyAnalysis;
+    const dep=diagnostic?.dependencies.find(d=>d.id===dependencyId);
+    if(!dep)return conflict('缺项已变化，请刷新诊断');
+    if(dep.owner!=='TOOL'&&!explanation)return conflict('运行时依赖请在运行配置中提供；归属未确认的依赖请补充契约说明');
+    const materials=new MigrationSupplements(this.root),record=await materials.get(id);
+    if(!Number.isInteger(revision)||revision!==record.revision)return conflict('补充内容已变化，请刷新后再提交');
+    if(content.files&&!['SDK','RESOURCE','CONFIG'].includes(dep.kind)&&!explanation)return conflict('此依赖需要直接填写数据');
+    if('value' in content&&!['DATA','CONFIG'].includes(dep.kind))return conflict('此依赖需要上传文件');
+    if('value' in content){const errors=validateDependencyData(content.value,dep.schema);if(errors.length)throw Object.assign(new Error(errors.join('；')),{statusCode:400});if(Buffer.byteLength(JSON.stringify(content.value))>128000)throw Object.assign(new Error('补充数据超过 128 KB'),{statusCode:400})}
+    const saved=await materials.save(id,{dependencyId,kind:dep.kind,...content,updatedAt:new Date().toISOString()});
+    diagnostic!.revision=saved.revision;diagnostic!.materialsDigest=materials.digest(saved);diagnostic!.status='PARTIAL';dep.provided='PENDING';dep.issue='已提供，等待继续分析';
+    // Keep the previous candidate in history; it is no longer current after inputs change.
+    value.candidate=null;value.inspection=structuredClone(value.sourceInspection!);value.analysis=undefined;
+    await writeJsonAtomic(this.file(id),value);return {revision:saved.revision,inspection:value.inspection};
+  }
   async inspection(id:string){const value=await this.get(id),asset=value.candidate??value.source;
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return this.inspect(id);
     // The asset id says which asset, the digest says which contents. A record written before
@@ -196,10 +294,18 @@ export class MigrationStore {
           ??recommendLanguage(decision.form,tool?.language??null);
         const sample=contractSample(tool);
         contract[decision.toolId]={form:decision.form,language,toolName:tool?.name??'',
+          dependencies:inspection.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(decision.toolId))??[],
+          runtimeInjection:'SERVICE_ENV dependencies are startup configuration: read the declared environment variable inside the MCP service, never from request Headers or business arguments. Actual values are supplied by the launcher, never sent to this model. runtimeToolConfig is for MCP only: contextBindings map HTTP Header names to context references, auth providers return request headers, and business arguments remain separate. Script runs through generic command with no additional Runtime injection. Never ask the model to supply injected fields.',
           inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
           samples:(tool?.samples??[]).map(item=>item.input),
           // No sample means the call cannot be exercised. Report that rather than invent one.
           ...('reason' in sample?{sampleMissing:sample.reason}:{sampleInput:sample.input})};
+      }
+      for(const capability of inspection.runtimeCapabilities??[]){
+        contract[`harness:${capability.name}`]={form:'HARNESS',language:'python',toolName:capability.name,
+          expectedToolNames:(inspection.runtimeCapabilities??[]).map(item=>item.name),
+          usageContract:capability.usageContract,evidence:capability.evidence,
+          sampleMissing:'诊断未提供 Harness 调用样例，仅验证原名工具可加载；不编造测试输入'};
       }
       // A4 is not deterministic: the same input can produce or stall. Retry the run a
       // bounded number of times, but treat ABSTAINED as a decision, not a flake.
@@ -211,8 +317,9 @@ export class MigrationStore {
       const result=await this.implementer({
         assetDigest:asset.artifactSha256,runId:asset.assetId,files:archive,
         decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
-        tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema,samples:t.samples})),
+        tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema,samples:t.samples,migrationContract:contract[t.toolId]})),
         contract,
+        deliveryContract:{script:{execution:"COMMAND",cwd:"WORKSPACE",entrypoint:"RUNTIME_PROVIDED_ABSOLUTE_PATH",packageResources:"RELATIVE_TO_SCRIPT",runtimeInjection:false},mcp:{contextTransport:"HTTP_HEADER",serviceConfigurationTransport:"SERVICE_ENV",businessArguments:"SEPARATE",pythonFramework:{package:"fastmcp",version:"2.14.7",import:"from fastmcp import FastMCP"}},harness:harnessDeliveryContract(inspection),runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions)},
       });
       if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
         // An abstention is a decision that belongs to a human. Report which Tool and why,
@@ -229,15 +336,23 @@ export class MigrationStore {
       }
       if(result?.status==='FAILED'){agentFailure=result.reason;continue;}
       if(result?.status==='PRODUCED'){
+        let harnessPlugins;
+        try{harnessPlugins=toGeneratedHarnessPlugins(result.payload as Record<string,unknown>,result.files,inspection);}
+        catch(error){agentFailure=error instanceof Error?error.message:String(error);continue;}
+        const deliveryIssues=validateAgentRuntimeDelivery(result.payload as Record<string,unknown>,inspection,decisions);
+        if(deliveryIssues.length){agentFailure=deliveryIssues.join('；');continue;}
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const mapped=toGeneratedImplementations(result.payload as never,result.files,nameById);
-        if(Object.keys(mapped).length)return mapped;
+        const missing=decisions.filter(decision=>!mapped[decision.toolId]||mapped[decision.toolId]!.language!==plan.items.find(item=>item.toolId===decision.toolId)?.language);
+        if(!missing.length)return {implementations:mapped,harnessPlugins};
+        agentFailure=`A4 交付不完整或语言与授权不符：${missing.map(decision=>nameById[decision.toolId]??decision.toolId).join('、')}`;
       }
       }
       if(agentFailure)return conflict(
         `迁移 agent 跑完了但没交付可用结果：${agentFailure}。这是执行问题不是工程问题——不会退回只能产出脚本的回退生成器。请重试或查看 agent 日志。`);
     }
-    return this.codeGenerator.generate({archive,inspection,decisions});
+    if(inspection.runtimeCapabilities?.length)return conflict('Harness 适配需要迁移 Agent 交付插件代码，不能退回业务脚本生成器');
+    return {implementations:await this.codeGenerator.generate({archive,inspection,decisions}),harnessPlugins:[]};
   }
   private async generatePortable(id:string,input:unknown){return this.serial(async()=>{
     const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
@@ -252,6 +367,7 @@ export class MigrationStore {
     }
     const plan=buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);if(!plan.generationAllowed)return conflict('当前逐 Tool 决策尚不能生成候选');
     const archive=await this.skills.readArchive(asset.assetId),version=`2.0.0-migration.${(value.candidateHistory?.length??0)+1}`;
+    for(const item of (await new MigrationSupplements(this.root).get(id)).items)for(const [name,content] of Object.entries(item.files??{}))archive[name]=Buffer.from(content,'base64');
     // Clear the previous generation before regenerating. The recorded diff is the only
     // reliable list of what was generated -- matching on a path prefix does not work,
     // because the generator writes mcp/ skill/ scripts/, not a generated/ root.
@@ -259,14 +375,22 @@ export class MigrationStore {
       const current=archive[item.path];
       if(current===undefined)continue;
       if(Buffer.from(current).toString('utf8')!==item.after)return conflict('生成文件已被人工修改；为避免覆盖工程改动，请将其作为新实现重新导入和检查');
-      delete archive[item.path];
+      if(item.operation==='MODIFY')archive[item.path]=strToU8(item.before);
+      else if(item.path!==asset.skillFile)delete archive[item.path];
     }
     const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
-    const implementations=await this.generateImplementations(archive,value.inspection,decisions,asset,plan);
-    const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,implementations});
+    const delivery=await this.generateImplementations(archive,value.inspection,decisions,asset,plan);
+    const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,...delivery});
+    if(value.inspection.dependencyAnalysis?.dependencies.length){
+      const path=decisions.some(d=>d.form==='MCP')?'runtime-dependencies.json':'scripts/runtime-dependencies.json';
+      if(generated.files[path])return conflict('生成工程占用了运行依赖声明路径，请调整后重新生成');
+      const declarations=value.inspection.tools.map(tool=>({tool:tool.name,dependencies:value.inspection!.dependencyAnalysis!.dependencies.filter(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({name:d.name,key:d.key,purpose:d.purpose,required:d.blocking,sensitive:d.sensitive,schema:d.schema,binding:d.binding}))}));
+      const content=JSON.stringify({schemaVersion:'finance.tool-runtime-dependencies.v1',tools:declarations},null,2)+'\n';generated.files[path]=strToU8(content);generated.diff.push({path,operation:'ADD',before:'',after:content});
+    }
     const candidate=await this.publishCandidate(generated.files);
     const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:value.inspection,decisions:value.decisions!,baseAssetId:asset.assetId,generations:generated.generations});
     value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
+    value.harnessPlugins=delivery.harnessPlugins.map(({contents,...declaration})=>declaration);
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await writeJsonAtomic(this.file(id),value);return value;
   });}
@@ -292,6 +416,8 @@ export class MigrationStore {
     catch{return conflict('生成候选的静态诊断执行失败，候选未被采纳；请检查 uv、锁文件和扫描器配置');}
     if(candidateDiagnosis.digest!==input.candidate.artifactSha256)return conflict('生成候选的静态诊断与资产不匹配');
     const candidateInspection=inspectProject({assetId:input.candidate.assetId,assetDigest:input.candidate.artifactSha256,files:decoded,skillFile:input.candidate.skillFile,diagnosis:candidateDiagnosis});
+    candidateInspection.dependencyAnalysis=input.inspection.dependencyAnalysis?structuredClone(input.inspection.dependencyAnalysis):undefined;
+    candidateInspection.runtimeCapabilities=input.inspection.runtimeCapabilities?structuredClone(input.inspection.runtimeCapabilities):undefined;
     if(candidateInspection.skill.status!=='COMPLIANT'){
       const errors=candidateInspection.skill.findings.filter(item=>item.severity==='ERROR').map(item=>`${item.code}: ${item.message}`).join('；');
       return conflict(`生成候选不符合 Skill 包规范，候选未被采纳：${errors||'Skill 检查未通过'}`);
@@ -303,7 +429,12 @@ export class MigrationStore {
       const generation=input.generations.find(item=>item.toolId===tool.toolId)!;
       if(decision.form==='SCRIPT'){
         const entry=generation.entrypoint??generation.files.find(name=>CODE_FILE.test(name))!;
-        return {...tool,sourcePaths:[entry],language:languageOfSourcePaths([entry]),kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:(/\.py$/iu.test(entry)?'PYTHON':'NODE') as 'PYTHON'|'NODE',path:entry},findings:[]};
+        // No formal source schema is not the same as a tool taking no arguments. Expose
+        // documented sample fields as hints, without claiming they are exhaustive/required.
+        const sample=tool.samples.find(item=>item.input&&typeof item.input==='object'&&!Array.isArray(item.input))?.input as Record<string,unknown>|undefined;
+        const inputSchema=tool.inputSchema??(sample?{type:'object',properties:Object.fromEntries(Object.entries(sample).map(([name,value])=>[name,
+          value===null?{}:Array.isArray(value)?{type:'array'}:{type:typeof value==='object'?'object':typeof value}])),additionalProperties:true}:null);
+        return {...tool,inputSchema,sourcePaths:[entry],language:languageOfSourcePaths([entry]),kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:(/\.py$/iu.test(entry)?'PYTHON':'NODE') as 'PYTHON'|'NODE',path:entry},findings:tool.inputSchema||!sample?[]:[{code:'SAMPLE_INPUT_HINTS',severity:'INFO' as const,path:entry,line:1,message:'输入字段来自原始样例，仅作调用提示，不是完整源 Schema'}]};
       }
       const generatedFiles=generation.files.filter(name=>CODE_FILE.test(name));
       return {...tool,sourcePaths:generatedFiles,language:languageOfSourcePaths(generatedFiles),kind:'MCP' as const,portability:'PORTABLE_MCP' as const,entrypoint:undefined,findings:[]};
@@ -317,41 +448,74 @@ export class MigrationStore {
     const tool=inspection.tools.find(item=>item.toolId===p.toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
     const generated=value.portableGenerations?.find(item=>item.toolId===tool.toolId);if(generated&&!generated.readyForValidation)return conflict('生成候选仍有待办，不能标记技术验证通过');
     const service=new TechnicalValidationService(),archive=await this.skills.readArchive(asset.assetId);
+    const runtimeStore=new MigrationRuntimeConfig(this.root),runtimeConfig=await runtimeStore.get(id);
+    const runtimeDeps=value.sourceInspection?.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(tool.toolId))??[];
+    if(tool.kind==='SCRIPT'&&runtimeDeps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT'))return conflict('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
+    const groupIds=(value.portableGenerations??[]).filter(g=>generated&&JSON.stringify([g.start,g.prepare])===JSON.stringify([generated.start,generated.prepare])).map(g=>g.toolId);
+    const serviceDeps=value.sourceInspection?.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.some(id=>[tool.toolId,...groupIds].includes(id)))??runtimeDeps;
+    const environment=serviceEnvironment(serviceDeps,runtimeConfig.values);
+    const injection=runtimeInjection(runtimeDeps,runtimeConfig.values,tool.kind==='MCP'?'HTTP_HEADER':'SCRIPT_CONTEXT');
+    if(injection.missing.length)return conflict(`工具试运行缺少测试配置：${injection.missing.join('、')}`);
     // A Tool this platform migrated is one this platform starts: the deliverable declares the
     // command, and that command being usable is exactly what raising the service proves. An
     // endpoint is only for a Tool that was already an MCP server and has no deliverable at all.
     const migrated=Boolean(generated?.start?.length)||Boolean(generated&&tool.kind==='MCP');
     const result=tool.kind==='MCP'
-      ?await service.validateMcp({asset,tool,archive,arguments:p.arguments,signal,
+      ?await service.validateMcp({asset,tool,archive,arguments:p.arguments,headers:injection.headers,environment,signal,
         ...(migrated?{service:{start:generated?.start,prepare:generated?.prepare}}:{endpoint:p.endpoint??''})})
-      :await service.validateScript({asset,archive,tool,request:p.request,signal});
+      :await service.validateScript({asset,archive,tool,request:p.request,context:injection.context,signal});
+    if(runtimeDeps.length){
+      result.runtimeConfigurationDigest=configurationDigest(runtimeConfig,value.sourceInspection?.dependencyAnalysis?.dependencies);
+      if(Object.keys(environment).length||Object.keys(injection.headers).length||Object.keys(injection.context).length){result.error=result.status==='PASSED'?null:'工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。';result.stages=result.stages.map(stage=>stage.passed?stage:{...stage,message:'此步骤未通过，原始错误未保存以保护运行依赖。'})}
+      await runtimeStore.check(id,{toolId:tool.toolId,kind:value.candidate?'GENERATED_TOOL':'SOURCE_TOOL',status:result.status,configurationDigest:result.runtimeConfigurationDigest,assetDigest:asset.artifactSha256,validationId:result.validationId,message:result.status==='PASSED'?'实际工具调用通过；尚未完成业务效果评估。':'实际工具调用未通过。'});
+    }
     (value.technicalValidations??=[]).push(result);await writeJsonAtomic(this.file(id),value);return result;
   });}
   async technicalValidations(id:string){return (await this.get(id)).technicalValidations??[];}
-  private currentTechnicalState(value:Migration){
+  private async currentTechnicalState(value:Migration){
     const asset=value.candidate??value.source,inspection=value.inspection;
     if(!inspection)return {ready:false,reasons:['请先完成 Tool 检查']};
-    const latest=new Map<string,TechnicalValidation>();
-    for(const result of value.technicalValidations??[])if(result.assetDigest===asset.artifactSha256)latest.set(result.toolId,result);
+    const latest=new Map<string,TechnicalValidation>(),runtimeDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(value.id),value.sourceInspection?.dependencyAnalysis?.dependencies);
+    for(const result of value.technicalValidations??[])if(result.assetDigest===asset.artifactSha256&&(!result.runtimeConfigurationDigest||result.runtimeConfigurationDigest===runtimeDigest))latest.set(result.toolId,result);
     const reasons=inspection.tools.flatMap(tool=>latest.get(tool.toolId)?.status==='PASSED'?[]:[`${tool.name} 尚未通过当前资产的技术验证`]);
     return {ready:reasons.length===0,reasons};
   }
   async validateOpenJiuwen(id:string,input:unknown){
-    const value=await this.get(id),state=this.currentTechnicalState(value);
+    const value=await this.get(id),state=await this.currentTechnicalState(value);
     if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
     if(!state.ready)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
     const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string}}};
-    if(body?.configuration?.runtime?.type!=='runtime_http')return conflict('OpenJiuwen 验证必须选择已登记的 Runtime HTTP 环境');
+    if(body?.configuration?.runtime?.type!=='runtime_http')return conflict('OpenJiuwen 验证必须选择本地 Runtime');
     const environmentId=body.configuration.runtime.environmentId;
-    const environment=environmentId?await this.environments?.get(environmentId):null;
-    if(!environment||environment.type!=='runtime_http'||environment.runtimeType!=='openjiuwen')return conflict('目标必须是已登记的 OpenJiuwen 环境');
+    const environment=environmentId?await this.migrationRuntimes?.environment(environmentId):null;
+    if(!environment||environment.runtimeType!=='openjiuwen')return conflict('目标必须是后端配置的本地 OpenJiuwen Runtime');
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
       .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;
         while(true){const prefix=cursor?`${cursor}/`:'';if(archive[`${prefix}pyproject.toml`]||archive[`${prefix}package.json`]){root=cursor;break;}if(!cursor)break;cursor=cursor.split('/').slice(0,-1).join('/');}
         const filePaths=Object.keys(archive).filter(name=>(!root||name.startsWith(`${root}/`))&&/\.(?:py|js|mjs|cjs|json|toml|lock)$/iu.test(name));
-        return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
-    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeToolBindings:{left:scripts,right:scripts}}};
+        return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,
+          launch:tool.entrypoint!.kind==='PYTHON'?pythonCommand(archive,entry):{program:'node',args:[entry]},
+          ...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
+    const services:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environmentReference?:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string}}>=[];
+    for(const generation of value.portableGenerations??[]){
+      if(generation.form!=='MCP')continue;
+      if(!generation.start?.length)return conflict(`候选 MCP ${generation.toolName} 缺少启动命令`);
+      const existing=services.find(service=>JSON.stringify([service.start,service.prepare])===JSON.stringify([generation.start,generation.prepare]));
+      if(existing){existing.toolNames.push(generation.toolName);existing.filePaths=[...new Set([...existing.filePaths,...generation.files])];}
+      else services.push({assetDigest:asset.artifactSha256,toolNames:[generation.toolName],filePaths:generation.files,start:generation.start,...(generation.prepare?{prepare:generation.prepare}:{})});
+    }
+    const config=await new MigrationRuntimeConfig(this.root).get(id);
+    const deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
+    for(const service of services){
+      const toolIds=inspection.tools.filter(tool=>service.toolNames.includes(tool.name)).map(tool=>tool.toolId);
+      const serviceDeps=deps.filter(dep=>dep.toolIds.some(id=>toolIds.includes(id))&&dep.binding?.kind==='SERVICE_ENV');
+      serviceEnvironment(serviceDeps,config.values);
+      if(serviceDeps.length)service.environmentReference={migrationId:id,revision:config.revision,assetDigest:asset.artifactSha256,configurationDigest:configurationDigest(config,deps)};
+    }
+    const plugins=(value.harnessPlugins??[]).map(plugin=>({assetDigest:asset.artifactSha256,manifestPath:plugin.manifestPath,filePaths:plugin.files,toolNames:plugin.toolNames}));
+    const comparison=(body.configuration as Record<string,unknown>).evaluationMode==='service_comparison';
+    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},runtimeHarnessBindings:{left:comparison?[]:plugins,right:plugins},...(deps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
     return this.validate(id,normalized);
   }
   async openJiuwenValidations(id:string){
@@ -366,8 +530,8 @@ export class MigrationStore {
       intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string(),simulationProfile:z.string().optional(),acknowledgeSimulation:z.literal(true).optional()}).parse(input);
     const value=await this.get(id);
     if(p.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
-    if(p.environmentId){const env=await this.environments?.get(p.environmentId);
-      if(!env||env.type!=='runtime_http'||env.runtimeType!=='openjiuwen')return conflict('目标必须是已登记的 OpenJiuwen 环境');}
+    if(p.environmentId){const env=await this.migrationRuntimes?.environment(p.environmentId);
+      if(!env||env.runtimeType!=='openjiuwen')return conflict('目标必须是后端配置的本地 OpenJiuwen Runtime');}
     const base=value.candidate??value.source;
     const originalArchive=await this.skills.readArchive(base.assetId);
     if(value.generation)for(const [name,bytes] of Object.entries(originalArchive).filter(([name])=>name.startsWith('migration-generated/'))){
@@ -397,7 +561,7 @@ export class MigrationStore {
     if (!candidate || candidate.artifactSha256===value.source.artifactSha256) return conflict('请作为独立的新版本候选导入；源资产保持不变');
     if (candidate.version===value.source.version) return conflict('候选必须使用新的版本号');
     value.candidate=candidate; value.candidateNotes=p.notes;
-    delete value.inspection;value.decisions=[];delete value.portableGenerations;delete value.portableGenerationDiff;
+    delete value.inspection;value.decisions=[];delete value.portableGenerations;delete value.portableGenerationDiff;delete value.harnessPlugins;
     (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
     await writeJsonAtomic(this.file(id),value); return value;
   });}
@@ -440,6 +604,14 @@ export class MigrationStore {
     const suite=await this.preparations.create({skill:value.source,summary:p.summary,cases:p.cases,holdoutCases:p.holdoutCases,source:'manual'});
     (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
   });}
+  async importSimpleSuite(id:string,input:unknown){return this.serial(async()=>{
+    const originalServiceMode=!!input&&typeof input==='object'&&(input as {mode?:unknown}).mode==='service_comparison';
+    const parsed=originalServiceMode?normalizeOriginalServiceSuite(input):simpleMigrationSuiteSchema.parse(input),value=await this.get(id);
+    const comparisonOnly=originalServiceMode&&(input as {cases:Array<{criteria?:unknown}>}).cases.some(c=>c.criteria===undefined);
+    if(!this.preparations)return conflict('测试集服务不可用');
+    const suite=await this.preparations.create({skill:value.source,summary:parsed.name,cases:simpleMigrationCases(parsed),source:'manual',assessmentMode:'natural_language',...(comparisonOnly?{comparisonOnly:true}:{})});
+    (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
+  });}
   /**
    * The test set, generated from the analysis rather than typed in by hand.
    *
@@ -448,20 +620,37 @@ export class MigrationStore {
    * tool surface, so a question cannot require a Tool the Skill never had.
    */
   async generateSuite(id:string,input:unknown) {return this.serial(async()=>{
-    const p=z.strictObject({baseAssetId:z.string().min(1),maximumCases:z.number().int().min(1).max(8).optional()}).parse(input);
+    const p=z.strictObject({baseAssetId:z.string().min(1),maximumCases:z.number().int().min(1).max(8).optional(),assessmentMode:z.literal('natural_language').optional()}).parse(input);
     const value=await this.get(id),current=value.candidate??value.source,asset=value.source;
     if(p.baseAssetId!==current.assetId)return conflict('资产已变化，请刷新后重新生成测试集');
     if(!value.inspection||value.inspection.assetId!==current.assetId)return conflict('测试集要从分析结果生成，请先检查当前资产');
     if(!this.preparations)return conflict('题集服务不可用');
     const decoded=await this.decodedSkillSource(asset);
+    let sourceInspection=value.sourceInspection??(value.inspection.assetId===asset.assetId?value.inspection:null);
+    // Upgrade existing projects without reading their candidate as the original baseline.
+    if(!sourceInspection){
+      const archive=await this.skills.readArchive(asset.assetId),files:Record<string,string>={};
+      for(const [name,bytes] of Object.entries(archive))try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
+      const result=await this.analyzer({assetDigest:asset.artifactSha256,runId:`${id}-source`,files:archive});
+      if(!result||result.status!=='PRODUCED')return conflict('原始资产分析未完成，不能使用候选分析替代出题依据');
+      sourceInspection=toProjectInspection(result.payload as never,asset.assetId,asset.artifactSha256,stableToolId,result.scanner??null,files);
+      sourceInspection.skill=validateSkill(files,asset.skillFile);
+      value.sourceInspection=structuredClone(sourceInspection);
+    }
+    if(!sourceInspection||sourceInspection.assetDigest!==asset.artifactSha256)return conflict('缺少原始资产的冻结分析，请重新分析原始资产后生成测试集');
     const generated=await this.suiteGenerator({
       skillId:asset.skillId,
-      skillSource:`${decoded}\n\n${baselineBrief(value.inspection)}`,
-      tools:value.inspection.tools.map(tool=>tool.name),
+      skillSource:`${decoded}\n\n${baselineBrief(sourceInspection)}`,
+      tools:sourceInspection.tools.map(tool=>tool.name),
+      documentedInputs:sourceInspection.tools.flatMap(tool=>tool.samples.slice(0,2).map(sample=>({toolName:tool.name,input:sample.input}))),
       ...(p.maximumCases===undefined?{}:{maximumCases:p.maximumCases}),
       generationId:`migration-suite-${id}`,
     });
-    const suite=await this.preparations.create({skill:asset,summary:generated.summary,cases:generated.cases,source:'ai_generated'});
+    // Generated cases already carry the analyzed Tool bindings and expectations. Converting them
+    // through the human-authored simple-suite format used to erase requiredTools, which made the
+    // Runtime execute a tool while the acceptance Judge was told there was no tool requirement.
+    const cases=p.assessmentMode==='natural_language'?generated.cases.map(item=>({...item,rubric:item.rubric.map(criterion=>({...criterion,allOf:[],anyOf:[],noneOf:[]}))})):generated.cases;
+    const suite=await this.preparations.create({skill:asset,summary:generated.summary,cases,source:'ai_generated',...(p.assessmentMode?{assessmentMode:p.assessmentMode}:{})});
     (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
   });}
   /** The Skill's own words, plus its references. Professional references only -- never a candidate's
@@ -475,7 +664,8 @@ export class MigrationStore {
     remaining-=Math.min(remaining,parts[0]!.length);
     for(const name of Object.keys(archive).sort()){
       if(remaining<=0)break;
-      if(!/^references\/.*\.md$/u.test(name)||/evals?\/|holdout|sealed|labels/iu.test(name))continue;
+      const skillRoot=asset.skillFile.includes('/')?asset.skillFile.slice(0,asset.skillFile.lastIndexOf('/')+1):'';
+      if(!(name.startsWith(`${skillRoot}references/`)&&/\.md$/u.test(name))||/evals?\/|holdout|sealed|labels/iu.test(name))continue;
       const text=decode(name).slice(0,Math.min(remaining,8_000));
       parts.push(`# ${name}\n${text}`);remaining-=text.length;
     }
@@ -488,11 +678,12 @@ export class MigrationStore {
     const experiment=value.runs.find(r=>r.jobId===p.jobId);
     if (!experiment || experiment.candidateDigest!==value.candidate.artifactSha256) return conflict('请为当前候选选择一次运行记录');
     if(value.schemaVersion==='finance.skill-migration.v2'){
-      const technical=this.currentTechnicalState(value);if(!technical.ready)return conflict(`请先完成当前 Tool 技术验证：${technical.reasons.join('；')}`);
+      const technical=await this.currentTechnicalState(value);if(!technical.ready)return conflict(`请先完成当前 Tool 技术验证：${technical.reasons.join('；')}`);
       const environmentId=experiment.declaredPlan?.configuration.runtime.type==='runtime_http'?experiment.declaredPlan.configuration.runtime.environmentId:null;
-      const environment=environmentId?await this.environments?.get(environmentId):null;
-      if(!environment||environment.type!=='runtime_http'||environment.runtimeType!=='openjiuwen')return conflict('请先完成当前候选的 OpenJiuwen 评估');
+      const environment=environmentId?await this.migrationRuntimes?.environment(environmentId):null;
+      if(!environment||environment.runtimeType!=='openjiuwen')return conflict('请先完成当前候选的本地 OpenJiuwen 评估');
     }
+    if(value.sourceInspection?.dependencyAnalysis?.dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')&&experiment.runtimeConfigurationDigest!==configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection.dependencyAnalysis.dependencies))return conflict('运行配置已变化，请重新评估后再优化');
     const job=this.jobs.get(p.jobId),variant=job?.report?.variants.right;
     if (variant?.mode!=='skill_version' || variant.artifactSha256!==value.candidate.artifactSha256) return conflict('缺少已完成的右侧候选运行证据');
     const item=await this.optimizers.create(p.jobId);
@@ -522,6 +713,11 @@ export class MigrationStore {
         executionModel:p.configuration.executionModel!,judgeModel:configuredModelRole('JUDGE').model});
     }
     if (!pack || p.configuration.includeHoldout) return conflict('请选择一个冻结的开发题集；留出题留给独立复评');
+    const serviceComparison=p.pair==='SC'&&p.configuration.evaluationMode==='service_comparison';
+    if((p.pair==='SC')!==(p.configuration.evaluationMode==='service_comparison'))return conflict('原服务对比必须使用 SC 对比计划');
+    if(pack.metadata.assessmentMode==='natural_language'&&(!(serviceComparison||(p.pair==='BC'&&p.configuration.evaluationMode==='candidate_assessment'))||p.configuration.judgeMode!=='model'))return conflict('自然语言测试集仅用于目标评估或原服务对比');
+    if(serviceComparison&&pack.metadata.assessmentMode!=='natural_language')return conflict('原服务对比请选择包含任务输入和验收要求的测试集');
+    if(pack.metadata.comparisonOnly==='true'&&!serviceComparison)return conflict('这份测试集以原服务为基线，请选择原服务对比；目标评估需另外提供独立验收要求');
     const expected=p.pair==='AB' ? [value.source,c] : p.pair==='BC' ? [c,c] : [value.source,c];
     for (const [index,side] of (['left','right'] as const).entries()) {
       const binding=p.configuration.runtimeBindings[side], variant=p.configuration[side==='left'?'leftVariant':'rightVariant'];
@@ -531,11 +727,13 @@ export class MigrationStore {
     }
     if(p.pair==='BC'&&p.configuration.evaluationMode!=='candidate_assessment')return conflict('BC 是对迁移候选的质量评估，不是左右胜负比较');
     if (p.pair==='AB' && p.configuration.runtimeBindings.left.environmentId!==p.configuration.runtimeBindings.right.environmentId) return conflict('AB 对照必须保持原 Runtime 环境一致');
-    const comparisonFingerprint=fingerprint({pack:pack.packFingerprint, model:p.configuration.executionModel,
+    const runtimeConfigurationDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
+    const comparisonFingerprint=fingerprint({runtimeConfigurationDigest,pack:pack.packFingerprint, model:p.configuration.executionModel,
       cases:p.configuration.selectedCaseIds, data:p.dataSnapshot, permissions:p.permissionBasis,
-      sourceProject:p.sourceProjectRef, lock:p.dependencyLockRef});
+      sourceProject:p.sourceProjectRef, lock:p.dependencyLockRef,evaluationMode:p.configuration.evaluationMode,
+      ...(p.configuration.originalService?{originalService:originalServiceFingerprint(p.configuration.originalService)}:{})});
     const job=await this.runs.create(p.configuration);
-    value.runs.push({jobId:job.jobId,pair:p.pair,candidateDigest:c.artifactSha256,comparisonFingerprint,packFingerprint:pack.packFingerprint,declaredPlan:p,suiteSnapshot:pack});
+    value.runs.push({jobId:job.jobId,pair:p.pair,candidateDigest:c.artifactSha256,comparisonFingerprint,packFingerprint:pack.packFingerprint,declaredPlan:p,suiteSnapshot:pack,runtimeConfigurationDigest});
     await writeJsonAtomic(this.file(id),value);
     return {job,comparisonFingerprint,acceptance:'NOT_VALIDATED',note:'Runs are experiments; declared environment/material references are not native-runtime or authorization attestation.'};
   });}
@@ -546,33 +744,44 @@ export class MigrationStore {
     const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>targetRunner.get(runId)));
     const current=targetRuns.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1);
     const currentAsset=value.candidate??value.source;
-    const technicalValidations=(value.technicalValidations??[]).map(result=>({...result,current:result.assetDigest===currentAsset.artifactSha256}));
+    const runtimeDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
+    const technicalValidations=(value.technicalValidations??[]).map(result=>({...result,current:result.assetDigest===currentAsset.artifactSha256&&(!result.runtimeConfigurationDigest||result.runtimeConfigurationDigest===runtimeDigest)}));
     const migrationPlan=value.inspection?buildMigrationPlan(value.inspection,value.decisions??[],value.inspection.assetId):null;
     const experiments=value.runs.map(r=>{
       const job=this.jobs.get(r.jobId);
       const complete=job?.status==='completed' && !!job.report?.cases.length && job.report.cases.every(c=>(['left','right'] as const).every(side=>{
+        if(side==='left'&&r.declaredPlan?.configuration.evaluationMode==='service_comparison'){
+          const service=c.left.metadata.baselineService as {configurationFingerprint?:string;sourceDigest?:string;responseDigest?:string}|undefined;
+          return c.left.status==='completed'&&c.left.streamCompleted&&service?.sourceDigest===value.source.artifactSha256
+            &&!!service.responseDigest&&service.configurationFingerprint===originalServiceFingerprint(r.declaredPlan.configuration.originalService!);
+        }
         const variant=job.configuration[side==='left'?'leftVariant':'rightVariant'];
         return c[side].status==='completed' && variant?.mode==='skill_version' && !!variant.artifactSha256
           && c[side].metadata.skillArtifactSha256===variant.artifactSha256;
       }));
-      return {...r,execution:job?.status??'MISSING',report:job?.report??null,evidence:complete?'HTTP_LOADED_DIGEST_CHECKED':'NOT_COMPLETE',
+      const selected=r.declaredPlan?.configuration.selectedCaseIds??[];
+      const acceptance=assessMigrationAcceptance(job?.report??null,(r.suiteSnapshot?.cases??[]).filter(item=>!selected.length||selected.includes(item.caseId)),complete);
+      return {...r,current:r.candidateDigest===currentAsset.artifactSha256&&(!value.sourceInspection?.dependencyAnalysis?.dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')||r.runtimeConfigurationDigest===runtimeDigest),execution:job?.status??'MISSING',createdAt:job?.createdAt,updatedAt:job?.updatedAt,report:job?.report??null,error:job?.error??null,evidence:complete?(r.pair==='SC'?'SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED':'HTTP_LOADED_DIGEST_CHECKED'):'NOT_COMPLETE',acceptance,
         taskSuccess:'NOT_INDEPENDENTLY_VERIFIED',professionalAcceptance:'NOT_REVIEWED',migrationAcceptance:'NOT_VALIDATED'};
     });
     const openJiuwenValidations=(await Promise.all(experiments.map(async experiment=>{
       const runtime=experiment.declaredPlan?.configuration.runtime;
-      const environment=runtime?.type==='runtime_http'?await this.environments?.get(runtime.environmentId):null;
+      const environment=runtime?.type==='runtime_http'?await this.migrationRuntimes?.environment(runtime.environmentId):null;
       if(!environment||environment.type!=='runtime_http'||environment.runtimeType!=='openjiuwen')return null;
       return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:environment.environmentId,
-        execution:experiment.execution,evidence:experiment.evidence,current:experiment.candidateDigest===currentAsset.artifactSha256,
-        status:experiment.execution==='completed'&&experiment.evidence==='HTTP_LOADED_DIGEST_CHECKED'?'PASSED':experiment.execution==='failed'?'FAILED':['queued','preparing','running','judging'].includes(experiment.execution)?'RUNNING':'NOT_VALIDATED'};
+        execution:experiment.execution,evidence:experiment.evidence,current:experiment.current,
+        executionCheck:['HTTP_LOADED_DIGEST_CHECKED','SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'].includes(experiment.evidence)?'ARTIFACT_VERIFIED':experiment.execution==='completed'?'EXECUTION_COMPLETED':'NOT_COMPLETE',
+        acceptance:experiment.acceptance,
+        status:experiment.execution==='completed'?experiment.acceptance.status:experiment.execution==='failed'?'FAILED':['queued','preparing','running','judging'].includes(experiment.execution)?'RUNNING':'NOT_VALIDATED'};
     }))).filter(item=>item!==null);
     const currentOpenJiuwen=openJiuwenValidations.filter(item=>item.current).at(-1);
     const targetExecution=value.schemaVersion==='finance.skill-migration.v2'?(currentOpenJiuwen?.status??'NOT_RUN'):(current?.status??'NOT_RUN');
-    return {project:value,diagnosis,inspection:value.inspection??null,decisions:value.decisions??[],migrationPlan,portableGenerationDiff:value.portableGenerationDiff??[],technicalValidations,openJiuwenValidations,targetRuns,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:'NOT_RUN',targetExecution,
+    const originalBaseline=experiments.filter(r=>r.pair==='SC'&&r.current).at(-1);
+    return {project:value,diagnosis,inspection:value.inspection??null,decisions:value.decisions??[],migrationPlan,portableGenerationDiff:value.portableGenerationDiff??[],technicalValidations,openJiuwenValidations,targetRuns,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:originalBaseline?.evidence==='SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'?'CAPTURED':originalBaseline?'NOT_COMPLETE':'NOT_RUN',targetExecution,
       candidateChanged:!!value.generation&&value.generation.candidateDigest!==value.candidate?.artifactSha256,
       originalOwner:'原工程负责人',targetOwner:'Harness / Host 接入开发者',
       missingSource:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>({path:f.path,line:f.line,reason:f.reason}))??[],
-      targetGaps:value.simulationProfile?['本目标只验证方法在模拟业务端口上的执行，不证明原环境等价或专业结论正确。','原工程、原环境对照与业务口径仍待负责人确认。']:['当前工具尚未接入已支持的目标 Host；请由接入开发者补齐工具实现、Schema 和资源映射',
+      targetGaps:value.simulationProfile?['本目标只验证方法在模拟业务端口上的执行，不证明原环境等价或专业结论正确。','原工程、原环境对照与业务口径仍待负责人确认。']:[targetExecution==='PASSED'?'当前候选通过自动验收，但原环境对照与人类专业签署尚未完成':'当前候选尚未通过完整业务验收，请查看工具调用证据、必备规则和质量评分',
         '需冻结等价测试数据与可信身份范围；配置声明不等于授权已核验']},
       suites:await Promise.all((value.suiteIds??[]).map(id=>this.preparations?.get(id)??null)),
       optimizations:await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)}))),

@@ -17,15 +17,23 @@ export type ToolInspection={
   kind:'MCP'|'SCRIPT'|'RUNTIME_BOUND'|'UNKNOWN';portability:ToolPortability;
   inputSchema:unknown|null;outputSchema:unknown|null;samples:ToolSample[];evidence:InspectionEvidence[];findings:ToolFinding[];
   recommendedForm:ToolForm;recommendedLanguage:string;recommendationReason:string;entrypoint?:{kind:'PYTHON'|'NODE';path:string};
+  scriptInjectionEvidence?:InspectionEvidence[];
 };
 export type ProjectInspection={assetId:string;assetDigest:string;inspectedAt:string;skill:SkillInspection;tools:ToolInspection[];scriptsExecuted:false;
+  runtimeCapabilities?:RuntimeHarnessCapability[];
+  dependencyAnalysis?:import('./migration-dependencies.js').DependencyAnalysis;
   staticAnalysis?:{status:'COMPLETE'|'PARTIAL'|'UNAVAILABLE';dependencyStatus:'EXPLICIT_BINDING'|'NO_BINDING_IN_CHECKED_SCOPE'|'UNKNOWN';scannerDigest:string|null;
     incompleteFiles:Array<{path:string;status:string}>;toolIncompleteFiles?:Array<{path:string;status:string}>};
   runtimeAnalysis?:{status:'RUNNING'|'COMPLETE'|'NOT_CONFIGURED'|'FAILED';model?:string;acceptedBindings:number;rejectedBindings:number;inputTruncated?:boolean}};
 export type ToolDecision={toolId:string;form:ToolForm;language?:string;reason:string;baseAssetId:string;decidedAt:string};
+/** Harness requirements are retained for test loading, never generated as Skill tools. */
+export type RuntimeHarnessCapability={name:string;owner:'RUNTIME_HARNESS';migrationAction:'DO_NOT_MIGRATE';blocking:false;
+  reason:string;usageContract:string;targetCapability:string|null;testAvailability:'UNCHECKED';
+  consumerTools:string[];evidence:InspectionEvidence[]};
 export type MigrationPlanItem={toolId:string;toolName:string;form:ToolForm;language:string;generator:string;blockingReasons:string[];warnings:string[]};
 export type MigrationPlan={baseAssetId:string;items:MigrationPlanItem[];skillMigrationItems:string[];skillBlockingReasons:string[];generationAllowed:boolean;technicalValidationAllowed:boolean};
 export type TechnicalValidation={
+  runtimeConfigurationDigest?:string;
   validationId:string;toolId:string;assetId:string;assetDigest:string;implementationDigest:string;
   casesDigest:string;
   mode:'LOCAL_TRUSTED'|'MCP_HTTP';status:'PASSED'|'FAILED';startedAt:string;finishedAt:string;
@@ -91,7 +99,10 @@ export function buildMigrationPlan(inspection:ProjectInspection,decisions:ToolDe
     // form's language into the plan.
     const language=(supported?decision!.language:undefined)||recommendLanguage(form,tool.language);
     const blockingReasons:string[]=[],warnings:string[]=[];
+    if(form==='MCP'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&d.binding?.kind!=='HTTP_HEADER'&&d.binding?.kind!=='SERVICE_ENV'))blockingReasons.push('选择 MCP 后需确认运行依赖的 HTTP header 映射，请补充契约说明后继续分析');
     if(!supported)blockingReasons.push('请重新选择 MCP 或 Python 脚本');
+    const targets:readonly string[]=form==='MCP'?MCP_TARGETS:SCRIPT_TARGETS;
+    if(!targets.includes(language))blockingReasons.push(`${form} 不支持实现语言 ${language}，请选择 ${targets.join('、')}`);
     const unmigratable=unmigratableLanguages(tool.language);
     if(unmigratable.length)blockingReasons.push(`源实现是 ${unmigratable.join('、')}，不在平台支持的迁移范围内，需要人工处理`);
     // The human may override the platform's form. When that forces a language the source
@@ -100,13 +111,16 @@ export function buildMigrationPlan(inspection:ProjectInspection,decisions:ToolDe
     const target=canonicalLanguage(language);
     if(!unmigratable.length&&target&&!(tool.language??'').split(',').some(part=>canonicalLanguage(part)===target))
       warnings.push(`源实现是 ${tool.language}，将改写为 ${language}；跨语言重写会损失保真度，不推荐`);
+    if(form==='SCRIPT'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'))blockingReasons.push('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
     return {toolId:tool.toolId,toolName:tool.name,form,language,
-      generator:form==='MCP'?'MCP_SERVICE':'SCRIPT_TOOL',blockingReasons,warnings} as MigrationPlanItem;
+      generator:form==='MCP'?'MCP_SERVICE':'COMMAND_SCRIPT',blockingReasons,warnings} as MigrationPlanItem;
   });
   // Skill-spec findings describe what the migration must repair. They are not a
   // reason to reject the source package: the generated candidate is validated again.
   const skillMigrationItems=inspection.skill.findings.map(finding=>`${finding.code}: ${finding.message}`);
   const skillBlockingReasons:string[]=[];
+  const diagnostic=inspection.dependencyAnalysis;
+  if(diagnostic&&diagnostic.status!=='COMPLETE')skillBlockingReasons.push('诊断链路或关键依赖尚未确认，请补齐后继续分析');
   return {baseAssetId,items,skillMigrationItems,skillBlockingReasons,
-    generationAllowed:items.every(item=>item.blockingReasons.length===0),technicalValidationAllowed:false};
+    generationAllowed:skillBlockingReasons.length===0&&items.every(item=>item.blockingReasons.length===0),technicalValidationAllowed:false};
 }

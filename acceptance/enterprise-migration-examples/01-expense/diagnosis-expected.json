@@ -1,0 +1,9 @@
+{
+  "tools": [
+    "check_expense"
+  ],
+  "sharedDependencies": [],
+  "toolSpecificDependencies": [],
+  "chain": "Skill → scripts/check_expense.py → 自带 rules.json + 工作区报销文件",
+  "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
+}

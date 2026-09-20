@@ -1,3 +1,4 @@
+import {SourceEvidenceValidator} from './source-evidence.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -141,11 +142,10 @@ export class MigrationDiagnostics {
             {role:'user',content:JSON.stringify({purpose:'定位需要从原 Runtime 解耦的 Tool 代码边界',staticFindings:value.findings,coverage:value.coverage,declarations:value.declarations,readable})}]});
         const result=aiSchema.parse(JSON.parse(response.content));
         if(result.suggestions.some(s=>!value.findings.some(f=>f.id===s.findingId)))throw new Error('UNSUPPORTED_FINDING');
+        const validator=new SourceEvidenceValidator(files);
         let rejected=0,nextFinding=value.findings.length+1;
         const accepted=result.runtimeBindings.flatMap(binding=>{
-          const source=files[binding.path],lines=source?.split(/\r?\n/u);
-          const valid=!!source&&binding.endLine>=binding.line&&binding.endLine<=lines!.length
-            &&lines!.slice(binding.line-1,binding.endLine).join('\n').includes(binding.snippet.trim());
+          const valid=validator.containsAtLines(binding.path,binding.snippet.trim(),binding.line,binding.endLine);
           if(!valid){rejected++;return [];}
           const duplicate=value.findings.some(f=>f.path===binding.path&&f.line===binding.line&&f.dependencyType===binding.dependencyType&&f.snippet.trim()===binding.snippet.trim());
           if(duplicate)return [];

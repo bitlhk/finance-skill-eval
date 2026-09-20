@@ -48,21 +48,22 @@ const SKILL_MD='skill/SKILL.md',TOOL_SOURCE='tool/legacy_runtime_tools.py';
  * an analysis is worth exactly as much as the place it points at, and the platform drops the rest.
  */
 const analysis={status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
-  {name:'get_acceptance_order',sourcePaths:[TOOL_SOURCE],language:'Python',portability:'RUNTIME_BOUND',
+  {name:'get_acceptance_order',sourcePaths:[TOOL_SOURCE,SKILL_MD],language:'Python',portability:'RUNTIME_BOUND',
     input:{description:'按订单号查询',schema:{type:'object',properties:{order_id:{type:'string'}},required:['order_id']},path:SKILL_MD,snippet:'Call `get_acceptance_order` with the exact order ID'},
     output:{description:'返回订单的币种、金额与审批状态',schema:{type:'object',properties:{order_id:{type:'string'},currency:{type:'string'},subtotal:{type:'string'},tax_rate:{type:'string'},approved:{type:'boolean'}}},path:SKILL_MD,snippet:'Return the order ID, currency, subtotal, tax amount, and total'},
     samples:[{input:{order_id:'ORDER-001'},path:SKILL_MD,snippet:'Call `get_acceptance_order` with the exact order ID'}],
     evidence:[],findings:[],recommendedForm:'MCP',
     recommendationReason:'注册在旧 Agent Runtime 里，需要一个可被不同环境调用的服务'},
-  {name:'calculate_acceptance_total',sourcePaths:[TOOL_SOURCE],language:'Python',portability:'RUNTIME_BOUND',
+  {name:'calculate_acceptance_total',sourcePaths:[TOOL_SOURCE,SKILL_MD],language:'Python',portability:'RUNTIME_BOUND',
     input:{description:'用订单的小计与税率算总额',schema:{type:'object',properties:{subtotal:{type:'string'},tax_rate:{type:'string'}},required:['subtotal','tax_rate']},path:SKILL_MD,snippet:'Call `calculate_acceptance_total` with the returned subtotal and tax rate'},
     output:{description:'返回小计、税额与合计',schema:{type:'object',properties:{status:{type:'string'},subtotal:{type:'string'},tax_rate:{type:'string'},tax_amount:{type:'string'},total:{type:'string'}}},path:SKILL_MD,snippet:'Return the order ID, currency, subtotal, tax amount, and total'},
     samples:[{input:{subtotal:'100.00',tax_rate:'0.06'},path:SKILL_MD,snippet:'Call `calculate_acceptance_total` with the returned subtotal and tax rate'}],
     evidence:[],findings:[],recommendedForm:'SCRIPT',
     recommendationReason:'纯计算，没有 runtime 依赖'},
 ]};
+analysis.dependencyAnalysis={dependencies:[],chains:analysis.tools.map(tool=>({toolName:tool.name,nodes:[{id:'entry',title:'业务入口',detail:tool.recommendationReason,dependencyKeys:[],evidence:[{path:tool.input.path,snippet:tool.input.snippet}]}],edges:[]}))};
 // Coverage comes from the scanner, not from the agent's own account of itself.
-const scanner={scannerDigest:'a'.repeat(64),coverage:[{path:SKILL_MD,status:'PARSED'},{path:TOOL_SOURCE,status:'PARSED'}]};
+const scanner={scannerDigest:'a'.repeat(64),coverage:[{path:SKILL_MD,status:'TEXT_INSPECTED'},{path:TOOL_SOURCE,status:'AST_PARSED'}]};
 const migrationAnalyzer=async()=>({status:'PRODUCED',payload:analysis,scanner});
 
 const scriptSource='from decimal import Decimal, ROUND_HALF_UP\nimport json, sys\n\ndef calculate_acceptance_total(subtotal: str, tax_rate: str):\n    amount=Decimal(subtotal); rate=Decimal(tax_rate); tax=(amount*rate).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)\n    return {"status":"ok","subtotal":f"{amount:.2f}","tax_rate":f"{rate:.2f}","tax_amount":f"{tax:.2f}","total":f"{amount+tax:.2f}"}\n\nif __name__ == "__main__":\n    json.dump(calculate_acceptance_total(**json.load(sys.stdin)),sys.stdout)\n';
@@ -154,7 +155,7 @@ try{
   await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
   await page.getByRole('button',{name:'新建迁移',exact:true}).click();
   await page.locator('input[type=file]').first().setInputFiles({name:'legacy-skill.zip',mimeType:'application/zip',buffer:legacyZip});
-  await page.getByRole('heading',{name:'检查结果',exact:true}).waitFor({timeout:STEP});
+  await page.getByRole('heading',{name:'诊断与依赖补充',exact:true}).waitFor({timeout:STEP});
   if(realAgents){
     // What A2 reports is A2's judgement, and a real one is entitled to disagree with the stub's.
     // What the page owes is that the Tools it found are on it.
@@ -163,14 +164,13 @@ try{
     for(const name of ['get_acceptance_order','calculate_acceptance_total'])
       await expect(page.getByText(name,{exact:false}).first()).toBeVisible({timeout:STEP});
   }else{
-    await expect(page.getByText('依赖原来的运行框架',{exact:false})).toHaveCount(2);
+    await expect(page.locator('.diagnosis-tool')).toHaveCount(2);
   }
   pass('legacy_skill_uploaded_and_inspected');
 
-  await page.getByRole('button',{name:'选择迁移方式',exact:true}).click();
-  await page.locator('article').filter({hasText:'calculate_acceptance_total'}).getByLabel('迁移方式').selectOption('SCRIPT');
-  await page.locator('article').filter({hasText:'get_acceptance_order'}).getByLabel('迁移方式').selectOption('MCP');
-  await page.getByRole('button',{name:'确认并生成方案',exact:true}).click();
+  await page.locator('article').filter({hasText:'calculate_acceptance_total'}).getByLabel('转换形式').selectOption('SCRIPT');
+  await page.locator('article').filter({hasText:'get_acceptance_order'}).getByLabel('转换形式').selectOption('MCP');
+  await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();
   await page.getByRole('button',{name:'生成迁移后的 Skill 包',exact:true}).click();
   await expect(page.getByText('工具已经可以试运行。',{exact:true})).toHaveCount(2,{timeout:STEP});
   await expect(page.getByText('已生成工具工程，还需要接入原有业务代码。',{exact:true})).toHaveCount(0);
@@ -212,14 +212,17 @@ try{
   }
   pass('generated_test_set_visible_and_selectable');
 
-  await page.getByRole('button',{name:'7 下载结果',exact:true}).click();
+  await page.getByRole('button',{name:'6 下载结果',exact:true}).click();
+  await expect(page.getByText(/当前候选尚未通过完整业务验收/)).toBeVisible();
   const pending=page.waitForEvent('download');
   await page.getByRole('button',{name:'下载迁移后的 Skill 包',exact:true}).click();
   const download=await pending,target=path.join(downloads,'migration.zip');await download.saveAs(target);
+  assert(download.suggestedFilename().endsWith('-unverified.zip'));
   const exported=unzipSync(await readFile(target));
   // The Skill keeps its layout; the Script goes where the Skill layout says; the MCP service keeps
   // the paths the agent reported, because the platform did not build it.
   assert(exported['skill/SKILL.md']);
+  assert(Buffer.from(exported['skill/SKILL.md']).toString('utf8').includes('If the order is unavailable or unapproved, stop'));
   assert(exported['skill/references/acceptance-policy.md']);
   assert(!exported['migration-manifest.json']);assert(!exported['migration-report.json']);
   if(realAgents){
@@ -236,7 +239,7 @@ try{
   // The runtime-coupled original is replaced, never shipped alongside its migration.
   assert(!Object.keys(exported).some(name=>name.includes('legacy_runtime_tools')));
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
-  pass('validated_candidate_downloaded');
+  pass('unverified_candidate_downloaded_with_source_workflow');
   assert.deepEqual(errors,[]);pass('no_browser_errors');
   process.stdout.write(`${JSON.stringify({mode:'REAL_SERVICE_HEADLESS_CHROME',checks},null,2)}\n`);
 }catch(error){failedAt=error;throw error;}finally{

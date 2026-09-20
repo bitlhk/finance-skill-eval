@@ -32,7 +32,7 @@
 - 维护脚本 `scripts/sync-ea-models.mjs` 只读调用 EA 的本机模型管理接口；运行期评测不依赖 EA。
 - `.runtime.local.json` 保存模型别名到真实上游模型 ID、地址和密钥的绑定，权限 600，不进入 Git。
 - `.models.local.json` 保存前端可见的模型名称、服务方和验证状态；不含凭据。
-- 服务通过 `FINANCE_EVAL_EXECUTION_CATALOG` 读取目录，本地工作台与公开实例共用同一目录。
+- 服务优先读取项目根目录的 `.models.local.json`，没有本地覆盖时读取 `config/execution-models.json`；也可通过 `FINANCE_EVAL_EXECUTION_CATALOG` 指定其他后端清单文件。本地工作台与公开实例共用同一清单。前端只展示该清单，不会把 `FINANCE_EVAL_EXECUTION_MODEL` 单值伪装成可选列表。
 - 在线评测默认左右均为 GLM-5.3-Flash；再次同步 EA 清单时保留评测默认值，不被 EA 的默认模型覆盖。出题、GPT-6 Judge 与文本直测配置独立，不随此次默认切换变化。
 - Runtime 使用真实上游 ID，不把 `MiniMax M3` 等显示别名直接发送给 API。
 - 同一模型 A/B 使用相同评测参数；参数不照搬 EA 对话采样配置。火山/华为与 OpenRouter 的思考开关按服务方分别处理，实际参数写入运行证据。

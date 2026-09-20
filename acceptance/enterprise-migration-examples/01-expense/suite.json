@@ -1,0 +1,75 @@
+{
+  "summary": "报销合规检查固定测试集；使用模型 Judge 根据业务目标判定。",
+  "cases": [
+    {
+      "caseId": "EXPENSE-OK",
+      "name": "检查 EXP-001 的报销合规性。",
+      "taskMode": "single_turn",
+      "prompt": "检查 EXP-001 的报销合规性。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "check_expense"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"claim_id\": \"EXP-001\", \"total\": \"200.00\", \"violations\": [], \"compliant\": true}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "EXPENSE-VIOLATION",
+      "name": "检查 EXP-002 的报销合规性。",
+      "taskMode": "single_turn",
+      "prompt": "检查 EXP-002 的报销合规性。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "check_expense"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"claim_id\": \"EXP-002\", \"total\": \"230.00\", \"violations\": [\"E3\", \"E4\"], \"compliant\": false}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "EXPENSE-MISSING",
+      "name": "检查 EXP-404 的报销合规性。",
+      "taskMode": "single_turn",
+      "prompt": "检查 EXP-404 的报销合规性。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "check_expense"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"claim_id\": \"EXP-404\", \"error\": \"CLAIM_NOT_FOUND\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    }
+  ],
+  "holdoutCases": []
+}

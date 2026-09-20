@@ -71,10 +71,23 @@ describe("execution model catalog", () => {
     await fixture([model("glm-5.2"), model("glm-5.2")]);
     await expect(executionModelCatalog()).rejects.toThrow(/duplicate/);
   });
-  it("supports the existing single-model setup without an imported catalog", async () => {
+  it("does not turn the single direct-execution environment variable into a selectable catalog", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "eval-models-empty-"));
+    directories.push(directory);
     vi.stubEnv("FINANCE_EVAL_EXECUTION_CATALOG", "");
     vi.stubEnv("FINANCE_EVAL_EXECUTION_MODEL", "original");
-    expect((await resolvePublicExecutionModels({})).rightExecutionModel.modelId).toBe("original");
+    expect(await executionModelCatalog(directory)).toBeNull();
+    await expect(resolvePublicExecutionModels({},directory)).rejects.toMatchObject({statusCode:503});
+  });
+  it("loads the conventional backend model list without requiring an environment variable path", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "eval-models-default-"));
+    directories.push(directory);
+    vi.stubEnv("FINANCE_EVAL_EXECUTION_CATALOG", "");
+    await writeFile(path.join(directory,".models.local.json"),JSON.stringify({
+      schemaVersion:"finance.skill-eval.execution-models.v1",defaultModelId:"glm-5.3",models:[model("glm-5.3")],
+    }));
+    expect((await executionModelCatalog(directory))?.models.map(item=>item.modelId)).toEqual(["glm-5.3"]);
+    expect((await resolvePublicExecutionModels({},directory)).rightExecutionModel.modelId).toBe("glm-5.3");
   });
   it("public API passes selected models through while keeping the Judge server-controlled", async () => {
     const directory = await fixture();

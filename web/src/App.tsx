@@ -796,13 +796,16 @@ function MigrationWorkspace({catalog,source,onChanged}:{catalog:Catalog;source:S
   async function upload(files:File[]){if(uploading)return;setUploading(true);setError('');setImports([]);let single:SkillAsset|null=null;try{
     const results=await importMigrationFiles(files,async(bytes)=>{
       const asset=await api<SkillAsset>('/api/migrations/upload',{method:'POST',body:new Blob([bytes as BlobPart]),headers:{'content-type':'application/zip'}});
+      // Single uploads are opened and created by MigrationPanel. Batch uploads remain in
+      // the project list, so create one project per successful file here.
+      if(files.length>1)await api('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:asset.assetId,name:`${asset.displayName} 迁移`})});
       single=asset;
     });setImports(results);await onChanged();setUploadedAsset(files.length===1?single:null);setRefreshKey(n=>n+1);
   }catch(e){setError(String(e));}finally{setUploading(false);}}
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL MIGRATION</span><h1>Skill 迁移</h1></div></section>
     {error&&<p role="alert">{error}</p>}{uploading&&<p role="status">上传中</p>}
-    {imports.length>0&&<ul aria-label="导入结果">{imports.map((r,i)=><li key={i}>{r.name}：{r.status==='IMPORTED'?'已导入并诊断':r.error}</li>)}</ul>}
-    <input hidden ref={input} type="file" multiple accept=".zip,application/zip" onChange={e=>{const files=Array.from(e.target.files??[]);if(files.length)void upload(files);e.target.value='';}}/>
+    {imports.length>0&&<ul aria-label="导入结果">{imports.map((r,i)=><li key={i}>{r.name}：{r.status==='IMPORTED'?'已导入':r.error}</li>)}</ul>}
+    <input hidden ref={input} type="file" multiple accept=".zip,.md,application/zip,text/markdown" onChange={e=>{const files=Array.from(e.target.files??[]);if(files.length)void upload(files);e.target.value='';}}/>
     <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUpload={()=>{if(!uploading)input.current?.click();}}/>
   </div>;
 }

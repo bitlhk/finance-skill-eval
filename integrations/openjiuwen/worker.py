@@ -9,6 +9,8 @@ import time
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from .model_config import resolve_model
+from .runtime_context import RuntimeContext
+from .package_runtime import service_environment
 
 app = FastAPI()
 active = set()
@@ -24,9 +26,11 @@ def config():
 @app.get("/health")
 async def health():
     from importlib.metadata import version
-    return {"status": "ready", "runtime": "openjiuwen", "version": version("openjiuwen"),
+    runtime_config = config()
+    models = list(runtime_config.get("models", {}))
+    return {"status": "ready", "runtime": "openjiuwen", "agentType": "DeepAgent", "version": version("openjiuwen"),
             "activeSessions": len(active), "maxConcurrentSessions": 2,
-            "models": list(config().get("models", {})), "streaming": True}
+            "models": models, "defaultModelId": runtime_config.get("defaultModelId") or (models[0] if models else None), "streaming": True}
 
 
 @app.post("/execute")
@@ -34,17 +38,48 @@ async def execute(request: Request):
     body = await request.json()
     cfg = config()
     try:
+        RuntimeContext((body.get('environment') or {}).get('runtimeToolConfig'), cfg.get('authProviders', {}))
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(400, 'Invalid runtime context or auth configuration') from None
+    try:
         resolve_model(cfg, body.get("model", {}))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     for server in (body.get("environment") or {}).get("mcpServers", []):
         if server["endpoint"] not in cfg.get("mcp", {}):
             raise HTTPException(400, "MCP endpoint is not registered in this worker")
-    for tool in (body.get("environment") or {}).get("scriptTools", []):
-        if os.environ.get("FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS") != "1":
-            raise HTTPException(403, "Local script execution is disabled")
+    if "scriptTools" in (body.get("environment") or {}):
+        raise HTTPException(400, "Legacy Script Tool registration is not supported")
+    harness = (body.get('environment') or {}).get('harnessToolNames', [])
+    if not isinstance(harness, list) or any(name not in ('read_file', 'glob', 'list_files', 'bash') for name in harness):
+        raise HTTPException(400, 'Unsupported requested Harness capability')
+    plugins = (body.get('environment') or {}).get('candidateHarnessPlugins', [])
+    if not isinstance(plugins, list):
+        raise HTTPException(400, 'Invalid Harness plugin bindings')
+    for plugin in plugins:
+        skill = body.get('skill') or {}
+        if (not isinstance(plugin, dict) or not plugin.get('toolNames') or not plugin.get('filePaths')
+                or plugin.get('assetDigest') != skill.get('artifactSha256')
+                or plugin.get('assetDigest') != (body.get('variant') or {}).get('artifactSha256')
+                or plugin.get('manifestPath') not in plugin['filePaths']
+                or any(name not in skill.get('files', {}) for name in plugin['filePaths'])):
+            raise HTTPException(400, 'Invalid Harness plugin artifact binding')
+    command_scripts = (body.get("environment") or {}).get("commandScripts", [])
+    if command_scripts and os.environ.get("FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS") != "1":
+        raise HTTPException(403, "Local script execution is disabled")
+    for tool in command_scripts:
         if tool.get("kind") not in ("PYTHON", "NODE") or not tool.get("name") or not tool.get("path"):
-            raise HTTPException(400, "Invalid local Script Tool binding")
+            raise HTTPException(400, "Invalid command script binding")
+    for service in (body.get("environment") or {}).get("candidateMcpServices", []):
+        try:
+            service_environment(service.get("environment", {}))
+        except ValueError:
+            raise HTTPException(400, "Invalid candidate service environment")
+        skill = body.get("skill") or {}
+        if not service.get("start") or not service.get("toolNames") or service.get("assetDigest") != skill.get("artifactSha256") or service.get("assetDigest") != (body.get("variant") or {}).get("artifactSha256"):
+            raise HTTPException(400, "Invalid candidate MCP artifact binding")
+        if any(name not in skill.get("files", {}) for name in service.get("filePaths", [])):
+            raise HTTPException(400, "Candidate MCP files are missing")
     if body.get("schemaVersion") != "finance.skill-eval.runtime-request.v1":
         raise HTTPException(400, "Unsupported runtime contract")
 
@@ -58,7 +93,7 @@ async def execute(request: Request):
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
                 limit=1048576,
-                env={**os.environ, "FINANCE_RUNTIME_CONFIG": str(CONFIG)},
+                env={**os.environ, "FINANCE_RUNTIME_CONFIG": str(CONFIG), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
             )
             active.add(process.pid)
             terminal = False

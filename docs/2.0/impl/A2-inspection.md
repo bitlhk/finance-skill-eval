@@ -1,5 +1,7 @@
 # A2 检查诊断（agent）
 
+依赖识别与后续处理的修订设计见 [迁移中的依赖识别与处理](migration-dependency-handling.md)。Tool 的职责与交付契约以 [Skill 规范](../skill-specification.md)为准；迁移流程不属于该标准。
+
 **对应特性**：[F-02 Skill 规范检查](../features.md)、[F-03 逐 Tool 可移植性检查](../features.md)
 **定位**：从"单次模型调用"变成 **agent 循环**，并新增**建议形式与建议语言**。
 

@@ -1,0 +1,7 @@
+{
+  "authProviders": {
+    "demo_sdk": {
+      "entrypoint": "auth_sdk:authenticate"
+    }
+  }
+}

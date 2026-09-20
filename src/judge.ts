@@ -124,30 +124,50 @@ export class DeterministicRubricJudge implements PairwiseJudge {
   }
 }
 
+const judgeDimensionIds = [
+  "professional_fit",
+  "business_completeness",
+  "clarity",
+  "actionability",
+] as const;
+const judgeDimensionIdSchema = z.enum(judgeDimensionIds);
+
+function completeDimensions<T extends { id: string }>(dimensions: T[], context: z.RefinementCtx): void {
+  for (const id of judgeDimensionIds) {
+    if (dimensions.filter(dimension => dimension.id === id).length !== 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Judge dimension must appear exactly once: ${id}`,
+      });
+    }
+  }
+}
+
+function dimensionsInProfileOrder<T extends { id: string }>(profile: JudgeProfile, dimensions: T[]) {
+  return profile.dimensions.map(profileDimension => {
+    const judgment = dimensions.find(dimension => dimension.id === profileDimension.id);
+    if (!judgment) throw new Error(`Judge dimension is missing: ${profileDimension.id}`);
+    return { profileDimension, judgment };
+  });
+}
+
 const anonymousJudgeResponseSchema = z.strictObject({
   winner: z.enum(["A", "B", "TIE"]),
   confidence: z.enum(["low", "medium", "high"]),
   summary: z.string().min(1),
   dimensions: z.array(z.strictObject({
-    id: z.enum([
-      "professional_fit",
-      "business_completeness",
-      "clarity",
-      "actionability",
-    ]),
-    label: z.string().min(1),
+    id: judgeDimensionIdSchema,
     aScore: z.number().min(0).max(4),
     bScore: z.number().min(0).max(4),
     reason: z.string().min(1),
-  })).length(4),
+  })).length(4).superRefine(completeDimensions),
 });
 
 const candidateJudgeResponseSchema = z.strictObject({
   confidence:z.enum(["low","medium","high"]),summary:z.string().min(1),
   dimensions:z.array(z.strictObject({
-    id:z.enum(["professional_fit","business_completeness","clarity","actionability"]),
-    label:z.string().min(1),score:z.number().min(0).max(4),reason:z.string().min(1),
-  })).length(4),
+    id:judgeDimensionIdSchema,score:z.number().min(0).max(4),reason:z.string().min(1),
+  })).length(4).superRefine(completeDimensions),
 });
 
 /** Absolute quality assessment for a migrated candidate. It deliberately has no winning side. */
@@ -163,14 +183,14 @@ export class ModelCandidateJudge implements PairwiseJudge {
       sourceFacts:Array.isArray(input.right.metadata.toolEvidence)?input.right.metadata.toolEvidence.filter((item:{tool?:string})=>item.tool!=="read_file"):[]};
     const messages=[{role:"system" as const,content:[input.profile.domainInstructions,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","Runtime 工具证据是实际执行事实；没有证据时不得把题面中的就绪描述当成已完成调用。","只返回符合约定的 JSON。"].join("\n")},
       {role:"user" as const,content:JSON.stringify({task:input.evalCase.prompt,evaluationGoal:input.evalCase.evaluationGoal,rubric:input.evalCase.rubric,candidateOutput:input.right.output,runtimeEvidence:businessEvidence,
-        responseContract:{confidence:"low | medium | high",summary:"string",scoreRule:"score must be a JSON integer from 0 to 4",dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,score:0,reason:"string"}))}})}];
+        responseContract:{confidence:"low | medium | high",summary:"string",scoreRule:"score must be a JSON integer from 0 to 4",dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,score:0,reason:"string"}))}})}];
     const request=(attempt:number)=>this.adapter.complete({requestId:`candidate-judge-${input.evalCase.caseId}-${attempt}`,model:this.model,signal:input.signal,responseFormat:"json",
-      messages:attempt===1?messages:[...messages,{role:"system" as const,content:"上一轮返回未满足 JSON 契约。直接返回 confidence、summary、dimensions 三个顶层字段。"}]});
+      messages:attempt===1?messages:[...messages,{role:"system" as const,content:"上一轮返回未满足 JSON 契约。直接返回 confidence、summary、dimensions 三个顶层字段；每个 dimensions 项必须包含不重复的 id、score、reason。"}]});
     let judged:z.infer<typeof candidateJudgeResponseSchema>;
     try{judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject((await request(1)).content));}
     catch(error){if(input.signal?.aborted)throw error;judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject((await request(2)).content));}
     return judgeResultSchema.parse({winner:"tie",confidence:judged.confidence,summary:judged.summary,
-      dimensions:judged.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,leftScore:dimension.score,rightScore:dimension.score,reason:dimension.reason})),
+      dimensions:dimensionsInProfileOrder(input.profile,judged.dimensions).map(({profileDimension,judgment})=>({id:profileDimension.id,label:profileDimension.label,leftScore:judgment.score,rightScore:judgment.score,reason:judgment.reason})),
       reviewerLabel:`AI 候选质量评估 · ${this.model.modelId}（非独立人类专家签署）`});
   }
 }
@@ -259,7 +279,6 @@ export class ModelPairwiseJudge implements PairwiseJudge {
               scoreRule: "aScore and bScore must be JSON integers from 0 to 4, not strings",
               dimensions: input.profile.dimensions.map(dimension => ({
                 id: dimension.id,
-                label: dimension.label,
                 aScore: 0,
                 bScore: 0,
                 reason: "string",
@@ -277,7 +296,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
         ...messages,
         {
           role: "system" as const,
-          content: "上一轮返回未满足 JSON 契约。请直接返回 winner、confidence、summary、dimensions 四个顶层字段，不要复述 responseContract。",
+          content: "上一轮返回未满足 JSON 契约。请直接返回 winner、confidence、summary、dimensions 四个顶层字段，不要复述 responseContract；每个 dimensions 项必须包含不重复的 id、aScore、bScore、reason。",
         },
       ],
     });
@@ -299,12 +318,12 @@ export class ModelPairwiseJudge implements PairwiseJudge {
       winner,
       confidence: judged.confidence,
       summary: remapAnonymousSideLabels(judged.summary, swapped),
-      dimensions: judged.dimensions.map(dimension => ({
-        id: dimension.id,
-        label: dimension.label,
-        leftScore: swapped ? dimension.bScore : dimension.aScore,
-        rightScore: swapped ? dimension.aScore : dimension.bScore,
-        reason: remapAnonymousSideLabels(dimension.reason, swapped),
+      dimensions: dimensionsInProfileOrder(input.profile, judged.dimensions).map(({ profileDimension, judgment }) => ({
+        id: profileDimension.id,
+        label: profileDimension.label,
+        leftScore: swapped ? judgment.bScore : judgment.aScore,
+        rightScore: swapped ? judgment.aScore : judgment.bScore,
+        reason: remapAnonymousSideLabels(judgment.reason, swapped),
       })),
       reviewerLabel: `AI 专业盲评 · ${this.model.modelId}（非独立人类专家签署）`,
     });

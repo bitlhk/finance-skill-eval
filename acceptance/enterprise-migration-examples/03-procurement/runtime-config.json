@@ -1,0 +1,62 @@
+{
+  "context": {
+    "user": {
+      "type": "object",
+      "value": {
+        "id": "U001",
+        "tenantId": "T001"
+      }
+    },
+    "serviceUrl": {
+      "type": "string",
+      "value": "http://127.0.0.1:4327",
+      "sensitive": false
+    },
+    "appKey": {
+      "type": "string",
+      "env": "DEMO_APP_KEY"
+    },
+    "departmentRules": {
+      "type": "object",
+      "value": {
+        "D001": {
+          "reserve": "100.00"
+        }
+      },
+      "sensitive": false
+    }
+  },
+  "providers": {
+    "businessAuth": {
+      "implementation": "demo_sdk",
+      "inputs": {
+        "user": "context.user",
+        "appKey": "context.appKey"
+      }
+    }
+  },
+  "tools": {
+    "get_request": {
+      "contextBindings": {
+        "X-User": "context.user",
+        "X-Service-Url": "context.serviceUrl"
+      },
+      "authProvider": "businessAuth"
+    },
+    "check_budget": {
+      "contextBindings": {
+        "X-User": "context.user",
+        "X-Service-Url": "context.serviceUrl",
+        "X-Department-Rules": "context.departmentRules"
+      },
+      "authProvider": "businessAuth"
+    },
+    "check_supplier": {
+      "contextBindings": {
+        "X-User": "context.user",
+        "X-Service-Url": "context.serviceUrl"
+      },
+      "authProvider": "businessAuth"
+    }
+  }
+}

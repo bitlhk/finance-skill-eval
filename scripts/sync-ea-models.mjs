@@ -67,7 +67,7 @@ const defaultModelId = previousCatalog?.defaultModelId ?? (entries[0].alias || e
 if (!models[defaultModelId]) throw new Error(`Retained default model is missing from this import: ${defaultModelId}`);
 await mkdir('data/model-imports', { recursive: true });
 await writeFile(`data/model-imports/runtime-${Date.now()}.json`, original, { mode: 0o600 });
-for (const [file, value] of [[runtimeFile, { ...config, models }], [catalogFile, { schemaVersion: 'finance.skill-eval.execution-models.v1',
+for (const [file, value] of [[runtimeFile, { ...config, defaultModelId, models }], [catalogFile, { schemaVersion: 'finance.skill-eval.execution-models.v1',
   importedAt: new Date().toISOString(), source: 'EA loopback models.list', defaultModelId, models: catalog }]]) {
   await writeFile(`${file}.tmp`, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
   await chmod(`${file}.tmp`, 0o600);

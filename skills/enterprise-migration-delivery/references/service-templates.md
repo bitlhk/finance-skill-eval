@@ -10,7 +10,7 @@
 
 1. **传输是 Streamable HTTP，端点 `/mcp`。** 平台按 `http://127.0.0.1:<port>/mcp` 连它。stdio 起不来。
 2. **端口从 `PORT` 环境变量读**，默认 8080，**监听 `0.0.0.0`**。
-3. **`tools/list` 公布源工具的输入 Schema。** 不要从函数签名反推——推出来的不是源 Schema。平台会拿它和**基线**对照，差异**记进报告**：不是门禁，但没写理由的差异会被当成手滑。
+3. **`tools/list` 公布业务输入 Schema。** 用类型、默认值和约束表达源业务契约，实际发现工具后与基线核对 required、类型、枚举、额外字段及输出形状。平台会拿它和**基线**对照，差异**记进报告**：不是门禁，但必须说明原因。不能为了完全复制源 Schema 而保留隐式身份和凭证参数。
 4. **`tools/call` 的返回里放 JSON 文本**，形状与源工具的输出一致。
 5. **工具名不能改。**
 
@@ -30,47 +30,50 @@
 
 ## Python MCP 骨架
 
-用官方 `mcp` 的低层 `Server`——只有它能公布**给定**的 Schema（高层 API 从函数签名推，会推错）。
-依赖写在 PEP 723 头里，`uv run --no-project server.py` 直接跑。
+新生成 Python 服务使用独立包 **FastMCP 2.14.7**（`from fastmcp import FastMCP`），不要使用官方 SDK 内嵌的 `mcp.server.fastmcp` 或自行拼装低层 Server。用具名函数、类型注解和必要的 Pydantic 约束定义业务 Schema；复杂 Schema 应明确表达约束并实际发现核对，不能仅改展示 Schema 而让真实参数校验不一致。
+
+依赖写在 PEP 723 头里，`uv run --no-project mcp-python/server.py` 直接跑。下例展示余额类工具的请求边界；实际工具名、输入、Header、下游地址和错误语义必须来自源代码及诊断声明，不复制样例假设。
 
 ```
 === mcp-python/server.py ===
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mcp", "uvicorn"]
+# dependencies = ["fastmcp==2.14.7", "httpx"]
 # ///
 import json
 import os
 
-from mcp.server.lowlevel import Server
-from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool
+import httpx
+from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
+from fastmcp.tools.tool import ToolResult
+from mcp.types import TextContent
 
-TOOL_NAME = "<tool>"
-# Schema 按 JSON 文本解析，不要手抄成 Python 字面量：JSON 的 false/null 不是 Python 的 False/None，
-# 一个 `additionalProperties: false` 就足以让服务起不来。
-INPUT_SCHEMA = json.loads(r"""<源工具输入 Schema 的 JSON 字面量>""")
-
-
-def execute(name: str, arguments: dict) -> object:
-    return {"received": arguments}
+server = FastMCP("enterprise-balance")
 
 
-async def _list_tools(_context, _params) -> ListToolsResult:
-    return ListToolsResult(tools=[Tool(name=TOOL_NAME, description="", inputSchema=INPUT_SCHEMA)])
-
-
-async def _call_tool(_context, params: CallToolRequestParams) -> CallToolResult:
-    output = execute(params.name, dict(params.arguments or {}))
-    return CallToolResult(content=[TextContent(type="text", text=json.dumps(output, ensure_ascii=False))])
-
-
-server = Server(name="<skill>-mcp", version="0.1.0", on_list_tools=_list_tools, on_call_tool=_call_tool)
+@server.tool(name="balance")
+async def balance(account_id: str) -> ToolResult:
+    """查询余额。凭证与租户由 Runtime 的当前请求 Header 提供。"""
+    headers = get_http_headers(include_all=True)
+    credential = headers.get("authorization")
+    tenant_id = headers.get("x-tenant-id")
+    if not credential or not tenant_id:
+        raise ValueError("缺少声明的 Authorization 或 X-Tenant-Id")
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(
+            os.environ["BALANCE_SERVICE_URL"].rstrip("/") + "/balance",
+            params={"account": account_id},
+            headers={"Authorization": credential, "X-Tenant-Id": tenant_id},
+        )
+        response.raise_for_status()
+        output = response.json()
+    return ToolResult(content=[TextContent(type="text", text=json.dumps(output, ensure_ascii=False))])
 
 
 def main() -> None:
-    import uvicorn
     port = int(os.environ.get("PORT", "8080"))
-    uvicorn.run(server.streamable_http_app(streamable_http_path="/mcp"), host="0.0.0.0", port=port)
+    server.run(transport="http", host="0.0.0.0", port=port, path="/mcp", stateless_http=True)
 
 
 if __name__ == "__main__":
@@ -78,6 +81,8 @@ if __name__ == "__main__":
 ```
 
 要按项目结构管理依赖时同时给 `pyproject.toml`，**两处依赖列表必须一致**。
+
+Header 按当前调用读取，不能保存在共享实例或全局可变身份中；只选择声明需要的 Header，不无差别转发。`include_all=True` 不代表全部透传。使用 FastMCP 不要求启用它的 auth 功能：企业凭证获取和刷新属于 Runtime Provider，Tool 可以按下游契约解析、消费凭证。stateless HTTP 是本平台普通请求型工具的默认方式，确需会话能力时按业务语义实现并验证调用隔离。
 
 ## Node MCP 骨架
 
@@ -362,3 +367,9 @@ skill/          Skill 文档与资源
 ```
 
 两种语言不能共用一个进程；强迫其中一种跨语言重写又违背"同语言优先"。
+
+## 服务配置与按调用注入
+
+业务服务地址、固定超时等部署配置，按诊断的 `SERVICE_ENV` 声明在 MCP 服务中读取环境变量。平台启动对应子进程时提供实际值；迁移模型只接收变量名、用途、类型和必需性。用 `serviceEnvironment:[{key,name}]` 报告绑定。必需变量缺失应在业务调用前明确失败；公布工具契约时不访问业务接口，也不索要真实值。不写死地址，不把地址放入 Header 或 arguments。
+
+用户上下文通过声明的 HTTP Header 传递，鉴权凭证由受信任 Runtime Provider 提供。服务配置不进入 `runtimeBindings` 或 `runtimeToolConfig.context`。包根目录配置模板 `runtime-tool-config.template.json` 的 `serviceEnvironment` 仅包含声明，实际值由部署方提供。

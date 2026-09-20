@@ -1,0 +1,39 @@
+[
+  {
+    "caseId": "PROCUREMENT-OK",
+    "input": {
+      "request_id": "PO-001"
+    },
+    "expected": {
+      "request_id": "PO-001",
+      "approved": true,
+      "reasons": []
+    }
+  },
+  {
+    "caseId": "PROCUREMENT-BUDGET",
+    "input": {
+      "request_id": "PO-002"
+    },
+    "expected": {
+      "request_id": "PO-002",
+      "approved": false,
+      "reasons": [
+        "BUDGET_EXCEEDED"
+      ]
+    }
+  },
+  {
+    "caseId": "PROCUREMENT-SUPPLIER",
+    "input": {
+      "request_id": "PO-003"
+    },
+    "expected": {
+      "request_id": "PO-003",
+      "approved": false,
+      "reasons": [
+        "SUPPLIER_INACTIVE"
+      ]
+    }
+  }
+]
