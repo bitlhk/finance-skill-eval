@@ -26,7 +26,8 @@ async def health():
     from importlib.metadata import version
     return {"status": "ready", "runtime": "openjiuwen", "version": version("openjiuwen"),
             "activeSessions": len(active), "maxConcurrentSessions": 2,
-            "models": list(config().get("models", {})), "streaming": True}
+            "models": list(config().get("models", {})), "streaming": True,
+            "mcpEndpoints": list(config().get("mcp", {}))}
 
 
 @app.post("/execute")

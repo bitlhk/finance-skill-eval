@@ -8,7 +8,8 @@ import { FINANCE_SKILL_EVAL_VERSION } from "../index.js";
 import { renderHtmlReport, type EvaluationReport } from "../report.js";
 import { EvalPackCatalog } from "./catalog.js";
 import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./config.js";
-import { createEnvironmentSchema, manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
+import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
+import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
 import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
@@ -291,17 +292,7 @@ export async function createEvaluationService(
     });
   });
 
-  app.post("/api/environments", async request => environments.create(
-    createEnvironmentSchema.parse(request.body),
-  ));
-  app.post<{ Params: { environmentId: string } }>(
-    "/api/environments/:environmentId/preflight",
-    async request => {
-      const environment = await environments.get(request.params.environmentId);
-      if (!environment) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
-      return environments.inspect(environment);
-    },
-  );
+  registerEnvironmentRoutes(app, environments);
 
   app.get<{ Querystring: { limit?: string } }>("/api/runs", async request => ({
     runs: jobs.list(Number.parseInt(request.query.limit ?? "50", 10)),
