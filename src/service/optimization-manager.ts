@@ -70,8 +70,10 @@ export class OptimizationManager {
   }
   async get(id: string): Promise<Optimization> {
     if (!/^opt-[a-f0-9-]+$/u.test(id)) throw new Error("Invalid optimization id");
+    // A live task can finish while readJson is reading an older atomic snapshot.
+    const wasActive = this.active.has(id);
     const item = await readJson<Optimization>(path.join(this.directory, `${id}.json`));
-    if (["diagnosing", "validating", "reevaluating"].includes(item.status) && !this.active.has(id)) {
+    if (!wasActive && ["diagnosing", "validating", "reevaluating"].includes(item.status) && !this.active.has(id)) {
       item.status = "failed"; item.error = "Service restarted; candidate was not adopted"; await this.save(item);
     }
     return item;
