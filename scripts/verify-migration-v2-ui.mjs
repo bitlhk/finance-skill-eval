@@ -241,6 +241,8 @@ try{
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
   pass('unverified_candidate_downloaded_with_source_workflow');
   assert.deepEqual(errors,[]);pass('no_browser_errors');
+  await page.setViewportSize({width:390,height:900});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));pass('mobile_no_overflow');
   process.stdout.write(`${JSON.stringify({mode:'REAL_SERVICE_HEADLESS_CHROME',checks},null,2)}\n`);
 }catch(error){failedAt=error;throw error;}finally{
   // A browser check that fails in CI without a picture is a check nobody can act on.

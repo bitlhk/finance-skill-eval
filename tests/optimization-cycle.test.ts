@@ -37,7 +37,7 @@ it('runs bounded optimizer, retains dependency bytes, rebinds candidate and hide
   const manager=new OptimizationManager({dataDirectory:dir,skills,jobs:{get} as unknown as EvaluationJobStore,
    runs:{create,cancel:vi.fn()} as unknown as EvaluationRunManager,catalog:{get:()=>pack} as unknown as EvalPackCatalog});
   const item=await manager.create('source');
-  await vi.waitFor(async()=>expect((await manager.get(item.optimizationId)).status).toBe('review'));
+  await vi.waitFor(async()=>{const current=await manager.get(item.optimizationId);expect(current.status,current.error??'').toBe('review');});
   const done=await manager.get(item.optimizationId),candidate=done.candidate!;
   const archive=await skills.readArchive(candidate.assetId);
   expect(Buffer.from(archive['helper.bin']!)).toEqual(Buffer.from([0,255,7]));

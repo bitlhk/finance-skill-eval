@@ -41,7 +41,7 @@ jobs:
       - name: Private subpath build
         run: VITE_PRIVATE_WORKSPACE=true pnpm exec vite build --base=/migration/ --outDir=../web-dist-private
       - name: Authenticated browser regression, on the private subpath
-        run: MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs
+        run: FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS=1 MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs
       - name: Keep the failure picture when the browser check fails
         if: failure()
         uses: actions/upload-artifact@v4

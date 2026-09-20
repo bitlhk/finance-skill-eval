@@ -5,26 +5,7 @@ import {originalServiceSchema} from '../original-service-runtime.js';
 
 const runtimeSideSchema = z.strictObject({environmentId:z.string().min(1), skillAssetId:z.string().min(1)});
 
-export const environmentRecordSchema = z.strictObject({
-  environmentId: z.string().min(1),
-  name: z.string().min(1),
-  type: z.enum(["mcp_streamable_http", "runtime_http"]),
-  runtimeType: z.enum(["openjiuwen", "ea", "generic_http"]).nullable().default(null),
-  endpoint: z.string().url(),
-  credentialEnv: z.string().min(1).nullable().default(null),
-  mcpEnvironmentIds: z.array(z.string().min(1)).default([]),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
-export const createEnvironmentSchema = z.strictObject({
-  name: z.string().min(1).max(80),
-  type: z.enum(["mcp_streamable_http", "runtime_http"]),
-  runtimeType: z.enum(["openjiuwen", "ea", "generic_http"]).nullable().optional(),
-  endpoint: z.string().url(),
-  credentialEnv: z.string().min(1).max(100).nullable().optional(),
-  mcpEnvironmentIds: z.array(z.string().min(1)).max(12).default([]),
-});
+export { createEnvironmentSchema, environmentRecordSchema, type EnvironmentRecord } from "../shared/contracts/environment.js";
 
 export const serviceEnvironmentReferenceSchema=z.strictObject({migrationId:z.string().regex(/^migration-[a-f0-9-]+$/u),revision:z.number().int().nonnegative(),assetDigest:z.string().regex(/^[a-f0-9]{64}$/u),configurationDigest:z.string().min(1)});
 export const runConfigurationSchema = z.strictObject({
@@ -105,5 +86,4 @@ export const manualPreparationSchema = z.strictObject({
   if (new Set(ids).size!==ids.length) context.addIssue({code:z.ZodIssueCode.custom,message:'Development and holdout case IDs must be disjoint and unique'});
 });
 
-export type EnvironmentRecord = z.infer<typeof environmentRecordSchema>;
 export type RunConfiguration = z.infer<typeof runConfigurationSchema>;

@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { unlink } from "node:fs/promises";
+import { KeyedQueue } from "../shared/keyed-queue.js";
 import { preflightMcpServer, type McpPreflightResult } from "../mcp-preflight.js";
 import {
   createEnvironmentSchema,
   environmentRecordSchema,
   type EnvironmentRecord,
-} from "./contracts.js";
+} from "../shared/contracts/environment.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
@@ -16,6 +18,7 @@ function headersFor(record: EnvironmentRecord): Record<string, string> {
 }
 export class EnvironmentStore {
   private readonly directory: string;
+  private readonly writes = new KeyedQueue();
 
   constructor(dataDirectory: string) {
     this.directory = path.join(dataDirectory, "environments");
@@ -46,7 +49,9 @@ export class EnvironmentStore {
   }
 
   async create(input: unknown): Promise<EnvironmentRecord> {
+    return this.writes.run("registry", async () => {
     const parsed = createEnvironmentSchema.parse(input);
+    await this.validateBindings(parsed.mcpEnvironmentIds);
     const now = new Date().toISOString();
     const record = environmentRecordSchema.parse({
       ...parsed,
@@ -60,6 +65,45 @@ export class EnvironmentStore {
     });
     await writeJsonAtomic(path.join(this.directory, `${record.environmentId}.json`), record);
     return record;
+    });
+  }
+
+  private async validateBindings(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      const record = await this.get(id);
+      if (!record || record.type !== "mcp_streamable_http") {
+        throw Object.assign(new Error(`MCP binding is unavailable: ${id}`), { statusCode: 400 });
+      }
+    }
+  }
+
+  async update(id: string, input: unknown): Promise<EnvironmentRecord> {
+    return this.writes.run("registry", async () => {
+      const previous = await this.get(id);
+      if (!previous) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
+      const parsed = createEnvironmentSchema.parse(input);
+      if (parsed.type !== previous.type) {
+        throw Object.assign(new Error("Resource type cannot change; create a new environment instead"), { statusCode: 409 });
+      }
+      await this.validateBindings(parsed.mcpEnvironmentIds);
+      const record = environmentRecordSchema.parse({
+        ...previous, ...parsed,
+        runtimeType: parsed.type === "runtime_http" ? parsed.runtimeType ?? "generic_http" : null,
+        credentialEnv: parsed.credentialEnv ?? null,
+        updatedAt: new Date().toISOString(),
+      });
+      await writeJsonAtomic(path.join(this.directory, `${id}.json`), record);
+      return record;
+    });
+  }
+
+  async remove(id: string): Promise<void> {
+    await this.writes.run("registry", async () => {
+      if (!await this.get(id)) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
+      const dependent = (await this.list()).find(record => record.mcpEnvironmentIds.includes(id));
+      if (dependent) throw Object.assign(new Error(`Environment is still bound by ${dependent.name}`), { statusCode: 409 });
+      await unlink(path.join(this.directory, `${id}.json`));
+    });
   }
 
   headers(record: EnvironmentRecord): Record<string, string> {
@@ -81,8 +125,24 @@ export class EnvironmentStore {
       const response = await fetch(url, {
         headers: headersFor(record),
         signal: AbortSignal.timeout(10_000),
+        redirect: "error",
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (record.runtimeType === "openjiuwen") {
+        const health = await response.json() as { mcpEndpoints?: unknown; status?: string };
+        if (health.status && health.status !== "ready") throw new Error("Runtime is not ready");
+        if (record.mcpEnvironmentIds.length) {
+          if (!Array.isArray(health.mcpEndpoints) || !health.mcpEndpoints.every(item => typeof item === "string")) {
+            throw new Error("Runtime 未声明 MCP 接入能力，无法确认绑定可执行；请升级 Runtime 的 /health 接口。");
+          }
+          for (const id of record.mcpEnvironmentIds) {
+            const mcp = await this.get(id);
+            if (!mcp || !health.mcpEndpoints.includes(mcp.endpoint)) {
+              throw new Error(`Runtime 尚未接受 MCP「${mcp?.name ?? id}」；服务连通不代表 Runtime 已装配，请检查 Runtime 配置。`);
+            }
+          }
+        }
+      }
       return { status: "ready", elapsedMs: Date.now() - startedAt, error: null };
     } catch (error) {
       return {

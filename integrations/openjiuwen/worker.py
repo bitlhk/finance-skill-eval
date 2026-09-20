@@ -30,7 +30,8 @@ async def health():
     models = list(runtime_config.get("models", {}))
     return {"status": "ready", "runtime": "openjiuwen", "agentType": "DeepAgent", "version": version("openjiuwen"),
             "activeSessions": len(active), "maxConcurrentSessions": 2,
-            "models": models, "defaultModelId": runtime_config.get("defaultModelId") or (models[0] if models else None), "streaming": True}
+            "models": models, "defaultModelId": runtime_config.get("defaultModelId") or (models[0] if models else None), "streaming": True,
+            "mcpEndpoints": list(runtime_config.get("mcp", {}))}
 
 
 @app.post("/execute")
