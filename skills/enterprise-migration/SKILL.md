@@ -193,7 +193,7 @@ Tool 实际消费的凭证和隐式调用上下文，应识别为 Runtime 通过
 
 判断工具职责，不按名称猜归属。Runtime 提供的通用文件读取、搜索、命令执行等底层能力属于 Harness，不建议绑定 Skill，不迁移实现。带企业权限、业务规则或内部服务调用的同名工具仍按业务工具分析；混合工具保留业务部分。
 
-将已确认的 Harness 能力单独记录到 `runtimeCapabilities`，引用真实原文并说明参数、返回值、路径、权限及错误约定（不明项明确列出）。不放入业务 `tools` 或缺失依赖补充清单，不要求用户补实现，不阻塞迁移。记录消费方和目标能力映射建议供测试 Runtime 加载；未提供目标能力清单时不猜映射，也不宣称测试能力已可用。
+将已确认的 Harness 能力单独记录到 `runtimeCapabilities`，引用真实原文并说明参数、返回值、路径、权限及错误约定（不明项明确列出）。不放入业务 `tools`、`dependencyAnalysis.dependencies`、`dependencyAnalysis.chains` 或缺失依赖补充清单；Harness 自身使用的标准库、SDK、配置和资源也不进入业务迁移依赖图。一旦存在真正的 Harness 能力需求，当前迁移在诊断阶段停止并输出 `finance.runtime-build-requirements.v1` YAML，等待未来 Runtime Builder 返回可登记的 Runtime 接口；不得生成候选插件或进入测试。未提供目标能力清单时不猜映射，也不宣称能力已可用。ToolBase、ToolResponse、Toolkit、register_tool 等注册与返回包装只是框架胶水，不属于 Harness 能力需求，仍按普通工具迁移处理。
 
 ### 语言建议
 

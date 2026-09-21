@@ -10,4 +10,4 @@ description: 退款资格判断；用于企业迁移测试的模拟业务案例�
 
 工具：refund_eligibility
 
-请阅读 references/workflow.md。
+业务输入示例：`{"order_id": "RF-001"}`

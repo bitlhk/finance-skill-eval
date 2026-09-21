@@ -14,7 +14,6 @@ export type RuntimeEnvironmentDescriptor = {
   requiredToolNames?: string[];
   availableToolNames?:string[];
   harnessToolNames?:Array<'read_file'|'glob'|'list_files'|'bash'>;
-  candidateHarnessPlugins?:Array<{assetDigest:string;manifestPath:string;filePaths:string[];toolNames:string[]}>;
   mcpServers?: Array<{
     serverId: string;
     endpoint: string;
@@ -24,7 +23,7 @@ export type RuntimeEnvironmentDescriptor = {
   }>;
   commandScripts?:Array<{name:string;path:string;kind:'PYTHON'|'NODE';filePaths:string[];inputSchema?:unknown;launch?:{program:string;args:string[]}}>;
   /** The worker starts these inside the candidate workspace, never a same-name external service. */
-  candidateMcpServices?:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environment?:Record<string,string>}>;
+  candidateMcpServices?:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environment?:Record<string,string>;secretEnvironment?:Record<string,string>;secretBindings?:Record<string,string>}>;
 };
 
 export type HttpRuntimeAdapterOptions = {

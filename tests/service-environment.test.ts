@@ -56,10 +56,10 @@ it('resolves a revision-bound reference for selected tools and rejects changed c
   await mkdir(path.join(root,'migrations'));
   const configs=new MigrationRuntimeConfig(root),config=await configs.save(id,dep,'https://business.example',0);
   const ref={migrationId:id,revision:config.revision,assetDigest,configurationDigest:configurationDigest(config,deps)};
-  await writeFile(path.join(root,'migrations',id+'.json'),JSON.stringify({id,schemaVersion:'finance.skill-migration.v2',source:{artifactSha256:'b'.repeat(64)},candidate:{artifactSha256:assetDigest},inspection,sourceInspection:inspection,runs:[{jobId:'job',candidateDigest:assetDigest,runtimeConfigurationDigest:ref.configurationDigest,declaredPlan:{configuration:{runtime:{type:'runtime_http',environmentId:'runtime'}}}}]}));
-  const runtime={environmentId:'runtime',type:'runtime_http',runtimeType:'openjiuwen'};
-  const store=new MigrationStore(root,{} as never,{} as never,{get:()=>({status:'failed'})} as never,{} as never,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,{environment:async()=>runtime} as never);
-  expect(await store.resolveServiceEnvironment(ref,['lookup'])).toEqual({BUSINESS_SERVICE_URL:'https://business.example'});
+  await writeFile(path.join(root,'migrations',id+'.json'),JSON.stringify({id,schemaVersion:'finance.skill-migration.v2',source:{artifactSha256:'b'.repeat(64)},candidate:{artifactSha256:assetDigest},inspection,sourceInspection:inspection,runs:[{jobId:'job',candidateDigest:assetDigest,runtimeConfigurationDigest:ref.configurationDigest,declaredPlan:{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'}}}}]}));
+  const runtime={environmentId:'runtime',type:'runtime_launcher',runtimeType:'openjiuwen'};
+  const store=new MigrationStore(root,{} as never,{} as never,{get:()=>({status:'failed'})} as never,{} as never,undefined,undefined,undefined,{get:async()=>runtime} as never);
+  expect(await store.resolveServiceEnvironment(ref,['lookup'])).toEqual({configuration:{BUSINESS_SERVICE_URL:'https://business.example'},secrets:{}});
   await expect(store.resolveServiceEnvironment(ref,['unknown'])).rejects.toThrow('未知工具');
   expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(true);
   await configs.save(id,dep,'https://changed.example',1);
@@ -72,19 +72,15 @@ it('resolves environment values only in the trusted Runtime transport, keeping t
  const assetDigest='a'.repeat(64),reference={migrationId:'migration-1234',revision:1,assetDigest,configurationDigest:'config-digest'};
  const launch={assetDigest,toolNames:['lookup'],filePaths:['mcp/server.mjs'],start:['node','mcp/server.mjs'],environmentReference:reference};
  const variant={mode:'skill_version',skillId:'fixture',version:'1.0.0',artifactSha256:assetDigest};
- const configuration=runConfigurationSchema.parse({packId:'fixture',executionModel:{providerId:'test',modelId:'test'},runtime:{type:'runtime_http',environmentId:'runtime'},evaluationMode:'candidate_assessment',leftVariant:variant,rightVariant:variant,runtimeBindings:{left:{environmentId:'runtime',skillAssetId:'asset'},right:{environmentId:'runtime',skillAssetId:'asset'}},runtimeMcpBindings:{left:[],right:[launch]}});
- let resolved=0,endpoint='http://127.0.0.1:9000/execute';
- const manager=new EvaluationRunManager({environments:{headers:()=>({})},resolveMigrationRuntime:async()=>({type:'runtime_http',endpoint,mcpEnvironmentIds:[]}),resolveServiceEnvironment:async(ref,names)=>{expect(ref).toEqual(reference);expect(names).toEqual(['lookup']);resolved++;return {BUSINESS_SERVICE_URL:'https://private-business.example'}}} as never);
+ const configuration=runConfigurationSchema.parse({packId:'fixture',executionModel:{providerId:'test',modelId:'test'},runtime:{type:'runtime_launcher',environmentId:'runtime'},evaluationMode:'candidate_assessment',leftVariant:variant,rightVariant:variant,runtimeBindings:{left:{environmentId:'runtime',skillAssetId:'asset'},right:{environmentId:'runtime',skillAssetId:'asset'}},runtimeMcpBindings:{left:[],right:[launch]}});
+ let resolved=0;
+ const manager=new EvaluationRunManager({environments:{headers:()=>({})},resolveMigrationRuntime:async()=>({type:'runtime_launcher',baseUrl:'http://127.0.0.1:9000/',runtimeType:'openjiuwen'}),resolveServiceEnvironment:async(ref,names)=>{expect(ref).toEqual(reference);expect(names).toEqual(['lookup']);resolved++;return {configuration:{BUSINESS_SERVICE_URL:'https://private-business.example'},secrets:{}}}} as never);
  (manager as any).skillResolver=async()=>async()=>({});
- const pack={variants:{left:variant,right:variant},cases:[{requiredTools:['lookup']}],metadata:{}};
- vi.stubEnv('FINANCE_MIGRATION_NATIVE_ENDPOINT',endpoint);
- try{
+ const model={providerId:'test',modelId:'test',parameters:{}};
+ const pack={variants:{left:variant,right:variant},models:{execution:{left:model,right:model}},cases:[{requiredTools:['lookup']}],metadata:{}};
  const runtime=await (manager as any).runtimeFor(configuration,pack);
  expect((runtime as any).options.environment.candidateMcpServices[0].environment).toEqual({BUSINESS_SERVICE_URL:'https://private-business.example'});
  expect(JSON.stringify(configuration)).not.toContain('private-business');expect(resolved).toBe(1);
- endpoint='https://untrusted.example/execute';
- await expect((manager as any).runtimeFor(configuration,pack)).rejects.toThrow('受信任');expect(resolved).toBe(1);
- }finally{vi.unstubAllEnvs()}
 });
 
 it('starts MCP with process-scoped service configuration and invokes the real business endpoint',async()=>{

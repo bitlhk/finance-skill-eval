@@ -3,11 +3,12 @@
     "get_balance"
   ],
   "sharedDependencies": [
-    "legacy_runtime.current_user: object，原 Runtime 提供，需测试配置注入",
-    "legacy_runtime.service_url / app_key: 原 Runtime 配置",
-    "auth_sdk: 源包缺失，用户补 SDK"
+    "AgentScope Toolkit 注册与 context 注入",
+    "auth_sdk: 使用 context.user / app_key 建立业务凭证"
   ],
-  "toolSpecificDependencies": [],
-  "chain": "Skill → Tool → tools/http_client.py → auth_sdk → business API",
+  "toolSpecificDependencies": [
+    "context.service_url: Runtime 提供的业务地址"
+  ],
+  "chain": "Skill → Toolkit → get_balance(context) → auth_sdk → business API",
   "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
 }

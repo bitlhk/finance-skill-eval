@@ -39,17 +39,11 @@ MCP 通过每次请求 Header 消费上下文和最终 Credential，业务 Schem
 
 新生成的 Python MCP 服务使用独立包 `fastmcp==2.14.7`，入口导入 `from fastmcp import FastMCP`。通过具名业务函数、类型注解与必要的 Pydantic 约束定义工具，实际发现 Schema 后与基线核对；差异明确记录原因。当前请求的 Header 通过 `fastmcp.server.dependencies.get_http_headers` 读取，不缓存身份，不新增 MCP 鉴权门槛，不将凭证放入函数的业务参数。依赖和启动命令由交付包声明，不依赖平台或 openJiuwen 的安装环境。
 
-## Harness 接入适配
+## Runtime Harness 边界
 
-诊断识别的 Runtime Harness 不属于业务工具决策，不转换成 Skill 脚本或业务 MCP。交付独立的 `runtime-plugins/<插件>/` 工程：保留源实现并放在 implementation/，目标 Runtime 包装层放在 adapter/，附框架原生 manifest.json、必要依赖清单及 README。
+本交付步骤只处理 Skill 文档、业务 MCP 和独立 Script。若诊断结果含 `runtimeCapabilities`，说明迁移依赖目标 Runtime 尚未提供的能力；当前流程必须在诊断阶段停止，并交付 `finance.runtime-build-requirements.v1` YAML，不能生成候选 Harness 插件、伪造能力或进入测试。
 
-只适配原 Runtime 注册及依赖访问方式。工具名称、原业务入参、返回值、错误语义和行为保持不变，不因目标 Runtime 有相近内置工具而改名、映射或替换；Skill 中的原工具名称保持不变。包装层委托原实现，不将完整原逻辑重新实现成另一个内置工具。其他 Runtime 接入时替换包装层，复用原实现和工具契约。
-
-当前目标是锁定的 OpenJiuwen 0.1.17.post1：清单 tools 用 file/class 指定包装层；类无参数构造，实例为 Tool，ToolCard.name 为原名，input_params 保留原 Schema，实现 invoke 和 stream。Session 由 Runtime 传入 kwargs，但不会自动获得原 Runtime 的业务身份或凭证。缺失的上下文、SDK 和接入能力明确报告，不伪造，不塞进模型参数，不缓存全局身份。
-
-交付 JSON 的 harnessPlugins 声明 toolNames、manifestPath、files、implementationFiles、adapterFiles、dependencies、compilePassed、contractPassed、callExecuted 及 runtimeDependenciesPending。资产摘要由平台打包后绑定，不由 Agent 填写。必须先 compile_source，再以 tool_id=harness:<原名>、entrypoint=manifest.json 调用 run_contract_test 实际加载。无源样例时记录加载通过、callExecuted=false；不得把加载成功等同于原行为对比通过。
-
-锁定版本插件 API 以 deliveryContract.harness.pluginApi 为准：导入 `openjiuwen.core.foundation.tool` 中的 Tool、ToolCard，提供 ToolCard.id。invoke 是 `async def invoke(self, inputs: dict, **kwargs)`，stream 是异步生成器。原业务入参位于 inputs，Runtime session 位于 kwargs；不能使用其他版本的导入路径或 kwargs.arguments。
+未来 Runtime Builder 将消费该 YAML，构建并返回可登记的 Runtime 接口。当前仅预留协议边界，不调用不存在的 Builder。ToolBase、ToolResponse、Toolkit、register_tool 等框架注册与返回包装属于迁移适配胶水，应由业务 MCP/Script 的目标框架实现替代，不得误报为 Runtime Harness 改造需求。
 
 ## 库依赖分类
 

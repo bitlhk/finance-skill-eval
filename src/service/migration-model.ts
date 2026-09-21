@@ -26,14 +26,16 @@ export type ProjectInspection={assetId:string;assetDigest:string;inspectedAt:str
     incompleteFiles:Array<{path:string;status:string}>;toolIncompleteFiles?:Array<{path:string;status:string}>};
   runtimeAnalysis?:{status:'RUNNING'|'COMPLETE'|'NOT_CONFIGURED'|'FAILED';model?:string;acceptedBindings:number;rejectedBindings:number;inputTruncated?:boolean}};
 export type ToolDecision={toolId:string;form:ToolForm;language?:string;reason:string;baseAssetId:string;decidedAt:string};
-/** Harness requirements are retained for test loading, never generated as Skill tools. */
-export type RuntimeHarnessCapability={name:string;owner:'RUNTIME_HARNESS';migrationAction:'DO_NOT_MIGRATE';blocking:false;
+/** A source-Runtime capability that requires a future Runtime Builder before migration can continue. */
+export type RuntimeHarnessCapability={name:string;owner:'RUNTIME_HARNESS';migrationAction:'REQUIRES_RUNTIME_BUILDER';blocking:true;
   reason:string;usageContract:string;targetCapability:string|null;testAvailability:'UNCHECKED';
   consumerTools:string[];evidence:InspectionEvidence[]};
 export type MigrationPlanItem={toolId:string;toolName:string;form:ToolForm;language:string;generator:string;blockingReasons:string[];warnings:string[]};
 export type MigrationPlan={baseAssetId:string;items:MigrationPlanItem[];skillMigrationItems:string[];skillBlockingReasons:string[];generationAllowed:boolean;technicalValidationAllowed:boolean};
 export type TechnicalValidation={
   runtimeConfigurationDigest?:string;
+  inputSource?:'USER'|'SOURCE_SAMPLE'|'SCHEMA_DEFAULT'|'EMPTY';
+  inputFields?:string[];
   validationId:string;toolId:string;assetId:string;assetDigest:string;implementationDigest:string;
   casesDigest:string;
   mode:'LOCAL_TRUSTED'|'MCP_HTTP';status:'PASSED'|'FAILED';startedAt:string;finishedAt:string;
@@ -88,6 +90,11 @@ export function recommendLanguage(form:ToolForm,sourceLanguage:string|null|undef
   return same??(form==='MCP'?'java':'python');
 }
 
+/** The command contract already runs scripts with cwd set to the Runtime workspace. */
+export function supportsImplicitScriptContext(dependency:{binding:{kind:string;name:string}|null;sensitive:boolean}){
+  return !dependency.sensitive&&dependency.binding?.kind==='SCRIPT_CONTEXT'&&/^(?:workspace|cwd)$/iu.test(dependency.binding.name);
+}
+
 export function buildMigrationPlan(inspection:ProjectInspection,decisions:ToolDecision[],baseAssetId:string):MigrationPlan{
   const current=decisions.filter(d=>d.baseAssetId===baseAssetId);
   const items=inspection.tools.map(tool=>{
@@ -99,7 +106,7 @@ export function buildMigrationPlan(inspection:ProjectInspection,decisions:ToolDe
     // form's language into the plan.
     const language=(supported?decision!.language:undefined)||recommendLanguage(form,tool.language);
     const blockingReasons:string[]=[],warnings:string[]=[];
-    if(form==='MCP'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&d.binding?.kind!=='HTTP_HEADER'&&d.binding?.kind!=='SERVICE_ENV'))blockingReasons.push('选择 MCP 后需确认运行依赖的 HTTP header 映射，请补充契约说明后继续分析');
+    if(form==='MCP'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&d.binding?.kind!=='HTTP_HEADER'&&d.binding?.kind!=='SERVICE_ENV'))blockingReasons.push('系统尚未确定运行依赖的传递方式，请返回诊断并重新分析迁移方案');
     if(!supported)blockingReasons.push('请重新选择 MCP 或 Python 脚本');
     const targets:readonly string[]=form==='MCP'?MCP_TARGETS:SCRIPT_TARGETS;
     if(!targets.includes(language))blockingReasons.push(`${form} 不支持实现语言 ${language}，请选择 ${targets.join('、')}`);
@@ -111,7 +118,7 @@ export function buildMigrationPlan(inspection:ProjectInspection,decisions:ToolDe
     const target=canonicalLanguage(language);
     if(!unmigratable.length&&target&&!(tool.language??'').split(',').some(part=>canonicalLanguage(part)===target))
       warnings.push(`源实现是 ${tool.language}，将改写为 ${language}；跨语言重写会损失保真度，不推荐`);
-    if(form==='SCRIPT'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'))blockingReasons.push('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
+    if(form==='SCRIPT'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&!supportsImplicitScriptContext(d)))blockingReasons.push('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
     return {toolId:tool.toolId,toolName:tool.name,form,language,
       generator:form==='MCP'?'MCP_SERVICE':'COMMAND_SCRIPT',blockingReasons,warnings} as MigrationPlanItem;
   });

@@ -28,6 +28,8 @@ it('builds a loadable environment-backed template without actual values or SDK c
  expect(template.runtimeToolConfig.tools.balance!.contextBindings.Authorization).toMatch(/^context\./);
  const payload={tools:[{toolId:tool.toolId,compilePassed:true,contractPassed:true,runtimeBindings:[{key:'credential',header:'Authorization'}]}],runtimeToolConfig:template.runtimeToolConfig};
  expect(validateAgentRuntimeDelivery(payload,inspection,decisions)).toEqual([]);
+ expect(validateAgentRuntimeDelivery({...payload,runtimeToolConfig:{schemaVersion:'finance.runtime-tool-config-template.v1',runtimeToolConfig:template.runtimeToolConfig}},inspection,decisions)).toEqual([]);
+ expect(validateAgentRuntimeDelivery({...payload,runtimeToolConfig:{schemaVersion:'wrong',runtimeToolConfig:template.runtimeToolConfig}},inspection,decisions).join()).toContain('不一致');
  expect(validateAgentRuntimeDelivery({...payload,runtimeToolConfig:{context:{},tools:{},providers:{}}},inspection,decisions).join()).toContain('不一致');
  payload.tools[0]!.runtimeBindings[0]!.header='X-Wrong';expect(validateAgentRuntimeDelivery(payload,inspection,decisions).join()).toContain('Header 绑定');
 });
@@ -51,6 +53,48 @@ it('retains pending-call evidence through delivery and renders it without a busi
  expect(generatedCallState({toolId:'legacy',readyForValidation:true,checks:[{name:'JSON_SMOKE',passed:true,message:'实际调用尚未执行'}]})).toBe('PENDING');
 });
 
+it('accepts workspace cwd as implicit Script context at delivery validation',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ inspection.dependencyAnalysis={dependencies:[{key:'workspace',name:'workspace',owner:'RUNTIME',action:'INJECT',sensitive:false,toolIds:[tool.toolId],binding:{kind:'SCRIPT_CONTEXT',name:'workspace'}}]} as any;
+ const decisions=[{toolId:tool.toolId,form:'SCRIPT' as const,language:'python',reason:'',baseAssetId:'asset',decidedAt:'now'}];
+ const payload={tools:[{toolId:tool.toolId,compilePassed:true,contractPassed:true,callExecuted:true,runtimeBindings:[]}]};
+ expect(validateAgentRuntimeDelivery(payload,inspection,decisions)).toEqual([]);
+ payload.tools[0]!.runtimeBindings=[{key:'workspace',header:'X-Workspace'}];
+ expect(validateAgentRuntimeDelivery(payload,inspection,decisions).join()).toContain('Script 不支持 Runtime 注入');
+});
+
+it('excludes runtime workspace data from the delivered Skill package',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD,'workspace/EXP-001.json':'{"id":"EXP-001"}','references/workspace/EXP-002.json':'{"id":"EXP-002"}','scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));
+ const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/expense.py',source:'print("{}")',additionalFiles:[],dependencies:[]}} as any});
+ expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
+});
+
+it('keeps documentation in one SKILL.md when the merged content is at most 500 lines',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD+'\n请阅读 `references/workflow.md`。','references/workflow.md':'# 处理流程\n\n先核对，再返回。','scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));
+ const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/expense.py',source:'print("{}")',additionalFiles:[],dependencies:[]}} as any});
+ expect(result.files['references/workflow.md']).toBeUndefined();
+ const skill=Buffer.from(result.files['SKILL.md']!).toString();expect(skill).toContain('## 处理流程');expect(skill).toContain('先核对，再返回。');expect(skill).not.toContain('references/workflow.md');
+});
+
+it('keeps a real reference when merging would exceed 500 lines',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const longReference=['# 大型手册',...Array.from({length:500},(_,index)=>`规则 ${index+1}`)].join('\n');
+ const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD+'\n请阅读 `references/manual.md`。','references/manual.md':longReference,'scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));
+ const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/expense.py',source:'print("{}")',additionalFiles:[],dependencies:[]}} as any});
+ expect(result.files['references/manual.md']).toBeDefined();expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('references/manual.md');
+});
+
+it('resolves a Java service directory entrypoint only from its declared main class',()=>{
+ const encoded=(value:string)=>Buffer.from(value).toString('base64');
+ const files={'mcp-java/src/com/acme/Main.java':encoded('package com.acme; class Main {}'),'mcp-java/src/com/acme/Helper.java':encoded('package com.acme; class Helper {}')};
+ const mapped=toGeneratedImplementations({tools:[{toolId:'java-tool',language:'java',entrypoint:'mcp-java',files:Object.keys(files),start:['java','-cp','mcp-java/src','com.acme.Main'],compilePassed:true,contractPassed:true}]},files,{'java-tool':'lookup'});
+ expect(mapped['java-tool']?.sourcePath).toBe('mcp-java/src/com/acme/Main.java');
+ expect(mapped['java-tool']?.additionalFiles.map(file=>file.path)).toEqual(['mcp-java/src/com/acme/Helper.java']);
+ expect(mapped['java-tool']?.prepare).toEqual(['javac','--release','17','-encoding','UTF-8','mcp-java/src/com/acme/Main.java','mcp-java/src/com/acme/Helper.java']);
+});
+
 it('packages matching Skill execution instructions and MCP configuration',()=>{
  const {inspection,decisions,tool}=fixture();
  const generated=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD),'balance.mjs':strToU8('old')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions,version:'2.0.0',implementations:{[tool.toolId]:{language:'node',sourcePath:'mcp/server.mjs',source:'// server',additionalFiles:[],dependencies:[],smokeInput:{},generatedBy:'A4',explanation:'',attempts:1,checks:[],start:['node','mcp/server.mjs']}}});
@@ -71,6 +115,21 @@ it('technical Script execution uses separate cwd and absolute entry/resource pat
  const source="import fs from 'node:fs';import path from 'node:path';const resource=fs.readFileSync(new URL('./resource.txt',import.meta.url),'utf8');if(path.dirname(new URL(import.meta.url).pathname).includes(process.cwd()))throw Error('cwd is package');fs.writeFileSync('result.txt',resource);console.log(JSON.stringify({resource,cwd:process.cwd()}));";
  const worker=new LocalWorker();const result=await worker.run({requestId:'separate',program:'node',args:['entry.mjs'],separateWorkspace:true,files:[{path:'entry.mjs',content:strToU8(source)},{path:'resource.txt',content:strToU8('package-data')}],stdin:'{}'});
  expect(result.exitCode,result.stderr).toBe(0);expect(JSON.parse(result.stdout).resource).toBe('package-data');expect(JSON.parse(result.stdout).cwd).toContain('finance-migration-execution-');
+});
+
+it('seeds declared sample workspace files without running inside the Skill package',async()=>{
+ vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
+ const source="import fs from 'node:fs';console.log(JSON.stringify({value:fs.readFileSync('EXP-001.json','utf8'),cwd:process.cwd()}));";
+ const worker=new LocalWorker();const result=await worker.run({requestId:'workspace-fixture',program:'node',args:['entry.mjs'],separateWorkspace:true,files:[{path:'entry.mjs',content:strToU8(source)}],workspaceFiles:[{path:'EXP-001.json',content:strToU8('sample-claim')}],stdin:'{}'});
+ expect(result.exitCode,result.stderr).toBe(0);expect(JSON.parse(result.stdout).value).toBe('sample-claim');expect(JSON.parse(result.stdout).cwd).toContain('finance-migration-execution-');
+});
+
+it('preserves an A4 Script layout that was already contract-tested',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/legacy.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD),'assets/rules.json':strToU8('{}')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/check_expense.py',source:'from pathlib import Path\nRULES=Path(__file__).resolve().parents[1]/"assets"/"rules.json"',additionalFiles:[{path:'scripts/README.md',content:'docs'}],dependencies:[],generatedBy:'expense',explanation:'',attempts:1,checks:[]}} as any});
+ expect(result.generations[0]!.entrypoint).toBe('scripts/check_expense.py');
+ expect(result.files['scripts/check_expense.py']).toBeDefined();
+ expect(result.files['scripts/expense/check_expense.py']).toBeUndefined();
 });
 
 it('relocates multi-file scripts with their resources and documentation, retiring exclusive Runtime code',()=>{

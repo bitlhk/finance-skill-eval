@@ -10,4 +10,4 @@ description: 员工余额查询；用于企业迁移测试的模拟业务案例�
 
 工具：get_balance
 
-请阅读 references/workflow.md。
+业务输入示例：`{"account_id": "ACC-001"}`

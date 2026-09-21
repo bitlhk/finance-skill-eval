@@ -31,7 +31,6 @@ describe("HttpRuntimeAdapter", () => {
       environment: {
         environmentId: "openjiuwen-eval",
         harnessToolNames:['glob'],
-        candidateHarnessPlugins:[{assetDigest:'a'.repeat(64),manifestPath:'plugins/demo/manifest.json',filePaths:['plugins/demo/manifest.json','plugins/demo/tool.py'],toolNames:['workspace_info']}],
         runtimeToolConfig: {context:{user:{type:'object',value:{id:'test-user'},sensitive:true}},providers:{},tools:{risk_query:{contextBindings:{'X-Business-User':'context.user'}}}},
         requiredToolNames: ["risk_query"],
         mcpServers: [{
@@ -76,7 +75,6 @@ describe("HttpRuntimeAdapter", () => {
       environment: {
         environmentId: "openjiuwen-eval",
         harnessToolNames:['glob'],
-        candidateHarnessPlugins:[{assetDigest:'a'.repeat(64),manifestPath:'plugins/demo/manifest.json',toolNames:['workspace_info']}],
         runtimeToolConfig: {tools:{risk_query:{contextBindings:{'X-Business-User':'context.user'}}}},
         requiredToolNames: ["risk_query"],
         mcpServers: [{ serverId: "risk-mcp", toolNames: ["risk_query"] }],

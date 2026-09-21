@@ -28,7 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Same allowlist idea as the TS LocalWorker: the program is chosen by the server,
 # never by the model.
 _ALLOWED_COMPILERS = {
-    "java": ("javac", ["--release", "17"]),
+    "java": ("javac", ["--release", "17", "-encoding", "UTF-8", "-J-Duser.language=en", "-J-Dfile.encoding=UTF-8"]),
     "python": ("python", ["-m", "py_compile"]),
     "node": ("node", ["--check"]),
 }
@@ -157,7 +157,10 @@ def build_compile_tool(workspace: Path, capture: list[dict[str, Any]] | None = N
     return _tool(
         "compile_source",
         "Compile the current workspace sources with the server-approved toolchain for the given "
-        "language (java | python | node). Returns the exit code and compiler output.",
+        "language (java | python | node). `paths` accepts source files only, never a directory or "
+        "build descriptor such as pom.xml; omit it to discover all source files. Java is the "
+        "current pure-JDK-17 delivery path and third-party classpaths are not available. Returns "
+        "the exit code and compiler output.",
         {
             "type": "object",
             "properties": {
@@ -179,6 +182,13 @@ async def _compile_source(workspace: Path, language: str, paths: list[str] | Non
     if program not in {"javac", "python", "node"}:
         return {"passed": False, "error": "PROGRAM_NOT_ALLOWED"}
     targets = [p for p in (paths or []) if p]
+    allowed_suffixes = {
+        "java": (".java",), "python": (".py",), "node": (".js", ".mjs", ".cjs"),
+    }[str(language).lower()]
+    invalid = [target for target in targets if not target.lower().endswith(allowed_suffixes)]
+    if invalid:
+        return {"passed": False, "error": "INVALID_SOURCE_PATHS: paths must name source files only; "
+                f"omit paths for automatic discovery. Invalid: {', '.join(invalid)}"}
     if not targets:
         suffix = {"java": ".java", "python": ".py", "node": ".js"}[str(language).lower()]
         targets = [p.relative_to(workspace).as_posix()
@@ -350,6 +360,27 @@ async def _wait_for_port(port: int, timeout: float) -> bool:
     return False
 
 
+def _is_implicit_script_context(dependency: dict[str, Any]) -> bool:
+    """Return whether a Runtime dependency is already supplied by the Script process itself."""
+    binding = dependency.get("binding") or {}
+    return (
+        dependency.get("owner") == "RUNTIME"
+        and dependency.get("action") == "INJECT"
+        and dependency.get("sensitive") is not True
+        and binding.get("kind") == "SCRIPT_CONTEXT"
+        and str(binding.get("name") or "").strip().lower() in {"workspace", "cwd"}
+    )
+
+
+def _unsupported_script_injections(dependencies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        dependency for dependency in dependencies
+        if dependency.get("owner") == "RUNTIME"
+        and dependency.get("action") == "INJECT"
+        and not _is_implicit_script_context(dependency)
+    ]
+
+
 async def _script_contract(workspace: Path, entry: dict[str, Any], source: Path, sample: Any) -> dict[str, Any]:
     kind = str(entry.get("language", "python")).lower()
     if kind == "python":
@@ -368,6 +399,8 @@ async def _script_contract(workspace: Path, entry: dict[str, Any], source: Path,
             argument = str(candidate)
         absolute_argv.append(argument)
     with tempfile.TemporaryDirectory(prefix='migration-contract-workspace-') as execution_workspace:
+        # The Runtime creates an isolated cwd by default.  Files inside the Skill package are
+        # never copied into it: workspace state and test data are not versioned deliverables.
         try:
             result = await execute_command(execution_workspace, absolute_argv, json.dumps(sample), timeout=_LAUNCH_TIMEOUT)
         except TimeoutError:
@@ -459,6 +492,127 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any, exe
         await _terminate(proc)
 
 
+async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], start: list[str],
+                              prepare: list[str] | None = None) -> dict[str, Any]:
+    """Build and start one shared MCP service once, then validate every requested Tool."""
+    if not start:
+        return {"passed": False, "error": "NO_START_COMMAND", "results": []}
+    port = _free_port()
+    env = {**os.environ, "PYTHONUTF8": "1", "PORT": str(port)}
+    if prepare:
+        step = await _run_process(workspace, [str(part) for part in prepare], _LAUNCH_TIMEOUT, env=env)
+        if step["exitCode"] != 0:
+            return {"passed": False, "error": "PREPARE_FAILED", "stderr": (step["stderr"] or "")[:1200],
+                    "results": []}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *[str(part) for part in start], cwd=str(workspace), stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=env)
+    except OSError as exc:
+        return {"passed": False, "error": f"SERVICE_FAILED_TO_START: {exc}", "results": []}
+    try:
+        if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
+            return {"passed": False, "error": "SERVICE_DID_NOT_START", "results": []}
+        url = f"http://127.0.0.1:{port}/mcp"
+        session, _ = await asyncio.to_thread(_mcp_post, url, {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "finance-skill-migration", "version": "0.1.0"}}})
+        await asyncio.to_thread(_mcp_post, url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
+        _, listed = await asyncio.to_thread(_mcp_post, url, {
+            "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, session)
+        advertised = ((listed or {}).get("result") or {}).get("tools") or []
+        results = []
+        for index, case in enumerate(cases, 3):
+            entry, sample = case["entry"], case["sample"]
+            observed = next((tool for tool in advertised if tool.get("name") == entry.get("toolName")), None)
+            if observed is None:
+                results.append({"passed": False, "toolId": case["toolId"],
+                                "error": f"TOOL_NOT_ADVERTISED: {entry.get('toolName')}"})
+                continue
+            drift = []
+            if observed.get("inputSchema") != entry.get("inputSchema"):
+                drift.append({"where": "inputSchema", "baseline": entry.get("inputSchema"),
+                              "observed": observed.get("inputSchema")})
+            if not case["executeCall"]:
+                results.append({"passed": True, "toolId": case["toolId"], "inputShapeOk": True,
+                                "contractPassed": True, "callExecuted": False,
+                                "runtimeDependenciesPending": case["runtimePending"], "drift": drift, "error": ""})
+                continue
+            _, called = await asyncio.to_thread(_mcp_post, url, {
+                "jsonrpc": "2.0", "id": index, "method": "tools/call",
+                "params": {"name": entry.get("toolName"), "arguments": sample}}, session)
+            result = ((called or {}).get("result") or {})
+            texts = [item.get("text", "") for item in (result.get("content") or []) if item.get("type") == "text"]
+            if result.get("isError"):
+                results.append({"passed": False, "toolId": case["toolId"],
+                                "error": f"TOOL_CALL_FAILED: {''.join(texts)[:600]}"})
+                continue
+            try:
+                produced = json.loads(texts[0] if texts else "null")
+            except ValueError:
+                results.append({"passed": False, "toolId": case["toolId"], "error": "OUTPUT_NOT_JSON"})
+                continue
+            ok, detail = _shape_ok(produced, entry.get("outputSchema"))
+            if not ok:
+                drift.append({"where": "outputShape", "baseline": entry.get("outputSchema"), "observed": detail})
+            results.append({"passed": True, "toolId": case["toolId"], "inputShapeOk": True,
+                            "contractPassed": True, "callExecuted": True,
+                            "runtimeDependenciesPending": [], "drift": drift, "error": ""})
+        return {"passed": bool(results) and all(item.get("passed") for item in results), "results": results}
+    except Exception as error:  # noqa: BLE001
+        return {"passed": False, "error": f"MCP_CONTRACT_FAILED: {type(error).__name__}: {error}", "results": []}
+    finally:
+        await _terminate(proc)
+
+
+async def _contract_suite(workspace: Path, contract: dict[str, Any], tool_ids: list[str],
+                          start: list[str], prepare: list[str] | None = None) -> dict[str, Any]:
+    cases = []
+    for tool_id in tool_ids:
+        entry = contract.get(tool_id)
+        if not entry:
+            return {"passed": False, "error": f"UNKNOWN_TOOL_CONTRACT: {tool_id}", "results": []}
+        if str(entry.get("form", "")).upper() != "MCP":
+            return {"passed": False, "error": f"NOT_MCP_TOOL: {tool_id}", "results": []}
+        sample_missing = bool(entry.get("sampleMissing")) and "sampleInput" not in entry
+        sample = entry.get("sampleInput") or {}
+        shape_ok, detail = _shape_ok(sample, entry.get("inputSchema"))
+        if not shape_ok and not sample_missing:
+            return {"passed": False, "error": f"SAMPLE_INPUT_SHAPE: {tool_id}: {detail}", "results": []}
+        runtime_pending = [d.get("name") or d.get("key") for d in entry.get("dependencies", [])
+                           if d.get("owner") == "RUNTIME" and d.get("action") == "INJECT"]
+        cases.append({"toolId": tool_id, "entry": entry, "sample": sample,
+                      "executeCall": not runtime_pending and not sample_missing,
+                      "runtimePending": runtime_pending})
+    return await _mcp_contract_suite(workspace, cases, start, prepare)
+
+
+def build_contract_suite_tool(workspace: Path, contract: dict[str, Any],
+                              capture: list[dict[str, Any]] | None = None) -> LocalFunction:
+    async def run_mcp_contract_suite(tool_ids: list[str], start: list[str],
+                                     prepare: list[str] | None = None) -> dict[str, Any]:
+        result = await _contract_suite(workspace, contract, tool_ids, start, prepare)
+        if capture is not None:
+            capture.append({"tool": "run_mcp_contract_suite", "toolIds": tool_ids,
+                            "passed": result.get("passed"), "results": result.get("results", []),
+                            **({"error": result.get("error")} if result.get("error") else {})})
+        return result
+
+    return _tool(
+        "run_mcp_contract_suite",
+        "Build and start one shared MCP service once, then validate tools/list and each requested "
+        "Tool contract. Prefer this over repeated run_contract_test calls when multiple Tools share "
+        "the same start command.",
+        {"type": "object", "properties": {
+            "tool_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "start": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "prepare": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["tool_ids", "start"], "additionalProperties": False},
+        run_mcp_contract_suite,
+    )
+
+
 def build_contract_test_tool(workspace: Path, contract: dict[str, Any],
                              capture: list[dict[str, Any]] | None = None) -> LocalFunction:
     """`contract` maps toolId -> {form, language, toolName, inputSchema, outputSchema, sampleInput}.
@@ -490,7 +644,7 @@ def build_contract_test_tool(workspace: Path, contract: dict[str, Any],
             "properties": {
                 "tool_id": {"type": "string"},
                 "entrypoint": {"type": "string",
-                               "description": "Workspace-relative SCRIPT entry or HARNESS manifest.json. For MCP use start instead."},
+                               "description": "Workspace-relative SCRIPT entry. For MCP use start instead."},
                 # How to start the service is the agent's own answer, and this test is the only
                 # place it can be given: the platform has no way to work it out, and the contract it
                 # sends carries only what the analysis read out of the source. Without it an MCP
@@ -519,20 +673,12 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
                  **({"prepare": prepare} if prepare else {})}
 
     form = str(entry.get("form", "SCRIPT")).upper()
-    if form == 'HARNESS':
-        from pathlib import Path
-        result = await _run_process(workspace, [sys.executable, '-B', str(Path(__file__).with_name('harness_contract.py')),
-            json.dumps({**entry,'manifestPath':entrypoint},ensure_ascii=False)], 90)
-        lines = [line.split('HARNESS_CONTRACT_JSON=',1)[1] for line in result['stdout'].splitlines() if line.startswith('HARNESS_CONTRACT_JSON=')]
-        if result['exitCode'] != 0 or not lines:
-            return {'passed':False,'toolId':tool_id,'error':result['stderr'][-1200:] or 'HARNESS_CONTRACT_FAILED'}
-        return {'toolId':tool_id,**json.loads(lines[-1])}
     dependencies=entry.get('dependencies', [])
     if form=='SCRIPT':
         source=(workspace / str(entrypoint or '')).resolve()
         if workspace.resolve() not in source.parents or not source.is_file():
             return {"passed":False,"toolId":tool_id,"error":f"ENTRYPOINT_MISSING: {entrypoint}"}
-        if any(d.get('owner')=='RUNTIME' and d.get('action')=='INJECT' for d in dependencies):
+        if _unsupported_script_injections(dependencies):
             return {"passed":False,"toolId":tool_id,"error":"SCRIPT_RUNTIME_INJECTION_UNSUPPORTED: 需要运行依赖时请使用 MCP"}
     sample_missing=bool(entry.get('sampleMissing')) and 'sampleInput' not in entry
     if sample_missing and form=='SCRIPT':
@@ -543,8 +689,12 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
         return {"passed": False, "toolId": tool_id, "inputShapeOk": False, "error": f"SAMPLE_INPUT_SHAPE: {detail}"}
 
     form = str(entry.get("form", "SCRIPT")).upper()
+    # `blocking` answers whether a missing contract prevents migration. It does not mean an actual
+    # invocation can run without the dependency value. A4 receives declarations, never credentials
+    # or tenant data, so every Runtime injection remains pending until technical validation.
     runtime_pending = [d.get("name") or d.get("key") for d in entry.get("dependencies", [])
-                       if d.get("owner") == "RUNTIME" and d.get("action") == "INJECT" and d.get("blocking", True)]
+                       if d.get("owner") == "RUNTIME" and d.get("action") == "INJECT"
+                       and not (form == "SCRIPT" and _is_implicit_script_context(d))]
     if form == "MCP":
         outcome = await _mcp_contract(workspace, entry, sample, execute_call=not runtime_pending and not sample_missing)
     else:
@@ -552,7 +702,7 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
         source = (workspace / chosen).resolve()
         if workspace.resolve() not in source.parents or not source.is_file():
             return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {chosen}"}
-        if any(d.get('owner')=='RUNTIME' and d.get('action')=='INJECT' for d in entry.get('dependencies', [])):
+        if _unsupported_script_injections(entry.get('dependencies', [])):
             return {"passed":False,"toolId":tool_id,"error":"SCRIPT_RUNTIME_INJECTION_UNSUPPORTED: 需要运行依赖时请使用 MCP"}
         outcome = await _script_contract(workspace, entry, source, sample)
     if not outcome.get("passed"):

@@ -69,12 +69,19 @@ export function analyzeDependencies(payload:unknown,inspection:ProjectInspection
  const raw=payload as {dependencyAnalysis?:unknown;reason?:string};const parsed=graphSchema.safeParse(raw?.dependencyAnalysis);
  if(!parsed.success)return {status:'UNAVAILABLE',revision,materialsDigest,reason:'当前分析尚未提供完整链路与依赖，请重新分析。',dependencies:[],chains:[],rejectedClaims:0};
  const validator=new SourceEvidenceValidator(files);
+ const runtimeCapabilityNames=new Set((inspection.runtimeCapabilities??[]).map(capability=>capability.name));
  let rejected=0;const dependencies:Dependency[]=[];const keys=new Set<string>();
  for(const item of parsed.data.dependencies){
+  const migrationReferences=item.references.filter(ref=>!runtimeCapabilityNames.has(ref.toolName));
+  // Runtime Harness capabilities are explicitly outside the migration graph. Their implementation
+  // details (for example pathlib inside read_document) neither need migration nor user supplements.
+  if(!migrationReferences.length)continue;
   if(keys.has(item.key)){rejected++;continue}keys.add(item.key);
-  const refs=item.references.flatMap(ref=>{const tool=inspection.tools.find(t=>t.name===ref.toolName);const e=locate(ref,files,workspaceRoot,validator);return tool&&e?[{toolId:tool.toolId,e}]:[]});
-  rejected+=item.references.length-refs.length;
-  if(!refs.length){rejected++;continue}
+  const refs=migrationReferences.flatMap(ref=>{const tool=inspection.tools.find(t=>t.name===ref.toolName);const e=locate(ref,files,workspaceRoot,validator);return tool&&e?[{toolId:tool.toolId,e}]:[]});
+  rejected+=migrationReferences.length-refs.length;
+  // Each rejected reference is already counted above. Do not count the containing dependency a
+  // second time merely because none of its references survived validation.
+  if(!refs.length)continue;
   const id=dependencyId(item.key,item.kind),provided=supplements.find(s=>s.dependencyId===id&&s.kind===item.kind);
   const schemaEvidence=item.schemaEvidence.flatMap(c=>{const e=locate(c,files,workspaceRoot,validator);return e?[e]:[]});
   rejected+=item.schemaEvidence.length-schemaEvidence.length;
@@ -96,7 +103,7 @@ export function analyzeDependencies(payload:unknown,inspection:ProjectInspection
   dependencies.push({...(library?{library}:{}),id,key:item.key,name:item.name,kind:item.kind,owner:item.owner,action:item.action,contractStatus,sensitive:item.sensitive,binding:item.binding,purpose:item.purpose,toolIds:[...new Set(refs.map(r=>r.toolId))],blocking:item.blocking,availability,provided:status,evidence:[...refs.map(r=>r.e),...schemaEvidence,...resolutions],resolvedPaths,schema,schemaCompleteness:completeness,...(issue?{issue}:{})});
  }
  const chains:ToolChain[]=[];
- for(const chain of parsed.data.chains){const tool=inspection.tools.find(t=>t.name===chain.toolName);if(!tool){rejected++;continue}if(chains.some(c=>c.toolId===tool.toolId)){rejected++;continue}
+ for(const chain of parsed.data.chains){if(runtimeCapabilityNames.has(chain.toolName))continue;const tool=inspection.tools.find(t=>t.name===chain.toolName);if(!tool){rejected++;continue}if(chains.some(c=>c.toolId===tool.toolId)){rejected++;continue}
   const nodeIds=new Set<string>();const nodes=chain.nodes.flatMap(n=>{const evidence=n.evidence.flatMap(c=>{const e=locate(c,files,workspaceRoot,validator);return e?[e]:[]});rejected+=n.evidence.length-evidence.length;const deps=n.dependencyKeys.map(k=>dependencies.find(d=>d.key===k&&d.toolIds.includes(tool.toolId))?.id);if(!evidence.length||nodeIds.has(n.id)||deps.some(d=>!d)){rejected++;return []}nodeIds.add(n.id);return [{id:n.id,title:n.title,detail:n.detail,dependencyIds:deps as string[],evidence}]});
   const edges=chain.edges.filter(e=>{const valid=nodeIds.has(e.from)&&nodeIds.has(e.to);if(!valid)rejected++;return valid}).map(({from,to,condition})=>({from,to,...(condition===undefined?{}:{condition})}));chains.push({toolId:tool.toolId,nodes,edges});
  }

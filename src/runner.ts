@@ -226,7 +226,7 @@ export async function runEvaluation(input: {
   });
   try {
     throwIfAborted(input.signal);
-    await input.runtime.prepare?.();
+    await input.runtime.prepare?.({runId,signal:input.signal});
     throwIfAborted(input.signal);
     await runPromptfooWorker({
       runId,

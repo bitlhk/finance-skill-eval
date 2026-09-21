@@ -27,7 +27,7 @@ it('returns model goal checks with grounded evidence and no dimension scores',as
  const requests:unknown[]=[];
  const result=await judge([{criterionIndex:1,verdict:'PASS',reason:'说明未扣费',evidence:'尚未扣费'},{criterionIndex:0,verdict:'PASS',reason:'等价金额',evidence:'2.50 元'}],requests).compare(input);
  expect(result.dimensions).toEqual([]);expect(result.goalAssessment?.verdict).toBe('PASS');expect(result.goalAssessment?.checks[0]!.criterion).toBe('服务费为2.5元');
- const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual(['服务费为2.5元','说明尚未扣费']);
+ const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual([{criterionIndex:0,description:'服务费为2.5元'},{criterionIndex:1,description:'说明尚未扣费'}]);expect(payload.requiredCriterionIndices).toEqual([0,1]);
  expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],sourceFacts:[]});
  expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe('PASSED');
 });
@@ -69,6 +69,21 @@ it('recovers one continuous verbatim clause when the retry still joins multiple 
  const result=await evaluator.compare(input);
  expect(result.goalAssessment?.verdict).toBe('PASS');
  expect(result.goalAssessment?.checks[0]?.evidence).toBe('服务费为人民币 2.50 元');
+});
+it('recovers an exact Markdown-delimited quote without accepting the surrounding rewrite',async()=>{
+ let attempt=0;
+ const answer='文档内容：\n> 迁移前后的内容必须一致。\n\n实现标记：`ORIGINAL_HARNESS_7F31`';
+ const evaluator=new ModelGoalJudge({adapterId:'markdown-joined-quotes',complete:async()=>{
+  attempt++;
+  return {modelId:'test',content:JSON.stringify({checks:[
+   {criterionIndex:0,verdict:'PASS',reason:'内容和标记符合',evidence:attempt===1?'改写内容':'文档内容 `迁移前后的内容必须一致。` 实现标记 `ORIGINAL_HARNESS_7F31`'},
+   {criterionIndex:1,verdict:'PASS',reason:'未扣费要求与本夹具无关',evidence:''},
+  ]})};
+ }},model);
+ const result=await evaluator.compare({...input,right:{...evidence,output:answer}});
+ expect(result.goalAssessment?.verdict).toBe('PASS');
+ expect(result.goalAssessment?.checks[0]?.evidence).toBe('ORIGINAL_HARNESS_7F31');
+ expect(answer).toContain(result.goalAssessment?.checks[0]?.evidence??'missing');
 });
 it('makes candidate tools available without requiring every tool to be called for each natural-language task',async()=>{
  const manager=new EvaluationRunManager({environments:{}} as any);

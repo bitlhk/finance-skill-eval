@@ -1,6 +1,6 @@
 import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../runtime-tool-config.js';
 import {fingerprint} from '../contracts.js';
-import type {ProjectInspection,ToolDecision} from './migration-model.js';
+import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} from './migration-model.js';
 
 export function runtimeToolConfigTemplate(inspection:ProjectInspection,decisions:ToolDecision[]){
  const runtimeToolConfig:RuntimeToolConfig={context:{},providers:{},tools:{}};
@@ -41,7 +41,8 @@ export function validateAgentRuntimeDelivery(payload:Record<string,unknown>,insp
   if(!report)continue;
   if(report.compilePassed!==true||report.contractPassed!==true)issues.push(`${decision.toolId} 未完成编译或契约检查`);
   const deps=inspection.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(decision.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT')??[];
-  if(decision.form==='SCRIPT'&&(deps.length||report.runtimeBindings?.length))issues.push(`${decision.toolId} Script 不支持 Runtime 注入`);
+  const unsupportedScriptDeps=deps.filter(dep=>!supportsImplicitScriptContext(dep));
+  if(decision.form==='SCRIPT'&&(unsupportedScriptDeps.length||report.runtimeBindings?.length))issues.push(`${decision.toolId} Script 不支持 Runtime 注入`);
   const callDeps=deps.filter(d=>d.binding?.kind!=='SERVICE_ENV'),serviceDeps=deps.filter(d=>d.binding?.kind==='SERVICE_ENV');
   if(decision.form==='MCP'){
    const declared=Array.isArray(report.serviceEnvironment)?report.serviceEnvironment:[];
@@ -52,7 +53,15 @@ export function validateAgentRuntimeDelivery(payload:Record<string,unknown>,insp
  }
  const expected=runtimeToolConfigTemplate(inspection,decisions);
  if(payload.runtimeToolConfig!==undefined){
-  const parsed=runtimeToolConfigSchema.safeParse(payload.runtimeToolConfig);
+  const outer=payload.runtimeToolConfig;
+  // Some agents copy the deterministic template envelope into the field instead of copying only
+  // its runtimeToolConfig member. Accept that shape only when it is the known version and unwrap
+  // it before the same exact fingerprint check; arbitrary wrappers and extra identity data remain
+  // rejected by runtimeToolConfigSchema.
+  const wrapped=outer&&typeof outer==='object'&&!Array.isArray(outer)
+   &&(outer as Record<string,unknown>).schemaVersion==='finance.runtime-tool-config-template.v1'
+   ?(outer as Record<string,unknown>).runtimeToolConfig:undefined;
+  const parsed=runtimeToolConfigSchema.safeParse(wrapped??outer);
   if(!parsed.success||fingerprint(parsed.data)!==fingerprint(expected.runtimeToolConfig))issues.push('A4 Runtime 配置与已确认依赖模板不一致，不接受新增身份逻辑或实际凭证');
  }else if(expected.requiredEnvironment.length)issues.push('A4 缺少配套 runtimeToolConfig');
  return issues;

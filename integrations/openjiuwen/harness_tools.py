@@ -147,7 +147,7 @@ class ToolTraceRail(AgentRail):
     async def after_tool_call(self, ctx) -> None:  # noqa: ANN001 - harness type
         inputs = getattr(ctx, "inputs", None)
         name = str(getattr(inputs, "tool_name", "") or "")
-        if not name or name == "compile_source" or name == "run_contract_test":
+        if not name or name in {"compile_source", "run_contract_test", "run_mcp_contract_suite"}:
             # Those two record themselves, with the outcome that matters (passed/failed and why).
             return
         # The arguments, not just the name: "read_file five times" says nothing about whether the

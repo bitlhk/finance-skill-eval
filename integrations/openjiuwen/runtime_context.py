@@ -8,13 +8,15 @@ import re
 
 
 class RuntimeContext:
-    def __init__(self, configuration=None, registry=None, environ=None):
+    def __init__(self, configuration=None, registry=None, environ=None, extra_secrets=None):
         configuration = configuration or {}
         self.registry = registry or {}
         self.tools = configuration.get('tools', {})
         self.providers = configuration.get('providers', {})
         self.values = {}
         self.secrets = set()
+        for secret in extra_secrets or []:
+            self.remember(secret)
         environ = os.environ if environ is None else environ
         for name, field in configuration.get('context', {}).items():
             if ('value' in field) == ('env' in field):

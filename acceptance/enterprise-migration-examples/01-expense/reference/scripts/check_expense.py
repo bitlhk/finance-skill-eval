@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 from decimal import Decimal
-
 def check_expense(claim_id: str, workspace: str = 'workspace') -> dict:
     rules = json.loads((Path(__file__).resolve().parents[1] / 'assets/rules.json').read_text(encoding='utf-8'))
     file = Path(workspace) / (claim_id + '.json')

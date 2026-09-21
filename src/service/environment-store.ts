@@ -9,6 +9,7 @@ import {
   type EnvironmentRecord,
 } from "../shared/contracts/environment.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
+import { runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if (!record.credentialEnv) return {};
@@ -51,13 +52,11 @@ export class EnvironmentStore {
   async create(input: unknown): Promise<EnvironmentRecord> {
     return this.writes.run("registry", async () => {
     const parsed = createEnvironmentSchema.parse(input);
-    await this.validateBindings(parsed.mcpEnvironmentIds);
+    if(parsed.type==='runtime_http')await this.validateBindings(parsed.mcpEnvironmentIds);
     const now = new Date().toISOString();
     const record = environmentRecordSchema.parse({
       ...parsed,
-      runtimeType: parsed.type === "runtime_http"
-        ? parsed.runtimeType ?? "generic_http"
-        : null,
+      runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:parsed.type === "runtime_http"?parsed.runtimeType ?? "generic_http":null,
       credentialEnv: parsed.credentialEnv ?? null,
       environmentId: `env-${randomUUID().slice(0, 12)}`,
       createdAt: now,
@@ -85,10 +84,10 @@ export class EnvironmentStore {
       if (parsed.type !== previous.type) {
         throw Object.assign(new Error("Resource type cannot change; create a new environment instead"), { statusCode: 409 });
       }
-      await this.validateBindings(parsed.mcpEnvironmentIds);
+      if(parsed.type==='runtime_http')await this.validateBindings(parsed.mcpEnvironmentIds);
       const record = environmentRecordSchema.parse({
         ...previous, ...parsed,
-        runtimeType: parsed.type === "runtime_http" ? parsed.runtimeType ?? "generic_http" : null,
+        runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:parsed.type === "runtime_http"?parsed.runtimeType ?? "generic_http":null,
         credentialEnv: parsed.credentialEnv ?? null,
         updatedAt: new Date().toISOString(),
       });
@@ -100,7 +99,7 @@ export class EnvironmentStore {
   async remove(id: string): Promise<void> {
     await this.writes.run("registry", async () => {
       if (!await this.get(id)) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
-      const dependent = (await this.list()).find(record => record.mcpEnvironmentIds.includes(id));
+      const dependent = (await this.list()).find(record => 'mcpEnvironmentIds' in record&&record.mcpEnvironmentIds.includes(id));
       if (dependent) throw Object.assign(new Error(`Environment is still bound by ${dependent.name}`), { statusCode: 409 });
       await unlink(path.join(this.directory, `${id}.json`));
     });
@@ -114,7 +113,18 @@ export class EnvironmentStore {
     status: "ready" | "failed";
     elapsedMs: number;
     error: string | null;
+    capabilities?:RuntimeLauncherCapabilities;
   }> {
+    if(record.type==='runtime_launcher'){
+      const startedAt=Date.now();
+      try{
+        const response=await fetch(new URL('v1/runtime-capabilities',record.baseUrl),{headers:headersFor(record),signal:AbortSignal.timeout(10_000),redirect:'error'});
+        if(!response.ok)throw new Error(`HTTP ${response.status}`);
+        const capabilities=runtimeLauncherCapabilitiesSchema.parse(await response.json());
+        if(record.runtimeType!=='generic_http'&&capabilities.runtime.type!==record.runtimeType)throw new Error('Runtime type does not match the registered Launcher');
+        return {status:'ready',elapsedMs:Date.now()-startedAt,error:null,capabilities};
+      }catch(error){return {status:'failed',elapsedMs:Date.now()-startedAt,error:error instanceof Error?error.message:String(error)};}
+    }
     if (record.type === "mcp_streamable_http") {
       return preflightMcpServer({ endpoint: record.endpoint, headers: headersFor(record) });
     }
@@ -137,7 +147,7 @@ export class EnvironmentStore {
           }
           for (const id of record.mcpEnvironmentIds) {
             const mcp = await this.get(id);
-            if (!mcp || !health.mcpEndpoints.includes(mcp.endpoint)) {
+            if (!mcp || mcp.type!=='mcp_streamable_http' || !health.mcpEndpoints.includes(mcp.endpoint)) {
               throw new Error(`Runtime 尚未接受 MCP「${mcp?.name ?? id}」；服务连通不代表 Runtime 已装配，请检查 Runtime 配置。`);
             }
           }
@@ -166,9 +176,11 @@ export class EnvironmentStore {
       toolNames: string[];
       error: string | null;
     }>;
+    capabilities?:RuntimeLauncherCapabilities;
   }> {
     const startedAt = Date.now();
     const primary = await this.preflight(record);
+    if(record.type==='runtime_launcher')return {status:primary.status,elapsedMs:Date.now()-startedAt,error:primary.error,toolCount:0,tools:[],mcpServers:[],...('capabilities' in primary&&primary.capabilities?{capabilities:primary.capabilities}:{})};
     if (record.type === "mcp_streamable_http") {
       const tools = primary.status === "ready" && "tools" in primary ? primary.tools : [];
       return {

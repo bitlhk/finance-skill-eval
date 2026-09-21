@@ -65,7 +65,7 @@ async def run(body):
     harness_found = set()
     reference_reads = {}
     output, usage, error = "", None, None
-    execution_context = RuntimeContext((body.get("environment") or {}).get("runtimeToolConfig"), config.get("authProviders", {}))
+    execution_context = RuntimeContext((body.get("environment") or {}).get("runtimeToolConfig"), config.get("authProviders", {}),extra_secrets=(body.get('environment') or {}).get('_inlineSecretValues', []))
 
     def redact_runtime(value):
         if isinstance(value, str):
@@ -185,8 +185,10 @@ async def run(body):
                 prompt_mode='minimal', language='cn')
             agent = DeepAgent(AgentCard(id=session_id, name="finance-eval-session", description="Isolated Skill evaluation"))
             agent.configure(settings)
+            from openjiuwen.core.runner import Runner
             for tool in tools:
-                agent.ability_manager.add_ability(tool.card, tool)
+                Runner.resource_mgr.add_tool(tool, refresh=True)
+                agent.ability_manager.add(tool.card)
             def observe_harness(name, arguments, result):
                 value = result.model_dump() if hasattr(result, 'model_dump') else result
                 value = redact_runtime(value)
@@ -203,7 +205,6 @@ async def run(body):
                     if content is not None:
                         reference_reads[relative] = hashlib.sha256(content.encode()).hexdigest()
             harness_found = await mount_skill_runtime(agent, stack, skill, root_path, workspace_path, harness_requested, observe_harness,
-                plugins=(body.get('environment') or {}).get('candidateHarnessPlugins', []), artifact_digest=variant.get('artifactSha256'),
                 observe_start=lambda name: event('tool_start', toolName=name))
             missing = required - found - script_names - harness_found - ({'skill_tool'} if skill else set())
             if missing:
@@ -250,6 +251,7 @@ async def run(body):
                                     "harnessToolNames": sorted(harness_found),
                                     "workspacePath": str(workspace_path), "skillPath": str(root_path),
                                     "candidateMcpBindings": candidate_bindings,
+                                    "instanceConfigurationDigest": (body.get('environment') or {}).get('instanceConfigurationDigest'),
                                     "toolEvidence": source_digests, "sessionIsolation": "process", "dataMode": ",".join(sorted({config["mcp"][s["endpoint"]].get("dataMode", "external-mcp") for s in (body.get("environment") or {}).get("mcpServers", [])} | ({"skill-script"} if (body.get("environment") or {}).get("commandScripts") else set()) | ({"candidate-mcp"} if candidate_bindings else set())))}}})
 
 

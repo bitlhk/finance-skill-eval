@@ -49,7 +49,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 2. **分析这个 Skill 用到了哪些工具、每个工具的输入输出是什么、样例是什么**；
 3. 判断每个 Tool 的可移植性，并给出形式建议。
 4. 沿工具入口追踪业务执行链路，区分 Tool 代码依赖、Runtime 注入依赖和应移至 Runtime 的身份建立逻辑，记录契约和证据。
-5. 区分 Runtime Harness 原生能力与 Skill 业务工具。通用文件读取、搜索、命令执行等由 Runtime 提供的能力，不建议绑定 Skill，不迁移实现，单独记录 runtimeCapabilities；不能仅凭 read_file 等名字判定。带企业权限、内部服务或业务规则的同名工具仍是业务工具，混合工具保留业务部分。必须引用职责或原生能力调用的真实证据。
+5. 区分 Runtime Harness 可调用能力、源框架胶水与 Skill 业务工具。通用文件读取、搜索、命令执行等由 Runtime 提供且被业务流程直接调用的独立工具，才记录到 runtimeCapabilities；不能仅凭 read_file 等名字判定。ToolBase/BaseTool、Toolkit、ToolResponse、TextBlock、register_tool 等基类、注册容器、结果包装与适配层只是源 Runtime 胶水，迁移到 MCP/Script 时由目标注册和返回协议替代，绝不能列入 runtimeCapabilities 或要求交付 Runtime 插件；相关 SDK 如需记录，应作为 RUNTIME + MOVE_TO_RUNTIME 依赖。带企业权限、内部服务或业务规则的同名工具仍是业务工具，混合工具保留业务部分。必须引用业务代码直接调用该能力的真实证据。
 
 第 2 件是**基线**——迁移要保留它，校验要拿它比对，出题要拿它当种子。
 怎么读，见**已加载的技能包 `enterprise-migration`**——用 `skill_tool` 按**这个名字**取
@@ -113,7 +113,7 @@ SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析
 status 为 ABSTAINED 时，reason 与 missing 必须说明缺什么。
 关键依赖缺失时仍保留已确认的工具、链路和依赖，使用 PRODUCED + MISSING/UNKNOWN 描述部分诊断；确实无法确认整体时可 ABSTAINED，但也保留能确认的部分。
 每个工具必须有链路。依赖 key 代表实际依赖身份而非变量名，只有同一实现/同一原 Runtime 注入项才能共享。
-runtimeCapabilities 单独列出，不重复进入 tools 或待补充 dependencies，不要求用户补实现，不因目标能力或使用约定待确认而阻塞迁移。业务工具链路仍可描述调用 Harness 的步骤。目标 Runtime 能力清单未提供时 targetCapability=null，不猜兼容性；由后续测试检查并加载，诊断不宣称已经可用。
+runtimeCapabilities 单独列出，只能使用原 Harness 中可独立调用的稳定工具名（不是“某框架能力”等分类描述），并提供业务工具直接调用它的证据；不重复进入 tools 或待补充 dependencies。一旦确认存在此类能力，平台会在诊断阶段输出 Runtime Builder YAML 并阻止当前版本继续生成和测试，不能为了继续流程而漏报。框架注册、基类继承、参数预绑定和返回对象构造不属于可调用 Harness 能力。业务工具链路仍可描述调用 Harness 工具的步骤。目标 Runtime 能力清单未提供时 targetCapability=null，不猜兼容性，也不宣称已经可用。
 owner 按方法的实际职责判断，不按变量或 SDK 名字判断。Tool 可以解析、校验、使用鉴权信息，但不建立、选择或切换执行身份。
 SDK 依赖必须填写 library：标准库 STANDARD_LIBRARY 不需要用户上传实现，引用真实 import 原文且一个模块一个依赖；第三方 PACKAGE 填实际模块名、发行包名及 pyproject.toml/requirements.txt/PEP723/package.json 等声明路径，并在 resolutionEvidence 引用真实依赖声明；不能将“包已声明”说成已安装或已通过测试。企业自定义 SDK 为 CUSTOM_SDK，缺实现且影响迁移时要求补充；无法区分为 UNKNOWN，不猜标准库。Python 标准模块由平台基于实际解释器模块清单验证，本地同名实现不能当标准库。
 依赖 references.toolName 必须是 tools 列出的业务工具名，即使引用 helper 文件，也填写实际消费此 helper 的业务工具，不把 request_json 等内部 helper 当业务工具。多个业务工具共用时列出每个消费者的引用。
@@ -121,11 +121,12 @@ library 仅用于 SDK 类型依赖；DATA/CONFIG/RESOURCE 没有库元数据时�
 TOOL + KEEP 是保留的代码/配置/资源依赖；代码依赖 AVAILABLE 必须有实际读取过的 resolvedPaths 和对应的 resolutionEvidence 原文依据。缺实现且影响理解/转换时要求代码或接口说明。
 RUNTIME + INJECT 是 Tool 实际消费的注入值。沿 user → auth_sdk → 凭证 → 业务接口追踪，若 Tool 只消费凭证就只声明凭证，不把获取凭证用的 user 一起声明。
 RUNTIME + MOVE_TO_RUNTIME 标记应移出的身份建立逻辑，不要求用户上传此 SDK 或填写其数据，也不是 Tool 需要注入 SDK 的声明。
-Runtime 依赖的实际值即使 MISSING 也不阻塞迁移；只有所需契约确实无法确定才 contractStatus=UNKNOWN。缺少实际测试值不能造成弃权。
+身份 SDK 与它产出的凭证是两项不同依赖，不能因为 SDK 已标记 MOVE_TO_RUNTIME 就省略凭证：只要迁移后的 Tool 仍需携带该凭证调用业务接口，必须同时声明一项 RUNTIME + INJECT 的动态凭证依赖，沿用业务接口实际消费的标准 Header（通常为 Authorization），schema.type=string、sensitive=true、blocking=true。SDK 的 MOVE_TO_RUNTIME 描述凭证由谁建立，凭证的 INJECT 描述建立后如何传入 Tool；二者必须同时存在，不能让生成代码读取一个诊断契约中不存在的 Header。
+Runtime 依赖的实际值即使 MISSING 也不阻塞迁移或生成；只有工具运行时不需要该值时 blocking=false。工具缺少该值就无法正确运行时 blocking=true，这只用于试运行前检查，不能因为实际测试值尚未提供而弃权。
 先区分已有显式业务参数、工作区读写约定和原 Runtime 的隐式依赖。函数签名中的参数及合法默认值（例如 workspace: str = 'workspace'）属于已有输入契约，不得为它新增 SERVICE_ENV/HTTP_HEADER 注入依赖，不能凭“运行时要用到”就认定原 Runtime 提供。脚本相对 cwd 读写工作区是执行约定，保留它；不凭空新增 CLAIM_WORKSPACE_PATH 等变量，不因此强迫原独立 Script 改为 MCP。
 服务地址、固定超时等部署配置与按请求传递的用户上下文必须分开。部署配置声明 kind=CONFIG、owner=RUNTIME、action=INJECT、binding.kind=SERVICE_ENV；name 是你设计的明确环境变量名（如 BUSINESS_SERVICE_URL），schema 按源码实际消费的 string/number/integer/boolean 类型填写，用源码引用证明用途和类型。环境变量名是迁移接收契约，不要求原代码已使用环境变量；不能借此编造原配置值。不要映射到 X-Service-Url 或业务 arguments，不把鉴权凭证当静态服务配置。实际值缺失不阻塞诊断。
-binding 是独立注入通道的迁移建议。MCP 的按调用上下文建议 HTTP_HEADER，名称取业务接口实际需要的 header；脚本建议 SCRIPT_CONTEXT，名称取实际消费值。没有依据就 null，不伪造字段；MOVE_TO_RUNTIME 的 binding 为 null。
-contractStatus=KNOWN 需要 references 中源码足以确定用途、处理边界和接收契约；UNKNOWN 说明还需哪种代码或契约说明。无法区分归属时 owner=UNKNOWN。
+binding 是目标平台的迁移设计，不是要从原源码中逐字找到的事实。原源码证据用于确认依赖的用途、消费者和数据结构；在这些事实足以设计安全接收边界时，你必须给 RUNTIME + INJECT 选择明确 binding，不能仅因原代码没有 Header/环境变量名而留 null。MCP 的动态凭证、用户上下文和每次调用需要的结构化业务数据使用 HTTP_HEADER：沿用业务接口已经实际消费的标准 Header；没有现成名称时设计稳定、可读的 X-* 名称（例如 department_rules → X-Department-Rules），并保持业务参数仍只出现在 Tool arguments。服务地址、固定超时等进程级标量配置使用 SERVICE_ENV。Script 使用 SCRIPT_CONTEXT。只有用途或安全归属确实无法确定时 binding=null；MOVE_TO_RUNTIME 的 binding 始终为 null。
+contractStatus=KNOWN 表示源码已经足以确认依赖用途、处理边界和数据形状，并且你已完成上述目标 binding 设计；目标 Header 或环境变量名是迁移建议，不要求它在原源码中出现。UNKNOWN 只用于还缺少必要代码、类型或安全归属、无法可靠设计接收边界的情况。无法区分归属时 owner=UNKNOWN。
 企业鉴权、动态凭证或敏感上下文优先 MCP，已具备安全注入机制的 Script 可以保留。说明原因，不将此建议当合规禁令。
 已有 Script 确实具有安全注入、调用隔离和清理机制时，scriptSecurity.safe=true 并提供相关源码 evidence；没有证据不能宣称 safe。
 schema 使用 JSON Schema 的 type/properties/required/items/enum 等结构；没有证据就写 null。局部字段访问不能当完整 object，标 PARTIAL；完整定义才能标 COMPLETE。

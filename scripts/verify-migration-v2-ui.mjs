@@ -185,6 +185,7 @@ try{
     pass('interface_change_report_visible');
   }
 
+  await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();
   await page.getByRole('button',{name:'验证能否运行',exact:true}).click();
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
   await scriptCard.getByLabel('试运行时传给工具的内容（JSON）').fill('{"subtotal":"100.00","tax_rate":"0.06"}');
@@ -212,7 +213,7 @@ try{
   }
   pass('generated_test_set_visible_and_selectable');
 
-  await page.getByRole('button',{name:'6 下载结果',exact:true}).click();
+  await page.getByRole('button',{name:'7 下载结果',exact:true}).click();
   await expect(page.getByText(/当前候选尚未通过完整业务验收/)).toBeVisible();
   const pending=page.waitForEvent('download');
   await page.getByRole('button',{name:'下载迁移后的 Skill 包',exact:true}).click();

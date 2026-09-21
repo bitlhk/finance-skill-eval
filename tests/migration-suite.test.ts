@@ -23,7 +23,7 @@ it('separates development/holdout, forbids foreign project suites and unrelated 
   expect(suite.statusCode).toBe(200);expect(suite.headers['cache-control']).toBe('no-store');
   const variant=(asset:typeof a)=>({mode:'skill_version',skillId:asset.skillId,version:asset.version,artifactSha256:asset.artifactSha256});
   const result=await post(`/api/migrations/${p2.id}/validate`,{pair:'AB',dataSnapshot:'fixture',permissionBasis:'fixture',sourceProjectRef:'fixture',dependencyLockRef:'fixture',
-   configuration:{preparationId:suite.json().preparationId,runtime:{type:'runtime_http',environmentId:'missing'},executionModel:{providerId:'fixture',modelId:'fixture'},
+   configuration:{preparationId:suite.json().preparationId,runtime:{type:'runtime_launcher',environmentId:'missing'},executionModel:{providerId:'fixture',modelId:'fixture'},
     leftVariant:variant(a),rightVariant:variant(b),runtimeBindings:{left:{environmentId:'missing',skillAssetId:a.assetId},right:{environmentId:'missing',skillAssetId:b.assetId}}}});
   expect(result.statusCode).toBe(409);expect(result.json().message).toContain('属于本次迁移');
   expect((await post(`/api/migrations/${p2.id}/optimized-candidate`,{optimizationId:'opt-0000'})).statusCode).toBe(409);

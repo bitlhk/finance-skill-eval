@@ -99,8 +99,9 @@ export class TechnicalValidationService{
       if(!['127.0.0.1','localhost','::1'].includes(url.hostname))return failed(mode,'首期只允许验证本机 MCP endpoint');
       const result=await validateMcpTool({endpoint:url.toString(),toolName:input.tool.name,arguments:input.arguments,headers:input.headers,signal:input.signal});
       const observed=result.tools.find(tool=>tool.name===input.tool.name),observedDigest=digest([input.tool.sourcePaths,input.service??input.endpoint??null,observed??null]);
+      const listed=!!observed;
       const stages=[{name:'PROCESS',passed:launched,message:launched?'交付物声明的启动命令已把服务起在 127.0.0.1':`连接操作者提供的 endpoint：${url.host}`},
-        {name:'INITIALIZE_AND_LIST',passed:result.status==='ready',message:result.status==='ready'?`发现 ${result.tools.length} 个 Tool`:result.error??'初始化失败'},
+        {name:'INITIALIZE_AND_LIST',passed:listed,message:listed?`发现 ${result.tools.length} 个 Tool`:result.error??'初始化失败'},
         {name:'INPUT_SCHEMA',passed:!!observed&&typeof observed.inputSchema==='object'&&observed.inputSchema!==null,message:observed?.inputSchema?'tools/list 返回了输入 Schema':'目标 Tool 没有可验证的输入 Schema'},
         {name:'TOOLS_CALL',passed:result.status==='ready'&&result.callResult!==null,message:result.status==='ready'&&result.callResult!==null?'Tool 调用成功':result.error??'Tool 调用未完成'}];
       const passed=result.status==='ready'&&!!observed&&stages[2]!.passed&&result.callResult!==null;

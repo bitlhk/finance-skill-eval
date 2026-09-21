@@ -21,12 +21,12 @@ class SessionBoundaryTests(unittest.IsolatedAsyncioTestCase):
         class Card:
             def __init__(self, **kwargs): self.__dict__.update(kwargs)
         class Function:
-            def __init__(self, card, function): self.card, self.function = card, function
+            def __init__(self, card, function): self.card, self.function = card, function; registered[card.name] = self
         class Settings(Card):
             def configure_model_client(self, *args, **kwargs): pass
         class Agent:
             def __init__(self, card):
-                self.ability_manager = types.SimpleNamespace(add_ability=lambda card, tool: registered.update({card.name:tool}))
+                self.ability_manager = types.SimpleNamespace(add=lambda card: None)
             def configure(self, settings): self.prompt = settings.system_prompt; self.react_agent = self
             async def stream(self, request):
                 if script:
@@ -61,6 +61,7 @@ class SessionBoundaryTests(unittest.IsolatedAsyncioTestCase):
             'openjiuwen.harness.schema.config':module('config', DeepAgentConfig=Settings),
             'openjiuwen.core.single_agent.schema.agent_card':module('agent_card', AgentCard=Card),
             'openjiuwen.core.foundation.tool':module('tool', ToolCard=Card, LocalFunction=Function),
+            'openjiuwen.core.runner':module('runner', Runner=types.SimpleNamespace(resource_mgr=types.SimpleNamespace(add_tool=lambda tool, refresh=False: None))),
             'openjiuwen.core.foundation.llm':module('llm', Model=lambda *args:Card()),
             'openjiuwen.core.foundation.llm.schema.config':module('config', ModelRequestConfig=Card, ModelClientConfig=Card),
         }

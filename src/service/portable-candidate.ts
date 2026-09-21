@@ -5,7 +5,6 @@ import type { SkillAssetRecord } from './skill-store.js';
 import { recommendLanguage,type ProjectInspection,type ToolDecision } from './migration-model.js';
 import type { GeneratedToolImplementation } from './migration-code-generator.js';
 import { normalizeSkillPackage } from './skill-normalizer.js';
-import type {GeneratedHarnessPlugin} from './migration-harness.js';
 
 export type PortableGeneration={toolId:string;toolName:string;form:ToolDecision['form'];files:string[];entrypoint?:string;
   callExecuted?:boolean;runtimeDependenciesPending?:string[];
@@ -46,6 +45,30 @@ function packagePath(path:string):string{
   return normalized;
 }
 
+const MAX_INLINE_SKILL_LINES=500;
+function lines(value:string){return value.replaceAll('\r\n','\n').split('\n').length;}
+function compactShortReferences(files:Record<string,Uint8Array>,skillTarget:string){
+  const root=skillTarget.slice(0,skillTarget.length-'SKILL.md'.length);
+  const references=Object.keys(files).filter(name=>name.startsWith(`${root}references/`)&&/\.md$/iu.test(name)).sort();
+  if(!references.length)return;
+  let skill=Buffer.from(files[skillTarget]!).toString('utf8');
+  const material=references.map(path=>({path,content:Buffer.from(files[path]!).toString('utf8').trim()}));
+  if(lines(skill)+material.reduce((sum,item)=>sum+lines(item.content)+3,0)>MAX_INLINE_SKILL_LINES)return;
+  for(const item of material){
+    const relative=item.path.slice(root.length),basename=posix.basename(relative,'.md');
+    const heading=item.content.match(/^#\s+(.+)$/mu)?.[1]?.trim()||basename.replaceAll('-',' ');
+    const body=item.content.replace(/^#\s+.+\r?\n+/u,'').trim();
+    const escaped=relative.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
+    skill=skill
+      .replace(new RegExp(`(?:请)?(?:阅读|参见|查看)\\s*[\`“\"]?${escaped}[\`”\"]?[。.]?`,'giu'),'')
+      .replaceAll(`\`${relative}\``,heading)
+      .replaceAll(`](${relative})`,']');
+    if(body)skill+=`\n\n## ${heading}\n\n${body}`;
+    delete files[item.path];
+  }
+  files[skillTarget]=strToU8(skill.trimEnd()+'\n');
+}
+
 /** Remove Python package markers whose package no longer contains implementation files. */
 function pruneOrphanPythonPackageMarkers(files:Record<string,Uint8Array>){
   const markers=Object.keys(files)
@@ -65,7 +88,7 @@ function reusable(tool:ProjectInspection['tools'][number],archive:Record<string,
   return bytes?{language,sourcePath:tool.entrypoint.path,source:Buffer.from(bytes).toString('utf8'),additionalFiles:[],dependencies:[]}:null;
 }
 
-export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>;harnessPlugins?:GeneratedHarnessPlugin[]}){
+export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>}){
   const implementations=input.implementations??{};
   const files:Record<string,Uint8Array>={},generations:PortableGeneration[]=[];
   const hasMcp=input.decisions.some(decision=>decision.form==='MCP');
@@ -87,15 +110,12 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
       &&input.inspection.tools.every(tool=>!tool.sourcePaths.includes(name)||migratedIds.has(tool.toolId))));
   // Supplementary source and explanations are analysis inputs. A4 must place any required
   // implementation in its delivered engineering files; never publish the raw intake area.
-  const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!name.startsWith('.diagnosis-supplements/')));
-  // An old Harness implementation is replaced by its independent plugin package.
-  // Citations and code still consumed by business tools are not a deletion list.
-  const harnessSources=new Set((input.harnessPlugins?.length?input.inspection.runtimeCapabilities??[]:[])
-    .flatMap(capability=>capability.evidence.map(evidence=>evidence.path))
-    .filter(path=>path!==input.base.skillFile&&/\.(?:py|js|mjs|cjs|ts|java)$/iu.test(path)
-      &&!/(?:^|\/)(?:references|assets)\//u.test(path)&&!input.inspection.tools.some(tool=>tool.sourcePaths.includes(path))
-      &&!graphDependencies.some(dep=>(dep.resolvedPaths??[]).includes(path))));
-  for(const path of harnessSources)delete sourceArchive[path];
+  const skillRoot=input.base.skillFile.includes('/')?input.base.skillFile.slice(0,input.base.skillFile.lastIndexOf('/')+1):'';
+  const isWorkspaceData=(name:string)=>{
+    const relative=skillRoot&&name.startsWith(skillRoot)?name.slice(skillRoot.length):name;
+    return relative.startsWith('workspace/')||relative.startsWith('references/workspace/');
+  };
+  const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
   const normalizedSkill=normalizeSkillPackage(sourceArchive,input.base.skillFile,input.base.skillId,input.version);
   pruneOrphanPythonPackageMarkers(normalizedSkill.files);
   for(const [name,bytes] of Object.entries(normalizedSkill.files))files[hasMcp?`skill/${name}`:name]=bytes;
@@ -117,8 +137,6 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     }
     return entries.map(entry=>entry.path);
   };
-  for(const plugin of input.harnessPlugins??[])claim(Object.entries(plugin.contents).map(([path,content])=>({path:packagePath(path),content})));
-
   for(const decision of input.decisions){
     const tool=input.inspection.tools.find(item=>item.toolId===decision.toolId);
     if(!tool)throw new Error(`Unknown Tool decision: ${decision.toolId}`);
@@ -161,18 +179,24 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     const relative=(path:string)=>packagePath(path).slice(prefix?prefix.length+1:0);
     // The Skill layout owns where a Script lives; the file itself is the agent's.
     const base=`${hasMcp?'skill/':''}scripts/`;
+    // A4 has already compiled and contract-tested its declared package layout. Preserve that
+    // layout when it is already under scripts/: moving the entrypoint one directory deeper can
+    // silently break __file__/import.meta.url resource lookups after the contract has passed.
+    const preserveDeclaredLayout=Boolean(detailed?.generatedBy)&&entries.every(file=>packagePath(file.path).startsWith('scripts/'));
     // Node only treats a bare .js as ESM when a package.json says so, and the platform runs
-    // the entrypoint as `node <path>`. A single file therefore ships as .mjs.
-    const target=language==='python'
-      ?(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.py`)
-      :(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.mjs`);
+    // the entrypoint as `node <path>`. A single non-A4 file therefore ships as .mjs.
+    const target=preserveDeclaredLayout
+      ?`${hasMcp?'skill/':''}${packagePath(implementation.sourcePath)}`
+      :language==='python'
+       ?(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.py`)
+       :(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.mjs`);
     const written:{path:string;content:string}[]=entries.map((file,index)=>({
-      path:multi?`${base}${module}/${relative(file.path)}`:target,
+      path:preserveDeclaredLayout?`${hasMcp?'skill/':''}${packagePath(file.path)}`:multi?`${base}${module}/${relative(file.path)}`:target,
       content:index===0&&language==='python'?withPep723(file.content,dependencies):file.content,
     }));
     const manifest=[...written];
     if(multi&&language==='node'&&!entries.some(file=>file.path.endsWith('package.json')))
-      manifest.push({path:`${base}${module}/package.json`,content:'{\n  "type": "module"\n}\n'});
+      manifest.push({path:preserveDeclaredLayout?`${posix.dirname(target)}/package.json`:`${base}${module}/package.json`,content:'{\n  "type": "module"\n}\n'});
     const lock=input.archive[`${implementation.sourcePath}.lock`];
     if(lock)manifest.push({path:`${target}.lock`,content:Buffer.from(lock).toString('utf8')});
     const paths=claim(manifest);
@@ -218,12 +242,13 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     ? `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`
     : `- ${g.toolName}: 通过 MCP 调用同名工具；服务参数从声明的环境变量读取，业务 arguments 与按调用 Runtime Header 分开，包级配置声明见 runtime-tool-config.template.json。`).join('\n');
   const originalInstructions=Buffer.from(files[skillTarget]!).toString('utf8');
-  const harnessGuide=(input.harnessPlugins??[]).map(plugin=>`- ${plugin.toolNames.join('、')}: 使用原名 Harness 工具，参数、返回值和行为遵循原契约；由 Runtime 加载独立插件 \`${plugin.manifestPath}\`，不替换为目标 Runtime 内置工具。`).join('\n');
-  files[skillTarget]=strToU8(originalInstructions+'\n## 迁移后的执行方式\n\n'+guide+'\n'+harnessGuide+'\n');
-  if(input.harnessPlugins?.length){
-    const declaration={schemaVersion:'finance.harness-plugins.v1',plugins:input.harnessPlugins.map(({contents,...plugin})=>plugin)};
-    claim([{path:'runtime-plugins/plugins.json',content:JSON.stringify(declaration,null,2)+'\n'}]);
-  }
+  // Regeneration may start from the previous immutable candidate.  Remove the guide we own
+  // before appending its replacement; otherwise every regeneration duplicates the section and
+  // gradually drowns out the business instructions.
+  const cleanInstructions=originalInstructions.replace(/\n## 迁移后的执行方式\n[\s\S]*?(?=\n## |\s*$)/u,'').trimEnd();
+  files[skillTarget]=strToU8(cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
+    '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n');
+  compactShortReferences(files,skillTarget);
   if(hasMcp){
     const templatePath='runtime-tool-config.template.json';
     const template=JSON.stringify(runtimeToolConfigTemplate(input.inspection,input.decisions),null,2)+'\n';
@@ -232,7 +257,11 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   }
 
   const diff:PortableDiff[]=Object.entries(files).flatMap(([name,bytes])=>{
-    const before=input.archive[name]??input.archive[`skill/${name}`];
+    // MCP delivery nests the normalized Skill below skill/.  Compare those files with the
+    // corresponding source-relative path, not with skill/skill/<path>.  Treating preserved
+    // references as generated ADD files made the next regeneration delete them.
+    const sourceRelative=hasMcp&&name.startsWith('skill/')?name.slice('skill/'.length):name;
+    const before=input.archive[name]??input.archive[sourceRelative];
     if(before&&Buffer.compare(Buffer.from(before),Buffer.from(bytes))===0)return [];
     return [{path:name,operation:before?'MODIFY':'ADD',before:before?Buffer.from(before).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')} as PortableDiff];
   });

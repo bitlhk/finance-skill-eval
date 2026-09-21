@@ -11,10 +11,6 @@ export const serviceEnvironmentReferenceSchema=z.strictObject({migrationId:z.str
 export const runConfigurationSchema = z.strictObject({
   originalService:originalServiceSchema.optional(),
   runtimeHarnessTools:z.array(z.enum(['read_file','glob','list_files','bash'])).max(4).optional(),
-  runtimeHarnessBindings:z.strictObject({
-    left:z.array(z.strictObject({assetDigest:z.string().regex(/^[a-f0-9]{64}$/),manifestPath:z.string().min(1),filePaths:z.array(z.string().min(1)).min(1).max(200),toolNames:z.array(z.string().min(1)).min(1).max(32)})).max(32),
-    right:z.array(z.strictObject({assetDigest:z.string().regex(/^[a-f0-9]{64}$/),manifestPath:z.string().min(1),filePaths:z.array(z.string().min(1)).min(1).max(200),toolNames:z.array(z.string().min(1)).min(1).max(32)})).max(32),
-  }).optional(),
   runtimeToolConfig:runtimeToolConfigSchema.optional(),
   runtimeBindings: z.strictObject({left:runtimeSideSchema, right:runtimeSideSchema}).optional(),
   runtimeCommandBindings: z.strictObject({
@@ -34,6 +30,7 @@ export const runConfigurationSchema = z.strictObject({
       type: z.literal("runtime_http"),
       environmentId: z.string().min(1),
     }),
+    z.strictObject({type:z.literal('runtime_launcher'),environmentId:z.string().min(1)}),
   ]),
   judgeMode: z.enum(["deterministic", "model"]).default("deterministic"),
   evaluationMode: z.enum(["pairwise", "candidate_assessment", "service_comparison"]).default("pairwise"),
@@ -51,13 +48,15 @@ export const runConfigurationSchema = z.strictObject({
   timeoutMs: z.number().int().min(10_000).max(900_000).default(310_000),
 }).superRefine((value, context) => {
   if((value.evaluationMode==='service_comparison')!==Boolean(value.originalService))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比模式必须配置原服务，其他模式不能附带原服务配置'});
-  if(value.evaluationMode==='service_comparison'&&(!value.runtimeBindings||value.runtime.type!=='runtime_http'||value.judgeMode!=='model'||value.caseSource!=='fixed'||!value.preparationId||value.includeHoldout))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比需要固定测试集、模型评估和显式候选 Runtime 绑定'});
-  if(value.runtimeToolConfig && value.runtime.type!=='runtime_http')context.addIssue({code:z.ZodIssueCode.custom,message:'Runtime context requires a Runtime HTTP execution environment'});
-  if (value.runtimeBindings && (value.runtime.type !== 'runtime_http' || value.caseSource !== 'fixed'
+  const managedRuntime=value.runtime.type==='runtime_http'||value.runtime.type==='runtime_launcher';
+  if(value.runtime.type==='runtime_launcher'&&!value.runtimeBindings)context.addIssue({code:z.ZodIssueCode.custom,message:'Runtime Launcher requires explicit left and right Runtime bindings.'});
+  if(value.evaluationMode==='service_comparison'&&(!value.runtimeBindings||!managedRuntime||value.judgeMode!=='model'||value.caseSource!=='fixed'||!value.preparationId||value.includeHoldout))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比需要固定测试集、模型评估和显式候选 Runtime 绑定'});
+  if(value.runtimeToolConfig && !managedRuntime)context.addIssue({code:z.ZodIssueCode.custom,message:'Runtime context requires a managed Runtime environment'});
+  if (value.runtimeBindings && (value.runtime.type!=='runtime_launcher' || value.caseSource !== 'fixed'
       || !value.leftVariant || !value.rightVariant || value.leftVariant.mode !== 'skill_version' || value.rightVariant.mode !== 'skill_version'
       || !value.executionModel || (value.leftExecutionModel && fingerprint(value.leftExecutionModel) !== fingerprint(value.executionModel))
       || (value.rightExecutionModel && fingerprint(value.rightExecutionModel) !== fingerprint(value.executionModel)))) {
-    context.addIssue({code:z.ZodIssueCode.custom,message:'Paired migration requires HTTP runtimes, explicit Skill versions, fixed cases and the same execution model.'});
+    context.addIssue({code:z.ZodIssueCode.custom,message:'Paired migration requires a Runtime Launcher, explicit Skill versions, fixed cases and the same execution model.'});
   }
   if (value.caseSource === "ai_generated" && (value.runtime.type === "replay" || value.preparationId || value.includeHoldout || value.selectedCaseIds.length || value.judgeMode !== "model")) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "动态出题需要在线执行与模型 Judge，不能混用回放、已准备题集、固定题选择或留出集。" });

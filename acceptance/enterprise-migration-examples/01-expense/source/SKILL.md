@@ -10,4 +10,4 @@ description: 报销合规检查；用于企业迁移测试的模拟业务案例�
 
 工具：check_expense
 
-请阅读 references/workflow.md。
+业务输入示例：`{"claim_id": "EXP-001"}`

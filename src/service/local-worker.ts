@@ -3,7 +3,7 @@ import { mkdtemp,mkdir,rm,writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-export type LocalWorkerRequest={requestId:string;program:string;args:string[];files:Array<{path:string;content:Uint8Array}>;stdin?:string;context?:Record<string,unknown>;separateWorkspace?:boolean;timeoutMs?:number;maxOutputBytes?:number;signal?:AbortSignal};
+export type LocalWorkerRequest={requestId:string;program:string;args:string[];files:Array<{path:string;content:Uint8Array}>;workspaceFiles?:Array<{path:string;content:Uint8Array}>;stdin?:string;context?:Record<string,unknown>;separateWorkspace?:boolean;timeoutMs?:number;maxOutputBytes?:number;signal?:AbortSignal};
 export type LocalWorkerResult={requestId:string;mode:'LOCAL_TRUSTED';startedAt:string;finishedAt:string;exitCode:number|null;timedOut:boolean;cancelled:boolean;stdout:string;stderr:string;outputTruncated:boolean};
 
 const allowedPrograms=new Set(['node','node.exe','python','python.exe','python3','python3.exe','uv','uv.exe','java','java.exe','javac','javac.exe']);
@@ -58,7 +58,12 @@ export class LocalWorker{
       for(const file of request.files){const relative=safeRelative(file.path),target=path.resolve(directory,relative);
         if(target!==directory&&!target.startsWith(directory+path.sep))throw new Error(`Unsafe worker path: ${file.path}`);
         await mkdir(path.dirname(target),{recursive:true});await writeFile(target,file.content,{mode:0o600});}
-      if(request.separateWorkspace)workspace=await mkdtemp(path.join(this.tempRoot,'finance-migration-execution-'));
+      if(request.separateWorkspace){
+        workspace=await mkdtemp(path.join(this.tempRoot,'finance-migration-execution-'));
+        for(const file of request.workspaceFiles??[]){const relative=safeRelative(file.path),target=path.resolve(workspace,relative);
+          if(target!==workspace&&!target.startsWith(workspace+path.sep))throw new Error(`Unsafe execution workspace path: ${file.path}`);
+          await mkdir(path.dirname(target),{recursive:true});await writeFile(target,file.content,{mode:0o600});}
+      }
       const args=request.args.map((arg,index)=>{
         const normalized=arg.replaceAll('\\','/');
         if(!workspace)return normalized;

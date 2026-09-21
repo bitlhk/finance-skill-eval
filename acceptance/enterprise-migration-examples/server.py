@@ -1,6 +1,8 @@
 """Local business API and deterministic original-service oracle. No LLM or writes."""
 import argparse
+import asyncio
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 import re
@@ -14,6 +16,46 @@ from business import api
 ROOT = Path(__file__).resolve().parent
 
 
+class FixtureToolResponse:
+    def __init__(self, content, metadata=None, **_):
+        self.content = content
+        self.metadata = metadata
+
+
+class FixtureToolBase:
+    def __init__(self, *_, **__): pass
+
+
+class FixtureToolkit:
+    def __init__(self, tools=None):
+        self.tools = {}
+        for tool in tools or []: self.register_tool(tool)
+
+    def register_tool(self, tool):
+        self.tools[tool.name] = (tool.call, {})
+
+    def register_tool_function(self, function, preset_kwargs=None, name=None, **_):
+        self.tools[name or function.__name__] = (function, dict(preset_kwargs or {}))
+
+    def invoke(self, name, **inputs):
+        function, preset = self.tools[name]
+        result = function(**inputs, **preset)
+        if inspect.isawaitable(result): result = asyncio.run(result)
+        if isinstance(result, FixtureToolResponse): return result.metadata['businessResult']
+        return result
+
+
+def install_agentscope_fixture():
+    """Provide only the SDK seam owned by the original-service harness."""
+    agentscope = types.ModuleType('agentscope')
+    tool = types.ModuleType('agentscope.tool')
+    message = types.ModuleType('agentscope.message')
+    tool.Toolkit, tool.ToolBase, tool.ToolResponse = FixtureToolkit, FixtureToolBase, FixtureToolResponse
+    message.TextBlock = lambda **value: value
+    agentscope.tool, agentscope.message = tool, message
+    sys.modules.update({'agentscope': agentscope, 'agentscope.tool': tool, 'agentscope.message': message})
+
+
 def load(path):
     spec = importlib.util.spec_from_file_location(path.stem + '_fixture', path)
     module = importlib.util.module_from_spec(spec)
@@ -22,29 +64,28 @@ def load(path):
 
 
 def invoke_original(case_name, inputs, port, user):
-    # The original environment owns these modules. They are deliberately absent from source ZIPs.
-    runtime = types.ModuleType('legacy_runtime')
-    runtime.current_user = user
-    runtime.service_url = f'http://127.0.0.1:{port}'
-    runtime.app_key = 'demo-app'
-    sys.modules['legacy_runtime'] = runtime
+    # The harness owns framework objects and per-run values; source ZIPs only consume them.
+    install_agentscope_fixture()
     sys.modules['auth_sdk'] = load(ROOT / 'supplements/auth_sdk.py')
     source = ROOT / case_name / 'source'
     sys.path[:] = [str(source)] + [p for p in sys.path if not (p.startswith(str(ROOT)) and p.endswith('/source'))]
     for name in list(sys.modules):
         if name == 'tools' or name.startswith('tools.'): del sys.modules[name]
-    sys.modules['department_config'] = load(ROOT / 'supplements/department_config.py')
+    context = types.SimpleNamespace(user=user, service_url=f'http://127.0.0.1:{port}', app_key='demo-app',
+                                    workspace=str(ROOT / case_name / 'workspace'),
+                                    department_rules={'D001': {'reserve': '100.00'}})
     if case_name == '01-expense':
-        return load(source / 'scripts/check_expense.py').check_expense(**inputs, workspace=ROOT / case_name / 'workspace')
-    if case_name == '02-balance': return load(source / 'tools/balance.py').get_balance(**inputs)
+        return load(source / 'scripts/check_expense.py').build_toolkit(context).invoke('check_expense', **inputs)
+    toolkit = load(source / 'runtime.py').build_toolkit(context)
+    if case_name == '02-balance': return toolkit.invoke('get_balance', **inputs)
     if case_name == '03-procurement':
-        request = load(source / 'tools/request.py').get_request(**inputs)
+        request = toolkit.invoke('get_request', **inputs)
         if 'error' in request: return request
-        budget = load(source / 'tools/budget.py').check_budget(request['department'], request['amount'])
-        supplier = load(source / 'tools/supplier.py').check_supplier(request['supplier'])
+        budget = toolkit.invoke('check_budget', department=request['department'], amount=request['amount'])
+        supplier = toolkit.invoke('check_supplier', supplier=request['supplier'])
         reasons = ([] if budget['enough'] else ['BUDGET_EXCEEDED']) + ([] if supplier['active'] else ['SUPPLIER_INACTIVE'])
         return {'request_id': inputs['request_id'], 'approved': not reasons, 'reasons': reasons}
-    return load(source / 'tools/refund.py').refund_eligibility(**inputs)
+    return toolkit.invoke('refund_eligibility', **inputs)
 
 
 class Handler(BaseHTTPRequestHandler):

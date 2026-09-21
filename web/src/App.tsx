@@ -614,9 +614,9 @@ function EvaluationView(props: {
   const dynamic = props.caseSource === "ai_generated";
   const questions = dynamic ? props.job?.questionSet?.cases ?? [] : props.cases;
   const runtimeEnvironment = props.catalog.environments.find(item => item.environmentId === props.runtimeEnvironmentId);
-  const linkedMcp = runtimeEnvironment?.mcpEnvironmentIds
+  const linkedMcp = runtimeEnvironment&&'mcpEnvironmentIds' in runtimeEnvironment?runtimeEnvironment.mcpEnvironmentIds
     .map(id => props.catalog.environments.find(item => item.environmentId === id))
-    .filter((item): item is Environment => Boolean(item)) ?? [];
+    .filter((item): item is Environment => Boolean(item)):[];
   const requiredTools = [...new Set((dynamic && questions.length ? questions : props.cases)
     .filter(item => dynamic || props.selectedCases.includes(item.caseId))
     .flatMap(item => item.requiredTools))];

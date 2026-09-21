@@ -5,6 +5,7 @@ import {fingerprint} from '../contracts.js';
 import {readJson,writeJsonAtomic} from './file-store.js';
 import {validateDependencyData,type Dependency} from './migration-dependencies.js';
 import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../runtime-tool-config.js';
+import {supportsImplicitScriptContext} from './migration-model.js';
 
 /** Migration is a producer of the shared contract, never a Runtime execution protocol. */
 export function migrationExecutionConfig(dependencies:Dependency[],values:Record<string,unknown>,tools:Array<{toolId:string;name:string;kind?:string}>):RuntimeToolConfig{
@@ -12,6 +13,7 @@ export function migrationExecutionConfig(dependencies:Dependency[],values:Record
  for(const tool of tools){
   const contextBindings:Record<string,string>={},headerNames=new Set<string>();
   for(const dep of dependencies.filter(d=>d.owner==='RUNTIME'&&d.action==='INJECT'&&d.binding?.kind!=='SERVICE_ENV'&&d.toolIds.includes(tool.toolId))){
+   if(tool.kind==='SCRIPT'&&supportsImplicitScriptContext(dep))continue;
    if(tool.kind==='SCRIPT')throw new Error('Script 不支持 Runtime 上下文或鉴权注入，请迁移为 MCP');
    if(dep.binding?.kind!=='HTTP_HEADER')throw new Error(`MCP 依赖尚未声明 Header 映射：${dep.name}`);
    if(!(dep.id in values)){if(dep.blocking)throw new Error(`测试运行依赖未就绪：${dep.name}`);continue}
@@ -43,7 +45,10 @@ const reserved=/^(?:host|content-length|connection|transfer-encoding|content-typ
 export function runtimeInjection(dependencies:Dependency[],values:Record<string,unknown>,kind:'HTTP_HEADER'|'SCRIPT_CONTEXT'){
  const headers:Record<string,string>={},context:Record<string,unknown>={},missing:string[]=[];
  for(const dep of dependencies.filter(d=>d.owner==='RUNTIME'&&d.action==='INJECT'&&d.binding?.kind!=='SERVICE_ENV')){
-  if(kind==='SCRIPT_CONTEXT'){missing.push(`${dep.name}（Script 不支持 Runtime 注入）`);continue}
+  if(kind==='SCRIPT_CONTEXT'){
+   if(supportsImplicitScriptContext(dep))continue;
+   missing.push(`${dep.name}（Script 不支持 Runtime 注入）`);continue
+  }
   if(!(dep.id in values)){if(dep.blocking)missing.push(dep.name);continue}
   const errors=validateDependencyData(values[dep.id],dep.schema);if(errors.length){missing.push(`${dep.name}（格式已变化）`);continue}
   const binding=dep.binding;if(!binding){missing.push(`${dep.name}（注入位置未确认）`);continue}

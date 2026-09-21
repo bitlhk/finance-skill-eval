@@ -19,9 +19,9 @@ import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
 import { validateSkill } from './skill-validator.js';
-import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision } from './migration-model.js';
+import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,supportsImplicitScriptContext,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision,type ToolInspection } from './migration-model.js';
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from './migration-delivery-contract.js';
-import {harnessDeliveryContract,toGeneratedHarnessPlugins,type HarnessPluginDeclaration} from './migration-harness.js';
+import {runtimeBuildRequirements,runtimeBuildRequirementsYaml} from './migration-harness.js';
 import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,probeBusinessInterface,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
 import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
@@ -34,7 +34,6 @@ import { assessMigrationAcceptance } from './migration-acceptance.js';
 import {simpleMigrationSuiteSchema,simpleMigrationCases,normalizeOriginalServiceSuite} from './simple-migration-suite.js';
 import {MigrationSupplements,supplementFiles} from './migration-supplements.js';
 import {analyzeDependencies,validateDependencyData,type Supplement} from './migration-dependencies.js';
-import type {LocalMigrationRuntimeCatalog} from './local-migration-runtimes.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
@@ -70,12 +69,37 @@ type Migration = {
   analysis?:import('./stage-envelope.js').StageEnvelope<ProjectInspection>;
   decisions?:ToolDecision[];
   portableGenerations?:PortableGeneration[];
-  harnessPlugins?:HarnessPluginDeclaration[];
   portableGenerationDiff?:PortableDiff[];
   technicalValidations?:TechnicalValidation[];
 };
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 const CODE_FILE=/\.(?:java|py|js|mjs|cjs|ts)$/iu;
+const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+type TestInput={value:unknown;source:NonNullable<TechnicalValidation['inputSource']>;fields:string[]};
+function schemaValue(schema:unknown):{available:boolean;value?:unknown}{
+  if(!record(schema))return {available:false};
+  if('const' in schema)return {available:true,value:schema.const};
+  if('default' in schema)return {available:true,value:schema.default};
+  if(Array.isArray(schema.examples)&&schema.examples.length)return {available:true,value:schema.examples[0]};
+  if(Array.isArray(schema.enum)&&schema.enum.length)return {available:true,value:schema.enum[0]};
+  return {available:false};
+}
+function automaticTestInput(tool:ToolInspection,provided:unknown):TestInput{
+  if(provided!==undefined){
+    if(tool.kind==='MCP'&&!record(provided))return conflict('MCP 工具的业务参数必须是对象');
+    return {value:provided,source:'USER',fields:record(provided)?Object.keys(provided):[]};
+  }
+  const sample=tool.samples.find(item=>record(item.input));
+  if(sample)return {value:sample.input,source:'SOURCE_SAMPLE',fields:Object.keys(sample.input as Record<string,unknown>)};
+  if(record(tool.inputSchema)){
+    const properties=record(tool.inputSchema.properties)?tool.inputSchema.properties:{},required=Array.isArray(tool.inputSchema.required)?tool.inputSchema.required.filter((name):name is string=>typeof name==='string'):[];
+    const value:Record<string,unknown>={},missing:string[]=[];
+    for(const name of required){const resolved=schemaValue(properties[name]);if(resolved.available)value[name]=resolved.value;else missing.push(name);}
+    if(missing.length)return conflict(`试运行需要补充真实业务测试值：${missing.join('、')}`);
+    return {value,source:'SCHEMA_DEFAULT',fields:Object.keys(value)};
+  }
+  return {value:{},source:'EMPTY',fields:[]};
+}
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -88,8 +112,10 @@ export class MigrationStore {
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
-    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
-    private migrationRuntimes?:LocalMigrationRuntimeCatalog) {}
+    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER'))) {}
+  private async migrationEnvironment(environmentId:string){
+    return await this.environments?.get(environmentId)??null;
+  }
   async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
   async verifyTarget(id:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
@@ -174,7 +200,7 @@ export class MigrationStore {
     inspection.skill={status:byRules.status,findings:[...byRules.findings,...agentSkillFindings]};
     inspection.dependencyAnalysis=analyzeDependencies(agent!.payload,inspection,files,supplementItems,record.revision,materials.digest(record),agent?.status==='PRODUCED'||agent?.status==='ABSTAINED'?agent.workspaceRoot:undefined,agent?.status==='PRODUCED'||agent?.status==='ABSTAINED'?agent.libraryInventory:undefined);
     if(agent?.status==='ABSTAINED'){inspection.dependencyAnalysis.status='PARTIAL';inspection.dependencyAnalysis.reason=agent.reason}
-    for(const tool of inspection.tools){if(inspection.dependencyAnalysis.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT')){tool.recommendedForm='MCP';tool.recommendedLanguage=recommendLanguage('MCP',tool.language);tool.recommendationReason='此实现需要 Runtime 上下文或凭证注入，应迁移为 MCP 服务；Script command 不支持额外注入。'}}
+    for(const tool of inspection.tools){if(inspection.dependencyAnalysis.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&!supportsImplicitScriptContext(d))){tool.recommendedForm='MCP';tool.recommendedLanguage=recommendLanguage('MCP',tool.language);tool.recommendationReason='此实现需要 Runtime 上下文或凭证注入，应迁移为 MCP 服务；Script command 不支持额外注入。'}else if(inspection.dependencyAnalysis.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&supportsImplicitScriptContext(d))){tool.recommendedForm='SCRIPT';tool.recommendedLanguage=recommendLanguage('SCRIPT',tool.language);tool.recommendationReason='仅依赖 Runtime 已提供的 workspace cwd，可作为独立脚本执行，不需要额外上下文注入。'}}
     if(asset.assetId===value.source.assetId)value.sourceInspection=structuredClone(inspection);
     if(sourceOnly&&value.candidate){await writeJsonAtomic(this.file(id),value);return inspection}
     value.inspection=inspection;
@@ -196,7 +222,10 @@ export class MigrationStore {
   }
   async runtimeConfiguration(id:string){
     const value=await this.get(id),config=await new MigrationRuntimeConfig(this.root).get(id),deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
-    return {revision:config.revision,dependencies:deps.filter(d=>d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({dependencyId:d.id,provided:d.id in config.values,valid:d.id in config.values&&!validateDependencyData(config.values[d.id],d.schema).length})),checks:config.checks.map(check=>({...check,current:check.configurationDigest===configurationDigest(config,deps)&&check.assetDigest===(check.kind==='GENERATED_TOOL'?(value.candidate??value.source):value.source).artifactSha256}))};
+    return {revision:config.revision,dependencies:deps.filter(d=>d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>{
+      const implicit=supportsImplicitScriptContext(d);
+      return {dependencyId:d.id,provided:implicit||d.id in config.values,valid:implicit||d.id in config.values&&!validateDependencyData(config.values[d.id],d.schema).length,implicit};
+    }),checks:config.checks.map(check=>({...check,current:check.configurationDigest===configurationDigest(config,deps)&&check.assetDigest===(check.kind==='GENERATED_TOOL'?(value.candidate??value.source):value.source).artifactSha256}))};
   }
   async saveRuntimeDependency(id:string,dependencyId:string,input:unknown){return this.serial(id,async()=>{
     const p=z.strictObject({revision:z.number().int().nonnegative(),value:z.unknown()}).parse(input);
@@ -216,7 +245,9 @@ export class MigrationStore {
     const tools=value.inspection?.tools??[];
     if(toolNames.some(name=>!tools.some(tool=>tool.name===name)))return conflict('服务配置关联了未知工具');
     const ids=tools.filter(tool=>toolNames.includes(tool.name)).map(tool=>tool.toolId);
-    return serviceEnvironment(deps.filter(dep=>dep.toolIds.some(id=>ids.includes(id))),config.values);
+    const selected=deps.filter(dep=>dep.toolIds.some(id=>ids.includes(id))),resolved=serviceEnvironment(selected,config.values);
+    const secretNames=new Set(selected.filter(dep=>dep.sensitive&&dep.binding?.kind==='SERVICE_ENV').map(dep=>dep.binding!.name));
+    return {configuration:Object.fromEntries(Object.entries(resolved).filter(([name])=>!secretNames.has(name))),secrets:Object.fromEntries(Object.entries(resolved).filter(([name])=>secretNames.has(name)))};
   }
   async checkBusinessConnection(id:string,input:unknown,signal?:AbortSignal){return this.serial(id,async()=>{
     const p=z.strictObject({toolId:z.string(),endpoint:z.string().url(),method:z.enum(['GET','HEAD']),confirmReadOnly:z.literal(true),revision:z.number().int().nonnegative()}).parse(input);
@@ -273,13 +304,25 @@ export class MigrationStore {
     if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新检查结果后重新确认');
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
     const tool=value.inspection.tools.find(item=>item.toolId===toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
-    const decision:ToolDecision={toolId,form:p.form,...(p.language?{language:p.language}:{}),reason:p.reason??(p.form==='MCP'?'迁移到本 Skill 的共享 MCP 服务':'迁移为独立脚本 Tool'),baseAssetId:p.baseAssetId,decidedAt:new Date().toISOString()};
+    const decision:ToolDecision={toolId,form:p.form,language:p.language??recommendLanguage(p.form,tool.language),reason:p.reason??(p.form==='MCP'?'迁移到本 Skill 的共享 MCP 服务':'迁移为独立脚本 Tool'),baseAssetId:p.baseAssetId,decidedAt:new Date().toISOString()};
     value.decisions=[...(value.decisions??[]).filter(item=>!(item.toolId===toolId&&item.baseAssetId===p.baseAssetId)),decision];
     await writeJsonAtomic(this.file(id),value);return decision;
   });}
   async plan(id:string){const value=await this.get(id),asset=value.candidate??value.source;
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
     return buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);
+  }
+  async runtimeRequirements(id:string){
+    const value=await this.get(id),inspection=value.sourceInspection??value.inspection;
+    if(!inspection)return conflict('请先完成源码诊断');
+    return runtimeBuildRequirements(inspection)??{schemaVersion:'finance.runtime-build-requirements.v1',status:'NOT_REQUIRED',requiredCapabilities:[]};
+  }
+  async runtimeRequirementsYaml(id:string){
+    const value=await this.get(id),inspection=value.sourceInspection??value.inspection;
+    if(!inspection)return conflict('请先完成源码诊断');
+    const yaml=runtimeBuildRequirementsYaml(inspection);
+    if(!yaml)return conflict('当前迁移没有 Runtime Harness 改造需求');
+    return yaml;
   }
   /**
    * A4 runs as an agent; the configured MIGRATION model is the fallback when the
@@ -305,15 +348,12 @@ export class MigrationStore {
           // No sample means the call cannot be exercised. Report that rather than invent one.
           ...('reason' in sample?{sampleMissing:sample.reason}:{sampleInput:sample.input})};
       }
-      for(const capability of inspection.runtimeCapabilities??[]){
-        contract[`harness:${capability.name}`]={form:'HARNESS',language:'python',toolName:capability.name,
-          expectedToolNames:(inspection.runtimeCapabilities??[]).map(item=>item.name),
-          usageContract:capability.usageContract,evidence:capability.evidence,
-          sampleMissing:'诊断未提供 Harness 调用样例，仅验证原名工具可加载；不编造测试输入'};
-      }
       // A4 is not deterministic: the same input can produce or stall. Retry the run a
       // bounded number of times, but treat ABSTAINED as a decision, not a flake.
-      const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??2));
+      // Re-running the whole code agent repeats every model/tool round and can double a long
+      // request without adding new evidence.  A user retry is explicit and keeps the failed run
+      // visible, so automatic whole-agent retry is opt-in only.
+      const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??1));
       // Remembered so the fallback is only reached when the agent is genuinely unavailable: an
       // agent that ran and failed has a reason, and that reason is what the reader needs.
       let agentFailure:string|null=null;
@@ -323,7 +363,7 @@ export class MigrationStore {
         decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
         tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema,samples:t.samples,migrationContract:contract[t.toolId]})),
         contract,
-        deliveryContract:{script:{execution:"COMMAND",cwd:"WORKSPACE",entrypoint:"RUNTIME_PROVIDED_ABSOLUTE_PATH",packageResources:"RELATIVE_TO_SCRIPT",runtimeInjection:false},mcp:{contextTransport:"HTTP_HEADER",serviceConfigurationTransport:"SERVICE_ENV",businessArguments:"SEPARATE",pythonFramework:{package:"fastmcp",version:"2.14.7",import:"from fastmcp import FastMCP"}},harness:harnessDeliveryContract(inspection),runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions)},
+        deliveryContract:{script:{execution:"COMMAND",cwd:"WORKSPACE",entrypoint:"RUNTIME_PROVIDED_ABSOLUTE_PATH",packageResources:"RELATIVE_TO_SCRIPT",runtimeInjection:false},mcp:{contextTransport:"HTTP_HEADER",serviceConfigurationTransport:"SERVICE_ENV",businessArguments:"SEPARATE",pythonFramework:{package:"fastmcp",version:"2.14.7",import:"from fastmcp import FastMCP"}},runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions)},
       });
       if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
         // An abstention is a decision that belongs to a human. Report which Tool and why,
@@ -340,61 +380,55 @@ export class MigrationStore {
       }
       if(result?.status==='FAILED'){agentFailure=result.reason;continue;}
       if(result?.status==='PRODUCED'){
-        let harnessPlugins;
-        try{harnessPlugins=toGeneratedHarnessPlugins(result.payload as Record<string,unknown>,result.files,inspection);}
-        catch(error){agentFailure=error instanceof Error?error.message:String(error);continue;}
         const deliveryIssues=validateAgentRuntimeDelivery(result.payload as Record<string,unknown>,inspection,decisions);
         if(deliveryIssues.length){agentFailure=deliveryIssues.join('；');continue;}
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const mapped=toGeneratedImplementations(result.payload as never,result.files,nameById);
         const missing=decisions.filter(decision=>!mapped[decision.toolId]||mapped[decision.toolId]!.language!==plan.items.find(item=>item.toolId===decision.toolId)?.language);
-        if(!missing.length)return {implementations:mapped,harnessPlugins};
+        if(!missing.length)return {implementations:mapped};
         agentFailure=`A4 交付不完整或语言与授权不符：${missing.map(decision=>nameById[decision.toolId]??decision.toolId).join('、')}`;
       }
       }
       if(agentFailure)return conflict(
         `迁移 agent 跑完了但没交付可用结果：${agentFailure}。这是执行问题不是工程问题——不会退回只能产出脚本的回退生成器。请重试或查看 agent 日志。`);
     }
-    if(inspection.runtimeCapabilities?.length)return conflict('Harness 适配需要迁移 Agent 交付插件代码，不能退回业务脚本生成器');
-    return {implementations:await this.codeGenerator.generate({archive,inspection,decisions}),harnessPlugins:[]};
+    return {implementations:await this.codeGenerator.generate({archive,inspection,decisions})};
   }
   private async generatePortable(id:string,input:unknown){return this.serial(id,async()=>{
-    const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),asset=value.candidate??value.source;
-    if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新生成');
-    if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
-    if(!value.inspection.staticAnalysis||value.inspection.staticAnalysis.status==='UNAVAILABLE')return conflict('静态分析不可用，已阻止生成候选');
-    const toolPaths=new Set(value.inspection.tools.flatMap(tool=>tool.sourcePaths));
-    const toolIncompleteFiles=value.inspection.staticAnalysis.toolIncompleteFiles??value.inspection.staticAnalysis.incompleteFiles.filter(item=>toolPaths.has(item.path));
+    const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),currentAsset=value.candidate??value.source;
+    if(p.baseAssetId!==currentAsset.assetId)return conflict('资产已变化，请刷新后重新生成');
+    if(!value.inspection||value.inspection.assetId!==currentAsset.assetId)return conflict('请先检查当前资产');
+    const generationInspection=value.sourceInspection??value.inspection;
+    if(!generationInspection.staticAnalysis||generationInspection.staticAnalysis.status==='UNAVAILABLE')return conflict('静态分析不可用，已阻止生成候选');
+    const toolPaths=new Set(generationInspection.tools.flatMap(tool=>tool.sourcePaths));
+    const toolIncompleteFiles=generationInspection.staticAnalysis.toolIncompleteFiles??generationInspection.staticAnalysis.incompleteFiles.filter(item=>toolPaths.has(item.path));
     if(toolIncompleteFiles.length&&!p.acknowledgePartialAnalysis){
       const files=toolIncompleteFiles.map(item=>`${item.path} (${item.status})`).join('、');
       return conflict(`静态分析未完整覆盖 Tool 相关源码；确认人工审阅后才能继续：${files}`);
     }
-    const plan=buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);if(!plan.generationAllowed)return conflict('当前逐 Tool 决策尚不能生成候选');
-    const archive=await this.skills.readArchive(asset.assetId),version=`2.0.0-migration.${(value.candidateHistory?.length??0)+1}`;
+    const plan=buildMigrationPlan(value.inspection,value.decisions??[],currentAsset.assetId);if(!plan.generationAllowed)return conflict('当前逐 Tool 决策尚不能生成候选');
+    // Every regeneration is a fresh derivation from the immutable source package.  Building on
+    // the previous candidate made generated guidance accumulate and allowed preserved references
+    // to disappear when an ADD diff was cleared.
+    const archive=await this.skills.readArchive(value.source.assetId),version=`2.0.0-migration.${(value.candidateHistory?.length??0)+1}`;
     for(const item of (await new MigrationSupplements(this.root).get(id)).items)for(const [name,content] of Object.entries(item.files??{}))archive[name]=Buffer.from(content,'base64');
-    // Clear the previous generation before regenerating. The recorded diff is the only
-    // reliable list of what was generated -- matching on a path prefix does not work,
-    // because the generator writes mcp/ skill/ scripts/, not a generated/ root.
-    for(const item of value.portableGenerationDiff??[]){
-      const current=archive[item.path];
-      if(current===undefined)continue;
-      if(Buffer.from(current).toString('utf8')!==item.after)return conflict('生成文件已被人工修改；为避免覆盖工程改动，请将其作为新实现重新导入和检查');
-      if(item.operation==='MODIFY')archive[item.path]=strToU8(item.before);
-      else if(item.path!==asset.skillFile)delete archive[item.path];
-    }
-    const decisions=value.decisions!.filter(d=>d.baseAssetId===asset.assetId);
-    const delivery=await this.generateImplementations(archive,value.inspection,decisions,asset,plan);
-    const generated=generatePortableCandidate({archive,base:asset,inspection:value.inspection,decisions,version,...delivery});
-    if(value.inspection.dependencyAnalysis?.dependencies.length){
+    const decisions=value.decisions!.filter(d=>d.baseAssetId===currentAsset.assetId);
+    const delivery=await this.generateImplementations(archive,generationInspection,decisions,value.source,plan);
+    const generated=generatePortableCandidate({archive,base:value.source,inspection:generationInspection,decisions,version,...delivery});
+    if(generationInspection.dependencyAnalysis?.dependencies.length){
       const path=decisions.some(d=>d.form==='MCP')?'runtime-dependencies.json':'scripts/runtime-dependencies.json';
       if(generated.files[path])return conflict('生成工程占用了运行依赖声明路径，请调整后重新生成');
-      const declarations=value.inspection.tools.map(tool=>({tool:tool.name,dependencies:value.inspection!.dependencyAnalysis!.dependencies.filter(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({name:d.name,key:d.key,purpose:d.purpose,required:d.blocking,sensitive:d.sensitive,schema:d.schema,binding:d.binding}))}));
+      const declarations=generationInspection.tools.map(tool=>({tool:tool.name,dependencies:generationInspection.dependencyAnalysis!.dependencies.filter(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({name:d.name,key:d.key,purpose:d.purpose,required:d.blocking,sensitive:d.sensitive,schema:d.schema,binding:d.binding}))}));
       const content=JSON.stringify({schemaVersion:'finance.tool-runtime-dependencies.v1',tools:declarations},null,2)+'\n';generated.files[path]=strToU8(content);generated.diff.push({path,operation:'ADD',before:'',after:content});
     }
     const candidate=await this.publishCandidate(generated.files);
-    const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:value.inspection,decisions:value.decisions!,baseAssetId:asset.assetId,generations:generated.generations});
+    const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:generationInspection,decisions:value.decisions!,baseAssetId:currentAsset.assetId,generations:generated.generations});
+    // The candidate inspection describes the same logical tools on a new immutable asset. Carry
+    // the authorized decisions forward to that asset; otherwise the report immediately claims
+    // every decision is missing and disables regeneration as soon as generation succeeds.
+    const carriedDecisions=decisions.map(decision=>({...decision,baseAssetId:candidate.assetId,decidedAt:new Date().toISOString()}));
+    value.decisions=[...(value.decisions??[]),...carriedDecisions];
     value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
-    value.harnessPlugins=delivery.harnessPlugins.map(({contents,...declaration})=>declaration);
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await writeJsonAtomic(this.file(id),value);return value;
   });}
@@ -449,12 +483,14 @@ export class MigrationStore {
     const p=z.strictObject({toolId:z.string().min(1),baseAssetId:z.string().min(1),request:z.unknown().optional(),endpoint:z.string().url().optional(),arguments:z.record(z.unknown()).optional()}).parse(input);
     const value=await this.get(id),asset=value.candidate??value.source;if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新验证');
     const inspection=value.inspection;if(!inspection)return conflict('请先完成 Tool 检查');
+    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime Harness 改造需求；自动 Runtime Builder 功能开发中，当前版本暂不能验证此迁移');
     const tool=inspection.tools.find(item=>item.toolId===p.toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
+    const testInput=automaticTestInput(tool,tool.kind==='MCP'?p.arguments:p.request);
     const generated=value.portableGenerations?.find(item=>item.toolId===tool.toolId);if(generated&&!generated.readyForValidation)return conflict('生成候选仍有待办，不能标记技术验证通过');
     const service=new TechnicalValidationService(),archive=await this.skills.readArchive(asset.assetId);
     const runtimeStore=new MigrationRuntimeConfig(this.root),runtimeConfig=await runtimeStore.get(id);
     const runtimeDeps=value.sourceInspection?.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(tool.toolId))??[];
-    if(tool.kind==='SCRIPT'&&runtimeDeps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT'))return conflict('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
+    if(tool.kind==='SCRIPT'&&runtimeDeps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT'&&!supportsImplicitScriptContext(d)))return conflict('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
     const groupIds=(value.portableGenerations??[]).filter(g=>generated&&JSON.stringify([g.start,g.prepare])===JSON.stringify([generated.start,generated.prepare])).map(g=>g.toolId);
     const serviceDeps=value.sourceInspection?.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.some(id=>[tool.toolId,...groupIds].includes(id)))??runtimeDeps;
     const environment=serviceEnvironment(serviceDeps,runtimeConfig.values);
@@ -465,9 +501,10 @@ export class MigrationStore {
     // endpoint is only for a Tool that was already an MCP server and has no deliverable at all.
     const migrated=Boolean(generated?.start?.length)||Boolean(generated&&tool.kind==='MCP');
     const result=tool.kind==='MCP'
-      ?await service.validateMcp({asset,tool,archive,arguments:p.arguments,headers:injection.headers,environment,signal,
+      ?await service.validateMcp({asset,tool,archive,arguments:testInput.value as Record<string,unknown>,headers:injection.headers,environment,signal,
         ...(migrated?{service:{start:generated?.start,prepare:generated?.prepare}}:{endpoint:p.endpoint??''})})
-      :await service.validateScript({asset,archive,tool,request:p.request,context:injection.context,signal});
+      :await service.validateScript({asset,archive,tool,request:testInput.value,context:injection.context,signal});
+    result.inputSource=testInput.source;result.inputFields=testInput.fields;
     if(runtimeDeps.length){
       result.runtimeConfigurationDigest=configurationDigest(runtimeConfig,value.sourceInspection?.dependencyAnalysis?.dependencies);
       if(Object.keys(environment).length||Object.keys(injection.headers).length||Object.keys(injection.context).length){result.error=result.status==='PASSED'?null:'工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。';result.stages=result.stages.map(stage=>stage.passed?stage:{...stage,message:'此步骤未通过，原始错误未保存以保护运行依赖。'})}
@@ -489,10 +526,11 @@ export class MigrationStore {
     if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
     if(!state.ready)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
     const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string}}};
-    if(body?.configuration?.runtime?.type!=='runtime_http')return conflict('OpenJiuwen 验证必须选择本地 Runtime');
-    const environmentId=body.configuration.runtime.environmentId;
-    const environment=environmentId?await this.migrationRuntimes?.environment(environmentId):null;
-    if(!environment||environment.runtimeType!=='openjiuwen')return conflict('目标必须是后端配置的本地 OpenJiuwen Runtime');
+    const selectedRuntime=body?.configuration?.runtime;
+    if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('OpenJiuwen 验证必须选择 Runtime Launcher');
+    const environmentId=selectedRuntime.environmentId;
+    const environment=environmentId?await this.migrationEnvironment(environmentId):null;
+    if(!environment||environment.type!=='runtime_launcher'||environment.runtimeType!=='openjiuwen')return conflict('目标必须是已配置的 OpenJiuwen Runtime Launcher');
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
       .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;
@@ -517,9 +555,9 @@ export class MigrationStore {
       serviceEnvironment(serviceDeps,config.values);
       if(serviceDeps.length)service.environmentReference={migrationId:id,revision:config.revision,assetDigest:asset.artifactSha256,configurationDigest:configurationDigest(config,deps)};
     }
-    const plugins=(value.harnessPlugins??[]).map(plugin=>({assetDigest:asset.artifactSha256,manifestPath:plugin.manifestPath,filePaths:plugin.files,toolNames:plugin.toolNames}));
     const comparison=(body.configuration as Record<string,unknown>).evaluationMode==='service_comparison';
-    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},runtimeHarnessBindings:{left:comparison?[]:plugins,right:plugins},...(deps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
+    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime Harness 改造需求；自动 Runtime Builder 功能开发中，当前版本暂不能执行对比评测');
+    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},...(deps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
     return this.validate(id,normalized);
   }
   async openJiuwenValidations(id:string){
@@ -534,8 +572,8 @@ export class MigrationStore {
       intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string(),simulationProfile:z.string().optional(),acknowledgeSimulation:z.literal(true).optional()}).parse(input);
     const value=await this.get(id);
     if(p.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
-    if(p.environmentId){const env=await this.migrationRuntimes?.environment(p.environmentId);
-      if(!env||env.runtimeType!=='openjiuwen')return conflict('目标必须是后端配置的本地 OpenJiuwen Runtime');}
+    if(p.environmentId){const env=await this.migrationEnvironment(p.environmentId);
+      if(!env||env.type!=='runtime_launcher'||env.runtimeType!=='openjiuwen')return conflict('目标必须是已配置的 OpenJiuwen Runtime Launcher');}
     const base=value.candidate??value.source;
     const originalArchive=await this.skills.readArchive(base.assetId);
     if(value.generation)for(const [name,bytes] of Object.entries(originalArchive).filter(([name])=>name.startsWith('migration-generated/'))){
@@ -565,7 +603,7 @@ export class MigrationStore {
     if (!candidate || candidate.artifactSha256===value.source.artifactSha256) return conflict('请作为独立的新版本候选导入；源资产保持不变');
     if (candidate.version===value.source.version) return conflict('候选必须使用新的版本号');
     value.candidate=candidate; value.candidateNotes=p.notes;
-    delete value.inspection;value.decisions=[];delete value.portableGenerations;delete value.portableGenerationDiff;delete value.harnessPlugins;
+    delete value.inspection;value.decisions=[];delete value.portableGenerations;delete value.portableGenerationDiff;
     (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
     await writeJsonAtomic(this.file(id),value); return value;
   });}
@@ -683,8 +721,9 @@ export class MigrationStore {
     if (!experiment || experiment.candidateDigest!==value.candidate.artifactSha256) return conflict('请为当前候选选择一次运行记录');
     if(value.schemaVersion==='finance.skill-migration.v2'){
       const technical=await this.currentTechnicalState(value);if(!technical.ready)return conflict(`请先完成当前 Tool 技术验证：${technical.reasons.join('；')}`);
-      const environmentId=experiment.declaredPlan?.configuration.runtime.type==='runtime_http'?experiment.declaredPlan.configuration.runtime.environmentId:null;
-      const environment=environmentId?await this.migrationRuntimes?.environment(environmentId):null;
+      const selectedRuntime=experiment.declaredPlan?.configuration.runtime;
+      const environmentId=selectedRuntime?.type==='runtime_launcher'?selectedRuntime.environmentId:null;
+      const environment=environmentId?await this.migrationEnvironment(environmentId):null;
       if(!environment||environment.runtimeType!=='openjiuwen')return conflict('请先完成当前候选的本地 OpenJiuwen 评估');
     }
     if(value.sourceInspection?.dependencyAnalysis?.dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')&&experiment.runtimeConfigurationDigest!==configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection.dependencyAnalysis.dependencies))return conflict('运行配置已变化，请重新评估后再优化');
@@ -709,6 +748,9 @@ export class MigrationStore {
   async validate(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=planSchema.parse(input), value=await this.get(id), c=value.candidate;
     if (!c || !p.configuration.runtimeBindings) return conflict('缺少候选或左右两侧的绑定');
+    if(p.configuration.runtime.type!=='runtime_launcher')return conflict('Skill 迁移评测必须使用 Runtime Launcher');
+    const launcherEnvironmentId=p.configuration.runtime.environmentId;
+    if((['left','right'] as const).some(side=>p.configuration.runtimeBindings![side].environmentId!==launcherEnvironmentId))return conflict('左右执行绑定必须属于所选 Runtime Launcher');
     let pack=p.configuration.packId ? this.catalog.get(p.configuration.packId):null;
     if (p.configuration.preparationId) {
       if (!value.suiteIds?.includes(p.configuration.preparationId)) return conflict('请选择属于本次迁移的冻结测试集');
@@ -743,6 +785,8 @@ export class MigrationStore {
   });}
   async report(id:string) {
     const value=await this.get(id);
+    const runtimeInspection=value.sourceInspection??value.inspection;
+    const runtimeRequirements=runtimeInspection?runtimeBuildRequirements(runtimeInspection):null;
     const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
     const targetRunner=new MigrationTargetRuns(this.root,this.skills);
     const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>targetRunner.get(runId)));
@@ -770,8 +814,8 @@ export class MigrationStore {
     });
     const openJiuwenValidations=(await Promise.all(experiments.map(async experiment=>{
       const runtime=experiment.declaredPlan?.configuration.runtime;
-      const environment=runtime?.type==='runtime_http'?await this.migrationRuntimes?.environment(runtime.environmentId):null;
-      if(!environment||environment.type!=='runtime_http'||environment.runtimeType!=='openjiuwen')return null;
+      const environment=runtime&&(runtime.type==='runtime_http'||runtime.type==='runtime_launcher')?await this.migrationEnvironment(runtime.environmentId):null;
+      if(!environment||!['runtime_http','runtime_launcher'].includes(environment.type)||environment.runtimeType!=='openjiuwen')return null;
       return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:environment.environmentId,
         execution:experiment.execution,evidence:experiment.evidence,current:experiment.current,
         executionCheck:['HTTP_LOADED_DIGEST_CHECKED','SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'].includes(experiment.evidence)?'ARTIFACT_VERIFIED':experiment.execution==='completed'?'EXECUTION_COMPLETED':'NOT_COMPLETE',
@@ -781,7 +825,7 @@ export class MigrationStore {
     const currentOpenJiuwen=openJiuwenValidations.filter(item=>item.current).at(-1);
     const targetExecution=value.schemaVersion==='finance.skill-migration.v2'?(currentOpenJiuwen?.status??'NOT_RUN'):(current?.status??'NOT_RUN');
     const originalBaseline=experiments.filter(r=>r.pair==='SC'&&r.current).at(-1);
-    return {project:value,diagnosis,inspection:value.inspection??null,decisions:value.decisions??[],migrationPlan,portableGenerationDiff:value.portableGenerationDiff??[],technicalValidations,openJiuwenValidations,targetRuns,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:originalBaseline?.evidence==='SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'?'CAPTURED':originalBaseline?'NOT_COMPLETE':'NOT_RUN',targetExecution,
+    return {project:value,diagnosis,inspection:value.inspection??null,decisions:value.decisions??[],migrationPlan,runtimeRequirements,portableGenerationDiff:value.portableGenerationDiff??[],technicalValidations,openJiuwenValidations,targetRuns,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:originalBaseline?.evidence==='SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'?'CAPTURED':originalBaseline?'NOT_COMPLETE':'NOT_RUN',targetExecution,
       candidateChanged:!!value.generation&&value.generation.candidateDigest!==value.candidate?.artifactSha256,
       originalOwner:'原工程负责人',targetOwner:'Harness / Host 接入开发者',
       missingSource:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>({path:f.path,line:f.line,reason:f.reason}))??[],

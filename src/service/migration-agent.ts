@@ -6,6 +6,7 @@ import { modelTimeoutMs, type ModelRole } from "./config.js";
 import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
 import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
+import {isAdaptableHarnessCapability} from './migration-harness.js';
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -387,9 +388,10 @@ export function toProjectInspection(
     });
     // An unsupported claim must not remove a tool from migration.
     if(!evidence.length||evidence.length!==claim.evidence.length||runtimeCapabilities.some(c=>c.name===claim.name.trim()))continue;
-    runtimeCapabilities.push({name:claim.name.trim(),owner:'RUNTIME_HARNESS',migrationAction:'DO_NOT_MIGRATE',blocking:false,
+    const capability={name:claim.name.trim(),owner:'RUNTIME_HARNESS' as const,migrationAction:'REQUIRES_RUNTIME_BUILDER' as const,blocking:true as const,
       reason:claim.reason,usageContract:claim.usageContract,targetCapability:typeof claim.targetCapability==='string'?claim.targetCapability:null,
-      testAvailability:'UNCHECKED',consumerTools:Array.isArray(claim.consumerTools)?claim.consumerTools.filter((name):name is string=>typeof name==='string'):[],evidence});
+      testAvailability:'UNCHECKED' as const,consumerTools:Array.isArray(claim.consumerTools)?claim.consumerTools.filter((name):name is string=>typeof name==='string'):[],evidence};
+    if(isAdaptableHarnessCapability(capability))runtimeCapabilities.push(capability);
   }
   const tools = (payload.tools ?? []).flatMap(tool => {
     const name = String(tool.name ?? "").trim();
@@ -538,17 +540,29 @@ export function toGeneratedImplementations(
   const out: Record<string, import("./migration-code-generator.js").GeneratedToolImplementation> = {};
   for (const tool of payload.tools ?? []) {
     const toolId = String(tool.toolId ?? "");
-    const entrypoint = String(tool.entrypoint ?? "");
+    let entrypoint = String(tool.entrypoint ?? "");
     const reported = String(tool.language ?? "").toLowerCase();
     const language: "java" | "python" | "node" = reported === "java" ? "java" : reported === "node" ? "node" : "python";
     if (!toolId || !entrypoint) continue;
     if (tool.status && tool.status.toUpperCase() === "ABSTAINED") continue;
-    const source = decode(entrypoint);
+    let source = decode(entrypoint);
+    if(source===null&&language==='java'&&Array.isArray(tool.start)){
+      const mainClass=tool.start.map(String).at(-1),suffix=mainClass?`${mainClass.replaceAll('.','/')}.java`:'';
+      const matches=(tool.files??[]).map(String).filter(name=>suffix&&name.endsWith(suffix)&&decode(name)!==null);
+      if(matches.length===1){entrypoint=matches[0]!;source=decode(entrypoint)}
+    }
     if (source === null) continue;
     const additionalFiles = (tool.files ?? [])
       .map(String)
       .filter(name => name && name !== entrypoint)
       .flatMap(name => { const content = decode(name); return content === null ? [] : [{ path: name, content }]; });
+    const declaredPrepare=Array.isArray(tool.prepare)&&tool.prepare.length?tool.prepare.map(String):undefined;
+    const javaSources=(tool.files??[]).map(String).filter(name=>name.endsWith('.java')&&decode(name)!==null);
+    // Contract tests run in the agent workspace, where compile_source has already left .class
+    // files. Those build artefacts are intentionally not packaged, so a Java delivery must rebuild
+    // itself in the target workspace even when the model omitted prepare.
+    const prepare=declaredPrepare??(language==='java'&&javaSources.length
+      ?['javac','--release','17','-encoding','UTF-8',...javaSources]:undefined);
     const compileCheck = language === "java"
       ? { name: "JAVA_COMPILE" as const, passed: true as const, message: "编译通过" }
       : language === "node"
@@ -565,7 +579,7 @@ export function toGeneratedImplementations(
       ...(tool.runtimeBindings?{runtimeBindings:tool.runtimeBindings}:{}),
       smokeInput: {},
       ...(Array.isArray(tool.start) && tool.start.length ? { start: tool.start.map(String) } : {}),
-      ...(Array.isArray(tool.prepare) && tool.prepare.length ? { prepare: tool.prepare.map(String) } : {}),
+      ...(prepare?{prepare}:{}),
       ...(Array.isArray(tool.drift) && tool.drift.length ? { drift: tool.drift } : {}),
       ...(Array.isArray(tool.changes) && tool.changes.length ? { changes: tool.changes } : {}),
       generatedBy: toolNameById[toolId] ?? toolId,
@@ -602,10 +616,19 @@ export async function runMigrationAgent<T = Record<string, unknown>>(
     return failed("migration agent runtime is not available");
   }
 
+  const requestedDecisions=stage==='A4'&&Array.isArray((request as {decisions?:unknown[]}).decisions)
+    ?(request as {decisions:unknown[]}).decisions.length:0;
+  // A4 used to receive the same 120-turn ceiling for one Tool and for a large mixed project.
+  // That let a mistaken implementation shape consume many model turns before it eventually
+  // corrected itself.  Keep enough room for read/write/compile/test/fix, but scale it with the
+  // actual number of authorized Tool decisions.
+  const iterationBudget=options.maxIterations??(stage==='A4'
+    ?Math.min(agentIterations(stage),Math.max(28,20+requestedDecisions*8))
+    :agentIterations(stage));
   const body = JSON.stringify({
     stage,
     model: { modelId: options.modelId, providerId: options.providerId ?? "service-execution" },
-    maxIterations: options.maxIterations ?? agentIterations(stage),
+    maxIterations: iterationBudget,
     maxTokens: options.maxTokens ?? agentMaxTokens(stage),
     // The harness's own default is 60 s per model call, which a reasoning model passes routinely:
     // measured, the same request ranged 36 s to 185 s. The role's deadline is the number that

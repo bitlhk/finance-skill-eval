@@ -48,7 +48,7 @@ it('carries a migration from baseline to adopted optimization and retires the ev
     return {jobId,status:'completed',configuration,report:{variants:{left:variants.leftVariant,right:variants.rightVariant},models:null,cases:[]}};
   }} as unknown as EvaluationJobStore;
   const environments={get:async(environmentId:string)=>environmentId==='env-openjiuwen'
-    ?{environmentId,name:'开放居问目标',type:'runtime_http',runtimeType:'openjiuwen',endpoint:'http://127.0.0.1:1/execute',credentialEnv:null,mcpEnvironmentIds:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}
+    ?{environmentId,name:'开放居问目标',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://127.0.0.1:1/',credentialEnv:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}
     :null} as unknown as EnvironmentStore;
   const catalog={get:(packId:string)=>packId===pack.packId?pack:null} as unknown as EvalPackCatalog;
   const optimizers={
@@ -66,7 +66,7 @@ it('carries a migration from baseline to adopted optimization and retires the ev
       return await analysisFixture([analyzedTool({name:'lookup',sourcePaths:[path],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path}})])(input);
     },
     implementationFixture([{tool:'lookup',entrypoint:'scripts/lookup.py',language:'python',files:{'scripts/lookup.py':LOOKUP_PY}}]),
-    undefined,{environment:(id:string)=>environments.get(id)} as never);
+    undefined);
 
   const upload=async(files:Record<string,string>)=>{
     const zip=Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([name,content])=>[name,strToU8(content)]))));
@@ -85,6 +85,7 @@ it('carries a migration from baseline to adopted optimization and retires the ev
   expect(inspection.tools.map(tool=>tool.name)).toEqual(['lookup']);
   const tool=inspection.tools[0]!;
   await store.decide(project.id,tool.toolId,{form:'SCRIPT',baseAssetId:source.assetId});
+  expect((await store.get(project.id)).decisions?.[0]?.language).toBe('python');
   expect(buildMigrationPlan(inspection,(await store.get(project.id)).decisions??[],source.assetId).generationAllowed).toBe(true);
 
   // A4: the migrated deliverable.
@@ -98,7 +99,7 @@ it('carries a migration from baseline to adopted optimization and retires the ev
     pair:'AB' as const,
     configuration:{
       packId:pack.packId,
-      runtime:{type:'runtime_http' as const,environmentId:'env-openjiuwen'},
+      runtime:{type:'runtime_launcher' as const,environmentId:'env-openjiuwen'},
       executionModel:{providerId:'controlled',modelId:'fixture',parameters:{}},
       runtimeBindings:{left:{environmentId:'env-openjiuwen',skillAssetId:source.assetId},right:{environmentId:'env-openjiuwen',skillAssetId:candidate.assetId}},
       leftVariant:{mode:'skill_version' as const,skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256},

@@ -17,22 +17,22 @@
 
 部署兼容要求：评测服务和 OpenJiuwen Worker 需一起升级；仅升级评测服务，旧 Worker 在有 MCP 绑定时会报不能确认兼容。现有 `/execute` 请求及历史数据未迁移。
 
-## 第二批：Issue #5 启动协议（尚未实现）
+## 第二批：Issue #5 启动协议
 
-新增而非覆盖 `runtime_launcher`：登记启动接口及凭据引用，发现模型和能力。MCP 从静态环境绑定迁移到每次任务的配置快照。每侧创建独立实例，逐题无历史执行，最后删除，Runtime 提供 TTL 兜底。
+Skill 迁移统一使用 `runtime_launcher`：测试环境只登记 Launcher Base URL 及访问凭据引用，通过 `/v1/runtime-capabilities` 发现模型和能力。迁移页面不再展示固定 `/execute` Runtime，也不再从本地配置文件投影兼容入口。MCP 从静态环境绑定迁移到每次任务的配置快照；左右两侧分别创建实例，逐题无历史执行，最后删除，Runtime 提供 TTL 兜底。已有 `runtime_http` 记录仍可读取，普通评测入口也暂时保留，但不能用于新建 Skill 迁移验证或优化。
 
-必须一起交付：异步启动、幂等、取消/失败回收、同源 URL 检查、完整资产传输及实际摘要校验、模型/MCP 秘密不出 Runtime、受限的已验证 MCP 包启动。不能仅删掉现有 Worker 的 MCP 白名单。
+当前协议支持同步或异步启动状态、幂等创建、取消/失败回收、同源 URL 检查、完整 zip 资产传输、受限候选 MCP 包启动及 SSE 执行证据。远程 Launcher 必须使用 HTTPS；本机回环地址允许 HTTP。OpenJiuwen 参考实现不接受外部 MCP URL，只启动本次 Skill 包内经过绑定的候选 MCP。
 
-当前 main 没有 Issue 中提到的 `local-migration-runtimes.ts`、`candidateMcpServices` 等完整实现；后续以实际合并的代码为基线，不假设其已经存在。
+本批为打通自建 Runtime 先支持服务端到 Launcher 的 `secrets.inline`。秘密值不进入环境登记、运行配置、实例状态或证据，Runtime 在执行副本中注入并统一脱敏；后续再扩展密钥引用/一次性凭据模式。协议细节见 `docs/runtime-launcher-protocol.md`。
 
 ## 第三批：Issue #6 后续重构（尚未实现）
 
 1. 迁移记录 Zod、Repository、显式升级与特征测试。
-2. 删除 v0.1 执行分支，保留原记录与可追溯升级；同步替换旧流程测试。
+2. 为历史迁移记录提供显式升级；同步替换其余旧流程测试。
 3. 迁移 use case、评测工厂/执行器及其他 HTTP 路由拆分。
 4. 统一其余前端 DTO/client、Python 生命周期及 TS/Python 契约验证。
 
-不在第一批中删除生产仍可能使用的旧迁移执行入口。两个 Issue 保持打开，不以本批 PR 自动关闭。
+普通评测仍可能使用的 `runtime_http` 不属于本批删除范围。两个 Issue 保持打开，不以本批 PR 自动关闭。
 
 ## 验证
 

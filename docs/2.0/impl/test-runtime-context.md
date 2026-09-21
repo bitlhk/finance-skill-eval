@@ -1,8 +1,8 @@
 # 测试 Runtime 上下文与鉴权
 
 运行请求的 `configuration.runtimeToolConfig` 是平台内部执行配置，不是交付产物。
-只支持受信任的本地 Runtime HTTP 环境。未配置时保持旧 Script 参数 JSON 和 MCP 静态 headers。
-迁移 Agent 暂不生成该配置。
+普通评测仍可使用已登记的 Runtime HTTP 环境；Skill 迁移的新验证只允许 Runtime Launcher，
+由 Launcher 接收本轮 Skill、MCP 与运行配置并创建隔离实例。迁移 Agent 暂不生成该配置。
 
 ```json
 {
@@ -72,24 +72,11 @@ Runtime 分别维护 workspace 和 Skill 目录，并把两者绝对路径提供
 
 Worker 的可信配置支持 workspaceDirectory（外部已有工作区，不清理）、workspaceRoot（每次执行创建临时工作区的父目录）和 skillDirectories（artifactSha256 到已有 Skill 目录的映射；校验已加载文件匹配，不覆盖或删除）。未配置时分别创建两个临时目录，无固定共同目录结构。临时目录在本次执行结束后清理；现阶段未增加文件产物归档，需持久保留文件时配置 workspaceDirectory。
 
-## 自定义 Harness 插件
+## Runtime Harness 改造需求
 
-运行配置 `runtimeHarnessBindings.left/right` 指定对应资产提供的插件，Worker 请求字段为 `environment.candidateHarnessPlugins`：
+候选包不携带或动态加载自定义 Harness 插件。诊断发现源 Skill 依赖目标 Runtime 尚未提供的独立能力时，平台输出 `finance.runtime-build-requirements.v1` YAML，并在诊断阶段停止当前迁移。未来 Runtime Builder 消费该声明，构建并返回可登记的 Runtime 接口；当前版本仅保留接口类型与需求文件，不伪造 Builder，也不进入候选生成或测试。
 
-```json
-{
-  "assetDigest": "<对应 Skill 资产的 SHA256>",
-  "manifestPath": "plugins/company/manifest.json",
-  "filePaths": ["plugins/company/manifest.json", "plugins/company/tool.py"],
-  "toolNames": ["company_search"]
-}
-```
-
-插件代码属于交付包中的独立 Runtime 插件，不是 Skill 业务脚本。平台按 filePaths 挂载这些文件；Worker 将声明文件复制到独立临时插件目录，使用框架 `DeepAgent.load_plugin` 加载 manifest.json。摘要必须同时匹配实际资产与请求 variant；清单必须包含在声明文件中，实际加载的工具必须与 toolNames 一致。同名能力、目录越界、缺失文件或摘要不匹配均报错。Harness 插件不能自行引入未声明的 MCP 服务或其他 Skill。
-
-工具清单使用框架格式 `{"packageType":"plugin","id":"company","tools":[{"file":"tool.py","class":"CompanySearchTool"}]}`。class 必须是可以无参数构建的 Python 类，实例为框架 Tool（或已注册实现的 ToolCard）。Tool 子类需要实现 invoke 和 stream。此清单加载器不自动注入平台上下文或鉴权；已有业务 MCP 的 runtimeToolConfig 配置保持原机制。
-
-真实 HTTP Runtime 验证脚本：`.venv-openjiuwen/Scripts/python.exe -B scripts/verify-deep-runtime-e2e.py`。使用已配置真实模型，覆盖左右两次执行、Skill 引用读取、业务鉴权 MCP、原生 BashTool、自定义插件、流式记录、工作区隔离、脱敏和错误摘要拒绝。该脚本不执行迁移 Agent 或模型 Judge。
+Runtime 自身已经声明并实现的内置能力仍通过 `harnessToolNames` 按需启用。这与迁移产物注入插件是两个边界：前者属于已登记 Runtime 的能力，后者已明确禁止。Worker 收到旧的 `candidateHarnessPlugins` 字段会直接拒绝。
 
 
 ## MCP 服务启动配置
@@ -98,6 +85,6 @@ Worker 的可信配置支持 workspaceDirectory（外部已有工作区，不清
 
 迁移 Agent 交付的服务读取声明的环境变量，用工具级 `serviceEnvironment:[{key,name}]` 报告映射。平台校验映射与诊断严格一致。包根目录配置模板 `runtime-tool-config.template.json` 包含 `serviceEnvironment` 声明，不包含实际值。工具公布契约不访问业务服务；必需配置缺失时，业务调用前明确失败。
 
-技术试运行按服务合并其工具所需的配置，传给 Node 启动器的对应子进程，并在验证结束后关闭。完整测试将 revision、候选 digest、configuration digest 的引用保存到 runtimeMcpBindings，不复制配置值到任务快照。Skill 迁移只选择后端 `FINANCE_RUNTIME_CONFIG` 对应的本地 Runtime 及其模型，不读取通用“测试环境”登记。执行时平台校验引用和工具范围，向该本地 Runtime 发送候选 MCP 的启动描述与临时环境值；Python Runtime 为本次执行启动 MCP，只把配置传给对应子进程，并在执行结束后清理。两条路径都不修改全局 process.env / os.environ，prepare 阶段不需要接收业务配置。PORT、PATH 等执行环境变量不能通过服务配置覆盖。外部已部署 MCP 的配置由部署方设置，平台不声称已为它注入环境变量。
+技术试运行按服务合并其工具所需的配置，传给 Node 启动器的对应子进程，并在验证结束后关闭。完整测试将 revision、候选 digest、configuration digest 的引用保存到 runtimeMcpBindings，不复制配置值到任务快照。Skill 迁移只展示“测试环境”登记的 Runtime Launcher；Launcher 通过 capabilities 公布模型，平台在评测时传递候选 Skill、候选 MCP 启动描述和本轮配置并创建隔离实例。Python Runtime 只把服务配置注入对应子进程，并在执行结束后清理；不会修改全局 process.env / os.environ。PORT、PATH 等执行环境变量不能通过服务配置覆盖。v1 Launcher 不接受任意外部 MCP URL。
 
 修改配置会使原连通、技术验证和完整 Runtime 评估失效；历史记录保留，不能用于当前候选验收或优化。配置实际值缺失不阻塞静态诊断或生成，试运行前必须补齐必需项。

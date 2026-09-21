@@ -14,4 +14,4 @@
 
 对比模型返回每项 PASS、FAIL 或 INDETERMINATE，以及分别来自两侧回答的逐字引用。平台校验完整覆盖、索引唯一、引用真实性；PASS 必须有两侧证据。任一项 FAIL 则整体 FAIL，任一项无法判定且无失败则整体 INDETERMINATE。页面和 HTML 报告展示双侧回答及判定依据，不使用左右胜负分数。
 
-自动测试：`tests/original-service-comparison.test.ts`、`tests/migration-service-comparison-workflow.test.ts`。真实执行入口：`node scripts/verify-original-service-comparison.mjs <真实 A4 Harness 报告目录> [同一源码的真实 A2 报告目录]`。可复用真实模型的迁移产物；执行与对比模型实际调用，报告明确记录复用范围。生产企业身份系统和远程协议不在本地受控验收的证明范围内。
+自动测试：`tests/original-service-comparison.test.ts`、`tests/migration-service-comparison-workflow.test.ts`。对比评测只接受已经完成迁移和技术验证的候选；检测到 Runtime Harness 改造需求时，在诊断阶段停止，不会通过候选插件绕过 Runtime Builder。生产企业身份系统和远程协议不在本地受控验收的证明范围内。

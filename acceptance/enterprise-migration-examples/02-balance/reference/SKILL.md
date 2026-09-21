@@ -10,6 +10,6 @@ description: 员工余额查询；用于企业迁移测试的模拟业务案例�
 
 工具：get_balance
 
-请阅读 references/workflow.md。
+业务输入示例：`{"account_id": "ACC-001"}`
 
 通过 MCP 调用上述工具。身份、业务地址和凭证由测试 Runtime 注入 HTTP headers，不能让模型提供。scripts/ 仅为 CLI 核对入口。

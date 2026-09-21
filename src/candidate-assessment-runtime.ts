@@ -8,7 +8,7 @@ export class CandidateAssessmentRuntimeAdapter implements RuntimeAdapter {
   constructor(private readonly inner:RuntimeAdapter,private readonly variant:SkillVariant,private readonly model:ModelRef){
     this.adapterId=`candidate-assessment:${inner.adapterId}`;
   }
-  prepare(){return this.inner.prepare?.()??Promise.resolve();}
+  prepare(context:import('./adapters.js').RuntimePrepareContext){return this.inner.prepare?.(context)??Promise.resolve();}
   async execute(request:RuntimeExecutionRequest){
     const key=`${request.runId}:${request.evalCase.caseId}`;
     let execution=this.runs.get(key);

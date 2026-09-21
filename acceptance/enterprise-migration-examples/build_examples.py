@@ -1,5 +1,6 @@
 """Reproducibly build only the four fixture directories under this script's directory."""
 import json
+import shutil
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 from business import EXPENSES
@@ -16,19 +17,19 @@ def dump(path, value): write(path, json.dumps(value, ensure_ascii=False, indent=
 
 
 CLIENT = '''import json
-from typing import TypedDict
+from typing import Protocol
 from urllib.request import Request, urlopen
-import legacy_runtime
 import auth_sdk
 
-class User(TypedDict):
-    id: str
-    tenantId: str
+class RuntimeContext(Protocol):
+    user: dict
+    service_url: str
+    app_key: str
+    department_rules: dict
 
-def request_json(operation: str, payload: dict) -> dict:
-    user: User = legacy_runtime.current_user
-    token = auth_sdk.get_token(user, legacy_runtime.app_key)
-    request = Request(legacy_runtime.service_url + '/business/' + operation,
+def request_json(operation: str, payload: dict, context: RuntimeContext) -> dict:
+    token = auth_sdk.get_token(context.user, context.app_key)
+    request = Request(context.service_url + '/business/' + operation,
                       data=json.dumps(payload).encode(),
                       headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token})
     with urlopen(request, timeout=5) as response:
@@ -46,10 +47,15 @@ def request_json(operation, payload, service_url, credential):
 EXPENSE = '''import json
 from pathlib import Path
 from decimal import Decimal
+from typing import Protocol
+from agentscope.tool import Toolkit
 
-def check_expense(claim_id: str, workspace: str = 'workspace') -> dict:
+class ExpenseContext(Protocol):
+    workspace: str
+
+def check_expense(claim_id: str, context: ExpenseContext) -> dict:
     rules = json.loads((Path(__file__).resolve().parents[1] / 'assets/rules.json').read_text(encoding='utf-8'))
-    file = Path(workspace) / (claim_id + '.json')
+    file = Path(context.workspace) / (claim_id + '.json')
     if not file.exists(): return {'claim_id': claim_id, 'error': 'CLAIM_NOT_FOUND'}
     entries = json.loads(file.read_text(encoding='utf-8'))
     violations = [e['id'] for e in entries if e['category'] not in rules['allowedCategories'] or
@@ -57,48 +63,130 @@ def check_expense(claim_id: str, workspace: str = 'workspace') -> dict:
     return {'claim_id': claim_id, 'total': str(sum((Decimal(e['amount']) for e in entries), Decimal('0')).quantize(Decimal('.01'))),
             'violations': violations, 'compliant': not violations}
 
-if __name__ == '__main__':
-    import sys
-    print(json.dumps(check_expense(**json.load(sys.stdin))))
+def build_toolkit(context: ExpenseContext) -> Toolkit:
+    toolkit = Toolkit()
+    toolkit.register_tool_function(check_expense, preset_kwargs={'context': context})
+    return toolkit
 '''
-BALANCE = '''from typing import TypedDict
-from tools.http_client import request_json
+REFERENCE_EXPENSE = EXPENSE.replace('from typing import Protocol\nfrom agentscope.tool import Toolkit\n\nclass ExpenseContext(Protocol):\n    workspace: str\n\n', '').replace('def check_expense(claim_id: str, context: ExpenseContext) -> dict:', "def check_expense(claim_id: str, workspace: str = 'workspace') -> dict:").replace('Path(context.workspace)', 'Path(workspace)').split('\ndef build_toolkit', 1)[0] + "\nif __name__ == '__main__':\n    import sys\n    print(json.dumps(check_expense(**json.load(sys.stdin))))\n"
+BALANCE = '''from tools.http_client import RuntimeContext, request_json
 
-class User(TypedDict):
-    id: str
-    tenantId: str
-
-def get_balance(account_id: str) -> dict:
-    return request_json('balance', {'account_id': account_id})
+def get_balance(account_id: str, context: RuntimeContext) -> dict:
+    return request_json('balance', {'account_id': account_id}, context)
 '''
 PROCUREMENT = {
- 'request': '''from tools.http_client import request_json
-def get_request(request_id: str) -> dict:
-    return request_json('request', {'request_id': request_id})
+ 'request': '''from tools.http_client import RuntimeContext, request_json
+def get_request(request_id: str, context: RuntimeContext) -> dict:
+    return request_json('request', {'request_id': request_id}, context)
 ''',
  'budget': '''from decimal import Decimal
-from tools.http_client import request_json
-from department_config import DEPARTMENT_RULES
-def check_budget(department: str, amount: str) -> dict:
-    result = request_json('budget', {'department': department})
-    reserve = Decimal(DEPARTMENT_RULES[department]['reserve'])
+from tools.http_client import RuntimeContext, request_json
+def check_budget(department: str, amount: str, context: RuntimeContext) -> dict:
+    result = request_json('budget', {'department': department}, context)
+    reserve = Decimal(context.department_rules[department]['reserve'])
     return {**result, 'reserve': str(reserve), 'enough': Decimal(amount) <= Decimal(result['available']) - reserve}
 ''',
- 'supplier': '''from tools.http_client import request_json
-def check_supplier(supplier: str) -> dict:
-    return request_json('supplier', {'supplier': supplier})
+ 'supplier': '''from tools.http_client import RuntimeContext, request_json
+def check_supplier(supplier: str, context: RuntimeContext) -> dict:
+    return request_json('supplier', {'supplier': supplier}, context)
 '''}
 REFUND = '''from decimal import Decimal
-from tools.http_client import request_json
+import json
+import shutil
+from agentscope.message import TextBlock
+from agentscope.tool import ToolResponse
+from tools.http_client import RuntimeContext, request_json
 
-def refund_eligibility(order_id: str) -> dict:
-    order = request_json('order', {'order_id': order_id})
+async def refund_eligibility(order_id: str, context: RuntimeContext) -> ToolResponse:
+    order = request_json('order', {'order_id': order_id}, context)
+    if 'error' in order: result = {'order_id': order_id, 'eligible': False, 'reason': order['error']}
+    else:
+        policy = request_json('refund-policy', {}, context)
+        if order['status'] not in policy['allowed_statuses']:
+            result = {'order_id': order_id, 'eligible': False, 'reason': 'STATUS_NOT_REFUNDABLE'}
+        else:
+            remaining = Decimal(order['paid_cents'] - order['refunded_cents']) / Decimal(100)
+            result = {'order_id': order_id, 'eligible': True, 'currency': policy['currency'], 'refundable_amount': str(remaining.quantize(Decimal('.01')))}
+    return ToolResponse(content=[TextBlock(type='text', text=json.dumps(result))], metadata={'businessResult': result})
+'''
+
+REFERENCE_BALANCE = '''from http_client import request_json
+def get_balance(account_id: str, user: dict, service_url: str, credential: str) -> dict:
+    return request_json('balance', {'account_id': account_id}, service_url, credential)
+'''
+REFERENCE_PROCUREMENT = {
+ 'get_request': '''from http_client import request_json
+def get_request(request_id: str, user: dict, service_url: str, credential: str) -> dict:
+    return request_json('request', {'request_id': request_id}, service_url, credential)
+''',
+ 'check_budget': '''from decimal import Decimal
+from http_client import request_json
+def check_budget(department: str, amount: str, user: dict, service_url: str, credential: str, department_rules: dict) -> dict:
+    result = request_json('budget', {'department': department}, service_url, credential)
+    reserve = Decimal(department_rules[department]['reserve'])
+    return {**result, 'reserve': str(reserve), 'enough': Decimal(amount) <= Decimal(result['available']) - reserve}
+''',
+ 'check_supplier': '''from http_client import request_json
+def check_supplier(supplier: str, user: dict, service_url: str, credential: str) -> dict:
+    return request_json('supplier', {'supplier': supplier}, service_url, credential)
+'''}
+REFERENCE_REFUND = '''from decimal import Decimal
+from http_client import request_json
+def refund_eligibility(order_id: str, user: dict, service_url: str, credential: str) -> dict:
+    order = request_json('order', {'order_id': order_id}, service_url, credential)
     if 'error' in order: return {'order_id': order_id, 'eligible': False, 'reason': order['error']}
-    policy = request_json('refund-policy', {})
+    policy = request_json('refund-policy', {}, service_url, credential)
     if order['status'] not in policy['allowed_statuses']:
         return {'order_id': order_id, 'eligible': False, 'reason': 'STATUS_NOT_REFUNDABLE'}
     remaining = Decimal(order['paid_cents'] - order['refunded_cents']) / Decimal(100)
     return {'order_id': order_id, 'eligible': True, 'currency': policy['currency'], 'refundable_amount': str(remaining.quantize(Decimal('.01')))}
+'''
+
+HOST = '''from agentscope.tool import Toolkit
+{imports}
+
+def build_toolkit(context):
+    toolkit = Toolkit()
+{registrations}
+    return toolkit
+'''
+
+TOOL_BASE_HOST = '''import json
+from agentscope.message import TextBlock
+from agentscope.tool import ToolBase, ToolResponse, Toolkit
+from tools.request import get_request
+from tools.budget import check_budget
+from tools.supplier import check_supplier
+
+class BusinessTool(ToolBase):
+    is_concurrency_safe = True
+    is_read_only = True
+    def __init__(self, context):
+        super().__init__()
+        self.context = context
+    def response(self, value):
+        return ToolResponse(content=[TextBlock(type='text', text=json.dumps(value))], metadata={'businessResult': value})
+
+class GetRequestTool(BusinessTool):
+    name = 'get_request'
+    description = '读取采购申请'
+    input_schema = {'type': 'object', 'properties': {'request_id': {'type': 'string'}}, 'required': ['request_id']}
+    async def call(self, request_id: str): return self.response(get_request(request_id, self.context))
+
+class CheckBudgetTool(BusinessTool):
+    name = 'check_budget'
+    description = '检查部门预算'
+    input_schema = {'type': 'object', 'properties': {'department': {'type': 'string'}, 'amount': {'type': 'string'}}, 'required': ['department', 'amount']}
+    async def call(self, department: str, amount: str): return self.response(check_budget(department, amount, self.context))
+
+class CheckSupplierTool(BusinessTool):
+    name = 'check_supplier'
+    description = '检查供应商状态'
+    input_schema = {'type': 'object', 'properties': {'supplier': {'type': 'string'}}, 'required': ['supplier']}
+    async def call(self, supplier: str): return self.response(check_supplier(supplier, self.context))
+
+def build_toolkit(context):
+    return Toolkit(tools=[GetRequestTool(context), CheckBudgetTool(context), CheckSupplierTool(context)])
 '''
 
 
@@ -143,20 +231,19 @@ def build():
     for directory, (name, title, tools, instructions) in descriptions.items():
         root = ROOT / directory
         source, reference = root / 'source', root / 'reference'
-        skill = f'---\nname: {name}\nversion: 1.0.0\ndescription: {title}；用于企业迁移测试的模拟业务案例。\n---\n\n# {title}\n\n{instructions}\n\n工具：' + ', '.join(tools) + '\n\n请阅读 references/workflow.md。\n'
+        for package in (source, reference):
+            if package.exists(): shutil.rmtree(package)
+        example = json.dumps(suites[directory][0][-1], ensure_ascii=False)
+        skill = f'---\nname: {name}\nversion: 1.0.0\ndescription: {title}；用于企业迁移测试的模拟业务案例。\n---\n\n# {title}\n\n{instructions}\n\n工具：' + ', '.join(tools) + f'\n\n业务输入示例：`{example}`\n'
         write(source / 'SKILL.md', skill)
-        write(source / 'references/workflow.md', instructions + '\n\n业务输入示例：' + json.dumps(suites[directory][0][-1], ensure_ascii=False) + '\n')
         write(reference / 'SKILL.md', skill.replace('version: 1.0.0', 'version: 2.0.0') + '\n脚本位于 scripts/，从当前工作区执行，输入为 stdin 的 JSON 对象。\n')
-        write(reference / 'references/workflow.md', instructions)
         if directory == '01-expense':
             write(source / 'scripts/check_expense.py', EXPENSE)
-            write(reference / 'scripts/check_expense.py', EXPENSE)
+            write(reference / 'scripts/check_expense.py', REFERENCE_EXPENSE)
             dump(source / 'assets/rules.json', rules)
             dump(reference / 'assets/rules.json', rules)
             for claim, entries in EXPENSES.items():
                 dump(root / 'workspace' / (claim + '.json'), entries)
-                dump(source / 'workspace' / (claim + '.json'), entries)
-                dump(reference / 'workspace' / (claim + '.json'), entries)
         else:
             write(source / 'tools/__init__.py', '')
             write(source / 'tools/http_client.py', CLIENT)
@@ -165,18 +252,15 @@ def build():
             files = {'get_balance': 'balance', 'refund_eligibility': 'refund', 'get_request': 'request', 'check_budget': 'budget', 'check_supplier': 'supplier'}
             for tool, content in original.items():
                 write(source / 'tools' / (files[tool] + '.py'), content)
-                converted = content.replace('from tools.http_client import request_json', 'from http_client import request_json as _request_json').replace('from department_config import DEPARTMENT_RULES\n', '')
-                signature = {'get_balance': 'account_id: str', 'get_request': 'request_id: str', 'check_budget': 'department: str, amount: str', 'check_supplier': 'supplier: str', 'refund_eligibility': 'order_id: str'}[tool]
-                extra = ', department_rules: dict' if tool == 'check_budget' else ''
-                converted = converted.replace(f'def {tool}({signature})', f'def {tool}({signature}, user: dict, service_url: str, credential: str{extra})')
-                converted = converted.replace("    return request_json(", "    return request_json(")
-                # Bind transport dependencies inside the explicit function scope.
-                marker = ') -> dict:\n'
-                pos = converted.index(marker, converted.index('def ' + tool)) + len(marker)
-                converted = converted[:pos] + '    def request_json(operation, payload):\n        return _request_json(operation, payload, service_url, credential)\n' + converted[pos:]
-                converted = converted.replace('DEPARTMENT_RULES[', 'department_rules[')
+                converted = REFERENCE_BALANCE if tool == 'get_balance' else REFERENCE_REFUND if tool == 'refund_eligibility' else REFERENCE_PROCUREMENT[tool]
                 converted += f"\nif __name__ == '__main__':\n    import sys, json\n    print(json.dumps({tool}(**json.load(sys.stdin))))\n"
                 write(reference / 'scripts' / (tool + '.py'), converted)
+            if directory == '02-balance':
+                write(source / 'runtime.py', HOST.format(imports='from tools.balance import get_balance', registrations="    toolkit.register_tool_function(get_balance, preset_kwargs={'context': context})"))
+            elif directory == '03-procurement':
+                write(source / 'runtime.py', TOOL_BASE_HOST)
+            else:
+                write(source / 'runtime.py', HOST.format(imports='from tools.refund import refund_eligibility', registrations="    toolkit.register_tool_function(refund_eligibility, preset_kwargs={'context': context})"))
             mcp = "import json, os, sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))\nfrom fastmcp import FastMCP\nfrom fastmcp.server.dependencies import get_http_headers\nmcp = FastMCP('enterprise-demo')\n"
             for tool in tools:
                 signature = {'get_balance': 'account_id: str', 'get_request': 'request_id: str', 'check_budget': 'department: str, amount: str', 'check_supplier': 'supplier: str', 'refund_eligibility': 'order_id: str'}[tool]
@@ -201,10 +285,20 @@ def build():
         dump(root / 'original-service.json', {'endpoint': 'http://127.0.0.1:4327/original/' + directory, 'method': 'POST',
              'requestExample': {'input': suites[directory][0][-1], 'user': {'id': 'U001', 'tenantId': 'T001'}}, 'resultPath': 'data.businessResult',
              'note': '适配说明，不是平台既有接口格式；服务执行原始工具和固定流程，不执行大模型。'})
-        missing = [] if directory == '01-expense' else ['legacy_runtime.current_user: object，原 Runtime 提供，需测试配置注入', 'legacy_runtime.service_url / app_key: 原 Runtime 配置', 'auth_sdk: 源包缺失，用户补 SDK']
-        if directory == '03-procurement': missing.append('department_config: 仅 check_budget 使用，补充独有配置 SDK')
-        dump(root / 'diagnosis-expected.json', {'tools': tools, 'sharedDependencies': missing[:3], 'toolSpecificDependencies': missing[3:],
-             'chain': 'Skill → Tool → tools/http_client.py → auth_sdk → business API' if missing else 'Skill → scripts/check_expense.py → 自带 rules.json + 工作区报销文件',
+        dependencies = {
+          '01-expense': (['AgentScope Toolkit 注册与 preset context 注入'], ['ExpenseContext.workspace: Harness 提供的执行工作区']),
+          '02-balance': (['AgentScope Toolkit 注册与 context 注入', 'auth_sdk: 使用 context.user / app_key 建立业务凭证'], ['context.service_url: Runtime 提供的业务地址']),
+          '03-procurement': (['AgentScope ToolBase / ToolResponse / Toolkit', 'auth_sdk: 多个 Tool 共享鉴权与传输'], ['context.department_rules: check_budget 独有配置']),
+          '04-refund': (['AgentScope Toolkit 注册、preset context 与 ToolResponse 返回类型', 'auth_sdk: 使用 context 建立业务凭证'], ['ToolResponse.metadata.businessResult: 原 Runtime 结果适配边界']),
+        }[directory]
+        chains = {
+          '01-expense': 'Skill → AgentScope Toolkit → preset ExpenseContext → check_expense → 工作区文件 + rules.json',
+          '02-balance': 'Skill → Toolkit → get_balance(context) → auth_sdk → business API',
+          '03-procurement': 'Skill → Toolkit → ToolBase.call → ToolResponse → shared http_client/auth_sdk → business API',
+          '04-refund': 'Skill → Toolkit 注册 → async Tool → ToolResponse → http_client/auth_sdk → business API',
+        }
+        dump(root / 'diagnosis-expected.json', {'tools': tools, 'sharedDependencies': dependencies[0], 'toolSpecificDependencies': dependencies[1],
+             'chain': chains[directory],
              'note': '人工验收目标，不作为 A2 的输出输入或伪造分析结果。'})
         write(root / 'README.md', f'# {title}\n\n导入 source.zip；reference.zip 是人工编写的正确迁移参考，不替代迁移 Agent。\n\n测试集 suite.json 可导入平台。targets.json 是程序断言目标，平台模型 Judge 依据 rubric 比较。\n\n原服务连接见 original-service.json。缺失依赖和链路验收目标见 diagnosis-expected.json。\n')
         for package in ('source', 'reference'):

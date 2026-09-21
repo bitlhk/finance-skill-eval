@@ -21,9 +21,10 @@ it('cleanup failures do not skip the other side',async()=>{
 });
 it('keeps plain runs compatible but rejects direct/replay migration and unequal models',()=>{
   expect(runConfigurationSchema.parse({packId:'p',runtime:{type:'replay'}}).runtime.type).toBe('replay');
-  const base={packId:'p',runtime:{type:'runtime_http',environmentId:'a'},runtimeBindings:{left:{environmentId:'a',skillAssetId:'s1'},right:{environmentId:'b',skillAssetId:'s2'}},
+  const base={packId:'p',runtime:{type:'runtime_launcher',environmentId:'a'},runtimeBindings:{left:{environmentId:'a',skillAssetId:'s1'},right:{environmentId:'a',skillAssetId:'s2'}},
     leftVariant:{mode:'skill_version',skillId:'s',version:'1'},rightVariant:{mode:'skill_version',skillId:'s',version:'2'},executionModel:{providerId:'p',modelId:'m'}};
   expect(runConfigurationSchema.safeParse(base).success).toBe(true);
+  expect(runConfigurationSchema.safeParse({...base,runtimeBindings:{...base.runtimeBindings,right:{...base.runtimeBindings.right,environmentId:'b'}}}).success).toBe(true);
   expect(runConfigurationSchema.safeParse({...base,runtime:{type:'direct_model'}}).success).toBe(false);
   expect(runConfigurationSchema.safeParse({...base,rightExecutionModel:{providerId:'p',modelId:'other'}}).success).toBe(false);
 });

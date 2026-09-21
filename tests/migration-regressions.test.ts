@@ -9,6 +9,7 @@ import { normalizeSkillPackage } from '../src/service/skill-normalizer.js';
 import { TechnicalValidationService,pythonCommand } from '../src/service/technical-validation.js';
 import { assessMigrationAcceptance } from '../src/service/migration-acceptance.js';
 import { buildMigrationPlan } from '../src/service/migration-model.js';
+import { runtimeInjection } from '../src/service/migration-runtime-config.js';
 import { analyzeSkillAndGenerateCases } from '../src/analyzer.js';
 import { createEvaluationService } from '../src/service/server.js';
 import { EvaluationRunManager } from '../src/service/run-manager.js';
@@ -25,7 +26,7 @@ const asset={assetId:'source',skillId:'fixture-skill',skillFile:'skill/SKILL.md'
 const criterion={criterionId:'actual',label:'实际核验',description:'须完成核验',dimension:'business_completeness' as const,weight:1,required:true,allOf:[],anyOf:[],noneOf:[]};
 const evalCase:EvalCase={caseId:'order',name:'订单',prompt:'查询 ORDER-001',evaluationGoal:'工具核验',taskMode:'single_turn',requiredTools:['lookup','calculate'],rubric:[criterion]};
 
-it('keeps source instructions, metadata, references and data even when A2 cites them as tool sourcePaths',()=>{
+it('keeps source instructions, metadata and assets while inlining a short reference',()=>{
   const source=SKILL_MD+'\nStop if unapproved; do not invent an amount.\n';
   const tool=toolFixture({toolId:'lookup',name:'lookup',sourcePaths:['tool/old.py','skill/SKILL.md','skill/references/policy.md','skill/assets/orders.json']});
   const result=generatePortableCandidate({archive:{'skill/SKILL.md':strToU8(source),'tool/old.py':strToU8('legacy'),
@@ -34,8 +35,31 @@ it('keeps source instructions, metadata, references and data even when A2 cites 
     implementations:{lookup:{language:'python',sourcePath:'lookup.py',source:'print("{}")',additionalFiles:[],dependencies:[]}}});
   expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('Stop if unapproved');
   expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('description: 夹具 Skill');
-  expect(Buffer.from(result.files['references/policy.md']!).toString()).toBe('stop rules');
+  expect(result.files['references/policy.md']).toBeUndefined();
+  expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('stop rules');
   expect(Buffer.from(result.files['assets/orders.json']!).toString()).toContain('ORDER-001');
+});
+
+it('keeps inlined MCP Skill guidance across regeneration and replaces its migration guide',()=>{
+  const source=SKILL_MD+'\nReturn request_id, approved and reasons.\n';
+  const tool=toolFixture({toolId:'lookup',name:'lookup',sourcePaths:['tools/old.py']});
+  const inspection=inspectionFixture([tool]);
+  const implementations={lookup:{language:'python' as const,sourcePath:'mcp-python/server.py',source:'print("server")',
+    additionalFiles:[],dependencies:[],start:['uv','run','--no-project','mcp-python/server.py']}};
+  const first=generatePortableCandidate({archive:{'SKILL.md':strToU8(source),'references/workflow.md':strToU8('business workflow'),
+      'tools/old.py':strToU8('legacy')},base:{...asset,skillFile:'SKILL.md'},inspection,
+    decisions:[{toolId:'lookup',form:'MCP',language:'python',baseAssetId:'source',reason:'port',decidedAt:'now'}],version:'2',implementations});
+  expect(first.files['skill/references/workflow.md']).toBeUndefined();
+  expect(Buffer.from(first.files['skill/SKILL.md']!).toString()).toContain('business workflow');
+  expect(first.diff.find(item=>item.path==='skill/SKILL.md')?.before).toBe(source);
+
+  const second=generatePortableCandidate({archive:first.files,base:{...asset,assetId:'candidate',skillFile:'skill/SKILL.md'},inspection,
+    decisions:[{toolId:'lookup',form:'MCP',language:'python',baseAssetId:'candidate',reason:'port',decidedAt:'now'}],version:'3',implementations});
+  const instructions=Buffer.from(second.files['skill/SKILL.md']!).toString();
+  expect(second.files['skill/references/workflow.md']).toBeUndefined();
+  expect(instructions).toContain('business workflow');
+  expect(instructions.match(/## 迁移后的执行方式/gu)).toHaveLength(1);
+  expect(instructions).toContain('空数组必须保持为 `[]`');
 });
 
 it('rejects missing or empty original instructions rather than manufacturing a compliant template',()=>{
@@ -67,6 +91,18 @@ it('preserves the package Python launch spec and rejects SCRIPT/java',()=>{
   const tool=toolFixture({toolId:'java',name:'java_tool',sourcePaths:['tool.java'],language:'Java'});
   const plan=buildMigrationPlan(inspectionFixture([tool],'source'),[{toolId:'java',form:'SCRIPT',language:'java',baseAssetId:'source',reason:'test',decidedAt:'now'}],'source');
   expect(plan.generationAllowed).toBe(false);expect(plan.items[0]?.blockingReasons.join()).toContain('不支持');
+});
+
+it('treats the Runtime workspace cwd as an implicit Script context instead of an injected value',()=>{
+  const tool=toolFixture({toolId:'expense',name:'check_expense',sourcePaths:['scripts/check_expense.py'],language:'python'});
+  const inspection=inspectionFixture([tool]);
+  const dependency={id:'workspace',key:'expense.workspace',name:'workspace',kind:'RESOURCE',owner:'RUNTIME',action:'INJECT',contractStatus:'KNOWN',
+    sensitive:false,binding:{kind:'SCRIPT_CONTEXT',name:'workspace'},toolIds:['expense'],purpose:'claim files',availability:'UNKNOWN',provided:'NONE',
+    blocking:true,evidence:[],resolvedPaths:[],schema:null,schemaCompleteness:'UNKNOWN'} as const;
+  inspection.dependencyAnalysis={status:'COMPLETE',revision:1,materialsDigest:'digest',dependencies:[dependency],chains:[],rejectedClaims:0};
+  const plan=buildMigrationPlan(inspection,[{toolId:'expense',form:'SCRIPT',language:'python',baseAssetId:'source',reason:'cwd',decidedAt:'now'}],'source');
+  expect(plan.generationAllowed).toBe(true);
+  expect(runtimeInjection([dependency],{},'SCRIPT_CONTEXT').missing).toEqual([]);
 });
 
 it('binds candidate services without querying same-name external services',async()=>{

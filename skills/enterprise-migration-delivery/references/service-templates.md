@@ -152,6 +152,15 @@ createServer(async (req, res) => {
 
 ## Java MCP 骨架
 
+> 当前平台的 Java 编译与契约验证只允许 JDK 17 标准库。下面的 Maven/官方 SDK
+> 模板是后续构建器接入 Maven 后的设计参考，**当前生成不得使用**。当前交付不要创建
+> `pom.xml`，不要导入 MCP SDK、Jetty 或 Jackson；使用 `com.sun.net.httpserver.HttpServer`
+> 实现 `/mcp` 的 initialize、notifications/initialized、tools/list、tools/call，并用
+> `compile_source(language="java")`（省略 paths）编译所有 `.java` 文件。业务参数 Schema
+> 必须显式公布，Header 按当前请求读取，`PORT` 从环境变量读取。
+
+以下模板暂不执行：
+
 官方 Java SDK + Jetty servlet，Maven 打成可执行 fat jar。四个文件，`===` 行是文件边界：
 
 ```

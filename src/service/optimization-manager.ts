@@ -31,7 +31,8 @@ export type Optimization = {
 export function optimizationRerunBindings(configuration:RunConfiguration, original:SkillAssetRecord, candidate:SkillAssetRecord) {
   if (!configuration.runtimeBindings) return {};
   const environmentId=configuration.runtimeBindings.right.environmentId;
-  return {runtime:{type:'runtime_http' as const,environmentId},runtimeBindings:{
+  const runtime={type:'runtime_launcher' as const,environmentId};
+  return {runtime,runtimeBindings:{
     left:{environmentId,skillAssetId:original.assetId},right:{environmentId,skillAssetId:candidate.assetId}}};
 }
 
@@ -98,7 +99,7 @@ export class OptimizationManager {
   async create(sourceJobId: string): Promise<Optimization> {
     if (this.active.size) throw new Error("已有一轮 Skill 优化正在进行");
     const source = this.options.jobs.get(sourceJobId);
-    if (!source?.report || source.status !== "completed" || source.configuration.runtime.type !== "runtime_http") throw new Error("请先完成一轮在线评测");
+    if (!source?.report || source.status !== "completed" || source.configuration.runtime.type!=='runtime_launcher') throw new Error("请先使用 Runtime Launcher 完成一轮在线评测");
     if (!source.report.cases.length) throw new Error('评测没有实际执行案例，不启动优化');
     if (source.report.cases.some(c => c.left.status !== "completed" || c.right.status !== "completed" || !c.judge)) throw new Error("运行或阅卷不完整，应修复环境后重测，不能据此修改 Skill");
     if (source.report.cases.some(c => [...c.left.toolCalls, ...c.right.toolCalls].some(t => t.status === "failed"))) throw new Error("存在工具失败，应先排查环境，不能将运行故障当作 Skill 缺陷");

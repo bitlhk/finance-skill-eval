@@ -40,6 +40,9 @@ export function normalizeSkillPackage(archive:Record<string,Uint8Array>,skillFil
   for(const [name,content] of scoped){
     if(name===skillFile)continue;
     const relative=root?name.slice(prefix.length):name;
+    // A workspace is per-execution state, never a versioned Skill resource.  Old uploads may
+    // contain demo fixtures here; keep them out of every normalized delivery package.
+    if(relative.startsWith('workspace/')||relative.startsWith('references/workspace/'))continue;
     let wanted:string;
     if(/(^|\/)skill\.md$/iu.test(relative))wanted=`references/legacy-${relative.replaceAll('/','-')}`;
     else if(/^(?:scripts|references|assets)\//u.test(relative))wanted=relative;

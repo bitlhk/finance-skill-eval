@@ -23,9 +23,11 @@ it('checks pair bindings before scheduling and retains declared conditions and s
     await migrations.candidate(project.id,{assetId:b.assetId,notes:'Synthetic method change'});
     const variant=(item:typeof a)=>({mode:'skill_version',skillId:item.skillId,version:item.version,artifactSha256:item.artifactSha256});
     const plan={pair:'AB',dataSnapshot:'fixture-v1',permissionBasis:'synthetic-only',sourceProjectRef:'fixture-project',dependencyLockRef:'fixture-lock',
-      configuration:{packId:catalog.list()[0]!.packId,runtime:{type:'runtime_http',environmentId:'original'},executionModel:{providerId:'fixture',modelId:'same'},
+      configuration:{packId:catalog.list()[0]!.packId,runtime:{type:'runtime_launcher',environmentId:'original'},executionModel:{providerId:'fixture',modelId:'same'},
         leftVariant:variant(a),rightVariant:variant(b),runtimeBindings:{left:{environmentId:'original',skillAssetId:a.assetId},right:{environmentId:'other',skillAssetId:b.assetId}}}};
-    await expect(migrations.validate(project.id,plan)).rejects.toThrow('AB');expect(create).not.toHaveBeenCalled();
+    const legacy={...plan,configuration:{...plan.configuration,runtime:{type:'runtime_http' as const,environmentId:'original'}}};
+    await expect(migrations.validate(project.id,legacy)).rejects.toThrow('Runtime Launcher');expect(create).not.toHaveBeenCalled();
+    await expect(migrations.validate(project.id,plan)).rejects.toThrow('左右执行绑定');expect(create).not.toHaveBeenCalled();
     plan.configuration.runtimeBindings.right.environmentId='original';
     await migrations.validate(project.id,plan);expect(create).toHaveBeenCalledOnce();
     const saved=await migrations.get(project.id),run=saved.runs[0]!;

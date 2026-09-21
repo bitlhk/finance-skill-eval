@@ -10,4 +10,4 @@ description: 采购审批助手；用于企业迁移测试的模拟业务案例�
 
 工具：get_request, check_budget, check_supplier
 
-请阅读 references/workflow.md。
+业务输入示例：`{"request_id": "PO-001"}`

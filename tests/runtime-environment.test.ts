@@ -4,16 +4,15 @@ import { environmentRecordSchema,runConfigurationSchema } from "../src/service/c
 import { EvaluationRunManager,findMissingRequiredTools } from "../src/service/run-manager.js";
 
 describe("runtime environment tool selection", () => {
-  it('keeps artifact-bound Harness tools out of external MCP discovery',async()=>{
+  it('uses declared built-in Harness tools without external MCP discovery',async()=>{
     const get=vi.fn();
     const manager=new EvaluationRunManager({environments:{get}} as never);
     const environment=environmentRecordSchema.parse({environmentId:'runtime',name:'Runtime',type:'runtime_http',endpoint:'http://127.0.0.1:9000/execute',mcpEnvironmentIds:['external'],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
-    const plugins=[{assetDigest:'a'.repeat(64),manifestPath:'plugins/demo/manifest.json',filePaths:['plugins/demo/manifest.json','plugins/demo/tool.py'],toolNames:['workspace_info']}];
-    const descriptor=await (manager as unknown as {environmentDescriptor(...args:unknown[]):Promise<Record<string,unknown>>}).environmentDescriptor(environment,['workspace_info'],[],[],false,[],plugins);
+    const descriptor=await (manager as unknown as {environmentDescriptor(...args:unknown[]):Promise<Record<string,unknown>>}).environmentDescriptor(environment,['read_file'],[],[],false,['read_file']);
     expect(get).not.toHaveBeenCalled();
-    expect(descriptor.candidateHarnessPlugins).toEqual(plugins);
+    expect(descriptor.harnessToolNames).toEqual(['read_file']);
     expect(descriptor.mcpServers).toEqual([]);
-    expect(runConfigurationSchema.parse({packId:'demo',runtime:{type:'runtime_http',environmentId:'runtime'},runtimeHarnessBindings:{left:plugins,right:plugins}}).runtimeHarnessBindings?.right).toEqual(plugins);
+    expect(()=>runConfigurationSchema.parse({packId:'demo',runtime:{type:'runtime_http',environmentId:'runtime'},runtimeHarnessBindings:{left:[],right:[]}})).toThrow();
   });
   it('counts a directly inspected MCP as one service, not zero bindings',async()=>{
     const store=new EnvironmentStore('/unused');

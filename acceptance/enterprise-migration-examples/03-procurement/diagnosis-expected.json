@@ -5,13 +5,12 @@
     "check_supplier"
   ],
   "sharedDependencies": [
-    "legacy_runtime.current_user: object，原 Runtime 提供，需测试配置注入",
-    "legacy_runtime.service_url / app_key: 原 Runtime 配置",
-    "auth_sdk: 源包缺失，用户补 SDK"
+    "AgentScope ToolBase / ToolResponse / Toolkit",
+    "auth_sdk: 多个 Tool 共享鉴权与传输"
   ],
   "toolSpecificDependencies": [
-    "department_config: 仅 check_budget 使用，补充独有配置 SDK"
+    "context.department_rules: check_budget 独有配置"
   ],
-  "chain": "Skill → Tool → tools/http_client.py → auth_sdk → business API",
+  "chain": "Skill → Toolkit → ToolBase.call → ToolResponse → shared http_client/auth_sdk → business API",
   "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
 }

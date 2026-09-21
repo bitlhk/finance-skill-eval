@@ -39,6 +39,9 @@ it('separates runtime contracts from missing values and blocks only unresolved T
  const inspection=inspectionFixture([toolFixture({name:'lookup',sourcePaths:['tool/lookup.mjs']})]);
  const files={'tool/lookup.mjs':SOURCE};
  const complete=analyzeDependencies(diagnosisPayload(),inspection,files,[],0,'digest');expect(complete.status).toBe('COMPLETE');expect(complete.dependencies[0]!.availability).toBe('MISSING');
+ const mcp=[{toolId:inspection.tools[0]!.toolId,form:'MCP' as const,language:'node',baseAssetId:'asset',reason:'',decidedAt:'now'}];
+ expect(buildMigrationPlan({...inspection,dependencyAnalysis:complete},mcp,'asset').generationAllowed).toBe(true);
+ expect(()=>migrationExecutionConfig(complete.dependencies,{},[{toolId:inspection.tools[0]!.toolId,name:'lookup',kind:'MCP'}])).toThrow('测试运行依赖未就绪');
  const decisions=[{toolId:inspection.tools[0]!.toolId,form:'SCRIPT' as const,baseAssetId:'asset',reason:'',decidedAt:'now'}];
  const plan=buildMigrationPlan({...inspection,dependencyAnalysis:complete},decisions,'asset');expect(plan.generationAllowed).toBe(false);expect(plan.items[0]!.blockingReasons.join()).toContain('Script 不支持');
  expect(analyzeDependencies(diagnosisPayload(true),inspection,files,[],0,'digest').status).toBe('PARTIAL');

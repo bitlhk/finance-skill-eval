@@ -7,7 +7,9 @@ import sys
 import time
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+from importlib.metadata import PackageNotFoundError, version
+from .instance_manager import InstanceManager
 from .model_config import resolve_model
 from .runtime_context import RuntimeContext
 from .package_runtime import service_environment
@@ -16,6 +18,7 @@ app = FastAPI()
 active = set()
 cleanup_jobs = set()
 slots = asyncio.Semaphore(2)
+instances = InstanceManager()
 CONFIG = Path(os.environ.get("FINANCE_RUNTIME_CONFIG", ".runtime.local.json")).resolve()
 
 
@@ -25,13 +28,98 @@ def config():
 
 @app.get("/health")
 async def health():
-    from importlib.metadata import version
     runtime_config = config()
     models = list(runtime_config.get("models", {}))
-    return {"status": "ready", "runtime": "openjiuwen", "agentType": "DeepAgent", "version": version("openjiuwen"),
+    return {"status": "ready", "runtime": "openjiuwen", "agentType": "DeepAgent", "version": runtime_version(),
             "activeSessions": len(active), "maxConcurrentSessions": 2,
             "models": models, "defaultModelId": runtime_config.get("defaultModelId") or (models[0] if models else None), "streaming": True,
             "mcpEndpoints": list(runtime_config.get("mcp", {}))}
+
+
+def runtime_version():
+    try:
+        return version('openjiuwen')
+    except PackageNotFoundError:
+        return 'development'
+
+
+@app.get('/v1/runtime-capabilities')
+async def runtime_capabilities():
+    runtime_config = config()
+    models = [{'modelId': model_id,
+               'upstreamModelId': model.get('upstreamModelId', model_id),
+               **({'label': model['label']} if model.get('label') else {})}
+              for model_id, model in runtime_config.get('models', {}).items()
+              if model.get('enabled') is not False]
+    default_model = runtime_config.get('defaultModelId') or (models[0]['modelId'] if models else None)
+    if not models or not default_model:
+        raise HTTPException(503, 'Runtime has no enabled execution model')
+    return {'schemaVersion': 'finance.skill-eval.runtime-capabilities.v1',
+            'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
+            'models': models, 'defaultModelId': default_model,
+            'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
+                         'externalMcp': False, 'inlineSecrets': True},
+            'limits': {'maxArchiveBytes': instances.max_archive_bytes, 'maxFiles': instances.max_files,
+                       'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
+
+
+@app.post('/v1/runtime-instances')
+async def create_runtime_instance(request: Request):
+    body = await request.json()
+    idempotency_key = request.headers.get('idempotency-key')
+    if not idempotency_key or len(idempotency_key) > 200:
+        raise HTTPException(400, 'A valid idempotency-key header is required')
+    runtime_config = config()
+    model = runtime_config.get('models', {}).get(body.get('modelId'))
+    if not model or model.get('enabled') is False:
+        raise HTTPException(400, 'Requested model is not configured in this Runtime')
+    try:
+        item = instances.create(body, idempotency_key)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return instances.public(item)
+
+
+@app.get('/v1/runtime-instances/{instance_id}')
+async def get_runtime_instance(instance_id: str):
+    item = instances.get(instance_id)
+    if not item:
+        raise HTTPException(404, 'Runtime instance not found')
+    return instances.public(item)
+
+
+@app.delete('/v1/runtime-instances/{instance_id}')
+async def delete_runtime_instance(instance_id: str):
+    if not instances.delete(instance_id):
+        raise HTTPException(404, 'Runtime instance not found')
+    return Response(status_code=204)
+
+
+class InstanceExecutionRequest:
+    def __init__(self, body, source):
+        self.body = body
+        self.source = source
+
+    async def json(self):
+        return self.body
+
+    async def is_disconnected(self):
+        return await self.source.is_disconnected()
+
+
+@app.post('/v1/runtime-instances/{instance_id}/execute')
+async def execute_runtime_instance(instance_id: str, request: Request):
+    try:
+        body = instances.execution(instance_id, await request.json())
+    except KeyError:
+        raise HTTPException(404, 'Runtime instance not found') from None
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    model = config().get('models', {}).get(body['model']['modelId'], {})
+    body['model']['providerId'] = model.get('providerId', 'service-execution')
+    return await execute(InstanceExecutionRequest(body, request))
 
 
 @app.post("/execute")
@@ -51,20 +139,11 @@ async def execute(request: Request):
             raise HTTPException(400, "MCP endpoint is not registered in this worker")
     if "scriptTools" in (body.get("environment") or {}):
         raise HTTPException(400, "Legacy Script Tool registration is not supported")
+    if "candidateHarnessPlugins" in (body.get("environment") or {}):
+        raise HTTPException(400, "Candidate Harness plugins are not supported; rebuild the Runtime through Runtime Builder")
     harness = (body.get('environment') or {}).get('harnessToolNames', [])
     if not isinstance(harness, list) or any(name not in ('read_file', 'glob', 'list_files', 'bash') for name in harness):
         raise HTTPException(400, 'Unsupported requested Harness capability')
-    plugins = (body.get('environment') or {}).get('candidateHarnessPlugins', [])
-    if not isinstance(plugins, list):
-        raise HTTPException(400, 'Invalid Harness plugin bindings')
-    for plugin in plugins:
-        skill = body.get('skill') or {}
-        if (not isinstance(plugin, dict) or not plugin.get('toolNames') or not plugin.get('filePaths')
-                or plugin.get('assetDigest') != skill.get('artifactSha256')
-                or plugin.get('assetDigest') != (body.get('variant') or {}).get('artifactSha256')
-                or plugin.get('manifestPath') not in plugin['filePaths']
-                or any(name not in skill.get('files', {}) for name in plugin['filePaths'])):
-            raise HTTPException(400, 'Invalid Harness plugin artifact binding')
     command_scripts = (body.get("environment") or {}).get("commandScripts", [])
     if command_scripts and os.environ.get("FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS") != "1":
         raise HTTPException(403, "Local script execution is disabled")

@@ -83,7 +83,8 @@ export type Preparation = {
   createdAt: string;
 };
 
-export type Environment = Omit<import('../../src/shared/contracts/environment').EnvironmentRecord, 'createdAt' | 'updatedAt'>;
+type EnvironmentRecord=import('../../src/shared/contracts/environment').EnvironmentRecord;
+export type Environment=EnvironmentRecord extends infer Item?Item extends EnvironmentRecord?Omit<Item,'createdAt'|'updatedAt'>:never:never;
 
 export type EnvironmentInspection = {
   status: "ready" | "failed";
@@ -98,6 +99,7 @@ export type EnvironmentInspection = {
     toolNames: string[];
     error: string | null;
   }>;
+  capabilities?:{runtime:{type:string;version:string};models:Array<{modelId:string;upstreamModelId:string;label?:string}>;defaultModelId:string;features:Record<string,boolean>;limits:Record<string,number>};
 };
 
 export type MigrationRuntime = {
@@ -107,6 +109,7 @@ export type MigrationRuntime = {
   endpoint: string;
   defaultModelId: string;
   models: ModelRef[];
+  transport:'runtime_launcher';
 };
 
 export type Catalog = {
