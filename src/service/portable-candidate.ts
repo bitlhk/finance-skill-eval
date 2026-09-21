@@ -17,6 +17,7 @@ export type PortableGeneration={toolId:string;toolName:string;form:ToolDecision[
   readyForValidation:boolean;todo:string[];generatedBy?:string;explanation?:string;attempts?:number;
   checks?:GeneratedToolImplementation['checks']};
 export type PortableDiff={path:string;operation:'ADD'|'MODIFY';before:string;after:string};
+export type SkillDocumentDelivery={files:Record<string,string>};
 
 /**
  * The candidate package is assembled, not generated.
@@ -45,30 +46,6 @@ function packagePath(path:string):string{
   return normalized;
 }
 
-const MAX_INLINE_SKILL_LINES=500;
-function lines(value:string){return value.replaceAll('\r\n','\n').split('\n').length;}
-function compactShortReferences(files:Record<string,Uint8Array>,skillTarget:string){
-  const root=skillTarget.slice(0,skillTarget.length-'SKILL.md'.length);
-  const references=Object.keys(files).filter(name=>name.startsWith(`${root}references/`)&&/\.md$/iu.test(name)).sort();
-  if(!references.length)return;
-  let skill=Buffer.from(files[skillTarget]!).toString('utf8');
-  const material=references.map(path=>({path,content:Buffer.from(files[path]!).toString('utf8').trim()}));
-  if(lines(skill)+material.reduce((sum,item)=>sum+lines(item.content)+3,0)>MAX_INLINE_SKILL_LINES)return;
-  for(const item of material){
-    const relative=item.path.slice(root.length),basename=posix.basename(relative,'.md');
-    const heading=item.content.match(/^#\s+(.+)$/mu)?.[1]?.trim()||basename.replaceAll('-',' ');
-    const body=item.content.replace(/^#\s+.+\r?\n+/u,'').trim();
-    const escaped=relative.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
-    skill=skill
-      .replace(new RegExp(`(?:请)?(?:阅读|参见|查看)\\s*[\`“\"]?${escaped}[\`”\"]?[。.]?`,'giu'),'')
-      .replaceAll(`\`${relative}\``,heading)
-      .replaceAll(`](${relative})`,']');
-    if(body)skill+=`\n\n## ${heading}\n\n${body}`;
-    delete files[item.path];
-  }
-  files[skillTarget]=strToU8(skill.trimEnd()+'\n');
-}
-
 /** Remove Python package markers whose package no longer contains implementation files. */
 function pruneOrphanPythonPackageMarkers(files:Record<string,Uint8Array>){
   const markers=Object.keys(files)
@@ -88,7 +65,7 @@ function reusable(tool:ProjectInspection['tools'][number],archive:Record<string,
   return bytes?{language,sourcePath:tool.entrypoint.path,source:Buffer.from(bytes).toString('utf8'),additionalFiles:[],dependencies:[]}:null;
 }
 
-export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>}){
+export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>;skillDelivery?:SkillDocumentDelivery}){
   const implementations=input.implementations??{};
   const files:Record<string,Uint8Array>={},generations:PortableGeneration[]=[];
   const hasMcp=input.decisions.some(decision=>decision.form==='MCP');
@@ -117,6 +94,13 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   };
   const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
   const normalizedSkill=normalizeSkillPackage(sourceArchive,input.base.skillFile,input.base.skillId,input.version);
+  if(input.skillDelivery){
+    // Document structure is an editorial migration decision made by A4.  The packager may check
+    // paths and the final Skill contract, but must not merge or split references after the model
+    // has delivered them.  The manifest is complete for human-readable Skill documentation.
+    for(const name of Object.keys(normalizedSkill.files))if(name==='SKILL.md'||/^references\/.*\.(?:md|mdx|txt)$/iu.test(name))delete normalizedSkill.files[name];
+    for(const [name,content] of Object.entries(input.skillDelivery.files))normalizedSkill.files[name]=strToU8(content);
+  }
   pruneOrphanPythonPackageMarkers(normalizedSkill.files);
   for(const [name,bytes] of Object.entries(normalizedSkill.files))files[hasMcp?`skill/${name}`:name]=bytes;
   const skillTarget=hasMcp?'skill/SKILL.md':'SKILL.md';
@@ -248,7 +232,6 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const cleanInstructions=originalInstructions.replace(/\n## 迁移后的执行方式\n[\s\S]*?(?=\n## |\s*$)/u,'').trimEnd();
   files[skillTarget]=strToU8(cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
     '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n');
-  compactShortReferences(files,skillTarget);
   if(hasMcp){
     const templatePath='runtime-tool-config.template.json';
     const template=JSON.stringify(runtimeToolConfigTemplate(input.inspection,input.decisions),null,2)+'\n';

@@ -5,7 +5,7 @@ import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
 import {analyzeDependencies} from '../src/service/migration-dependencies.js';
 import {generatePortableCandidate} from '../src/service/portable-candidate.js';
 import {LocalWorker} from '../src/service/local-worker.js';
-import {toGeneratedImplementations} from '../src/service/migration-agent.js';
+import {toGeneratedImplementations,toSkillDocumentDelivery} from '../src/service/migration-agent.js';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {GenerationStatus,generatedCallState} from '../web/src/GenerationStatus.js';
@@ -70,20 +70,34 @@ it('excludes runtime workspace data from the delivered Skill package',()=>{
  expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
 });
 
-it('keeps documentation in one SKILL.md when the merged content is at most 500 lines',()=>{
+it('does not rewrite short references after generation',()=>{
  const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
  const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD+'\n请阅读 `references/workflow.md`。','references/workflow.md':'# 处理流程\n\n先核对，再返回。','scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));
  const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/expense.py',source:'print("{}")',additionalFiles:[],dependencies:[]}} as any});
- expect(result.files['references/workflow.md']).toBeUndefined();
- const skill=Buffer.from(result.files['SKILL.md']!).toString();expect(skill).toContain('## 处理流程');expect(skill).toContain('先核对，再返回。');expect(skill).not.toContain('references/workflow.md');
+ expect(Buffer.from(result.files['references/workflow.md']!).toString()).toContain('先核对，再返回。');
+ expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('references/workflow.md');
 });
 
-it('keeps a real reference when merging would exceed 500 lines',()=>{
+it('does not use document length as a packaging rewrite threshold',()=>{
  const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
  const longReference=['# 大型手册',...Array.from({length:500},(_,index)=>`规则 ${index+1}`)].join('\n');
  const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD+'\n请阅读 `references/manual.md`。','references/manual.md':longReference,'scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));
  const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/expense.py',source:'print("{}")',additionalFiles:[],dependencies:[]}} as any});
  expect(result.files['references/manual.md']).toBeDefined();expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('references/manual.md');
+});
+
+it('uses the A4 document manifest without post-processing its references',()=>{
+ const encoded=(value:string)=>Buffer.from(value).toString('base64');
+ const delivery=toSkillDocumentDelivery({skillDelivery:{skillFile:'SKILL.md',files:[
+  {source:'migration-skill/SKILL.md',path:'SKILL.md'},
+  {source:'migration-skill/references/policy.md',path:'references/policy.md'},
+ ]}},{'migration-skill/SKILL.md':encoded(SKILL_MD+'\n读取 `references/policy.md`。'),'migration-skill/references/policy.md':encoded('短但独立的政策。')});
+ expect(delivery).not.toBeNull();
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD),'references/old.md':strToU8('old')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[],version:'2.0.0',skillDelivery:delivery!});
+ expect(Buffer.from(result.files['references/policy.md']!).toString()).toBe('短但独立的政策。');
+ expect(result.files['references/old.md']).toBeUndefined();
+ expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('references/policy.md');
 });
 
 it('resolves a Java service directory entrypoint only from its declared main class',()=>{

@@ -523,6 +523,32 @@ type AgentGeneration = {
   reason?: string; missing?: string[];
 };
 
+type AgentSkillDelivery={skillFile?:string;files?:Array<{source?:string;path?:string}>};
+
+/** Decode the explicit A4 documentation manifest.  Paths in `source` address the isolated agent
+ * workspace; paths in `path` are relative to the final Skill root.  Keeping the two separate lets
+ * A4 replace a root SKILL.md without mutating the uploaded source in place. */
+export function toSkillDocumentDelivery(
+  payload:{skillDelivery?:AgentSkillDelivery},files:Record<string,string>,
+):import('./portable-candidate.js').SkillDocumentDelivery|null{
+  const delivery=payload.skillDelivery;
+  if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)return null;
+  const result:Record<string,string>={},targets=new Set<string>();
+  for(const item of delivery.files){
+    const source=typeof item.source==='string'?item.source.replaceAll('\\','/').replace(/^\.\//u,''):'';
+    const target=typeof item.path==='string'?item.path.replaceAll('\\','/').replace(/^\.\//u,''):'';
+    if(!source.startsWith('migration-skill/')||source.split('/').includes('..')||!target||target.startsWith('/')||target.split('/').includes('..'))return null;
+    if(target!=='SKILL.md'&&!/^references\/.+\.(?:md|mdx|txt)$/iu.test(target))return null;
+    const key=target.toLowerCase(),encoded=files[source];if(typeof encoded!=='string'||targets.has(key))return null;
+    try{
+      const bytes=Buffer.from(encoded,'base64');
+      if(bytes.length>300_000||bytes.toString('base64').replace(/=+$/u,'')!==encoded.replace(/=+$/u,''))return null;
+      result[target]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);targets.add(key);
+    }catch{return null}
+  }
+  return result['SKILL.md']?{files:result}:null;
+}
+
 /**
  * Map an A4 result onto the generator's output shape. Packaging no longer builds anything:
  * it places the files the agent wrote and keeps its start command and change notes.

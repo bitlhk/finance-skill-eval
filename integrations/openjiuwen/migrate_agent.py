@@ -33,7 +33,7 @@ from migration_tools import build_compile_tool, build_contract_suite_tool, build
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 
 工作区里是待迁移的源工程。你的任务是按给定的逐 Tool 决策，把每个 Tool 迁移成可以独立运行的形式，
-并且让它**通过编译和契约测试**。
+让它**通过编译和契约测试**，并交付整理后的 Skill 文档。
 
 `decisions` 是已授权的硬边界：对每个 Tool 只能生成其 `form` 指定的交付形态。
 - `form=SCRIPT` 时不得创建 `mcp/`、`mcp-python/`、`mcp-java/` 或 MCP 服务文件，直接生成 Script 并跑 Script 契约测试。
@@ -60,7 +60,7 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
      平台不知道你的服务怎么起，`start` 只能由你给；不传这个 MCP 工具就没法验证。
      这里给的 `start` 要和最后 JSON 里给的一致。
 5. 失败就按失败原因改，再回到 3。
-一旦所有已授权 Tool 的编译和契约测试已通过，立即输出最终 JSON 并结束；不再读文件、不再重写、不做额外优化或第二套实现。
+一旦所有已授权 Tool 的编译和契约测试已通过、Skill 文档也已写入 `migration-skill/`，立即输出最终 JSON 并结束；不再读文件、不再重写、不做额外优化或第二套实现。
 
 交付形态（骨架与硬要求见**已加载的技能包 `enterprise-migration-delivery`** 里的 `references/service-templates.md`
 ——用 `skill_tool` 按 **`enterprise-migration-delivery`** 取，**名字写错会一直取不到，别试别的写法**；
@@ -75,7 +75,7 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 - 迁移适配只能改变注册、启动和依赖注入边界，不能重写业务协议或业务判断。源码里的接口路径片段、operation 字符串、HTTP method、请求 payload 字段、响应字段、状态值、错误码、金额计算和返回对象合并方式必须逐项原样保留；例如业务函数名 `get_request` 不等于它传给共享 HTTP helper 的 operation 字面量 `request`。不得从 Skill 的最终回答格式反推并改写底层 Tool 返回结构，也不得把 `enough/reserve` 改造成 `approved/reasons`。如果源码事实与文字说明冲突，以实际业务实现为迁移基线，并在 changes/drift 中报告，而不是自行改业务逻辑。
 - **SCRIPT**：写出通过通用 command 执行的完整程序，首版业务输入仍从 stdin 读取 JSON、stdout 返回 JSON。它不是独立注册的业务工具。执行时 cwd 是独立 workspace，Skill 包可能位于其他目录；入口使用 Runtime 给出的绝对路径。包内资源基于 __file__（Node 使用 import.meta.url）定位，业务文件与相对输出路径基于 cwd。不能写死部署绝对路径，不能假设 cwd 是源工程或 Skill 根目录。
 - Tool 的 runtime 依赖与业务参数分开：SCRIPT 通过通用 command 执行，不注册为独立工具，也不支持额外 Runtime 注入；唯一例外是 binding.kind=SCRIPT_CONTEXT 且 name=workspace/cwd 的非敏感依赖，它直接使用执行进程 cwd，无需声明 runtimeBindings。其他需要 Runtime 上下文或凭证的实现必须使用 MCP，并从每次 HTTP 请求的声明 header 读取。不要把凭证或上下文加入模型输入 Schema，不建立或切换执行身份。
-- Skill 文档默认保持单一 `SKILL.md`。合并后的完整说明不超过 500 行时，不创建 `references/*.md`；只有超过 500 行且存在独立、低频、可按需加载的章节时才允许拆分。不要按 Tool 机械拆文档。`workspace/` 是运行期工作目录，不属于 Skill 包，禁止写入候选产物。
+- 必须迁移 Skill 文档并明确交付最终结构。优先保持单一 `SKILL.md`；只有内容确实独立、低频、适合按需读取时才拆到 `references/`，不要按 Tool 或原目录机械拆分。500 行只是帮助判断可读性的参考，不是硬阈值。平台只校验你交付的结构，不会在完成后替你合并或拆分文档。`workspace/` 是运行期工作目录，不属于 Skill 包，禁止写入候选产物。
 - 本阶段只迁移业务 MCP/SCRIPT。真正的 Runtime Harness 改造需求会在进入 A4 前被平台阻止，并单独输出 Runtime Builder YAML；不得生成、打包或声明任何 Runtime 插件。
 - tools 中 migrationContract.dependencies 给出源码诊断的契约、移出逻辑及注入方式，只包含声明，不包含真实测试值。保留 Tool 所需的鉴权解析与业务逻辑；Runtime 内部用于获取凭证的 user/SDK 不应整体成为 Tool 依赖。
 - 有必需的 Runtime 注入依赖时，run_contract_test 会明确标记实际调用待验证；仍需完成编译及可检查的接口契约，不索要真实凭证、不伪造值、不因测试值缺失弃权，也不宣称业务链路通过。
@@ -115,7 +115,7 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
   不判通过与否——但差异要写进 `changes` 说明理由。别为了"看起来一致"去编一个对不上的 Schema。
 - **做不到就诚实弃权**：某个 Tool 无法忠实迁移时把它的 status 置为 ABSTAINED，
   写清 reason 和 missing，**不要编一个看起来对的实现**。
-- 不要修改源工程里已有的文件；只新增/修改你要交付的实现。
+- 不要原地修改源工程。Tool 实现写入新的交付路径；最终 Skill 文档写入 `migration-skill/`，并通过 `skillDelivery` 给出目标 Skill 内路径。
 
 最后**只输出一个 JSON 对象**，不要有其它文字：
 {
@@ -134,6 +134,13 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
     "compilePassed": true, "contractPassed": true,
     "reason": "", "missing": []
   }],
+  "skillDelivery": {
+    "skillFile": "SKILL.md",
+    "files": [
+      {"source": "migration-skill/SKILL.md", "path": "SKILL.md"},
+      {"source": "migration-skill/references/manual.md", "path": "references/manual.md"}
+    ]
+  },
   "runtimeToolConfig": {"context":{},"providers":{},"tools":{}},
   "reason": "", "missing": []
 }
@@ -229,7 +236,7 @@ async def run(body: dict) -> None:
             f"逐 Tool 决策：{decisions}\n"
             f"源 Tool 描述（含源契约 schema）：{contracts}\n"
             f"平台交付与加载契约：{delivery}\n"
-            "先用 read/grep 读源实现，再写实现，然后调 compile_source 和 run_contract_test，失败就改。"
+            "先用 read/grep 读源实现和 Skill 文档，再写实现，然后调 compile_source 和 run_contract_test，失败就改；最后整理并写入 migration-skill/ 文档交付目录。"
             "最后按约定只输出一个 JSON 对象。"
         )})
         raw = str(result.get("output", ""))
@@ -259,6 +266,11 @@ async def run(body: dict) -> None:
 
         # The workspace afterwards is the delivery: collect what the agent actually wrote.
         produced: dict[str, str] = {}
+        declared_skill_sources = {
+            str(item.get("source", "")).replace("\\", "/")
+            for item in ((payload.get("skillDelivery") or {}).get("files") or [])
+            if isinstance(item, dict)
+        }
         for path in sorted(workspace.rglob("*")):
             if not path.is_file():
                 continue
@@ -275,7 +287,7 @@ async def run(body: dict) -> None:
             # shipping the runtime-coupled original alongside its migration would be wrong.
             written = path.read_bytes()
             original = originals.get(rel)
-            if original is not None and original == written:
+            if original is not None and original == written and rel not in declared_skill_sources:
                 continue
             produced[rel] = base64.b64encode(written).decode()
 
