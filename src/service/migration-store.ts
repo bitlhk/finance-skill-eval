@@ -23,7 +23,7 @@ import { MigrationOpenJiuwenService } from '../migration/application/migration-o
 import { MigrationOptimizationService } from '../migration/application/migration-optimization-service.js';
 import { MigrationExportService } from '../migration/application/migration-export-service.js';
 import { MigrationLegacyService } from '../migration/application/migration-legacy-service.js';
-const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
+import { migrationConflict as conflict } from '../migration/application/migration-errors.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {

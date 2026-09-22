@@ -5,6 +5,7 @@ import { versionedMethod } from "../../service/migration-candidate.js";
 import type { MigrationDiagnostics } from "../../service/migration-diagnostics.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import { migrationConflict as conflict } from "./migration-errors.js";
 
 const candidateSchema = z.strictObject({
   assetId: z.string().min(1),
@@ -23,10 +24,6 @@ const reviewSchema = z.strictObject({
   decision: z.enum(["ACCEPTED", "NEEDS_CHANGES"]),
   notes: z.string().min(1).max(2000),
 });
-
-const conflict = (message: string): never => {
-  throw Object.assign(new Error(message), { statusCode: 409 });
-};
 
 export class MigrationCandidateService {
   constructor(

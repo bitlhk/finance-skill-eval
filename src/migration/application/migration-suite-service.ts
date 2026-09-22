@@ -13,10 +13,7 @@ import {
 import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
 import { validateSkill } from "../../service/skill-validator.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
-
-const conflict = (message: string): never => {
-  throw Object.assign(new Error(message), { statusCode: 409 });
-};
+import { migrationConflict as conflict } from "./migration-errors.js";
 
 export class MigrationSuiteService {
   constructor(

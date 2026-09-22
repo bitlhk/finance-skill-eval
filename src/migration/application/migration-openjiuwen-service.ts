@@ -11,10 +11,7 @@ import type { SkillStore } from '../../service/skill-store.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
-
-const conflict = (message:string):never => {
-  throw Object.assign(new Error(message),{statusCode:409});
-};
+import { migrationConflict as conflict } from './migration-errors.js';
 
 /** Builds the OpenJiuwen launcher bindings from the inspected and generated candidate. */
 export class MigrationOpenJiuwenService {

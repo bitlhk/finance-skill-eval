@@ -17,16 +17,13 @@ import type { PreparationStore } from '../../service/preparation-store.js';
 import type { EvaluationRunManager } from '../../service/run-manager.js';
 import type { SkillStore } from '../../service/skill-store.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
+import { migrationConflict as conflict } from './migration-errors.js';
 
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
   dataSnapshot:z.string().min(1).max(300), permissionBasis:z.string().min(1).max(1000),
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
-
-const conflict = (message:string):never => {
-  throw Object.assign(new Error(message),{statusCode:409});
-};
 
 export class MigrationEvaluationService {
   constructor(

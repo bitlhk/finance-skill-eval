@@ -11,10 +11,7 @@ import type { SkillStore } from "../../service/skill-store.js";
 import { TechnicalValidationService } from "../../service/technical-validation.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
-
-const conflict = (message: string): never => {
-  throw Object.assign(new Error(message), { statusCode: 409 });
-};
+import { migrationConflict as conflict } from "./migration-errors.js";
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);

@@ -22,12 +22,9 @@ import { generatePortableCandidate, type PortableGeneration } from "../../servic
 import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
 import { inspectProject } from "../../service/tool-inspector.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import { migrationConflict as conflict } from "./migration-errors.js";
 
 const CODE_FILE = /\.(?:java|py|js|mjs|cjs|ts)$/iu;
-const conflict = (message: string): never => {
-  throw Object.assign(new Error(message), { statusCode: 409 });
-};
-
 export class MigrationGenerationService {
   constructor(
     private readonly root: string,

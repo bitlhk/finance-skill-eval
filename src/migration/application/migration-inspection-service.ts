@@ -28,10 +28,7 @@ import type { SkillStore } from "../../service/skill-store.js";
 import { validateSkill } from "../../service/skill-validator.js";
 import { stageEnvelope, staleAgainst } from "../../service/stage-envelope.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
-
-const conflict = (message: string): never => {
-  throw Object.assign(new Error(message), { statusCode: 409 });
-};
+import { migrationConflict as conflict } from "./migration-errors.js";
 
 export type MigrationRuntimeReference = {
   migrationId: string;

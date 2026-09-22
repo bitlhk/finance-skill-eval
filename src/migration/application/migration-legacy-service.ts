@@ -7,10 +7,7 @@ import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { SkillStore } from '../../service/skill-store.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import type { MigrationProjectService } from './migration-project-service.js';
-
-const conflict = (message:string):never => {
-  throw Object.assign(new Error(message),{statusCode:409});
-};
+import { migrationConflict as conflict } from './migration-errors.js';
 
 /** Compatibility boundary for the deprecated finance.skill-migration.v0.1 workflow. */
 export class MigrationLegacyService {

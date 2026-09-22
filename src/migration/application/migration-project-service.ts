@@ -4,15 +4,12 @@ import type { MigrationDiagnostics } from "../../service/migration-diagnostics.j
 import type { SkillStore } from "../../service/skill-store.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import { migrationConflict as conflict } from "./migration-errors.js";
 
 const createMigrationProjectSchema = z.strictObject({
   sourceAssetId: z.string().min(1),
   name: z.string().min(1).max(120),
 });
-
-const conflict = (message: string): never => {
-  throw Object.assign(new Error(message), { statusCode: 409 });
-};
 
 export class MigrationProjectService {
   constructor(
