@@ -12,7 +12,6 @@ import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { generateCandidateFiles, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
-import {MigrationRuntimeConfig,configurationDigest} from './migration-runtime-config.js';
 import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
@@ -26,6 +25,7 @@ import { MigrationGenerationService } from '../migration/application/migration-g
 import { MigrationTechnicalValidationWorkflow } from '../migration/application/migration-technical-validation-service.js';
 import { MigrationEvaluationService } from '../migration/application/migration-evaluation-service.js';
 import { MigrationOpenJiuwenService } from '../migration/application/migration-openjiuwen-service.js';
+import { MigrationOptimizationService } from '../migration/application/migration-optimization-service.js';
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
@@ -39,9 +39,10 @@ export class MigrationStore {
   private readonly technicalValidation: MigrationTechnicalValidationWorkflow;
   private readonly evaluationService: MigrationEvaluationService;
   private readonly openJiuwenService: MigrationOpenJiuwenService;
+  private readonly optimizationService: MigrationOptimizationService;
   constructor(private root:string, private skills:SkillStore, runs:EvaluationRunManager,
-    private jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
-    private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
+    jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
+    optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
     private codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
     analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
@@ -58,6 +59,7 @@ export class MigrationStore {
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills);
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations, optimizers, diagnostics, environments);
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
+    this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -101,7 +103,6 @@ export class MigrationStore {
   private async generatePortable(id:string,input:unknown){return this.generationService.generate(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.technicalValidation.list(id);}
-  private async currentTechnicalState(value:MigrationProject){return this.technicalValidation.currentState(value);}
   async validateOpenJiuwen(id:string,input:unknown){return this.openJiuwenService.validate(id,input);}
   async openJiuwenValidations(id:string){return this.openJiuwenService.validations(id);}
   async generate(id:string,input:unknown){
@@ -146,38 +147,8 @@ export class MigrationStore {
   async createSuite(id:string,input:unknown) {return this.suiteService.create(id,input);}
   async importSimpleSuite(id:string,input:unknown){return this.suiteService.importSimple(id,input);}
   async generateSuite(id:string,input:unknown) {return this.suiteService.generate(id,input);}
-  async optimize(id:string,input:unknown) {return this.serial(id,async()=>{
-    const p=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.get(id);
-    if (!this.optimizers || !value.candidate) return conflict('优化器或候选不可用');
-    if(value.generation)return conflict('生成候选需先完成原生迁移验证；当前 Host 适配验收尚未完成，暂不进入表达优化');
-    const experiment=value.runs.find(r=>r.jobId===p.jobId);
-    if (!experiment || experiment.candidateDigest!==value.candidate.artifactSha256) return conflict('请为当前候选选择一次运行记录');
-    if(value.schemaVersion==='finance.skill-migration.v2'){
-      const technical=await this.currentTechnicalState(value);if(!technical.ready)return conflict(`请先完成当前 Tool 技术验证：${technical.reasons.join('；')}`);
-      const selectedRuntime=experiment.declaredPlan?.configuration.runtime;
-      const environmentId=selectedRuntime?.type==='runtime_launcher'?selectedRuntime.environmentId:null;
-      const environment=environmentId?await this.migrationEnvironment(environmentId):null;
-      if(!environment||environment.runtimeType!=='openjiuwen')return conflict('请先完成当前候选的本地 OpenJiuwen 评估');
-    }
-    if(value.sourceInspection?.dependencyAnalysis?.dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')&&experiment.runtimeConfigurationDigest!==configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection.dependencyAnalysis.dependencies))return conflict('运行配置已变化，请重新评估后再优化');
-    const job=this.jobs.get(p.jobId),variant=job?.report?.variants.right;
-    if (variant?.mode!=='skill_version' || variant.artifactSha256!==value.candidate.artifactSha256) return conflict('缺少已完成的右侧候选运行证据');
-    const item=await this.optimizers.create(p.jobId);
-    (value.optimizations??=[]).push({optimizationId:item.optimizationId,sourceJobId:p.jobId,baseAssetId:value.candidate.assetId,candidateDigest:value.candidate.artifactSha256});
-    await this.projects.save(value);return item;
-  });}
-  async adoptOptimization(id:string,input:unknown) {return this.serial(id,async()=>{
-    const p=z.strictObject({optimizationId:z.string().min(1)}).parse(input),value=await this.get(id);
-    const link=value.optimizations?.find(o=>o.optimizationId===p.optimizationId);
-    if (!link || !this.optimizers || value.candidate?.assetId!==link.baseAssetId) return conflict('这次优化与当前候选无关，或它的基线候选已变化');
-    const item=await this.optimizers.get(p.optimizationId);
-    if (!item.candidate || !['review','adopted'].includes(item.status)) return conflict('优化候选必须先跑完复测才能采用');
-    await this.skills.readArchive(item.candidate.assetId);
-    value.candidate=item.candidate;value.candidateNotes=`Optimization ${item.optimizationId}: ${item.summary}`;
-    (value.candidateHistory??=[]).push({asset:item.candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'optimization'});
-    // Adoption is a local candidate choice, not migration or business acceptance.
-    await this.projects.save(value);return value;
-  });}
+  async optimize(id:string,input:unknown) {return this.optimizationService.optimize(id,input);}
+  async adoptOptimization(id:string,input:unknown) {return this.optimizationService.adopt(id,input);}
   async validate(id:string,input:unknown) {return this.evaluationService.validate(id,input);}
   async report(id:string) {return this.evaluationService.report(id);}
   async exportCandidate(id:string) {
