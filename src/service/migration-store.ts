@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { zipSync, strToU8 } from 'fflate';
 import { fingerprint } from '../contracts.js';
-import type { SkillStore, SkillAssetRecord } from './skill-store.js';
+import type { SkillStore } from './skill-store.js';
 import type { EvaluationRunManager } from './run-manager.js';
 import type { EvaluationJobStore } from './job-store.js';
 import type { EvalPackCatalog } from './catalog.js';
@@ -14,25 +14,22 @@ import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { generateCandidateFiles, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
-import { inspectProject } from './tool-inspector.js';
-import {buildMigrationPlan,languageOfSourcePaths,recommendLanguage,supportsImplicitScriptContext,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision,type ToolInspection } from './migration-model.js';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from './migration-delivery-contract.js';
+import {buildMigrationPlan,supportsImplicitScriptContext,type TechnicalValidation,type ToolInspection } from './migration-model.js';
 import {runtimeBuildRequirements} from './migration-harness.js';
 import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
-import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toSkillDocumentDelivery,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
-import { generatePortableCandidate,type PortableGeneration } from './portable-candidate.js';
+import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import {originalServiceFingerprint} from '../original-service-runtime.js';
 import { TechnicalValidationService,pythonCommand } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 import { assessMigrationAcceptance } from './migration-acceptance.js';
-import {MigrationSupplements} from './migration-supplements.js';
 import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
 import type { MigrationProject } from '../migration/domain/migration-project.js';
 import { MigrationProjectService } from '../migration/application/migration-project-service.js';
 import { MigrationInspectionService, type MigrationRuntimeReference } from '../migration/application/migration-inspection-service.js';
 import { MigrationSuiteService } from '../migration/application/migration-suite-service.js';
 import { MigrationCandidateService } from '../migration/application/migration-candidate-service.js';
+import { MigrationGenerationService } from '../migration/application/migration-generation-service.js';
 
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
@@ -40,7 +37,6 @@ const planSchema = z.strictObject({
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
-const CODE_FILE=/\.(?:java|py|js|mjs|cjs|ts)$/iu;
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 type TestInput={value:unknown;source:NonNullable<TechnicalValidation['inputSource']>;fields:string[]};
 function schemaValue(schema:unknown):{available:boolean;value?:unknown}{
@@ -75,6 +71,7 @@ export class MigrationStore {
   private readonly inspectionService: MigrationInspectionService;
   private readonly suiteService: MigrationSuiteService;
   private readonly candidateService: MigrationCandidateService;
+  private readonly generationService: MigrationGenerationService;
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -90,6 +87,7 @@ export class MigrationStore {
     this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
+    this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -130,163 +128,7 @@ export class MigrationStore {
   async plan(id:string){return this.inspectionService.plan(id);}
   async runtimeRequirements(id:string){return this.inspectionService.runtimeRequirements(id);}
   async runtimeRequirementsYaml(id:string){return this.inspectionService.runtimeRequirementsYaml(id);}
-  /**
-   * A4 runs as an agent; the configured MIGRATION model is the fallback when the
-   * agent runtime is absent. The judged contract is the source tool's own input/output
-   * shape -- the agent supplies the implementation, never the test.
-   */
-  private async generateImplementations(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord,plan:MigrationPlan){
-    {
-      // The contract takes its language from the plan the human approved, so what is
-      // generated cannot disagree with what was shown to them. What *to preserve* comes from
-      // the analysis; how to build and start it is the agent's own answer.
-      const contract:Record<string,unknown>={};
-      for(const decision of decisions){
-        const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
-        const language=plan.items.find(item=>item.toolId===decision.toolId)?.language
-          ??recommendLanguage(decision.form,tool?.language??null);
-        const sample=contractSample(tool);
-        contract[decision.toolId]={form:decision.form,language,toolName:tool?.name??'',
-          dependencies:inspection.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(decision.toolId))??[],
-          runtimeInjection:'SERVICE_ENV dependencies are startup configuration: read the declared environment variable inside the MCP service, never from request Headers or business arguments. Actual values are supplied by the launcher, never sent to this model. runtimeToolConfig is for MCP only: contextBindings map HTTP Header names to context references, auth providers return request headers, and business arguments remain separate. Script runs through generic command with no additional Runtime injection. Never ask the model to supply injected fields.',
-          inputSchema:tool?.inputSchema??null,outputSchema:tool?.outputSchema??null,
-          samples:(tool?.samples??[]).map(item=>item.input),
-          // No sample means the call cannot be exercised. Report that rather than invent one.
-          ...('reason' in sample?{sampleMissing:sample.reason}:{sampleInput:sample.input})};
-      }
-      // A4 is not deterministic: the same input can produce or stall. Retry the run a
-      // bounded number of times, but treat ABSTAINED as a decision, not a flake.
-      // Re-running the whole code agent repeats every model/tool round and can double a long
-      // request without adding new evidence.  A user retry is explicit and keeps the failed run
-      // visible, so automatic whole-agent retry is opt-in only.
-      const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??1));
-      // Remembered so the fallback is only reached when the agent is genuinely unavailable: an
-      // agent that ran and failed has a reason, and that reason is what the reader needs.
-      let agentFailure:string|null=null;
-      for(let attempt=1;attempt<=attempts;attempt++){
-      const result=await this.implementer({
-        assetDigest:asset.artifactSha256,runId:asset.assetId,files:archive,
-        decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
-        tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema,samples:t.samples,migrationContract:contract[t.toolId]})),
-        contract,
-        deliveryContract:{skillDocumentation:{sourceSkillFile:asset.skillFile,manifestPathsRelativeToSkillRoot:true},script:{execution:"COMMAND",cwd:"WORKSPACE",entrypoint:"RUNTIME_PROVIDED_ABSOLUTE_PATH",packageResources:"RELATIVE_TO_SCRIPT",runtimeInjection:false},mcp:{contextTransport:"HTTP_HEADER",serviceConfigurationTransport:"SERVICE_ENV",businessArguments:"SEPARATE",pythonFramework:{package:"fastmcp",version:"2.14.7",import:"from fastmcp import FastMCP"}},runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions)},
-      });
-      if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
-        // An abstention is a decision that belongs to a human. Report which Tool and why,
-        // rather than letting the packager fail with a generic message.
-        const reported=((result.payload as {tools?:Array<{toolId?:string;status?:string;reason?:string;missing?:string[]}>}).tools??[])
-          .filter(item=>String(item.status??'').toUpperCase()==='ABSTAINED');
-        if(reported.length){
-          const detail=reported.map(item=>`${item.toolId||'未知 Tool'}：${item.reason?.trim()||'未说明原因'}${
-            item.missing?.length?`（缺 ${item.missing.join('、')}）`:''}`).join('；');
-          throw Object.assign(new Error(`有 Tool 无法忠实迁移，已停止生成并退回授权环节重新决策。${detail}`),{statusCode:409});
-        }
-        if(result.status==='ABSTAINED')throw Object.assign(new Error(
-          `迁移模型无法完成本次迁移，已退回授权环节重新决策。${String((result.payload as {reason?:string}).reason??'').trim()}`),{statusCode:409});
-      }
-      if(result?.status==='FAILED'){agentFailure=result.reason;continue;}
-      if(result?.status==='PRODUCED'){
-        const deliveryIssues=validateAgentRuntimeDelivery(result.payload as Record<string,unknown>,inspection,decisions);
-        if(deliveryIssues.length){agentFailure=deliveryIssues.join('；');continue;}
-        const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
-        const mapped=toGeneratedImplementations(result.payload as never,result.files,nameById);
-        const skillDelivery=toSkillDocumentDelivery(result.payload as never,result.files);
-        const missing=decisions.filter(decision=>!mapped[decision.toolId]||mapped[decision.toolId]!.language!==plan.items.find(item=>item.toolId===decision.toolId)?.language);
-        if(!missing.length&&skillDelivery)return {implementations:mapped,skillDelivery};
-        if(!skillDelivery){agentFailure='A4 没有按文档清单交付最终 SKILL.md；平台不会在模型完成后替它机械合并或拆分 references';continue}
-        agentFailure=`A4 交付不完整或语言与授权不符：${missing.map(decision=>nameById[decision.toolId]??decision.toolId).join('、')}`;
-      }
-      }
-      if(agentFailure)return conflict(
-        `迁移 agent 跑完了但没交付可用结果：${agentFailure}。这是执行问题不是工程问题——不会退回只能产出脚本的回退生成器。请重试或查看 agent 日志。`);
-    }
-    return {implementations:await this.codeGenerator.generate({archive,inspection,decisions})};
-  }
-  private async generatePortable(id:string,input:unknown){return this.serial(id,async()=>{
-    const p=z.strictObject({baseAssetId:z.string().min(1),acknowledgePartialAnalysis:z.boolean().optional()}).parse(input),value=await this.get(id),currentAsset=value.candidate??value.source;
-    if(p.baseAssetId!==currentAsset.assetId)return conflict('资产已变化，请刷新后重新生成');
-    if(!value.inspection||value.inspection.assetId!==currentAsset.assetId)return conflict('请先检查当前资产');
-    const generationInspection=value.sourceInspection??value.inspection;
-    if(!generationInspection.staticAnalysis||generationInspection.staticAnalysis.status==='UNAVAILABLE')return conflict('静态分析不可用，已阻止生成候选');
-    const toolPaths=new Set(generationInspection.tools.flatMap(tool=>tool.sourcePaths));
-    const toolIncompleteFiles=generationInspection.staticAnalysis.toolIncompleteFiles??generationInspection.staticAnalysis.incompleteFiles.filter(item=>toolPaths.has(item.path));
-    if(toolIncompleteFiles.length&&!p.acknowledgePartialAnalysis){
-      const files=toolIncompleteFiles.map(item=>`${item.path} (${item.status})`).join('、');
-      return conflict(`静态分析未完整覆盖 Tool 相关源码；确认人工审阅后才能继续：${files}`);
-    }
-    const plan=buildMigrationPlan(value.inspection,value.decisions??[],currentAsset.assetId);if(!plan.generationAllowed)return conflict('当前逐 Tool 决策尚不能生成候选');
-    // Every regeneration is a fresh derivation from the immutable source package.  Building on
-    // the previous candidate made generated guidance accumulate and allowed preserved references
-    // to disappear when an ADD diff was cleared.
-    const archive=await this.skills.readArchive(value.source.assetId),version=`2.0.0-migration.${(value.candidateHistory?.length??0)+1}`;
-    for(const item of (await new MigrationSupplements(this.root).get(id)).items)for(const [name,content] of Object.entries(item.files??{}))archive[name]=Buffer.from(content,'base64');
-    const decisions=value.decisions!.filter(d=>d.baseAssetId===currentAsset.assetId);
-    const delivery=await this.generateImplementations(archive,generationInspection,decisions,value.source,plan);
-    const generated=generatePortableCandidate({archive,base:value.source,inspection:generationInspection,decisions,version,...delivery});
-    if(generationInspection.dependencyAnalysis?.dependencies.length){
-      const path=decisions.some(d=>d.form==='MCP')?'runtime-dependencies.json':'scripts/runtime-dependencies.json';
-      if(generated.files[path])return conflict('生成工程占用了运行依赖声明路径，请调整后重新生成');
-      const declarations=generationInspection.tools.map(tool=>({tool:tool.name,dependencies:generationInspection.dependencyAnalysis!.dependencies.filter(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({name:d.name,key:d.key,purpose:d.purpose,required:d.blocking,sensitive:d.sensitive,schema:d.schema,binding:d.binding}))}));
-      const content=JSON.stringify({schemaVersion:'finance.tool-runtime-dependencies.v1',tools:declarations},null,2)+'\n';generated.files[path]=strToU8(content);generated.diff.push({path,operation:'ADD',before:'',after:content});
-    }
-    const candidate=await this.publishCandidate(generated.files,version);
-    const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:generationInspection,decisions:value.decisions!,baseAssetId:currentAsset.assetId,generations:generated.generations});
-    // The candidate inspection describes the same logical tools on a new immutable asset. Carry
-    // the authorized decisions forward to that asset; otherwise the report immediately claims
-    // every decision is missing and disables regeneration as soon as generation succeeds.
-    const carriedDecisions=decisions.map(decision=>({...decision,baseAssetId:candidate.assetId,decidedAt:new Date().toISOString()}));
-    value.decisions=[...(value.decisions??[]),...carriedDecisions];
-    value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
-    (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
-    await this.projects.save(value);return value;
-  });}
-  /** Turn placed files into an asset. Separate from generating them: this is the step that makes
-   * the result referenceable, and it has nothing to say about whether the code is any good. */
-  private async publishCandidate(files:Record<string,Uint8Array>,version:string):Promise<SkillAssetRecord>{
-    return this.skills.uploadZip(Buffer.from(zipSync(files)),{version});
-  }
-  /**
-   * The candidate's own check, after it exists.
-   *
-   * It is a separate method because it is a separate cost and a separate failure: the scanner plus
-   * a model call, against the generation's model call or agent run. Folded into one method, a slow
-   * or failing check decided whether generation was attempted at all -- and the two are worth
-   * reporting apart.
-   */
-  private async inspectCandidate(input:{candidate:SkillAssetRecord;files:Record<string,Uint8Array>;
-    inspection:ProjectInspection;decisions:ToolDecision[];baseAssetId:string;generations:PortableGeneration[]}):Promise<ProjectInspection>{
-    const decoded:Record<string,string>={};for(const [name,bytes] of Object.entries(input.files))try{decoded[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
-    if(!this.diagnostics)return conflict('静态诊断服务不可用，不能确认生成候选');
-    let candidateDiagnosis;
-    try{candidateDiagnosis=await this.diagnostics.diagnose(input.candidate);}
-    catch{return conflict('生成候选的静态诊断执行失败，候选未被采纳；请检查 uv、锁文件和扫描器配置');}
-    if(candidateDiagnosis.digest!==input.candidate.artifactSha256)return conflict('生成候选的静态诊断与资产不匹配');
-    const candidateInspection=inspectProject({assetId:input.candidate.assetId,assetDigest:input.candidate.artifactSha256,files:decoded,skillFile:input.candidate.skillFile,diagnosis:candidateDiagnosis});
-    candidateInspection.dependencyAnalysis=input.inspection.dependencyAnalysis?structuredClone(input.inspection.dependencyAnalysis):undefined;
-    candidateInspection.runtimeCapabilities=input.inspection.runtimeCapabilities?structuredClone(input.inspection.runtimeCapabilities):undefined;
-    if(candidateInspection.skill.status!=='COMPLIANT'){
-      const errors=candidateInspection.skill.findings.filter(item=>item.severity==='ERROR').map(item=>`${item.code}: ${item.message}`).join('；');
-      return conflict(`生成候选不符合 Skill 包规范，候选未被采纳：${errors||'Skill 检查未通过'}`);
-    }
-    // Describe what was generated instead of asserting a language: asserting it made the
-    // record say Python for a Node script and Java for anything that was not Java.
-    candidateInspection.tools=input.inspection.tools.map(tool=>{
-      const decision=input.decisions.find(item=>item.toolId===tool.toolId&&item.baseAssetId===input.baseAssetId)!;
-      const generation=input.generations.find(item=>item.toolId===tool.toolId)!;
-      if(decision.form==='SCRIPT'){
-        const entry=generation.entrypoint??generation.files.find(name=>CODE_FILE.test(name))!;
-        // No formal source schema is not the same as a tool taking no arguments. Expose
-        // documented sample fields as hints, without claiming they are exhaustive/required.
-        const sample=tool.samples.find(item=>item.input&&typeof item.input==='object'&&!Array.isArray(item.input))?.input as Record<string,unknown>|undefined;
-        const inputSchema=tool.inputSchema??(sample?{type:'object',properties:Object.fromEntries(Object.entries(sample).map(([name,value])=>[name,
-          value===null?{}:Array.isArray(value)?{type:'array'}:{type:typeof value==='object'?'object':typeof value}])),additionalProperties:true}:null);
-        return {...tool,inputSchema,sourcePaths:[entry],language:languageOfSourcePaths([entry]),kind:'SCRIPT' as const,portability:'PORTABLE_SCRIPT' as const,entrypoint:{kind:(/\.py$/iu.test(entry)?'PYTHON':'NODE') as 'PYTHON'|'NODE',path:entry},findings:tool.inputSchema||!sample?[]:[{code:'SAMPLE_INPUT_HINTS',severity:'INFO' as const,path:entry,line:1,message:'输入字段来自原始样例，仅作调用提示，不是完整源 Schema'}]};
-      }
-      const generatedFiles=generation.files.filter(name=>CODE_FILE.test(name));
-      return {...tool,sourcePaths:generatedFiles,language:languageOfSourcePaths(generatedFiles),kind:'MCP' as const,portability:'PORTABLE_MCP' as const,entrypoint:undefined,findings:[]};
-    });
-    return candidateInspection;
-  }
+  private async generatePortable(id:string,input:unknown){return this.generationService.generate(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.serial(id,async()=>{
     const p=z.strictObject({toolId:z.string().min(1),baseAssetId:z.string().min(1),request:z.unknown().optional(),endpoint:z.string().url().optional(),arguments:z.record(z.unknown()).optional()}).parse(input);
     const value=await this.get(id),asset=value.candidate??value.source;if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新验证');
