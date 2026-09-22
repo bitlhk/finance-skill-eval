@@ -11,7 +11,7 @@ import type { PreparationStore } from './preparation-store.js';
 import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
-import { generateCandidateFiles, versionedMethod, regenerationArchive } from './migration-candidate.js';
+import { generateCandidateFiles, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
@@ -32,13 +32,8 @@ import type { MigrationProject } from '../migration/domain/migration-project.js'
 import { MigrationProjectService } from '../migration/application/migration-project-service.js';
 import { MigrationInspectionService, type MigrationRuntimeReference } from '../migration/application/migration-inspection-service.js';
 import { MigrationSuiteService } from '../migration/application/migration-suite-service.js';
+import { MigrationCandidateService } from '../migration/application/migration-candidate-service.js';
 
-const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
-const draftSchema = z.strictObject({
-  source:z.string().min(1).max(128000), notes:z.string().min(1).max(8000),
-  baseAssetId:z.string().min(1),
-  autoVersion:z.boolean().optional(),
-});
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
   dataSnapshot:z.string().min(1).max(300), permissionBasis:z.string().min(1).max(1000),
@@ -79,6 +74,7 @@ export class MigrationStore {
   private readonly projectService: MigrationProjectService;
   private readonly inspectionService: MigrationInspectionService;
   private readonly suiteService: MigrationSuiteService;
+  private readonly candidateService: MigrationCandidateService;
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -93,6 +89,7 @@ export class MigrationStore {
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
     this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
+    this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -409,48 +406,10 @@ export class MigrationStore {
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
     await this.projects.save(value);return value;
   });}
-  async candidate(id:string,input:unknown) {return this.serial(id,async()=>{
-    const p=candidateSchema.parse(input), value=await this.get(id), candidate=await this.skills.get(p.assetId);
-    if (!candidate || candidate.artifactSha256===value.source.artifactSha256) return conflict('请作为独立的新版本候选导入；源资产保持不变');
-    if (candidate.version===value.source.version) return conflict('候选必须使用新的版本号');
-    value.candidate=candidate; value.candidateNotes=p.notes;
-    delete value.inspection;value.decisions=[];delete value.portableGenerations;delete value.portableGenerationDiff;
-    (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
-    await this.projects.save(value); return value;
-  });}
-  async draft(id:string,input:unknown) {return this.serial(id,async()=>{
-    const p=draftSchema.parse(input), value=await this.get(id), base=value.candidate??value.source;
-    if (p.baseAssetId!==base.assetId) return conflict('候选已变化，请刷新后再编辑');
-    const files=await this.skills.readArchive(base.assetId);
-    files[base.skillFile]=strToU8(p.autoVersion?versionedMethod(p.source,base.skillId,`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`):p.source);
-    const candidate=await this.skills.uploadZip(Buffer.from(zipSync(files)));
-    if (candidate.version==='0.0.0-upload' || candidate.version===base.version || candidate.version===value.source.version)
-      return conflict('保存前请在 Skill 元数据里写明新的版本号');
-    if (candidate.skillId!==base.skillId) return conflict('方法内容的修改不能悄悄改变 Skill 身份');
-    value.candidate=candidate;value.candidateNotes=p.notes;
-    (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
-    await this.projects.save(value);return value;
-  });}
-  async analyze(id:string) {
-    const value=await this.get(id), source=await this.skills.readSource(value.source.assetId);
-    const files=await this.skills.readFiles((value.candidate??value.source).assetId);
-    const archive=await this.skills.readArchive((value.candidate??value.source).assetId);
-    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.candidate??value.source).catch(()=>null):null;
-    return {project:value, source, candidate:value.candidate ? await this.skills.readSource(value.candidate.assetId):null,diagnosis,
-      readableFiles:Object.keys(files), inventoryComplete:diagnosis?.status==='COMPLETE',
-      fileInventory:Object.entries(archive).map(([name,bytes])=>({name,bytes:bytes.length,
-        sha256:createHash('sha256').update(bytes).digest('hex'),
-        executableReviewRequired:/\.(py|sh|js|mjs|cjs|exe|jar)$/i.test(name)})),
-      unresolved:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>f.dependencyType)??['DIAGNOSIS_NOT_RUN'],
-      analysisMode:'STATIC_INVENTORY_NOT_DEPENDENCY_VALIDATION', uploadedScriptsExecuted:false};
-  }
-  async review(id:string,input:unknown){return this.serial(id,async()=>{
-    const p=z.strictObject({baseAssetId:z.string(),decision:z.enum(['ACCEPTED','NEEDS_CHANGES']),notes:z.string().min(1).max(2000)}).parse(input);
-    const value=await this.get(id);
-    if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请对当前版本重新记录专业复核');
-    (value.reviews??=[]).push({candidateDigest:value.candidate.artifactSha256,decision:p.decision,notes:p.notes,recordedAt:new Date().toISOString(),source:'PRIVATE_ADMIN_RECORDED'});
-    await this.projects.save(value);return value;
-  });}
+  async candidate(id:string,input:unknown) {return this.candidateService.import(id,input);}
+  async draft(id:string,input:unknown) {return this.candidateService.saveDraft(id,input);}
+  async analyze(id:string) {return this.candidateService.analyze(id);}
+  async review(id:string,input:unknown){return this.candidateService.review(id,input);}
   async createSuite(id:string,input:unknown) {return this.suiteService.create(id,input);}
   async importSimpleSuite(id:string,input:unknown){return this.suiteService.importSimple(id,input);}
   async generateSuite(id:string,input:unknown) {return this.suiteService.generate(id,input);}
