@@ -61,9 +61,9 @@ async function waitForPort(port: number, timeoutMs: number, alive: () => string 
  * child. Same reason the agent-side tool uses a tree kill.
  */
 export async function terminate(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
   const pid = child.pid;
   if (pid === undefined) return;
+  const closed = new Promise<void>(resolve => child.once('close', () => resolve()));
   if (process.platform === 'win32') {
     await new Promise<void>(resolve => {
       const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
@@ -71,17 +71,19 @@ export async function terminate(child: ChildProcess): Promise<void> {
       killer.once('error', () => resolve());
     });
   } else {
-    child.kill('SIGKILL');
+    try { process.kill(-pid, 'SIGKILL'); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
   }
-  await Promise.race([
-    new Promise<void>(resolve => child.once('close', () => resolve())),
-    new Promise<void>(resolve => setTimeout(resolve, STOP_TIMEOUT_MS)),
-  ]);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([closed, new Promise<void>(resolve => { timer=setTimeout(resolve, STOP_TIMEOUT_MS); })]);
+  } finally { clearTimeout(timer); }
 }
 
 function runToCompletion(command: { program: string; args: string[] }, cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number) {
   return new Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }>((resolve, reject) => {
-    const child = spawn(command.program, command.args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(command.program, command.args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
     let stdout = '', stderr = '', timedOut = false, settled = false;
     const finish = (result: { exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }) => {
       if (settled) return; settled = true; clearTimeout(timer); resolve(result);
@@ -133,7 +135,7 @@ export async function startService(input: {
     if (prepared.exitCode !== 0) return { ok: false, error: `PREPARE_FAILED: ${(prepared.stderr || prepared.stdout || `exit ${prepared.exitCode}`).trim().slice(0, 1200)}` };
   }
 
-  const child = spawn(start[0]!, start.slice(1), { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(start[0]!, start.slice(1), { cwd: directory, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
   let stderr = '', spawnError: string | null = null;
   child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-4000); });
   child.stdout?.on('data', () => undefined);
