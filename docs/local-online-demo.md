@@ -17,15 +17,16 @@
 
 ## 首次安装
 
-要求 Node 22、pnpm、Python 3.11–3.13、已登录且可用的 Codex CLI；模型网关需支持 OpenAI-compatible 工具调用。
+要求 Node 22、pnpm、uv、Python 3.11–3.13、已登录且可用的 Codex CLI；模型网关需支持 OpenAI-compatible 工具调用。
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
-python3 -m venv .venv-openjiuwen
-.venv-openjiuwen/bin/pip install -r integrations/openjiuwen/requirements.txt
+UV_PROJECT_ENVIRONMENT=.venv-openjiuwen uv sync --locked --project integrations/openjiuwen
 node scripts/bootstrap-local.mjs /path/to/model.env /path/to/wealth-skill
 ```
+
+运行环境从 `integrations/openjiuwen/uv.lock` 安装——版本和传递依赖都锁在那里。若 uv 报锁已过期，先 `uv lock --project integrations/openjiuwen` 重新锁定。
 
 `model.env` 提供 `API_BASE / API_KEY / MODEL_NAME`。脚本只读导入模型配置和 Skill Markdown 文档，不改动源项目。它生成被 Git 忽略的 `.env.local / .runtime.local.json`（0600），把包内文档导入 `data/skills`，登记运行环境，并生成财富在线 Eval Pack。原作者信息保留，导入不等于重新发布。
 
@@ -57,7 +58,7 @@ copy /Y ".runtime.local.example.json" ".runtime.local.json"
 scripts\start-openjiuwen.cmd
 ```
 
-首次运行会使用本机 Python 3.11–3.13 创建 `.venv-openjiuwen`，并安装 `integrations\openjiuwen\requirements.txt` 中固定的依赖。已有环境缺少依赖时也会自动补装。依赖文件更新后，可显式重新安装：
+首次运行会使用本机 Python 3.11–3.13 创建 `.venv-openjiuwen`，并从 `integrations\openjiuwen\uv.lock` 安装锁定的依赖（需要 `uv` 在 `PATH`）。已有环境缺少依赖时也会自动补装。锁更新后，可显式重新安装：
 
 ```bat
 scripts\start-openjiuwen.cmd --setup

@@ -1,0 +1,16 @@
+{
+  "tools": [
+    "get_request",
+    "check_budget",
+    "check_supplier"
+  ],
+  "sharedDependencies": [
+    "AgentScope ToolBase / ToolResponse / Toolkit",
+    "auth_sdk: 多个 Tool 共享鉴权与传输"
+  ],
+  "toolSpecificDependencies": [
+    "context.department_rules: check_budget 独有配置"
+  ],
+  "chain": "Skill → Toolkit → ToolBase.call → ToolResponse → shared http_client/auth_sdk → business API",
+  "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
+}

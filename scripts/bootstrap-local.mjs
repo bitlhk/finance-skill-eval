@@ -16,7 +16,8 @@ const mcpEndpoint = "http://127.0.0.1:56363/mcp";
 const model = { providerId: "service-execution", modelId: env.MODEL_NAME, parameters: {} };
 const tools = ["get_customer_profile", "get_customer_portfolio", "get_wealth_policy_basis", "prepare_wealth_allocation_context", "wealth_assistant_product_info"];
 const existingConfig = await readFile(".runtime.local.json", "utf8").then(JSON.parse).catch(e => { if (e.code === "ENOENT") return {}; throw e; });
-await writeFile(".runtime.local.json", JSON.stringify({ ...existingConfig, models: { ...existingConfig.models, [env.MODEL_NAME]: { baseUrl: env.API_BASE, apiKey: env.API_KEY } },
+await writeFile(".runtime.local.json", JSON.stringify({ ...existingConfig, defaultModelId: existingConfig.defaultModelId ?? env.MODEL_NAME,
+  models: { ...existingConfig.models, [env.MODEL_NAME]: { providerId: "service-execution", baseUrl: env.API_BASE, apiKey: env.API_KEY, upstreamModelId: env.MODEL_NAME, enabled: true } },
   mcp: { ...existingConfig.mcp, [mcpEndpoint]: { headers: {}, toolNames: tools, dataMode: "synthetic-snapshot" } } }, null, 2), { mode: 0o600 });
 const localEnv = { FINANCE_EVAL_HOST: "127.0.0.1", FINANCE_EVAL_EXECUTION_BASE_URL: env.API_BASE, FINANCE_EVAL_EXECUTION_API_KEY: env.API_KEY,
   FINANCE_EVAL_EXECUTION_MODEL: env.MODEL_NAME, FINANCE_EVAL_ANALYZER_BASE_URL: env.API_BASE, FINANCE_EVAL_ANALYZER_API_KEY: env.API_KEY,

@@ -1,0 +1,15 @@
+{
+  "endpoint": "http://127.0.0.1:4327/original/04-refund",
+  "method": "POST",
+  "requestExample": {
+    "input": {
+      "order_id": "RF-001"
+    },
+    "user": {
+      "id": "U001",
+      "tenantId": "T001"
+    }
+  },
+  "resultPath": "data.businessResult",
+  "note": "适配说明，不是平台既有接口格式；服务执行原始工具和固定流程，不执行大模型。"
+}

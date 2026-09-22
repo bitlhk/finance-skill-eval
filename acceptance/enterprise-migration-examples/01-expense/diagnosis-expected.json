@@ -1,0 +1,13 @@
+{
+  "tools": [
+    "check_expense"
+  ],
+  "targetForm": "MCP",
+  "targetChain": "Skill → MCP check_expense → X-Workspace-Root → 独立业务逻辑 → 工作区文件 + assets/rules.json",
+  "sharedDependencies": [],
+  "toolSpecificDependencies": [
+    "cwd/workspace: Script Runtime 提供的工作目录，不属于模型输入"
+  ],
+  "chain": "Skill → scripts/check_expense.py → 工作区文件 + assets/rules.json",
+  "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
+}

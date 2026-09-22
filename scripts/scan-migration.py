@@ -112,9 +112,61 @@ def scan(files):
                 line = next(i for i, s in enumerate(text.splitlines(), 1) if 'long_term' in s)
                 add(path, line, "BUSINESS_CONFLICT", "长期命名与短期借款描述同时出现", "不能由 SDK 迁移决定业务口径", "由业务 Owner 确认；本轮原样保留", confidence="MEDIUM", layer="BUSINESS")
         coverage.append(dict(path=path, status=status))
-    return dict(findings=findings, coverage=coverage, declarations=tools)
+    return dict(findings=findings, coverage=coverage, declarations=tools, structure=structure_of(files))
+
+
+# A file's role, decided by where it is -- never by what it contains. The point is to answer "what
+# is this package made of" in one deterministic pass, so that reading it is not a search.
+_SEGMENT_ROLES = {"scripts": "SCRIPT", "references": "REFERENCE", "assets": "ASSET"}
+_SOURCE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".java", ".go", ".rb", ".sh", ".ps1")
+
+
+def _role_of(path):
+    name = posixpath.basename(path).lower()
+    if name in ("skill.md", "skill.mdx"):
+        return "SKILL_DOCUMENT"
+    for segment in path.lower().split("/")[:-1]:
+        if segment in _SEGMENT_ROLES:
+            return _SEGMENT_ROLES[segment]
+    return "SOURCE" if name.endswith(_SOURCE_SUFFIXES) else "OTHER"
+
+
+def structure_of(files):
+    """The package's shape: every directory the files imply, and what each file is for.
+
+    Coverage says how far each file was read; it does not say what the package looks like, so an
+    agent that wants the layout has to go and list directories. This is that answer, computed
+    rather than searched for.
+
+    Only directories that contain files appear: the scanner is handed files, not a filesystem, so
+    an empty directory is invisible to it -- and an empty directory is not part of what a migration
+    has to account for.
+    """
+    directories = set()
+    entries = []
+    for path in sorted(files):
+        parent = posixpath.dirname(path)
+        while parent:
+            directories.add(parent)
+            parent = posixpath.dirname(parent)
+        # `replace` because this text is untrusted: a caller that hands over a JS string can send a
+        # lone surrogate as `\udXXX`, which json accepts and utf-8 cannot encode. A size that is a
+        # byte or two off on a malformed file is not worth failing the whole scan over.
+        size = len(files[path].encode("utf-8", "replace"))
+        entries.append(dict(path=path, role=_role_of(path), bytes=size))
+    return dict(directories=sorted(directories), files=entries)
 
 
 if __name__ == '__main__':
-    data = json.load(sys.stdin)
-    print(json.dumps(scan(data['files']), ensure_ascii=False))
+    # This is a UTF-8 JSON subprocess protocol, independent of the Windows code page.
+    # -I ignores PYTHONUTF8; decoding the text stream with the host locale can even corrupt
+    # JSON delimiters next to Chinese characters in nested dependency declarations.
+    data = json.loads(sys.stdin.buffer.read().decode('utf-8'))
+    # ASCII-safe on purpose. `ensure_ascii=False` put the findings' Chinese on stdout raw, which
+    # made this protocol depend on the *console codepage* of whoever ran it: the callers spawn this
+    # with `python -I`, and `-I` implies `-E`, so PYTHONUTF8=1 is ignored and the bytes came out in
+    # the local code page. `json.loads` on the caller's side then failed to detect the encoding and
+    # reported the whole scan as invalid -- so the agent, which is the caller that most needs the
+    # result, was getting `{"status": "unavailable"}` and going off to list directories by hand.
+    # Escaped non-ASCII is valid JSON that every parser decodes back to the same characters.
+    print(json.dumps(scan(data['files'])))

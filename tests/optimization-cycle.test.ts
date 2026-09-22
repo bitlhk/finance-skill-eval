@@ -23,7 +23,7 @@ it('runs bounded optimizer, retains dependency bytes, rebinds candidate and hide
   const pack=await loadEvalPack('packs/finance/wealth-online/eval.yaml');
   const model={providerId:'controlled',modelId:'fixture',parameters:{}};
   const variant={mode:'skill_version' as const,skillId:original.skillId,version:original.version,artifactSha256:original.artifactSha256};
-  const configuration=runConfigurationSchema.parse({packId:pack.packId,runtime:{type:'runtime_http',environmentId:'native'},executionModel:model,
+  const configuration=runConfigurationSchema.parse({packId:pack.packId,runtime:{type:'runtime_launcher',environmentId:'native'},executionModel:model,
    runtimeBindings:{left:{environmentId:'native',skillAssetId:original.assetId},right:{environmentId:'native',skillAssetId:original.assetId}},leftVariant:variant,rightVariant:variant});
   const evidence={status:'completed',output:'controlled result',toolCalls:[]};
   const cases=[...pack.cases.map(c=>({caseId:c.caseId,prompt:c.prompt,left:evidence,right:evidence,judge:{summary:'controlled review',dimensions:[]}})),

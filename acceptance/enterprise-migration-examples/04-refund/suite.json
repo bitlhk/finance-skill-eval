@@ -1,0 +1,75 @@
+{
+  "summary": "退款资格判断固定测试集；使用模型 Judge 根据业务目标判定。",
+  "cases": [
+    {
+      "caseId": "REFUND-OK",
+      "name": "判断 RF-001 的退款资格和可退金额。",
+      "taskMode": "single_turn",
+      "prompt": "判断 RF-001 的退款资格和可退金额。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "refund_eligibility"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"order_id\": \"RF-001\", \"eligible\": true, \"currency\": \"CNY\", \"refundable_amount\": \"100.00\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "REFUND-REJECTED",
+      "name": "判断 RF-002 的退款资格和可退金额。",
+      "taskMode": "single_turn",
+      "prompt": "判断 RF-002 的退款资格和可退金额。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "refund_eligibility"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"order_id\": \"RF-002\", \"eligible\": false, \"reason\": \"STATUS_NOT_REFUNDABLE\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "REFUND-MISSING",
+      "name": "判断 RF-404 的退款资格和可退金额。",
+      "taskMode": "single_turn",
+      "prompt": "判断 RF-404 的退款资格和可退金额。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "refund_eligibility"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"order_id\": \"RF-404\", \"eligible\": false, \"reason\": \"ORDER_NOT_FOUND\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    }
+  ],
+  "holdoutCases": []
+}

@@ -38,13 +38,13 @@ try {
   cases:[makeCase('DEV-MISSING','只读核验合成客户借款资料；来源未提供，不把缺失记为零。')],
   holdoutCases:[makeCase('HOLDOUT-MISSING','另一个合成客户的关键资料不可用，列明无法判断的项目。')]});
  assert.equal(suite.statusCode,200);
- const env=await post('/api/environments',{name:'Unconnected original Runtime probe',type:'runtime_http',runtimeType:'generic_http',
-  endpoint:`http://127.0.0.1:${server.address().port}/execute`,mcpEnvironmentIds:[]});assert.equal(env.statusCode,200);
+ const env=await post('/api/environments',{name:'Unconnected Runtime Launcher probe',type:'runtime_launcher',runtimeType:'generic_http',
+  baseUrl:`http://127.0.0.1:${server.address().port}/`});assert.equal(env.statusCode,200);
  const variant=a=>({mode:'skill_version',skillId:a.skillId,version:a.version,artifactSha256:a.artifactSha256});
  const environmentId=env.json().environmentId;
  const run=await post(`/api/migrations/${id}/validate`,{pair:'AB',dataSnapshot:'NOT_AVAILABLE',permissionBasis:'SYNTHETIC_ONLY_NOT_NATIVE_AUTHORIZATION',
   sourceProjectRef:'MISSING_ORIGINAL_ENGINEERING',dependencyLockRef:'MISSING',configuration:{preparationId:suite.json().preparationId,
-  runtime:{type:'runtime_http',environmentId},executionModel:{providerId:'synthetic',modelId:'not-invoked'},judgeMode:'deterministic',
+  runtime:{type:'runtime_launcher',environmentId},executionModel:{providerId:'synthetic',modelId:'not-invoked'},judgeMode:'deterministic',
   leftVariant:variant(source),rightVariant:variant(candidate),runtimeBindings:{left:{environmentId,skillAssetId:source.assetId},right:{environmentId,skillAssetId:candidate.assetId}}}});
  assert.equal(run.statusCode,200);const jobId=run.json().job.jobId;
  let job;

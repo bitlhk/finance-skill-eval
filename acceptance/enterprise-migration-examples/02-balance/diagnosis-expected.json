@@ -1,0 +1,14 @@
+{
+  "tools": [
+    "get_balance"
+  ],
+  "sharedDependencies": [
+    "AgentScope Toolkit 注册与 context 注入",
+    "auth_sdk: 使用 context.user / app_key 建立业务凭证"
+  ],
+  "toolSpecificDependencies": [
+    "context.service_url: Runtime 提供的业务地址"
+  ],
+  "chain": "Skill → Toolkit → get_balance(context) → auth_sdk → business API",
+  "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
+}

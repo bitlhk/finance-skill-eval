@@ -7,7 +7,7 @@ import { analyzeSkillAndGenerateCases } from "../analyzer.js";
 import { FINANCE_SKILL_EVAL_VERSION } from "../index.js";
 import { renderHtmlReport, type EvaluationReport } from "../report.js";
 import { EvalPackCatalog } from "./catalog.js";
-import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./config.js";
+import { configuredModelRole, loadServiceConfig, type ConfiguredModelRole, type ServiceConfig } from "./config.js";
 import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
@@ -18,9 +18,13 @@ import { SkillStore } from "./skill-store.js";
 import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
 import { MigrationStore } from './migration-store.js';
+import {simpleMigrationSuiteExample} from './simple-migration-suite.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
+import type { MigrationAnalyzer, MigrationImplementer } from './migration-agent.js';
+import type { MigrationSuiteGenerator } from './migration-suite.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
+import { MigrationCodeGenerator } from './migration-code-generator.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -60,9 +64,10 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> = {},
+  overrides: Partial<ServiceConfig> & {migrationModel?:()=>ConfiguredModelRole;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator} = {},
 ): Promise<FastifyInstance> {
-  const config = { ...loadServiceConfig(), ...overrides };
+  const {migrationModel,migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
+  const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   app.addHook('onSend',async(request,reply,payload)=>{
@@ -81,24 +86,31 @@ export async function createEvaluationService(
     preparations.initialize(),
     jobs.initialize(),
   ]);
-  const manager = new EvaluationRunManager({
+  const manager:EvaluationRunManager = new EvaluationRunManager({
     catalog,
     preparations,
     skills,
     environments,
     jobs,
     maxConcurrentRuns: config.maxConcurrentRuns,
+    resolveMigrationRuntime:async runtimeId=>await environments.get(runtimeId),
+    resolveServiceEnvironment:(reference,toolNames)=>migrations.resolveServiceEnvironment(reference,toolNames),
   });
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  const migrations = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments);
+  const migrations:MigrationStore = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments,
+    new MigrationCodeGenerator(migrationModel??(()=>configuredModelRole('MIGRATION'))),migrationAnalyzer,migrationImplementer,migrationSuite);
   // Private workspace only. A public demo must not expose customer migration snapshots.
   app.addHook('preValidation',async(request,reply)=>{
     if ((config.publicDemo || !config.accessToken) && request.url.startsWith('/api/migrations')) return reply.code(403).send({message:'迁移资产仅限配置访问令牌的私有工作区。'});
   });
   app.get('/api/migrations',()=>migrations.list());
   app.get('/api/migrations/target',()=>migrations.target());
+  app.post('/api/migrations/upload',async request=>{
+    if(!Buffer.isBuffer(request.body))throw new Error('Request body must be a migration ZIP');
+    return skills.uploadMigrationZip(request.body);
+  });
   app.post('/api/migrations',request=>migrations.create(request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/upgrade',request=>migrations.upgrade(request.params.id));
   app.get<{Params:{id:string}}>('/api/migrations/:id',request=>migrations.get(request.params.id));
@@ -106,7 +118,23 @@ export async function createEvaluationService(
   app.post<{Params:{id:string}}>('/api/migrations/:id/diagnose',request=>migrations.diagnose(request.params.id,true));
   app.get<{Params:{id:string}}>('/api/migrations/:id/diagnosis',request=>migrations.diagnose(request.params.id));
   app.post<{Params:{id:string}}>('/api/migrations/:id/inspect',request=>migrations.inspect(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/inspect/source',request=>migrations.inspect(request.params.id,true));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/runtime-configuration',request=>migrations.runtimeConfiguration(request.params.id));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/runtime-requirements',request=>migrations.runtimeRequirements(request.params.id));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/runtime-requirements.yaml',async(request,reply)=>reply
+    .type('application/yaml; charset=utf-8')
+    .header('content-disposition','attachment; filename="runtime-build-requirements.yaml"')
+    .send(await migrations.runtimeRequirementsYaml(request.params.id)));
+  app.put<{Params:{id:string;dependencyId:string}}>('/api/migrations/:id/runtime-configuration/:dependencyId',request=>migrations.saveRuntimeDependency(request.params.id,request.params.dependencyId,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/check-business-connection',request=>{const controller=new AbortController();request.raw.once('aborted',()=>controller.abort());return migrations.checkBusinessConnection(request.params.id,request.body,controller.signal)});
   app.get<{Params:{id:string}}>('/api/migrations/:id/inspection',request=>migrations.inspection(request.params.id));
+  app.get<{Params:{id:string;dependencyId:string}}>('/api/migrations/:id/dependencies/:dependencyId/data',request=>migrations.dependencyData(request.params.id,request.params.dependencyId));
+  app.put<{Params:{id:string;dependencyId:string}}>('/api/migrations/:id/dependencies/:dependencyId/data',request=>migrations.supplementDependency(request.params.id,request.params.dependencyId,request.body));
+  app.put<{Params:{id:string;dependencyId:string}}>('/api/migrations/:id/dependencies/:dependencyId/explanation',request=>migrations.explainDependency(request.params.id,request.params.dependencyId,request.body));
+  app.post<{Params:{id:string;dependencyId:string};Querystring:{revision:string;filename:string}}>('/api/migrations/:id/dependencies/:dependencyId/file',request=>{
+    if(!Buffer.isBuffer(request.body))throw Object.assign(new Error('请上传文件'),{statusCode:400});
+    return migrations.uploadDependency(request.params.id,request.params.dependencyId,Number(request.query.revision),request.query.filename??'',request.body);
+  });
   app.put<{Params:{id:string;toolId:string}}>('/api/migrations/:id/tools/:toolId/decision',request=>migrations.decide(request.params.id,request.params.toolId,request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id/plan',request=>migrations.plan(request.params.id));
   app.post<{Params:{id:string}}>('/api/migrations/:id/generate',request=>migrations.generate(request.params.id,request.body));
@@ -116,16 +144,37 @@ export async function createEvaluationService(
   app.post<{Params:{id:string}}>('/api/migrations/:id/verify-target',request=>migrations.verifyTarget(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/validate/technical',request=>{const controller=new AbortController();request.raw.once('aborted',()=>controller.abort());return migrations.validateTechnical(request.params.id,request.body,controller.signal);});
   app.get<{Params:{id:string}}>('/api/migrations/:id/validations/technical',request=>migrations.technicalValidations(request.params.id));
-  app.post<{Params:{id:string}}>('/api/migrations/:id/validate/openjiuwen',request=>migrations.validateOpenJiuwen(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/validate/openjiuwen',async request=>{
+    const body=request.body as {configuration?:{runtime?:{type?:string;environmentId?:string};executionModel?:import('../contracts.js').ModelRef}};
+    const configuration=body?.configuration;
+    if(!configuration)return migrations.validateOpenJiuwen(request.params.id,request.body);
+    if(configuration.runtime?.type!=='runtime_launcher'||!configuration.runtime.environmentId)throw Object.assign(new Error('请选择 Runtime Launcher。'),{statusCode:400});
+    const environment=await environments.get(configuration.runtime.environmentId);
+    if(!environment||environment.type!=='runtime_launcher')throw Object.assign(new Error('Runtime Launcher 不存在。'),{statusCode:400});
+    const inspection=await environments.inspect(environment),capabilities=inspection.capabilities;
+    if(inspection.status!=='ready'||!capabilities)throw Object.assign(new Error(inspection.error??'Runtime Launcher 预检失败。'),{statusCode:400});
+    const requested=configuration.executionModel?.modelId??capabilities.defaultModelId,model=capabilities.models.find(item=>item.modelId===requested);
+    if(!model)throw Object.assign(new Error('所选执行模型不属于这个 Runtime Launcher。'),{statusCode:400});
+    const executionModel={providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,label:model.label??model.upstreamModelId,parameters:{}};
+    return migrations.validateOpenJiuwen(request.params.id,{...(request.body as Record<string,unknown>),configuration:{...configuration,
+      executionModel,leftExecutionModel:executionModel,rightExecutionModel:executionModel}});
+  });
   app.get<{Params:{id:string}}>('/api/migrations/:id/validations/openjiuwen',request=>migrations.openJiuwenValidations(request.params.id));
   app.post<{Params:{id:string}}>('/api/migrations/:id/review',request=>migrations.review(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/suites',request=>migrations.createSuite(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/suites/import',request=>migrations.importSimpleSuite(request.params.id,request.body));
+  app.get('/api/migration-suite-example',()=>simpleMigrationSuiteExample);
+  app.post<{Params:{id:string}}>('/api/migrations/:id/suites/generated',request=>migrations.generateSuite(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimize',request=>migrations.optimize(request.params.id,request.body));
   app.post<{Params:{id:string}}>('/api/migrations/:id/optimized-candidate',request=>migrations.adoptOptimization(request.params.id,request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id/report',request=>migrations.report(request.params.id));
   app.post('/api/migrations/:id/releases',()=>migrations.release());
-  app.get<{Params:{id:string}}>('/api/migrations/:id/export',async(request,reply)=>reply.type('application/zip')
-    .header('content-disposition','attachment; filename="migration-candidate.zip"').send(await migrations.exportCandidate(request.params.id)));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/export',async(request,reply)=>{
+    const report=await migrations.report(request.params.id),project=report.project,name=(project.candidate??project.source).skillId.replace(/[^a-z0-9-]+/giu,'-');
+    const verified=report.verification.targetExecution==='PASSED';
+    return reply.type('application/zip').header('x-migration-acceptance',report.verification.targetExecution)
+      .header('content-disposition',`attachment; filename="${name}${verified?'':'-unverified'}.zip"`).send(await migrations.exportCandidate(request.params.id));
+  });
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
@@ -183,25 +232,20 @@ export async function createEvaluationService(
       environments.list(),
       preparations.list(),
     ]);
+    const launcherRuntimes=(await Promise.all(savedEnvironments.filter(environment=>environment.type==='runtime_launcher').map(async environment=>{
+      const inspection=await environments.inspect(environment);if(inspection.status!=='ready'||!inspection.capabilities)return null;
+      return {runtimeId:environment.environmentId,name:environment.name,runtimeType:environment.runtimeType,endpoint:environment.baseUrl,
+        transport:'runtime_launcher' as const,defaultModelId:inspection.capabilities.defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
+    }))).filter(item=>item!==null);
+    const migrationRuntimes=launcherRuntimes;
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");
-    const executionCatalog = await executionModelCatalog();
+    const executionCatalog = await executionModelCatalog(config.rootDirectory);
     const executionDefault = executionCatalog?.models.find(m => m.modelId === executionCatalog.defaultModelId);
     const judge = configuredModelRole("JUDGE");
     const optimizer = configuredModelRole("OPTIMIZER");
     const evalPacks = catalog.list();
-    const modelMap = new Map<string, { providerId: string; modelId: string; label?: string }>();
-    for (const pack of evalPacks) {
-      for (const model of [pack.models.execution.left, pack.models.execution.right]) {
-        const key = `${model.providerId}:${model.modelId}`;
-        if (!modelMap.has(key)) modelMap.set(key, { ...model, label: model.modelId });
-      }
-    }
-    const executionKey = `${execution.model.providerId}:${execution.model.modelId}`;
-    if (!modelMap.has(executionKey)) {
-      modelMap.set(executionKey, { ...execution.model, label: execution.model.modelId });
-    }
-    const onlineRuntimeReady = savedEnvironments.some(item => item.type === "runtime_http");
+    const onlineRuntimeReady = savedEnvironments.some(item => item.type === "runtime_http"||item.type==='runtime_launcher');
     return {
       schemaVersion: "finance.skill-eval.catalog.v1",
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
@@ -213,7 +257,8 @@ export async function createEvaluationService(
       uploadedSkills,
       preparations: savedPreparations,
       environments: savedEnvironments,
-      models: executionCatalog?.models ?? (execution.configured ? [{ ...execution.model, label: execution.model.modelId }] : [...modelMap.values()]),
+      migrationRuntimes,
+      models: executionCatalog?.models ?? [],
       runtimes: [
         {
           id: "replay",
@@ -232,7 +277,7 @@ export async function createEvaluationService(
         {
           id: "runtime_http",
           label: "外部 Agent Runtime",
-          status: savedEnvironments.some(item => item.type === "runtime_http")
+          status: savedEnvironments.some(item => item.type === "runtime_http") && executionCatalog?.models.some(model => model.availability === "ready")
             ? "ready" : "configuration_required",
           realExecution: true,
           description: "通过标准 HTTP 合同调用 EA、OpenJiuwen Candidate 或其他 Agent Runtime。",
@@ -240,7 +285,7 @@ export async function createEvaluationService(
       ],
       modelRoles: {
         analyzer: { configured: analyzer.configured, model: analyzer.model },
-        execution: { configured: execution.configured || Boolean(executionDefault), model: executionDefault ? modelReference(executionDefault) : execution.model },
+        execution: { configured: Boolean(executionDefault), model: executionDefault ? modelReference(executionDefault) : execution.model },
         directExecution: { configured: execution.configured, model: execution.model },
         judge: { configured: judge.configured, model: judge.model },
         optimizer: { configured: optimizer.configured, model: optimizer.model },
@@ -303,15 +348,17 @@ export async function createEvaluationService(
     return job;
   });
   app.post("/api/runs", async (request, reply) => {
-    if(!config.publicDemo) return reply.code(202).send(await manager.create(request.body));
     const input=runConfigurationSchema.parse(request.body);
+    const execution=input.runtime.type==='runtime_http' ? await resolvePublicExecutionModels(input,config.rootDirectory) : null;
+    const normalizedInput=execution?{...input,executionModel:input.runtimeBindings?execution.rightExecutionModel:undefined,...execution}:input;
+    if(!config.publicDemo) return reply.code(202).send(await manager.create(normalizedInput));
+    if(input.runtimeToolConfig) return reply.code(403).send({message:'运行上下文与鉴权配置仅限私有工作区。'});
     if (input.runtimeBindings) return reply.code(403).send({message:'逐侧 Runtime 迁移仅限私有工作区。'});
     const pack=catalog.list().find(p=>p.packId===input.packId);
     const runtime=input.runtime.type==='runtime_http' ? await environments.get(input.runtime.environmentId) : null;
     if(!pack || !pack.packId.endsWith('-online-v1') || !runtime || runtime.type!=='runtime_http' || input.preparationId || input.skillAssetId || input.includeHoldout) {
       return reply.code(400).send({message:'请选择预制在线评测包与已配置环境。'});
     }
-    const execution=await resolvePublicExecutionModels(input);
     const assets=await skills.list();
     for(const variant of [input.leftVariant,input.rightVariant]) {
       if(!variant) continue;
@@ -319,7 +366,7 @@ export async function createEvaluationService(
         return reply.code(400).send({message:'只能比较当前精选技能的已装配版本。'});
       }
     }
-    const normalized={...input,judgeMode:'model',timeoutMs:310000,executionModel:undefined,...execution,judgeModel:configuredModelRole('JUDGE').model};
+    const normalized={...normalizedInput,judgeMode:'model',timeoutMs:310000,executionModel:undefined,judgeModel:configuredModelRole('JUDGE').model};
     const job=await demo.create(demo.identity(request.headers['x-demo-user']),()=>jobs.list(100).filter(j=>['queued','preparing','running','judging'].includes(j.status)).length,()=>manager.create(normalized));
     return reply.code(202).send(job);
   });

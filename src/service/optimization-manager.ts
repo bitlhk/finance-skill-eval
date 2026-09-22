@@ -31,7 +31,8 @@ export type Optimization = {
 export function optimizationRerunBindings(configuration:RunConfiguration, original:SkillAssetRecord, candidate:SkillAssetRecord) {
   if (!configuration.runtimeBindings) return {};
   const environmentId=configuration.runtimeBindings.right.environmentId;
-  return {runtime:{type:'runtime_http' as const,environmentId},runtimeBindings:{
+  const runtime={type:'runtime_launcher' as const,environmentId};
+  return {runtime,runtimeBindings:{
     left:{environmentId,skillAssetId:original.assetId},right:{environmentId,skillAssetId:candidate.assetId}}};
 }
 
@@ -40,18 +41,18 @@ export function candidateFiles(files: Record<string, string>, changes: Array<{ p
   const seen = new Set<string>();
   for (const change of changes) {
     if (!(change.path === "SKILL.md" || /^references\/[a-zA-Z0-9_/-]+\.md$/u.test(change.path)) || change.path.includes("..") || seen.has(change.path)) {
-      throw new Error("Candidate edits may only change SKILL.md and reference Markdown files");
+      throw new Error("候选只能修改 SKILL.md 与 references 下的 Markdown");
     }
     seen.add(change.path); next[change.path] = change.content;
   }
   const match = next["SKILL.md"]?.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/u);
-  if (!match) throw new Error("Candidate requires valid Skill frontmatter");
+  if (!match) throw new Error("候选需要合法的 Skill frontmatter");
   const original = files["SKILL.md"]?.match(/^---\s*\n([\s\S]*?)\n---/u);
   const identity = original ? parse(original[1]!) : null;
   const metadata = parse(match[1]!);
-  if (!identity?.name || metadata?.name !== identity.name) throw new Error("Optimizer cannot change Skill identity");
+  if (!identity?.name || metadata?.name !== identity.name) throw new Error("优化器不能改变 Skill 身份");
   next["SKILL.md"] = `---\n${stringify({ ...metadata, name: identity.name, version })}---\n\n${match[2]}`;
-  if (Object.values(next).reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 240000) throw new Error("Candidate package exceeds text budget");
+  if (Object.values(next).reduce((sum, text) => sum + Buffer.byteLength(text), 0) > 240000) throw new Error("候选包超出文本大小上限");
   return next;
 }
 
@@ -69,7 +70,7 @@ export class OptimizationManager {
       executionModel:configuration.executionModel??configuredModelRole('EXECUTION').model,judgeModel:configuredModelRole('JUDGE').model});
   }
   async get(id: string): Promise<Optimization> {
-    if (!/^opt-[a-f0-9-]+$/u.test(id)) throw new Error("Invalid optimization id");
+    if (!/^opt-[a-f0-9-]+$/u.test(id)) throw new Error("优化记录 ID 不合法");
     // A live task can finish while readJson is reading an older atomic snapshot.
     const wasActive = this.active.has(id);
     const item = await readJson<Optimization>(path.join(this.directory, `${id}.json`));
@@ -98,7 +99,7 @@ export class OptimizationManager {
   async create(sourceJobId: string): Promise<Optimization> {
     if (this.active.size) throw new Error("已有一轮 Skill 优化正在进行");
     const source = this.options.jobs.get(sourceJobId);
-    if (!source?.report || source.status !== "completed" || source.configuration.runtime.type !== "runtime_http") throw new Error("请先完成一轮在线评测");
+    if (!source?.report || source.status !== "completed" || source.configuration.runtime.type!=='runtime_launcher') throw new Error("请先使用 Runtime Launcher 完成一轮在线评测");
     if (!source.report.cases.length) throw new Error('评测没有实际执行案例，不启动优化');
     if (source.report.cases.some(c => c.left.status !== "completed" || c.right.status !== "completed" || !c.judge)) throw new Error("运行或阅卷不完整，应修复环境后重测，不能据此修改 Skill");
     if (source.report.cases.some(c => [...c.left.toolCalls, ...c.right.toolCalls].some(t => t.status === "failed"))) throw new Error("存在工具失败，应先排查环境，不能将运行故障当作 Skill 缺陷");
@@ -182,7 +183,7 @@ export class OptimizationManager {
       const variant = (a: SkillAssetRecord) => ({ mode: "skill_version", skillId: a.skillId, version: a.version, artifactSha256: a.artifactSha256 });
       const rerun = await this.options.runs.create({ ...source.configuration, caseSource: "fixed", selectedCaseIds: source.questionSet ? [] : source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => c.caseId),
         ...optimizationRerunBindings(source.configuration,original!,item.candidate!),
-        includeHoldout: true, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model" }, source.questionSet);
+        includeHoldout: true, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model",evaluationMode:"pairwise" }, source.questionSet);
       item.rerunJobId = rerun.jobId;
       await this.stage(item, "reevaluating");
       while (true) {

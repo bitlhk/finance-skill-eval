@@ -1,0 +1,14 @@
+{
+  "tools": [
+    "refund_eligibility"
+  ],
+  "sharedDependencies": [
+    "AgentScope Toolkit 注册、preset context 与 ToolResponse 返回类型",
+    "auth_sdk: 使用 context 建立业务凭证"
+  ],
+  "toolSpecificDependencies": [
+    "ToolResponse.metadata.businessResult: 原 Runtime 结果适配边界"
+  ],
+  "chain": "Skill → Toolkit 注册 → async Tool → ToolResponse → http_client/auth_sdk → business API",
+  "note": "人工验收目标，不作为 A2 的输出输入或伪造分析结果。"
+}

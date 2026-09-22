@@ -7,16 +7,26 @@ rem The service is deliberately bound to loopback for enterprise workstation use
 for %%I in ("%~dp0..") do set "PROJECT_ROOT=%%~fI"
 set "VENV_DIR=%PROJECT_ROOT%\.venv-openjiuwen"
 set "VENV_PYTHON=%VENV_DIR%\Scripts\python.exe"
-set "REQUIREMENTS=%PROJECT_ROOT%\integrations\openjiuwen\requirements.txt"
+set "RUNTIME_PROJECT=%PROJECT_ROOT%\integrations\openjiuwen"
+set "RUNTIME_LOCK=%RUNTIME_PROJECT%\uv.lock"
 set "FORCE_SETUP=0"
+
+rem uv target environment. Override with UV_PROJECT_ENVIRONMENT; defaults to the venv below.
+if not defined UV_PROJECT_ENVIRONMENT set "UV_PROJECT_ENVIRONMENT=%VENV_DIR%"
+
+rem Load local machine config from .env.local (written by scripts/bootstrap-local.mjs).
+rem cmd does not read it on its own. Existing environment variables win over the file.
+set "LOCAL_ENV=%PROJECT_ROOT%\.env.local"
+if exist "%LOCAL_ENV%" for /f "usebackq eol=# tokens=1* delims==" %%A in ("%LOCAL_ENV%") do if not "%%A"=="" if not defined %%A set "%%A=%%B"
 
 if /I "%~1"=="--setup" set "FORCE_SETUP=1"
 if not "%~1"=="" if /I not "%~1"=="--setup" goto :usage
 
 if not defined FINANCE_RUNTIME_CONFIG set "FINANCE_RUNTIME_CONFIG=%PROJECT_ROOT%\.runtime.local.json"
 
-if not exist "%REQUIREMENTS%" (
-  echo [ERROR] Requirements file not found: "%REQUIREMENTS%"
+if not exist "%RUNTIME_LOCK%" (
+  echo [ERROR] Dependency lock not found: "%RUNTIME_LOCK%"
+  echo The runtime version and its transitive dependencies are pinned there.
   exit /b 1
 )
 
@@ -70,10 +80,15 @@ if not exist "%VENV_DIR%\Scripts\uv.exe" goto :install_dependencies
 goto :validate_config
 
 :install_dependencies
-echo [INFO] Installing the pinned OpenJiuwen dependencies...
-"%VENV_PYTHON%" -m pip install --disable-pip-version-check -r "%REQUIREMENTS%"
+rem The environment comes from uv.lock: single source of runtime version and transitive deps.
+where uv.exe >nul 2>nul
+if errorlevel 1 goto :uv_missing
+echo [INFO] Installing the locked OpenJiuwen dependencies...
+uv sync --locked --project "%RUNTIME_PROJECT%"
 if errorlevel 1 (
   echo [ERROR] Dependency installation failed. Check the Python package source and network policy.
+  echo If uv reports that the lock is out of date, re-lock with:
+  echo   uv lock --project "%RUNTIME_PROJECT%"
   exit /b 1
 )
 
@@ -110,4 +125,10 @@ exit /b 1
 
 :venv_failed
 echo [ERROR] Could not create "%VENV_DIR%".
+exit /b 1
+
+:uv_missing
+echo [ERROR] uv was not found on PATH.
+echo The runtime environment is installed from integrations\openjiuwen\uv.lock,
+echo so uv is required (the static scanner uses it too).
 exit /b 1

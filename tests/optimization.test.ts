@@ -7,12 +7,17 @@ import { loadEvalPack } from "../src/eval-pack.js";
 const files = { "SKILL.md": "---\nname: test-skill\nversion: 1.0.0\n---\n\nOriginal", "references/sop.md": "Original SOP" };
 describe("bounded candidate generation", () => {
   it('rebinds both optimization sides to the target Runtime and exact current/candidate assets',()=>{
-    const configuration=runConfigurationSchema.parse({packId:'p',runtime:{type:'runtime_http',environmentId:'a'},
+    const configuration=runConfigurationSchema.parse({packId:'p',runtime:{type:'runtime_launcher',environmentId:'a'},
       runtimeBindings:{left:{environmentId:'a',skillAssetId:'source'},right:{environmentId:'b',skillAssetId:'normalized'}},
       executionModel:{providerId:'p',modelId:'m'},leftVariant:{mode:'skill_version',skillId:'s',version:'1'},rightVariant:{mode:'skill_version',skillId:'s',version:'2'}});
     const result=optimizationRerunBindings(configuration,{assetId:'normalized'} as SkillAssetRecord,{assetId:'optimized'} as SkillAssetRecord);
     expect(result.runtimeBindings).toEqual({left:{environmentId:'b',skillAssetId:'normalized'},right:{environmentId:'b',skillAssetId:'optimized'}});
     expect(configuration.runtimeBindings!.right.skillAssetId).toBe('normalized');
+  });
+  it('preserves Runtime Launcher transport when rebinding an optimized candidate',()=>{
+    const variant={mode:'skill_version' as const,skillId:'s',version:'1',artifactSha256:'a'.repeat(64)};
+    const configuration=runConfigurationSchema.parse({packId:'p',runtime:{type:'runtime_launcher',environmentId:'launcher'},executionModel:{providerId:'runtime',modelId:'model'},leftVariant:variant,rightVariant:variant,runtimeBindings:{left:{environmentId:'launcher',skillAssetId:'old-left'},right:{environmentId:'launcher',skillAssetId:'old-right'}}});
+    expect(optimizationRerunBindings(configuration,{assetId:'original'} as SkillAssetRecord,{assetId:'candidate'} as SkillAssetRecord)).toMatchObject({runtime:{type:'runtime_launcher',environmentId:'launcher'},runtimeBindings:{left:{skillAssetId:'original'},right:{skillAssetId:'candidate'}}});
   });
   it("preserves original files and locks a distinct candidate version", () => {
     const next = candidateFiles(files, [{ path: "references/sop.md", content: "Improved SOP" }], "1.0.0-candidate.abc");
@@ -24,7 +29,7 @@ describe("bounded candidate generation", () => {
     expect(() => candidateFiles(files, [{ path, content: "x" }], "candidate")).toThrow();
   });
   it("does not let optimizer change Skill identity", () => {
-    expect(() => candidateFiles(files, [{ path: "SKILL.md", content: files["SKILL.md"].replace("test-skill", "other-skill") }], "candidate")).toThrow(/identity/);
+    expect(() => candidateFiles(files, [{ path: "SKILL.md", content: files["SKILL.md"].replace("test-skill", "other-skill") }], "candidate")).toThrow(/身份/);
   });
   it("loads holdout independently of development cases", async () => {
     const pack = await loadEvalPack("packs/finance/wealth-online/eval.yaml");

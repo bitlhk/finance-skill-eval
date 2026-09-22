@@ -98,32 +98,32 @@ export class SkillStore {
     const root = path.join(this.assetsDirectory, assetId);
     const files: Record<string, Uint8Array> = {};
     for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
-      if (entry.isSymbolicLink()) throw new Error('Skill assets cannot contain symbolic links');
+      if (entry.isSymbolicLink()) throw new Error('Skill 包不能包含符号链接');
       if (!entry.isFile()) continue;
       const file = path.join(entry.parentPath, entry.name);
       files[path.relative(root, file).replaceAll(path.sep, '/')]=await readFile(file);
     }
     const entries=Object.entries(files).sort(([a],[b])=>a.localeCompare(b));
     const digest=fingerprint(entries.map(([name,content])=>({name,content:Buffer.from(content).toString('base64')})));
-    if (entries.length!==record.fileCount || digest!==record.artifactSha256) throw new Error('Skill snapshot integrity mismatch');
+    if (entries.length!==record.fileCount || digest!==record.artifactSha256) throw new Error('Skill 快照摘要不一致');
     return files;
   }
 
-  async uploadZip(buffer: Buffer): Promise<SkillAssetRecord> {
+  async uploadZip(buffer: Buffer, options: { migrationInput?: boolean; version?: string } = {}): Promise<SkillAssetRecord> {
     if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
-      throw new Error("Skill ZIP must be between 1 byte and 8 MB");
+      throw new Error("Skill ZIP 大小必须在 1 字节到 8 MB 之间");
     }
     let declaredBytes = 0, declaredCount = 0;
     const archive = unzipSync(buffer, { filter: file => {
       if (file.name.endsWith("/")) return false;
       safeArchivePath(file.name);
       declaredBytes += file.originalSize; declaredCount += 1;
-      if (declaredBytes > 16 * 1024 * 1024 || declaredCount > 200) throw new Error("Skill ZIP exceeds extraction limits");
+      if (declaredBytes > 16 * 1024 * 1024 || declaredCount > 200) throw new Error("Skill ZIP 超过解压限制");
       return true;
     } });
     const files = Object.entries(archive);
     if (files.length === 0 || files.length > 200) {
-      throw new Error("Skill ZIP must contain between 1 and 200 files");
+      throw new Error("Skill ZIP 的文件数必须在 1 到 200 之间");
     }
     let uncompressedBytes = 0;
     const normalizedFiles = files.map(([name, content]) => {
@@ -131,22 +131,28 @@ export class SkillStore {
       return [safeArchivePath(name), content] as const;
     });
     if (uncompressedBytes > 16 * 1024 * 1024) {
-      throw new Error("Uncompressed Skill content exceeds 16 MB");
+      throw new Error("解压后的 Skill 内容超过 16 MB");
     }
     const skillCandidates = normalizedFiles
       .map(([name]) => name)
       .filter(name => /(^|\/)skill\.md$/iu.test(name))
       .sort((left, right) => left.split("/").length - right.split("/").length);
-    const skillFile = skillCandidates[0];
-    if (!skillFile) throw new Error("Skill ZIP does not contain SKILL.md");
-    if (skillCandidates.length > 1) throw new Error('Skill ZIP has ambiguous root Skill files: multiple Skills are not supported; upload each Skill separately');
+    // Migration input is not required to sit under skill/: pick the shallowest
+    // readable instruction file wherever the tree puts it.
+    const migrationFallback = options.migrationInput
+      ? normalizedFiles.map(([name])=>name).filter(name=>/\.(?:md|mdx|txt)$/iu.test(name))
+        .sort((left,right)=>left.split('/').length-right.split('/').length||left.localeCompare(right))[0]
+      : undefined;
+    const skillFile = skillCandidates.find(name=>name==='skill/SKILL.md')??skillCandidates[0]??migrationFallback;
+    if (!skillFile) throw new Error(options.migrationInput?'Migration ZIP needs a readable instruction file (.md/.mdx/.txt) anywhere in the archive':'Skill ZIP does not contain SKILL.md');
+    if (skillCandidates.length > 1&&!options.migrationInput) throw new Error('Skill ZIP 根目录有多个 Skill 入口：不支持一个包里放多个 Skill，请分别上传');
     const sourceBytes = normalizedFiles.find(([name]) => name === skillFile)?.[1];
-    if (!sourceBytes) throw new Error("Unable to read SKILL.md from archive");
+    if (!sourceBytes) throw new Error("无法从压缩包里读出 SKILL.md");
     const source = Buffer.from(sourceBytes).toString("utf8");
-    if (!source.trim()) throw new Error("SKILL.md is empty");
+    if (!source.trim()&&!options.migrationInput) throw new Error("SKILL.md 是空的");
     const metadata = parseFrontmatter(source);
     const skillId = asText(metadata.name) ?? `uploaded-skill-${randomUUID().slice(0, 8)}`;
-    const version = asText(metadata.version) ?? "0.0.0-upload";
+    const version = asText(options.version) ?? asText(metadata.version) ?? "0.0.0-upload";
     normalizedFiles.sort(([a], [b]) => a.localeCompare(b));
     if (new Set(normalizedFiles.map(([name]) => name)).size !== normalizedFiles.length) throw new Error("Duplicate archive paths");
     const digest = fingerprint(normalizedFiles.map(([name, content]) => ({
@@ -178,5 +184,16 @@ export class SkillStore {
     };
     await writeJsonAtomic(path.join(this.recordsDirectory, `${assetId}.json`), record);
     return record;
+  }
+
+  async uploadMigrationZip(buffer: Buffer): Promise<SkillAssetRecord> {
+    // Import stays thin: unzip, digest, safety limits. It does not judge the
+    // directory layout -- real source projects do not follow a fixed one, and
+    // A2 is an agent that can inspect the tree itself. Credential files are not
+    // rejected here; the export path is the gate that matters.
+    if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
+      throw new Error("迁移 ZIP 大小必须在 1 字节到 8 MB 之间");
+    }
+    return this.uploadZip(buffer, { migrationInput: true });
   }
 }

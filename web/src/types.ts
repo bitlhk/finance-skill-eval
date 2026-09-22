@@ -27,6 +27,7 @@ export type EvalPackSummary = {
 export type ModelRef = {
   providerId: string;
   modelId: string;
+  upstreamModelId?: string;
   label?: string;
   providerLabel?: string;
   availability?: "ready" | "unverified" | "unavailable";
@@ -82,7 +83,8 @@ export type Preparation = {
   createdAt: string;
 };
 
-export type Environment = Omit<import('../../src/shared/contracts/environment').EnvironmentRecord, 'createdAt' | 'updatedAt'>;
+type EnvironmentRecord=import('../../src/shared/contracts/environment').EnvironmentRecord;
+export type Environment=EnvironmentRecord extends infer Item?Item extends EnvironmentRecord?Omit<Item,'createdAt'|'updatedAt'>:never:never;
 
 export type EnvironmentInspection = {
   status: "ready" | "failed";
@@ -97,6 +99,17 @@ export type EnvironmentInspection = {
     toolNames: string[];
     error: string | null;
   }>;
+  capabilities?:{runtime:{type:string;version:string};models:Array<{modelId:string;upstreamModelId:string;label?:string}>;defaultModelId:string;features:Record<string,boolean>;limits:Record<string,number>};
+};
+
+export type MigrationRuntime = {
+  runtimeId: string;
+  name: string;
+  runtimeType: "openjiuwen";
+  endpoint: string;
+  defaultModelId: string;
+  models: ModelRef[];
+  transport:'runtime_launcher';
 };
 
 export type Catalog = {
@@ -107,6 +120,7 @@ export type Catalog = {
   uploadedSkills: SkillAsset[];
   preparations: Preparation[];
   environments: Environment[];
+  migrationRuntimes: MigrationRuntime[];
   models: ModelRef[];
   runtimes: Array<{
     id: "replay" | "direct_model" | "runtime_http";
@@ -164,6 +178,8 @@ export type EvaluationJob = {
       left: Evidence;
       right: Evidence;
       judge: null | {
+        goalAssessment?:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>};
+        serviceComparison?:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;originalEvidence:string;candidateEvidence:string}>};
         winner: "left" | "right" | "tie";
         confidence: string;
         summary: string;

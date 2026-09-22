@@ -9,7 +9,9 @@ export async function importMigrationFiles(files:File[],consume:(zip:Uint8Array,
     try{
       if(file.size>8*1024*1024)throw new Error('单个文件不能超过 8 MB');
       const ext=file.name.split('.').at(-1)?.toLowerCase();
-      if(ext!=='zip'&&ext!=='md')throw new Error('仅支持单 Skill ZIP 或独立 Markdown；代码需连同 SKILL.md 打包');
+      if(ext!=='zip'&&ext!=='md')throw new Error('仅支持源码 ZIP 或独立 Markdown；工具源码请连同说明文件一起打包');
+      // Preserve source layout. Archive safety is checked by the migration upload endpoint;
+      // identifying the Skill and its dependencies belongs to diagnosis.
       const bytes=ext==='zip'?new Uint8Array(await file.arrayBuffer()):zipSync({'SKILL.md':strToU8(await file.text())});
       await consume(bytes,file.name);results.push({name:file.name,status:'IMPORTED'});
     }catch(e){const message=e instanceof Error?e.message:String(e);results.push({name:file.name,status:'FAILED',error:/invalid zip|unexpected EOF/i.test(message)?'ZIP 文件损坏或格式不正确，请重新打包':message});}

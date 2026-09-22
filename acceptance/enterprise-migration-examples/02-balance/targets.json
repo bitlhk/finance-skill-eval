@@ -1,0 +1,31 @@
+[
+  {
+    "caseId": "BALANCE-OK",
+    "input": {
+      "account_id": "ACC-001"
+    },
+    "expected": {
+      "account_id": "ACC-001",
+      "currency": "CNY",
+      "balance": "1280.50"
+    }
+  },
+  {
+    "caseId": "BALANCE-DENIED",
+    "input": {
+      "account_id": "ACC-002"
+    },
+    "expected": {
+      "error": "PERMISSION_DENIED"
+    }
+  },
+  {
+    "caseId": "BALANCE-MISSING",
+    "input": {
+      "account_id": "ACC-404"
+    },
+    "expected": {
+      "error": "ACCOUNT_NOT_FOUND"
+    }
+  }
+]

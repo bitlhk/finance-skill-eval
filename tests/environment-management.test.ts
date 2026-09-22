@@ -63,6 +63,15 @@ describe("environment registry", () => {
     expect(fetch.mock.calls[2]?.[1]).toMatchObject({ redirect: "error" });
   });
 
+  it('discovers Runtime Launcher capabilities without pre-registering models or MCPs',async()=>{
+    const {store}=await fixture();
+    const launcher=await store.create({name:'Launcher',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://127.0.0.1:9000'});
+    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'deepseek-v4'}],defaultModelId:'execution',features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
+    expect(await store.inspect(launcher)).toMatchObject({status:'ready',capabilities});
+    expect(createEnvironmentSchema.safeParse({name:'remote',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://runtime.example.com'}).success).toBe(false);
+  });
+
   it("serves edit and delete through existing authentication hooks", async () => {
     const { directory } = await fixture();
     const app = await createEvaluationService({ dataDirectory: directory, rootDirectory: path.resolve('.'), accessToken: "test-secret" });

@@ -39,9 +39,11 @@ export type RuntimeEvent = {
   status?: string;
 };
 
+export type RuntimePrepareContext={runId:string;signal?:AbortSignal};
+
 export interface RuntimeAdapter {
   readonly adapterId: string;
-  prepare?(): Promise<void>;
+  prepare?(context:RuntimePrepareContext): Promise<void>;
   execute(request: RuntimeExecutionRequest): Promise<RuntimeExecutionEvidence>;
   cleanup?(): Promise<void>;
 }

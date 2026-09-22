@@ -1,0 +1,75 @@
+{
+  "summary": "员工余额查询固定测试集；使用模型 Judge 根据业务目标判定。",
+  "cases": [
+    {
+      "caseId": "BALANCE-OK",
+      "name": "查询 ACC-001 的余额。",
+      "taskMode": "single_turn",
+      "prompt": "查询 ACC-001 的余额。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "get_balance"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"account_id\": \"ACC-001\", \"currency\": \"CNY\", \"balance\": \"1280.50\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "BALANCE-DENIED",
+      "name": "查询 ACC-002 的余额。",
+      "taskMode": "single_turn",
+      "prompt": "查询 ACC-002 的余额。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "get_balance"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"error\": \"PERMISSION_DENIED\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "BALANCE-MISSING",
+      "name": "查询 ACC-404 的余额。",
+      "taskMode": "single_turn",
+      "prompt": "查询 ACC-404 的余额。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "get_balance"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"error\": \"ACCOUNT_NOT_FOUND\"}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    }
+  ],
+  "holdoutCases": []
+}

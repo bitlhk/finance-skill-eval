@@ -17,6 +17,8 @@ export type PreparedEvaluation = {
   source: "ai_generated" | "manual";
   evaluationContext: EvaluationContextSnapshot | null;
   createdAt: string;
+  assessmentMode?:'natural_language';
+  comparisonOnly?:boolean;
 };
 
 export class PreparationStore {
@@ -53,6 +55,8 @@ export class PreparationStore {
     cases: EvalCase[];
     holdoutCases?: EvalCase[];
     source: PreparedEvaluation["source"];
+    assessmentMode?:'natural_language';
+    comparisonOnly?:boolean;
     evaluationContext?: EvaluationContextSnapshot | null;
   }): Promise<PreparedEvaluation> {
     const record: PreparedEvaluation = {
@@ -65,6 +69,8 @@ export class PreparationStore {
       cases: input.cases,
       holdoutCases: input.holdoutCases ?? [],
       source: input.source,
+      ...(input.assessmentMode?{assessmentMode:input.assessmentMode}:{}),
+      ...(input.comparisonOnly?{comparisonOnly:true}:{}),
       evaluationContext: input.evaluationContext ?? null,
       createdAt: new Date().toISOString(),
     };
@@ -107,6 +113,8 @@ export class PreparationStore {
       metadata: {
         source: input.preparation.source,
         preparationId: input.preparation.preparationId,
+        ...(input.preparation.assessmentMode?{assessmentMode:input.preparation.assessmentMode}:{}),
+        ...(input.preparation.comparisonOnly?{comparisonOnly:'true'}:{}),
       },
     };
     const judgeProfile = {

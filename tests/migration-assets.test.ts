@@ -16,13 +16,13 @@ it('imports legacy lowercase metadata without changing bytes, and rejects ambigu
   expect(record.skillId).toBe('legacy-method');expect(record.version).toBe('0.0.0-upload');
   expect(await store.readSource(record.assetId)).toBe(source);
   expect(Object.keys(await store.readArchive(record.assetId))).toHaveLength(2);
-  await expect(store.uploadZip(Buffer.from(zipSync({'skill.md':strToU8(source),'SKILL.md':strToU8(source)})))).rejects.toThrow('ambiguous');
+  await expect(store.uploadZip(Buffer.from(zipSync({'skill.md':strToU8(source),'SKILL.md':strToU8(source)})))).rejects.toThrow('多个 Skill 入口');
 });
 it('detects changed on-disk snapshots instead of trusting metadata',async()=>{
   const dir=await directory(),store=new SkillStore(dir);await store.initialize();
   const record=await store.uploadZip(Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: example\nversion: 1\n---\nRead only')})));
   await writeFile(path.join(dir,'skills/assets',record.assetId,'SKILL.md'),'changed');
-  await expect(store.readArchive(record.assetId)).rejects.toThrow('integrity');
+  await expect(store.readArchive(record.assetId)).rejects.toThrow('摘要不一致');
 });
 it('edits a separate version, retains unsupported files and exports them inertly without claiming release',async()=>{
   const dir=await directory();
@@ -47,10 +47,8 @@ it('edits a separate version, retains unsupported files and exports them inertly
     const exported=await app.inject({url:`/api/migrations/${id}/export`,headers});expect(exported.statusCode).toBe(200);
     const archive=unzipSync(exported.rawPayload);
     expect(Buffer.from(archive['helper.py']!).toString()).toBe('raise Exception("not executed")');
-    const manifest=JSON.parse(Buffer.from(archive['migration-manifest.json']!).toString());
-    expect(manifest.executionPolicy).toBe('INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION');
-    expect(manifest.dependencies).toBe('NOT_VALIDATED');
-    expect(JSON.parse(Buffer.from(archive['migration-report.json']!).toString()).professionalAcceptance).toBe('NOT_REVIEWED');
+    expect(archive['migration-manifest.json']).toBeUndefined();
+    expect(archive['migration-report.json']).toBeUndefined();
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/releases`,headers})).statusCode).toBe(409);
   } finally {await app.close();}
 });

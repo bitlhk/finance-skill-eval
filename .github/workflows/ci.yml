@@ -19,6 +19,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # The platform starts delivered Python services with `uv run`, and the skeleton check needs
+      # it for the Python skeleton. Both are steps below.
+      - uses: astral-sh/setup-uv@v7
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,14 +31,21 @@ jobs:
       - run: python -m pip install uv==0.12.13
       - run: pnpm check
       - run: pnpm test
-      - run: python -m unittest integrations.openjiuwen.test_script_process
+      - run: python -m unittest integrations.openjiuwen.test_script_process integrations.openjiuwen.test_instance_manager
       - run: pnpm build
+      - name: Run the MCP skeletons the skill package hands the agent
+        run: pnpm test:skeleton:mcp
       - name: Compile native target (no live credentials or model calls)
         run: mvn -B -f examples/migration-native-host/pom.xml package
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Environment management browser regression
-        run: node scripts/verify-environment-ui.mjs
       - name: Private subpath build
         run: VITE_PRIVATE_WORKSPACE=true pnpm exec vite build --base=/migration/ --outDir=../web-dist-private
-      - name: Authenticated synthetic browser regression
+      - name: Authenticated browser regression, on the private subpath
         run: FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS=1 MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs
+      - name: Keep the failure picture when the browser check fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-ui-failure
+          path: reports/migration-v2-ui/failure.png
+          if-no-files-found: ignore

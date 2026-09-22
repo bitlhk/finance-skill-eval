@@ -1,0 +1,81 @@
+{
+  "summary": "采购审批助手固定测试集；使用模型 Judge 根据业务目标判定。",
+  "cases": [
+    {
+      "caseId": "PROCUREMENT-OK",
+      "name": "检查 PO-001 是否可以批准。",
+      "taskMode": "single_turn",
+      "prompt": "检查 PO-001 是否可以批准。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "get_request",
+        "check_budget",
+        "check_supplier"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"request_id\": \"PO-001\", \"approved\": true, \"reasons\": []}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "PROCUREMENT-BUDGET",
+      "name": "检查 PO-002 是否可以批准。",
+      "taskMode": "single_turn",
+      "prompt": "检查 PO-002 是否可以批准。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "get_request",
+        "check_budget",
+        "check_supplier"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"request_id\": \"PO-002\", \"approved\": false, \"reasons\": [\"BUDGET_EXCEEDED\"]}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    },
+    {
+      "caseId": "PROCUREMENT-SUPPLIER",
+      "name": "检查 PO-003 是否可以批准。",
+      "taskMode": "single_turn",
+      "prompt": "检查 PO-003 是否可以批准。",
+      "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
+      "requiredTools": [
+        "get_request",
+        "check_budget",
+        "check_supplier"
+      ],
+      "rubric": [
+        {
+          "criterionId": "business-result",
+          "label": "业务结果一致",
+          "description": "必须保留目标中的字段、金额精度、权限或拒绝原因：{\"request_id\": \"PO-003\", \"approved\": false, \"reasons\": [\"SUPPLIER_INACTIVE\"]}",
+          "dimension": "business_completeness",
+          "weight": 1,
+          "required": true,
+          "allOf": [],
+          "anyOf": [],
+          "noneOf": []
+        }
+      ]
+    }
+  ],
+  "holdoutCases": []
+}

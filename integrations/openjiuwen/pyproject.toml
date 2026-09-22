@@ -1,0 +1,19 @@
+[project]
+name = "finance-skill-eval-openjiuwen-runtime"
+version = "1.0.0"
+description = "Local OpenJiuwen runtime for Skill evaluation and Tool migration"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "openjiuwen==0.1.17.post1",
+  "fastapi==0.141.1",
+  "uvicorn==0.52.4",
+  "fastmcp==2.14.7",
+  "opentelemetry-sdk==1.44.0",
+  "opentelemetry-exporter-otlp==1.44.0",
+  "uv==0.12.13",
+]
+
+# 这是一个依赖清单，不是要构建安装的包。声明 false 后 `uv sync` 只装依赖，
+# 不会尝试构建/安装本项目自身。
+[tool.uv]
+package = false

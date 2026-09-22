@@ -22,8 +22,7 @@ try{
  for(const [p,type] of [['financial_data_tool.py','SDK_IMPORT'],['file_tool.py','SDK_RESULT'],['file_tool.py','TOOL_REGISTRATION'],['financial_data_tool.py','OMITTED_IMPLEMENTATION'],['short_term_borrowing_analysis/skill.md','RESOURCE_INJECTION']])
    assert(d.findings.some(f=>f.path===p&&f.dependencyType===type),`${p}/${type}`);
  assert(d.findings.filter(f=>f.dependencyType==='TOOL_REGISTRATION').every(f=>f.layer==='HOST'));
- const target=await post('/api/environments',{name:'Offline registered target - not contacted',type:'runtime_http',runtimeType:'openjiuwen',endpoint:'http://127.0.0.1:1/execute'});
- const candidate=await post(`/api/migrations/${project.id}/generate`,{runtime:'openjiuwen',environmentId:target.environmentId,intent:'portable_method_and_adapters',baseAssetId:asset.assetId});
+ const candidate=await post(`/api/migrations/${project.id}/generate`,{runtime:'openjiuwen',intent:'portable_method_and_adapters',baseAssetId:asset.assetId});
  const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});assert.equal(exported.statusCode,200);
  const archive=unzipSync(exported.rawPayload);
  for(const [p,bytes] of Object.entries(files)){if(p!==asset.skillFile)assert(Buffer.from(bytes).equals(Buffer.from(archive[p])));}

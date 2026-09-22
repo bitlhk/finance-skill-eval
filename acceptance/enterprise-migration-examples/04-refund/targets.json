@@ -1,0 +1,36 @@
+[
+  {
+    "caseId": "REFUND-OK",
+    "input": {
+      "order_id": "RF-001"
+    },
+    "expected": {
+      "order_id": "RF-001",
+      "eligible": true,
+      "currency": "CNY",
+      "refundable_amount": "100.00"
+    }
+  },
+  {
+    "caseId": "REFUND-REJECTED",
+    "input": {
+      "order_id": "RF-002"
+    },
+    "expected": {
+      "order_id": "RF-002",
+      "eligible": false,
+      "reason": "STATUS_NOT_REFUNDABLE"
+    }
+  },
+  {
+    "caseId": "REFUND-MISSING",
+    "input": {
+      "order_id": "RF-404"
+    },
+    "expected": {
+      "order_id": "RF-404",
+      "eligible": false,
+      "reason": "ORDER_NOT_FOUND"
+    }
+  }
+]

@@ -12,6 +12,8 @@ export type ResolvedSkillSource = {
   instructions: string;
   files?: Record<string, string>;
   canonicalArchive?: string;
+  archiveBase64?:string;
+  archiveSha256?:string;
 };
 
 export type DirectModelRuntimeOptions = {

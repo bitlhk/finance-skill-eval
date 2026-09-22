@@ -1,4 +1,4 @@
-import type { RuntimeAdapter, RuntimeExecutionRequest } from './adapters.js';
+import type { RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 
 /** A routing wrapper, not another execution engine. Both sides have their own lifecycle. */
 export class SideRuntimeAdapter implements RuntimeAdapter {
@@ -7,10 +7,10 @@ export class SideRuntimeAdapter implements RuntimeAdapter {
   constructor(private readonly sides: {left: RuntimeAdapter; right: RuntimeAdapter}) {
     this.adapterId = `side-runtime:${sides.left.adapterId}|${sides.right.adapterId}`;
   }
-  async prepare(): Promise<void> {
+  async prepare(context:RuntimePrepareContext): Promise<void> {
     for (const adapter of [this.sides.left, this.sides.right]) {
       this.started.push(adapter);
-      await adapter.prepare?.();
+      await adapter.prepare?.(context);
     }
   }
   async execute(request: RuntimeExecutionRequest) {
