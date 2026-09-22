@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { zipSync, strToU8 } from 'fflate';
+import { zipSync } from 'fflate';
 import type { SkillStore } from './skill-store.js';
 import type { EvaluationRunManager } from './run-manager.js';
 import type { EvaluationJobStore } from './job-store.js';
@@ -26,6 +25,7 @@ import { MigrationTechnicalValidationWorkflow } from '../migration/application/m
 import { MigrationEvaluationService } from '../migration/application/migration-evaluation-service.js';
 import { MigrationOpenJiuwenService } from '../migration/application/migration-openjiuwen-service.js';
 import { MigrationOptimizationService } from '../migration/application/migration-optimization-service.js';
+import { MigrationExportService } from '../migration/application/migration-export-service.js';
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
@@ -40,6 +40,7 @@ export class MigrationStore {
   private readonly evaluationService: MigrationEvaluationService;
   private readonly openJiuwenService: MigrationOpenJiuwenService;
   private readonly optimizationService: MigrationOptimizationService;
+  private readonly exportService: MigrationExportService;
   constructor(private root:string, private skills:SkillStore, runs:EvaluationRunManager,
     jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
     optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -60,6 +61,7 @@ export class MigrationStore {
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations, optimizers, diagnostics, environments);
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments);
+    this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -151,36 +153,6 @@ export class MigrationStore {
   async adoptOptimization(id:string,input:unknown) {return this.optimizationService.adopt(id,input);}
   async validate(id:string,input:unknown) {return this.evaluationService.validate(id,input);}
   async report(id:string) {return this.evaluationService.report(id);}
-  async exportCandidate(id:string) {
-    const value=await this.get(id);
-    if (!value.candidate) return conflict('请先生成候选');
-    const files=await this.skills.readArchive(value.candidate.assetId);
-    if (['migration-manifest.json','migration-report.json'].some(name=>name in files)) return conflict('候选里已存在导出要用的元数据路径，未覆盖任何文件');
-    const report=await this.report(id);
-    for(const [name,bytes] of Object.entries(files)){
-      if(/(^|\/)(\.env(?:\..*)?|access-token|id_rsa|id_ed25519)$|\.(pem|key)$/i.test(name)||/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:api[_-]?key|password|secret|token)\s*[:=]\s*["'][^"'\n]{8,}["']/i.test(Buffer.from(bytes).toString()))
-        return conflict('候选可能包含凭据，请先检查并移除敏感配置；未导出任何文件');
-    }
-    // V2 exports are the standard Skill/Tool delivery itself. Migration evidence
-    // remains available from /report and must not pollute the specified package.
-    if(value.schemaVersion==='finance.skill-migration.v2')return Buffer.from(zipSync(files));
-    const state=report.verification.targetExecution==='PASSED'?'TARGET_VERIFIED_CANDIDATE':'DRAFT_NOT_VALIDATED';
-    const manifest={schemaVersion:'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
-      state,builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
-      executionPolicy:'INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION',dependencies:'NOT_VALIDATED',
-      fileDigestAlgorithm:'SHA-256 of original file bytes',
-      files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,createHash('sha256').update(content).digest('hex')]))};
-    return Buffer.from(zipSync({...files,'migration-manifest.json':strToU8(JSON.stringify(manifest,null,2)),
-      'migration-report.json':strToU8(JSON.stringify({schemaVersion:'migration.export-scope.v1',state,
-        candidateDigest:value.candidate.artifactSha256,inspection:report.inspection,decisions:report.decisions,migrationPlan:report.migrationPlan,
-        technicalValidations:report.technicalValidations.map(v=>({validationId:v.validationId,toolId:v.toolId,assetDigest:v.assetDigest,implementationDigest:v.implementationDigest,casesDigest:v.casesDigest,mode:v.mode,status:v.status,stages:v.stages,current:v.current})),openJiuwenValidations:report.openJiuwenValidations,verification:report.verification,
-        changes:(value.portableGenerationDiff??value.generation?.diff??[]).map(d=>({path:d.path,operation:d.operation})),
-        targetRuns:report.targetRuns.map(r=>({id:r.id,candidateDigest:r.candidateDigest,status:r.status,
-          cases:r.cases.map(c=>({caseId:c.caseId,passed:c.passed}))})),
-        professionalAcceptance:report.professionalReview?'ADMIN_RECORDED_NOT_INDEPENDENTLY_VERIFIED':'NOT_REVIEWED',
-        professionalReview:report.professionalReview?{decision:report.professionalReview.decision,source:report.professionalReview.source,recordedAt:report.professionalReview.recordedAt}:null,
-        originalEquivalence:'NOT_VERIFIED',
-        excluded:'No raw model answers, test payloads, connection configuration or complete experiment reports. Review your own method/resource files for private content before sharing.'},null,2))}));
-  }
+  async exportCandidate(id:string) {return this.exportService.exportCandidate(id);}
   release():never {return conflict('发布已阻止：原环境基线、目标 Host 接入、依赖验证与独立业务验收都还没有验证');}
 }
