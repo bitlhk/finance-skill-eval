@@ -17,4 +17,4 @@ export * from "./runtime-launcher.js";
 export * from "./service/runtime-builder.js";
 export * from "./mcp-preflight.js";
 
-export const FINANCE_SKILL_EVAL_VERSION = "0.4.2";
+export const FINANCE_SKILL_EVAL_VERSION = "0.5.0";

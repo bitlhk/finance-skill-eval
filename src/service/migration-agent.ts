@@ -223,7 +223,9 @@ function interpreter(projectRoot: string): string {
   if (configured) return configured;
   // The agent needs openjiuwen, which lives in the launcher's venv -- not the
   // interpreter that happens to be on PATH.
-  return path.join(projectRoot, ".venv-openjiuwen", "Scripts", "python.exe");
+  return process.platform === "win32"
+    ? path.join(projectRoot, ".venv-openjiuwen", "Scripts", "python.exe")
+    : path.join(projectRoot, ".venv-openjiuwen", "bin", "python");
 }
 
 export function encodeArchive(archive: Record<string, Uint8Array>): Record<string, string> {

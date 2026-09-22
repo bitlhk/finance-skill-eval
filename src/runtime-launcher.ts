@@ -89,18 +89,24 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     this.options.baseUrl=httpBaseUrl.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
+    const signal = context.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(this.options.timeoutMs)]) : AbortSignal.timeout(this.options.timeoutMs);
     const extracted=extractSecrets(this.options.environment,this.options.secrets);
     const request:RuntimeInstanceRequest={schemaVersion:'finance.skill-eval.runtime-instance.v1',runId:context.runId,side:this.options.side,
       modelId:this.options.model.modelId,variant:this.options.variant,skill:this.options.skill,environment:extracted.environment,
       configuration:this.options.configuration??{},secrets:extracted.secrets,limits:{timeoutMs:this.options.timeoutMs}};
     const idempotencyKey=fingerprint({runId:context.runId,side:this.options.side,configuration:fingerprint(request)});
-    const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal:context.signal,
+    const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
     if(!response.ok)throw await responseError(response);
     this.instance=instanceStateSchema.parse(await response.json());
     while(this.instance.status==='starting'){
-      await new Promise<void>((resolve,reject)=>{const timer=setTimeout(resolve,250);context.signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(context.signal!.reason)},{once:true});});
-      const status=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance.instanceId)}`),{headers:this.options.headers,redirect:'error',signal:context.signal});
+      signal.throwIfAborted();
+      await new Promise<void>((resolve,reject)=>{
+        const abort=()=>{clearTimeout(timer);reject(signal.reason);};
+        const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},250);
+        signal.addEventListener('abort',abort,{once:true});
+      });
+      const status=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance.instanceId)}`),{headers:this.options.headers,redirect:'error',signal});
       if(!status.ok)throw await responseError(status);this.instance=instanceStateSchema.parse(await status.json());
     }
     if(this.instance.status!=='ready'||!this.instance.executeEndpoint)throw new Error(this.instance.error??'Runtime instance failed to start');
@@ -124,7 +130,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   }
   async cleanup():Promise<void>{
     const instance=this.instance;this.instance=null;this.executeUrl=null;if(!instance)return;
-    const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error'});
+    const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});
     if(!response.ok&&response.status!==404)throw await responseError(response);
   }
 }

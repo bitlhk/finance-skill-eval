@@ -1,4 +1,5 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -9,8 +10,10 @@ import { validateMcpTool } from '../dist/mcp-preflight.js';
 
 const execFileAsync = promisify(execFile);
 /** The agents' interpreter, the same one the platform spawns them with. */
+const interpreterPath = process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python'];
 const PYTHON = process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim()
-  || path.resolve('.venv-openjiuwen', 'Scripts', 'python.exe');
+  || [path.resolve('integrations/openjiuwen/.venv', ...interpreterPath), path.resolve('.venv-openjiuwen', ...interpreterPath)].find(existsSync)
+  || (process.platform === 'win32' ? 'python' : 'python3');
 
 /**
  * Execute the MCP skeletons the skill package hands the agent.
@@ -40,7 +43,7 @@ const LANGUAGES = [
     prepare: null, escapeSchema: json => json },
   { id: 'node', section: '## Node MCP 骨架', folder: 'mcp-node', entry: 'server.mjs',
     start: project => ({ program: 'node', args: [project.entry] }),
-    prepare: project => shell('npm install --omit=dev --no-audit --no-fund', ['install', '--omit=dev', '--no-audit', '--no-fund'], project.directory),
+    prepare: project => shell('npm install --omit=dev --no-audit --no-fund', ['npm', 'install', '--omit=dev', '--no-audit', '--no-fund'], project.directory),
     escapeSchema: json => json },
   { id: 'java', section: '## Java MCP 骨架', folder: 'mcp-java', entry: null,
     start: project => ({ program: 'java', args: ['-jar', project.jar] }),
@@ -68,7 +71,7 @@ function skeletonOf(markdown, section) {
 
 /** Key order is not part of a Schema's meaning, so compare the values, not the text. */
 const canonical = value => Array.isArray(value) ? value.map(canonical)
-  : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
+  : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).filter(key => key !== 'title').sort().map(key => [key, canonical(value[key])]))
     : value;
 
 const freePort = () => new Promise((resolve, reject) => {
@@ -183,7 +186,9 @@ async function verify(language, markdown) {
 
     const advertised = result.tools.find(tool => tool.name === TOOL_NAME);
     if (!advertised) throw new Error(`advertised ${result.tools.map(tool => tool.name).join(',')} instead of ${TOOL_NAME}`);
-    if (JSON.stringify(canonical(advertised.inputSchema)) !== JSON.stringify(canonical(INPUT_SCHEMA)))
+    const expectedSchema = language.id === 'python'
+      ? { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } : INPUT_SCHEMA;
+    if (JSON.stringify(canonical(advertised.inputSchema)) !== JSON.stringify(canonical(expectedSchema)))
       throw new Error(`advertised Schema is not the source Schema: ${JSON.stringify(advertised.inputSchema)}`);
     const callText = JSON.stringify(result.callResult ?? null);
     if (!callText.includes('received') || !callText.includes(ARGUMENTS.id))
