@@ -14,13 +14,13 @@ import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { generateCandidateFiles, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
-import {buildMigrationPlan,supportsImplicitScriptContext,type TechnicalValidation,type ToolInspection } from './migration-model.js';
+import {buildMigrationPlan} from './migration-model.js';
 import {runtimeBuildRequirements} from './migration-harness.js';
-import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
+import {MigrationRuntimeConfig,configurationDigest,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
 import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import {originalServiceFingerprint} from '../original-service-runtime.js';
-import { TechnicalValidationService,pythonCommand } from './technical-validation.js';
+import {pythonCommand} from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 import { assessMigrationAcceptance } from './migration-acceptance.js';
 import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
@@ -30,6 +30,7 @@ import { MigrationInspectionService, type MigrationRuntimeReference } from '../m
 import { MigrationSuiteService } from '../migration/application/migration-suite-service.js';
 import { MigrationCandidateService } from '../migration/application/migration-candidate-service.js';
 import { MigrationGenerationService } from '../migration/application/migration-generation-service.js';
+import { MigrationTechnicalValidationWorkflow } from '../migration/application/migration-technical-validation-service.js';
 
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
@@ -37,32 +38,6 @@ const planSchema = z.strictObject({
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
-const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-type TestInput={value:unknown;source:NonNullable<TechnicalValidation['inputSource']>;fields:string[]};
-function schemaValue(schema:unknown):{available:boolean;value?:unknown}{
-  if(!record(schema))return {available:false};
-  if('const' in schema)return {available:true,value:schema.const};
-  if('default' in schema)return {available:true,value:schema.default};
-  if(Array.isArray(schema.examples)&&schema.examples.length)return {available:true,value:schema.examples[0]};
-  if(Array.isArray(schema.enum)&&schema.enum.length)return {available:true,value:schema.enum[0]};
-  return {available:false};
-}
-function automaticTestInput(tool:ToolInspection,provided:unknown):TestInput{
-  if(provided!==undefined){
-    if(tool.kind==='MCP'&&!record(provided))return conflict('MCP 工具的业务参数必须是对象');
-    return {value:provided,source:'USER',fields:record(provided)?Object.keys(provided):[]};
-  }
-  const sample=tool.samples.find(item=>record(item.input));
-  if(sample)return {value:sample.input,source:'SOURCE_SAMPLE',fields:Object.keys(sample.input as Record<string,unknown>)};
-  if(record(tool.inputSchema)){
-    const properties=record(tool.inputSchema.properties)?tool.inputSchema.properties:{},required=Array.isArray(tool.inputSchema.required)?tool.inputSchema.required.filter((name):name is string=>typeof name==='string'):[];
-    const value:Record<string,unknown>={},missing:string[]=[];
-    for(const name of required){const resolved=schemaValue(properties[name]);if(resolved.available)value[name]=resolved.value;else missing.push(name);}
-    if(missing.length)return conflict(`试运行需要补充真实业务测试值：${missing.join('、')}`);
-    return {value,source:'SCHEMA_DEFAULT',fields:Object.keys(value)};
-  }
-  return {value:{},source:'EMPTY',fields:[]};
-}
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -72,6 +47,7 @@ export class MigrationStore {
   private readonly suiteService: MigrationSuiteService;
   private readonly candidateService: MigrationCandidateService;
   private readonly generationService: MigrationGenerationService;
+  private readonly technicalValidation: MigrationTechnicalValidationWorkflow;
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -88,6 +64,7 @@ export class MigrationStore {
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
     this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
+    this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -129,48 +106,9 @@ export class MigrationStore {
   async runtimeRequirements(id:string){return this.inspectionService.runtimeRequirements(id);}
   async runtimeRequirementsYaml(id:string){return this.inspectionService.runtimeRequirementsYaml(id);}
   private async generatePortable(id:string,input:unknown){return this.generationService.generate(id,input);}
-  async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.serial(id,async()=>{
-    const p=z.strictObject({toolId:z.string().min(1),baseAssetId:z.string().min(1),request:z.unknown().optional(),endpoint:z.string().url().optional(),arguments:z.record(z.unknown()).optional()}).parse(input);
-    const value=await this.get(id),asset=value.candidate??value.source;if(p.baseAssetId!==asset.assetId)return conflict('资产已变化，请刷新后重新验证');
-    const inspection=value.inspection;if(!inspection)return conflict('请先完成 Tool 检查');
-    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime Harness 改造需求；自动 Runtime Builder 功能开发中，当前版本暂不能验证此迁移');
-    const tool=inspection.tools.find(item=>item.toolId===p.toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
-    const testInput=automaticTestInput(tool,tool.kind==='MCP'?p.arguments:p.request);
-    const generated=value.portableGenerations?.find(item=>item.toolId===tool.toolId);if(generated&&!generated.readyForValidation)return conflict('生成候选仍有待办，不能标记技术验证通过');
-    const service=new TechnicalValidationService(),archive=await this.skills.readArchive(asset.assetId);
-    const runtimeStore=new MigrationRuntimeConfig(this.root),runtimeConfig=await runtimeStore.get(id);
-    const runtimeDeps=value.sourceInspection?.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.includes(tool.toolId))??[];
-    if(tool.kind==='SCRIPT'&&runtimeDeps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT'&&!supportsImplicitScriptContext(d)))return conflict('Script 不支持 Runtime 上下文或鉴权注入，请选择 MCP');
-    const groupIds=(value.portableGenerations??[]).filter(g=>generated&&JSON.stringify([g.start,g.prepare])===JSON.stringify([generated.start,generated.prepare])).map(g=>g.toolId);
-    const serviceDeps=value.sourceInspection?.dependencyAnalysis?.dependencies.filter(d=>d.toolIds.some(id=>[tool.toolId,...groupIds].includes(id)))??runtimeDeps;
-    const environment=serviceEnvironment(serviceDeps,runtimeConfig.values);
-    const injection=runtimeInjection(runtimeDeps,runtimeConfig.values,tool.kind==='MCP'?'HTTP_HEADER':'SCRIPT_CONTEXT');
-    if(injection.missing.length)return conflict(`工具试运行缺少测试配置：${injection.missing.join('、')}`);
-    // A Tool this platform migrated is one this platform starts: the deliverable declares the
-    // command, and that command being usable is exactly what raising the service proves. An
-    // endpoint is only for a Tool that was already an MCP server and has no deliverable at all.
-    const migrated=Boolean(generated?.start?.length)||Boolean(generated&&tool.kind==='MCP');
-    const result=tool.kind==='MCP'
-      ?await service.validateMcp({asset,tool,archive,arguments:testInput.value as Record<string,unknown>,headers:injection.headers,environment,signal,
-        ...(migrated?{service:{start:generated?.start,prepare:generated?.prepare}}:{endpoint:p.endpoint??''})})
-      :await service.validateScript({asset,archive,tool,request:testInput.value,context:injection.context,signal});
-    result.inputSource=testInput.source;result.inputFields=testInput.fields;
-    if(runtimeDeps.length){
-      result.runtimeConfigurationDigest=configurationDigest(runtimeConfig,value.sourceInspection?.dependencyAnalysis?.dependencies);
-      if(Object.keys(environment).length||Object.keys(injection.headers).length||Object.keys(injection.context).length){result.error=result.status==='PASSED'?null:'工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。';result.stages=result.stages.map(stage=>stage.passed?stage:{...stage,message:'此步骤未通过，原始错误未保存以保护运行依赖。'})}
-      await runtimeStore.check(id,{toolId:tool.toolId,kind:value.candidate?'GENERATED_TOOL':'SOURCE_TOOL',status:result.status,configurationDigest:result.runtimeConfigurationDigest,assetDigest:asset.artifactSha256,validationId:result.validationId,message:result.status==='PASSED'?'实际工具调用通过；尚未完成业务效果评估。':'实际工具调用未通过。'});
-    }
-    (value.technicalValidations??=[]).push(result);await this.projects.save(value);return result;
-  });}
-  async technicalValidations(id:string){return (await this.get(id)).technicalValidations??[];}
-  private async currentTechnicalState(value:MigrationProject){
-    const asset=value.candidate??value.source,inspection=value.inspection;
-    if(!inspection)return {ready:false,reasons:['请先完成 Tool 检查']};
-    const latest=new Map<string,TechnicalValidation>(),runtimeDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(value.id),value.sourceInspection?.dependencyAnalysis?.dependencies);
-    for(const result of value.technicalValidations??[])if(result.assetDigest===asset.artifactSha256&&(!result.runtimeConfigurationDigest||result.runtimeConfigurationDigest===runtimeDigest))latest.set(result.toolId,result);
-    const reasons=inspection.tools.flatMap(tool=>latest.get(tool.toolId)?.status==='PASSED'?[]:[`${tool.name} 尚未通过当前资产的技术验证`]);
-    return {ready:reasons.length===0,reasons};
-  }
+  async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.technicalValidation.validate(id,input,signal);}
+  async technicalValidations(id:string){return this.technicalValidation.list(id);}
+  private async currentTechnicalState(value:MigrationProject){return this.technicalValidation.currentState(value);}
   async validateOpenJiuwen(id:string,input:unknown){
     const value=await this.get(id),state=await this.currentTechnicalState(value);
     if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
