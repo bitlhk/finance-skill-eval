@@ -1,10 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import path from 'node:path';
-import { KeyedQueue } from '../shared/keyed-queue.js';
 import { z } from 'zod';
 import { zipSync, strToU8 } from 'fflate';
-import { fingerprint, type EvalPack } from '../contracts.js';
-import { listJsonFiles, readJson, writeJsonAtomic } from './file-store.js';
+import { fingerprint } from '../contracts.js';
 import type { SkillStore, SkillAssetRecord } from './skill-store.js';
 import type { EvaluationRunManager } from './run-manager.js';
 import type { EvaluationJobStore } from './job-store.js';
@@ -24,7 +21,7 @@ import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from './migratio
 import {runtimeBuildRequirements,runtimeBuildRequirementsYaml} from './migration-harness.js';
 import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,probeBusinessInterface,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
 import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,toSkillDocumentDelivery,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
-import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
+import { generatePortableCandidate,type PortableGeneration } from './portable-candidate.js';
 import { baselineBrief,generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import {originalServiceFingerprint} from '../original-service-runtime.js';
 import { stageEnvelope,staleAgainst } from './stage-envelope.js';
@@ -34,6 +31,8 @@ import { assessMigrationAcceptance } from './migration-acceptance.js';
 import {simpleMigrationSuiteSchema,simpleMigrationCases,normalizeOriginalServiceSuite} from './simple-migration-suite.js';
 import {MigrationSupplements,supplementFiles} from './migration-supplements.js';
 import {analyzeDependencies,validateDependencyData,type Supplement} from './migration-dependencies.js';
+import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
+import type { MigrationProject } from '../migration/domain/migration-project.js';
 
 const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
@@ -47,31 +46,6 @@ const planSchema = z.strictObject({
   dataSnapshot:z.string().min(1).max(300), permissionBasis:z.string().min(1).max(1000),
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
-type Migration = {
-  schemaVersion:'finance.skill-migration.v0.1'|'finance.skill-migration.v2'; id:string; name:string; createdAt:string;
-  legacySourceProjectId?:string;
-  source:SkillAssetRecord; candidate:SkillAssetRecord|null; candidateNotes:string;
-  candidateHistory?:Array<{asset:SkillAssetRecord;notes:string;recordedAt:string;kind?:'migration'|'optimization'}>;
-  suiteIds?:string[];
-  optimizations?:Array<{optimizationId:string;sourceJobId:string;baseAssetId:string;candidateDigest:string}>;
-  runs:Array<{jobId:string; pair:'AB'|'BC'|'AC'|'SC'; candidateDigest:string; comparisonFingerprint:string; packFingerprint:string;
-    declaredPlan?:z.infer<typeof planSchema>;suiteSnapshot?:EvalPack;runtimeConfigurationDigest?:string}>;
-  assessment:'NOT_VALIDATED';
-  targetRuns?:string[];
-  simulationProfile?:string;
-  reviews?:Array<{candidateDigest:string;decision:'ACCEPTED'|'NEEDS_CHANGES';notes:string;recordedAt:string;source:'PRIVATE_ADMIN_RECORDED'}>;
-  generation?:{candidateDigest:string;target:{runtime:string;environmentId?:string;intent:string};
-    diff:Array<{path:string;operation:string;before:string;after:string}>;generatedAt:string};
-  inspection?:ProjectInspection;
-  /** Immutable A2 grounding for questions; candidate inspection must not replace it. */
-  sourceInspection?:ProjectInspection;
-  /** The A2 product as a stage product: its binding is what says which asset it describes. */
-  analysis?:import('./stage-envelope.js').StageEnvelope<ProjectInspection>;
-  decisions?:ToolDecision[];
-  portableGenerations?:PortableGeneration[];
-  portableGenerationDiff?:PortableDiff[];
-  technicalValidations?:TechnicalValidation[];
-};
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 const CODE_FILE=/\.(?:java|py|js|mjs|cjs|ts)$/iu;
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
@@ -103,7 +77,7 @@ function automaticTestInput(tool:ToolInspection,provided:unknown):TestInput{
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
-  private readonly mutations = new KeyedQueue();
+  private readonly projects: MigrationProjectRepository;
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -112,7 +86,10 @@ export class MigrationStore {
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
-    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER'))) {}
+    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
+    projects?: MigrationProjectRepository) {
+    this.projects = projects ?? new MigrationProjectRepository(root);
+  }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
   }
@@ -123,26 +100,22 @@ export class MigrationStore {
     if(!value.simulationProfile||value.generation?.candidateDigest!==value.candidate.artifactSha256)return conflict('请先审阅映射并生成当前候选；修改后需重新审阅');
     const runner=new MigrationTargetRuns(this.root,this.skills);
     for(const runId of value.targetRuns??[])if((await runner.get(runId)).status==='RUNNING')return conflict('当前项目已有验证正在运行');
-    const run=await runner.start(value.candidate,value.simulationProfile);(value.targetRuns??=[]).push(run.id);await writeJsonAtomic(this.file(id),value);return run;
+    const run=await runner.start(value.candidate,value.simulationProfile);(value.targetRuns??=[]).push(run.id);await this.projects.save(value);return run;
   });}
-  private file(id:string) {
-    if (!/^migration-[a-f0-9-]+$/.test(id)) throw Object.assign(new Error('迁移记录 ID 不合法'),{statusCode:400});
-    return path.join(this.root,'migrations',id+'.json');
-  }
   private serial<T>(id:string,fn:()=>Promise<T>):Promise<T> {
-    return this.mutations.run(id,fn);
+    return this.projects.runExclusive(id,fn);
   }
-  async list() {return Promise.all((await listJsonFiles(path.join(this.root,'migrations'))).map(f=>readJson<Migration>(f)));}
-  async get(id:string):Promise<Migration> {return readJson<Migration>(this.file(id));}
+  async list() {return this.projects.list();}
+  async get(id:string):Promise<MigrationProject> {return this.projects.get(id);}
   async create(input:unknown) {
     const value=await this.serial('create',async()=>{
     const p=createSchema.parse(input), source=await this.skills.get(p.sourceAssetId);
     if (!source) return conflict('源 Skill 不可用');
     const existing=(await this.list()).find(item=>item.source.artifactSha256===source.artifactSha256&&item.name===p.name);
     if(existing)return existing;
-    const value:Migration={schemaVersion:'finance.skill-migration.v2',id:'migration-'+randomUUID(),name:p.name,
+    const value:MigrationProject={schemaVersion:'finance.skill-migration.v2',id:'migration-'+randomUUID(),name:p.name,
       createdAt:new Date().toISOString(),source,candidate:null,candidateNotes:'',runs:[],assessment:'NOT_VALIDATED'};
-    await writeJsonAtomic(this.file(value.id),value); return value;
+    await this.projects.save(value); return value;
     });
     void this.diagnostics?.diagnose(value.source).catch(()=>undefined);return value;
   }
@@ -152,7 +125,7 @@ export class MigrationStore {
     const upgraded=await this.create({sourceAssetId:asset.assetId,name:`${legacy.name} 2.0`});
     return this.serial(upgraded.id,async()=>{
       const current=await this.get(upgraded.id);
-      if(current.legacySourceProjectId!==legacy.id){current.legacySourceProjectId=legacy.id;await writeJsonAtomic(this.file(current.id),current);}
+      if(current.legacySourceProjectId!==legacy.id){current.legacySourceProjectId=legacy.id;await this.projects.save(current);}
       return current;
     });
   }
@@ -202,7 +175,7 @@ export class MigrationStore {
     if(agent?.status==='ABSTAINED'){inspection.dependencyAnalysis.status='PARTIAL';inspection.dependencyAnalysis.reason=agent.reason}
     for(const tool of inspection.tools){if(inspection.dependencyAnalysis.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&!supportsImplicitScriptContext(d))){tool.recommendedForm='MCP';tool.recommendedLanguage=recommendLanguage('MCP',tool.language);tool.recommendationReason='此实现需要 Runtime 上下文或凭证注入，应迁移为 MCP 服务；Script command 不支持额外注入。'}else if(inspection.dependencyAnalysis.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&supportsImplicitScriptContext(d))){tool.recommendedForm='SCRIPT';tool.recommendedLanguage=recommendLanguage('SCRIPT',tool.language);tool.recommendationReason='仅依赖 Runtime 已提供的 workspace cwd，可作为独立脚本执行，不需要额外上下文注入。'}}
     if(asset.assetId===value.source.assetId)value.sourceInspection=structuredClone(inspection);
-    if(sourceOnly&&value.candidate){await writeJsonAtomic(this.file(id),value);return inspection}
+    if(sourceOnly&&value.candidate){await this.projects.save(value);return inspection}
     value.inspection=inspection;
     // The baseline is a stage product, so it is recorded as one: what produced it and what it was
     // bound to. Without the binding there is no way to say later whether it still describes the
@@ -211,7 +184,7 @@ export class MigrationStore {
       inputDigests:{supplements:materials.digest(record)},
       payload:inspection});
     value.decisions=(value.decisions??[]).filter(decision=>decision.baseAssetId===asset.assetId&&value.inspection!.tools.some(tool=>tool.toolId===decision.toolId));
-    await writeJsonAtomic(this.file(id),value);return value.inspection;
+    await this.projects.save(value);return value.inspection;
   });}
   async dependencyData(id:string,dependencyId:string){
     const value=await this.get(id),dependency=value.sourceInspection?.dependencyAnalysis?.dependencies.find(d=>d.id===dependencyId);
@@ -288,7 +261,7 @@ export class MigrationStore {
     diagnostic!.revision=saved.revision;diagnostic!.materialsDigest=materials.digest(saved);diagnostic!.status='PARTIAL';dep.provided='PENDING';dep.issue='已提供，等待继续分析';
     // Keep the previous candidate in history; it is no longer current after inputs change.
     value.candidate=null;value.inspection=structuredClone(value.sourceInspection!);value.analysis=undefined;
-    await writeJsonAtomic(this.file(id),value);return {revision:saved.revision,inspection:value.inspection};
+    await this.projects.save(value);return {revision:saved.revision,inspection:value.inspection};
   }
   async inspection(id:string){const value=await this.get(id),asset=value.candidate??value.source;
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return this.inspect(id);
@@ -306,7 +279,7 @@ export class MigrationStore {
     const tool=value.inspection.tools.find(item=>item.toolId===toolId);if(!tool)return conflict('当前检查结果中不存在这个 Tool');
     const decision:ToolDecision={toolId,form:p.form,language:p.language??recommendLanguage(p.form,tool.language),reason:p.reason??(p.form==='MCP'?'迁移到本 Skill 的共享 MCP 服务':'迁移为独立脚本 Tool'),baseAssetId:p.baseAssetId,decidedAt:new Date().toISOString()};
     value.decisions=[...(value.decisions??[]).filter(item=>!(item.toolId===toolId&&item.baseAssetId===p.baseAssetId)),decision];
-    await writeJsonAtomic(this.file(id),value);return decision;
+    await this.projects.save(value);return decision;
   });}
   async plan(id:string){const value=await this.get(id),asset=value.candidate??value.source;
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
@@ -432,7 +405,7 @@ export class MigrationStore {
     value.decisions=[...(value.decisions??[]),...carriedDecisions];
     value.candidate=candidate;value.inspection=candidateInspection;value.candidateNotes='按逐 Tool 决策生成符合 Skill 规范的完整候选；原始资产保持不变。';value.portableGenerations=generated.generations;value.portableGenerationDiff=generated.diff;
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
-    await writeJsonAtomic(this.file(id),value);return value;
+    await this.projects.save(value);return value;
   });}
   /** Turn placed files into an asset. Separate from generating them: this is the step that makes
    * the result referenceable, and it has nothing to say about whether the code is any good. */
@@ -512,10 +485,10 @@ export class MigrationStore {
       if(Object.keys(environment).length||Object.keys(injection.headers).length||Object.keys(injection.context).length){result.error=result.status==='PASSED'?null:'工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。';result.stages=result.stages.map(stage=>stage.passed?stage:{...stage,message:'此步骤未通过，原始错误未保存以保护运行依赖。'})}
       await runtimeStore.check(id,{toolId:tool.toolId,kind:value.candidate?'GENERATED_TOOL':'SOURCE_TOOL',status:result.status,configurationDigest:result.runtimeConfigurationDigest,assetDigest:asset.artifactSha256,validationId:result.validationId,message:result.status==='PASSED'?'实际工具调用通过；尚未完成业务效果评估。':'实际工具调用未通过。'});
     }
-    (value.technicalValidations??=[]).push(result);await writeJsonAtomic(this.file(id),value);return result;
+    (value.technicalValidations??=[]).push(result);await this.projects.save(value);return result;
   });}
   async technicalValidations(id:string){return (await this.get(id)).technicalValidations??[];}
-  private async currentTechnicalState(value:Migration){
+  private async currentTechnicalState(value:MigrationProject){
     const asset=value.candidate??value.source,inspection=value.inspection;
     if(!inspection)return {ready:false,reasons:['请先完成 Tool 检查']};
     const latest=new Map<string,TechnicalValidation>(),runtimeDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(value.id),value.sourceInspection?.dependencyAnalysis?.dependencies);
@@ -598,7 +571,7 @@ export class MigrationStore {
     value.simulationProfile=p.simulationProfile;
     value.generation={candidateDigest:candidate.artifactSha256,target,diff:generated.diff,generatedAt:new Date().toISOString()};
     (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
-    await writeJsonAtomic(this.file(id),value);return value;
+    await this.projects.save(value);return value;
   });}
   async candidate(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=candidateSchema.parse(input), value=await this.get(id), candidate=await this.skills.get(p.assetId);
@@ -607,7 +580,7 @@ export class MigrationStore {
     value.candidate=candidate; value.candidateNotes=p.notes;
     delete value.inspection;value.decisions=[];delete value.portableGenerations;delete value.portableGenerationDiff;
     (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
-    await writeJsonAtomic(this.file(id),value); return value;
+    await this.projects.save(value); return value;
   });}
   async draft(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=draftSchema.parse(input), value=await this.get(id), base=value.candidate??value.source;
@@ -620,7 +593,7 @@ export class MigrationStore {
     if (candidate.skillId!==base.skillId) return conflict('方法内容的修改不能悄悄改变 Skill 身份');
     value.candidate=candidate;value.candidateNotes=p.notes;
     (value.candidateHistory??=[]).push({asset:candidate,notes:p.notes,recordedAt:new Date().toISOString()});
-    await writeJsonAtomic(this.file(id),value);return value;
+    await this.projects.save(value);return value;
   });}
   async analyze(id:string) {
     const value=await this.get(id), source=await this.skills.readSource(value.source.assetId);
@@ -640,13 +613,13 @@ export class MigrationStore {
     const value=await this.get(id);
     if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请对当前版本重新记录专业复核');
     (value.reviews??=[]).push({candidateDigest:value.candidate.artifactSha256,decision:p.decision,notes:p.notes,recordedAt:new Date().toISOString(),source:'PRIVATE_ADMIN_RECORDED'});
-    await writeJsonAtomic(this.file(id),value);return value;
+    await this.projects.save(value);return value;
   });}
   async createSuite(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=manualPreparationSchema.parse(input),value=await this.get(id);
     if (!this.preparations) return conflict('题集服务不可用');
     const suite=await this.preparations.create({skill:value.source,summary:p.summary,cases:p.cases,holdoutCases:p.holdoutCases,source:'manual'});
-    (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
+    (value.suiteIds??=[]).push(suite.preparationId);await this.projects.save(value);return suite;
   });}
   async importSimpleSuite(id:string,input:unknown){return this.serial(id,async()=>{
     const originalServiceMode=!!input&&typeof input==='object'&&(input as {mode?:unknown}).mode==='service_comparison';
@@ -654,7 +627,7 @@ export class MigrationStore {
     const comparisonOnly=originalServiceMode&&(input as {cases:Array<{criteria?:unknown}>}).cases.some(c=>c.criteria===undefined);
     if(!this.preparations)return conflict('测试集服务不可用');
     const suite=await this.preparations.create({skill:value.source,summary:parsed.name,cases:simpleMigrationCases(parsed),source:'manual',assessmentMode:'natural_language',...(comparisonOnly?{comparisonOnly:true}:{})});
-    (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
+    (value.suiteIds??=[]).push(suite.preparationId);await this.projects.save(value);return suite;
   });}
   /**
    * The test set, generated from the analysis rather than typed in by hand.
@@ -695,7 +668,7 @@ export class MigrationStore {
     // Runtime execute a tool while the acceptance Judge was told there was no tool requirement.
     const cases=p.assessmentMode==='natural_language'?generated.cases.map(item=>({...item,rubric:item.rubric.map(criterion=>({...criterion,allOf:[],anyOf:[],noneOf:[]}))})):generated.cases;
     const suite=await this.preparations.create({skill:asset,summary:generated.summary,cases,source:'ai_generated',...(p.assessmentMode?{assessmentMode:p.assessmentMode}:{})});
-    (value.suiteIds??=[]).push(suite.preparationId);await writeJsonAtomic(this.file(id),value);return suite;
+    (value.suiteIds??=[]).push(suite.preparationId);await this.projects.save(value);return suite;
   });}
   /** The Skill's own words, plus its references. Professional references only -- never a candidate's
    * generated files, and never anything that looks like an answer key. */
@@ -733,7 +706,7 @@ export class MigrationStore {
     if (variant?.mode!=='skill_version' || variant.artifactSha256!==value.candidate.artifactSha256) return conflict('缺少已完成的右侧候选运行证据');
     const item=await this.optimizers.create(p.jobId);
     (value.optimizations??=[]).push({optimizationId:item.optimizationId,sourceJobId:p.jobId,baseAssetId:value.candidate.assetId,candidateDigest:value.candidate.artifactSha256});
-    await writeJsonAtomic(this.file(id),value);return item;
+    await this.projects.save(value);return item;
   });}
   async adoptOptimization(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=z.strictObject({optimizationId:z.string().min(1)}).parse(input),value=await this.get(id);
@@ -745,7 +718,7 @@ export class MigrationStore {
     value.candidate=item.candidate;value.candidateNotes=`Optimization ${item.optimizationId}: ${item.summary}`;
     (value.candidateHistory??=[]).push({asset:item.candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'optimization'});
     // Adoption is a local candidate choice, not migration or business acceptance.
-    await writeJsonAtomic(this.file(id),value);return value;
+    await this.projects.save(value);return value;
   });}
   async validate(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=planSchema.parse(input), value=await this.get(id), c=value.candidate;
@@ -782,7 +755,7 @@ export class MigrationStore {
       ...(p.configuration.originalService?{originalService:originalServiceFingerprint(p.configuration.originalService)}:{})});
     const job=await this.runs.create(p.configuration);
     value.runs.push({jobId:job.jobId,pair:p.pair,candidateDigest:c.artifactSha256,comparisonFingerprint,packFingerprint:pack.packFingerprint,declaredPlan:p,suiteSnapshot:pack,runtimeConfigurationDigest});
-    await writeJsonAtomic(this.file(id),value);
+    await this.projects.save(value);
     return {job,comparisonFingerprint,acceptance:'NOT_VALIDATED',note:'Runs are experiments; declared environment/material references are not native-runtime or authorization attestation.'};
   });}
   async report(id:string) {
