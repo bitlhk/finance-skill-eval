@@ -34,7 +34,11 @@ jobs:
       - run: python -m unittest integrations.openjiuwen.test_script_process integrations.openjiuwen.test_instance_manager
       - run: pnpm build
       - name: Run the MCP skeletons the skill package hands the agent
-        run: pnpm test:skeleton:mcp
+        env:
+          FINANCE_EVAL_MIGRATION_PYTHON: integrations/openjiuwen/.venv/bin/python
+        run: |
+          uv sync --project integrations/openjiuwen --frozen
+          pnpm test:skeleton:mcp
       - name: Compile native target (no live credentials or model calls)
         run: mvn -B -f examples/migration-native-host/pom.xml package
       - run: pnpm exec playwright install --with-deps chromium

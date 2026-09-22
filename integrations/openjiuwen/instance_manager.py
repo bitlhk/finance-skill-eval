@@ -69,6 +69,7 @@ class InstanceManager:
         return hashlib.sha256(json.dumps(public, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
 
     def create(self, request, idempotency_key):
+        self.expire()
         if request.get('schemaVersion') != 'finance.skill-eval.runtime-instance.v1':
             raise ValueError('Unsupported Runtime instance contract')
         if not isinstance(request.get('runId'), str) or not request['runId'] or request.get('side') not in ('left', 'right'):
@@ -102,6 +103,8 @@ class InstanceManager:
             if not item or item['_requestDigest'] != request_digest:
                 raise RuntimeError('Idempotency key was reused with different configuration')
             return item
+        if len(self.instances) >= 2:
+            raise RuntimeError('Runtime instance capacity exceeded')
         instance_id = 'runtime-instance-' + uuid.uuid4().hex[:16]
         now = time.time()
         item = {'schemaVersion': 'finance.skill-eval.runtime-instance-state.v1', 'instanceId': instance_id,

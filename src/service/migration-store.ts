@@ -23,7 +23,7 @@ import { buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from './migration-delivery-contract.js';
 import {runtimeBuildRequirements,runtimeBuildRequirementsYaml} from './migration-harness.js';
 import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,probeBusinessInterface,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
-import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
+import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,toSkillDocumentDelivery,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableDiff,type PortableGeneration } from './portable-candidate.js';
 import { baselineBrief,generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import {originalServiceFingerprint} from '../original-service-runtime.js';
@@ -363,7 +363,7 @@ export class MigrationStore {
         decisions:decisions.map(d=>({toolId:d.toolId,form:d.form,language:d.language})),
         tools:inspection.tools.map(t=>({toolId:t.toolId,name:t.name,language:t.language,sourcePaths:t.sourcePaths,inputSchema:t.inputSchema,outputSchema:t.outputSchema,samples:t.samples,migrationContract:contract[t.toolId]})),
         contract,
-        deliveryContract:{script:{execution:"COMMAND",cwd:"WORKSPACE",entrypoint:"RUNTIME_PROVIDED_ABSOLUTE_PATH",packageResources:"RELATIVE_TO_SCRIPT",runtimeInjection:false},mcp:{contextTransport:"HTTP_HEADER",serviceConfigurationTransport:"SERVICE_ENV",businessArguments:"SEPARATE",pythonFramework:{package:"fastmcp",version:"2.14.7",import:"from fastmcp import FastMCP"}},runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions)},
+        deliveryContract:{skillDocumentation:{sourceSkillFile:asset.skillFile,manifestPathsRelativeToSkillRoot:true},script:{execution:"COMMAND",cwd:"WORKSPACE",entrypoint:"RUNTIME_PROVIDED_ABSOLUTE_PATH",packageResources:"RELATIVE_TO_SCRIPT",runtimeInjection:false},mcp:{contextTransport:"HTTP_HEADER",serviceConfigurationTransport:"SERVICE_ENV",businessArguments:"SEPARATE",pythonFramework:{package:"fastmcp",version:"2.14.7",import:"from fastmcp import FastMCP"}},runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions)},
       });
       if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
         // An abstention is a decision that belongs to a human. Report which Tool and why,
@@ -384,8 +384,10 @@ export class MigrationStore {
         if(deliveryIssues.length){agentFailure=deliveryIssues.join('；');continue;}
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const mapped=toGeneratedImplementations(result.payload as never,result.files,nameById);
+        const skillDelivery=toSkillDocumentDelivery(result.payload as never,result.files);
         const missing=decisions.filter(decision=>!mapped[decision.toolId]||mapped[decision.toolId]!.language!==plan.items.find(item=>item.toolId===decision.toolId)?.language);
-        if(!missing.length)return {implementations:mapped};
+        if(!missing.length&&skillDelivery)return {implementations:mapped,skillDelivery};
+        if(!skillDelivery){agentFailure='A4 没有按文档清单交付最终 SKILL.md；平台不会在模型完成后替它机械合并或拆分 references';continue}
         agentFailure=`A4 交付不完整或语言与授权不符：${missing.map(decision=>nameById[decision.toolId]??decision.toolId).join('、')}`;
       }
       }
@@ -421,7 +423,7 @@ export class MigrationStore {
       const declarations=generationInspection.tools.map(tool=>({tool:tool.name,dependencies:generationInspection.dependencyAnalysis!.dependencies.filter(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({name:d.name,key:d.key,purpose:d.purpose,required:d.blocking,sensitive:d.sensitive,schema:d.schema,binding:d.binding}))}));
       const content=JSON.stringify({schemaVersion:'finance.tool-runtime-dependencies.v1',tools:declarations},null,2)+'\n';generated.files[path]=strToU8(content);generated.diff.push({path,operation:'ADD',before:'',after:content});
     }
-    const candidate=await this.publishCandidate(generated.files);
+    const candidate=await this.publishCandidate(generated.files,version);
     const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:generationInspection,decisions:value.decisions!,baseAssetId:currentAsset.assetId,generations:generated.generations});
     // The candidate inspection describes the same logical tools on a new immutable asset. Carry
     // the authorized decisions forward to that asset; otherwise the report immediately claims
@@ -434,8 +436,8 @@ export class MigrationStore {
   });}
   /** Turn placed files into an asset. Separate from generating them: this is the step that makes
    * the result referenceable, and it has nothing to say about whether the code is any good. */
-  private async publishCandidate(files:Record<string,Uint8Array>):Promise<SkillAssetRecord>{
-    return this.skills.uploadZip(Buffer.from(zipSync(files)));
+  private async publishCandidate(files:Record<string,Uint8Array>,version:string):Promise<SkillAssetRecord>{
+    return this.skills.uploadZip(Buffer.from(zipSync(files)),{version});
   }
   /**
    * The candidate's own check, after it exists.

@@ -109,7 +109,7 @@ export class SkillStore {
     return files;
   }
 
-  async uploadZip(buffer: Buffer, options: { migrationInput?: boolean } = {}): Promise<SkillAssetRecord> {
+  async uploadZip(buffer: Buffer, options: { migrationInput?: boolean; version?: string } = {}): Promise<SkillAssetRecord> {
     if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
       throw new Error("Skill ZIP 大小必须在 1 字节到 8 MB 之间");
     }
@@ -152,7 +152,7 @@ export class SkillStore {
     if (!source.trim()&&!options.migrationInput) throw new Error("SKILL.md 是空的");
     const metadata = parseFrontmatter(source);
     const skillId = asText(metadata.name) ?? `uploaded-skill-${randomUUID().slice(0, 8)}`;
-    const version = asText(metadata.version) ?? "0.0.0-upload";
+    const version = asText(options.version) ?? asText(metadata.version) ?? "0.0.0-upload";
     normalizedFiles.sort(([a], [b]) => a.localeCompare(b));
     if (new Set(normalizedFiles.map(([name]) => name)).size !== normalizedFiles.length) throw new Error("Duplicate archive paths");
     const digest = fingerprint(normalizedFiles.map(([name, content]) => ({

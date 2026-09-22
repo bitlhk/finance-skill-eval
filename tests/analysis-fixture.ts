@@ -72,10 +72,19 @@ export function implementationFixture(specs: Array<{
 }>): MigrationImplementer {
   return async input => {
     const idByName = Object.fromEntries((input.tools as Array<{ toolId: string; name: string }>).map(item => [item.name, item.toolId]));
+    const sourceSkillFile=String((input.deliveryContract as any)?.skillDocumentation?.sourceSkillFile??'SKILL.md');
+    const skillRoot=sourceSkillFile.includes('/')?sourceSkillFile.slice(0,sourceSkillFile.lastIndexOf('/')+1):'';
+    const documentFiles=Object.entries(input.files).flatMap(([path,content])=>{
+      const relative=skillRoot&&path.startsWith(skillRoot)?path.slice(skillRoot.length):path;
+      if(path!==sourceSkillFile&&!/^references\/.+\.(?:md|mdx|txt)$/iu.test(relative))return [];
+      const target=path===sourceSkillFile?'SKILL.md':relative;
+      return [{source:`migration-skill/${target}`,target,content}];
+    });
     return {
       status: 'PRODUCED',
       payload: {
         status: 'PRODUCED',
+        skillDelivery:{skillFile:'SKILL.md',files:documentFiles.map(file=>({source:file.source,path:file.target}))},
         runtimeToolConfig:(input.deliveryContract as any)?.runtimeToolConfigTemplate.runtimeToolConfig,
         tools: specs.flatMap(spec => {
           const toolId = idByName[spec.tool];
@@ -90,8 +99,10 @@ export function implementationFixture(specs: Array<{
           }] : [];
         }),
       },
-      files: Object.fromEntries(specs.flatMap(spec =>
-        Object.entries(spec.files).map(([path, content]) => [path, Buffer.from(content).toString('base64')]))),
+      files: Object.fromEntries([
+        ...documentFiles.map(file=>[file.source,Buffer.from(file.content).toString('base64')] as const),
+        ...specs.flatMap(spec =>Object.entries(spec.files).map(([path, content]) => [path, Buffer.from(content).toString('base64')] as const)),
+      ]),
     };
   };
 }

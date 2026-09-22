@@ -18,7 +18,7 @@ def run_script(root, name, inputs, workspace=None):
 
 def migrated(root, inputs, base_url):
     common = {'user': {'id': 'U001', 'tenantId': 'T001'}, 'service_url': base_url, 'credential': 'Bearer fixture:T001:U001'}
-    if root.name == '01-expense': return run_script(root, 'check_expense', {**inputs, 'workspace': '.'}, root / 'workspace')
+    if root.name == '01-expense': return run_script(root, 'check_expense', inputs, root)
     if root.name == '02-balance': return run_script(root, 'get_balance', {**inputs, **common})
     if root.name == '04-refund': return run_script(root, 'refund_eligibility', {**inputs, **common})
     request = run_script(root, 'get_request', {**inputs, **common})

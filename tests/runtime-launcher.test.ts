@@ -35,5 +35,7 @@ describe('Runtime Launcher adapter',()=>{
     expect(createBody.secrets.values).toEqual({'mcp.0.API_TOKEN':'top-secret','context.user':'alice'});
     expect(events).toEqual([expect.objectContaining({type:'text_delta',text:'done'})]);
     expect(calls.at(-1)).toMatchObject({url:'http://127.0.0.1:9000/v1/runtime-instances/instance-1',init:{method:'DELETE'}});
+    expect(calls[0]!.init!.signal).toBeInstanceOf(AbortSignal);
+    expect(calls.at(-1)!.init!.signal).toBeInstanceOf(AbortSignal);
   });
 });

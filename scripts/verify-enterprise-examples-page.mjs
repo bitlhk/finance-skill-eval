@@ -53,20 +53,14 @@ try{
     }
     const rerun=page.waitForResponse(r=>r.url().endsWith('/inspect/source')&&r.request().method()==='POST',{timeout:900000});rerun.catch(()=>{});await page.getByRole('button',{name:'继续分析',exact:true}).click();assert.ok((await rerun).ok());rep=await api('GET',base+'/report');
    }
-   if(current==='01-expense'){
-    const context=rep.inspection.dependencyAnalysis?.dependencies.find(d=>d.key==='runtime_context');
-    if(context?.binding?.kind!=='HTTP_HEADER'){
-     const card=page.locator('[data-dependency="runtime_context"]').first(),group=card.locator('..');await card.evaluate(element=>{const details=element.closest('details');if(details)details.open=true});await group.getByText('补充或纠正依赖契约说明',{exact:true}).click();await group.getByLabel(/context 的契约说明/u).fill('目标部署为 MCP：workspace 不属于模型可填写的业务参数。Runtime 每次调用通过 HTTP Header X-Workspace-Root 注入字符串路径，MCP 适配层读取该 Header 后构造 context.workspace；迁移后的 Tool schema 仍只暴露 claim_id。');await group.getByRole('button',{name:'保存说明',exact:true}).click();await expect(group.getByText('说明已保存，请继续分析确认。',{exact:true})).toBeVisible();const rebound=page.waitForResponse(r=>r.url().endsWith('/inspect/source')&&r.request().method()==='POST',{timeout:900000});rebound.catch(()=>{});await page.getByRole('button',{name:'继续分析',exact:true}).click();assert.ok((await rebound).ok());rep=await api('GET',base+'/report');await save(current+'/diagnosis-rebound.json',rep);const reboundContext=rep.inspection.dependencyAnalysis?.dependencies.find(d=>d.key==='runtime_context');assert.equal(reboundContext?.binding?.kind,'HTTP_HEADER',JSON.stringify(reboundContext));
-    }
-   }
    if(current==='03-procurement'){
     const rules=rep.inspection.dependencyAnalysis?.dependencies.find(d=>d.key==='department_rules');
     assert.deepEqual(rules?.binding,{kind:'HTTP_HEADER',name:'X-Department-Rules'},'模型必须为结构化运行数据设计明确的 MCP Header 注入协议');
     assert.equal(rules?.blocking,true,'缺少部门规则时 check_budget 无法运行，但不能阻止生成');
    }
    await save(current+'/diagnosis.json',rep);await page.screenshot({path:path.join(report,current,'01-diagnosis.png'),fullPage:true});assert.equal(rep.inspection.dependencyAnalysis?.status,'COMPLETE','Diagnostic closure not reached');outcome.checks.push('real A2 diagnosis closed');
-   // All four fixtures consume hidden Runtime context, so the supported target is MCP.
-   // Procurement deliberately crosses from Python to Java to exercise the Java MCP delivery path.
+   // Expense explicitly exercises framework-independent Script → MCP migration;
+   // procurement crosses into Java delivery.
    for(const [index,tool] of rep.inspection.tools.entries()){const language=current==='03-procurement'?'java':'python',label=current==='03-procurement'?'Java':'Python',card=page.locator('.diagnosis-tool').nth(index);await expect(card.locator('h3')).toContainText(tool.name);await card.getByLabel('转换形式').selectOption('MCP');await expect(card.getByLabel('转换形式')).toHaveValue('MCP');await card.getByLabel('实现语言').selectOption(language);await expect(card.getByLabel('实现语言')).toHaveValue(language);await expect(page.locator('.diagnosis-plan').getByText(`${tool.name} → ${label} MCP 服务`,{exact:true})).toBeVisible()}
    await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();phase='generation';await expect(page.getByRole('button',{name:'开始生成',exact:true})).toBeEnabled({timeout:30000});rep=await api('GET',base+'/report');await save(current+'/plan-report.json',rep);assert.equal(rep.migrationPlan?.generationAllowed,true,JSON.stringify(rep.migrationPlan));const gen=page.waitForResponse(r=>r.url().endsWith('/generate')&&r.request().method()==='POST',{timeout:950000});gen.catch(()=>{});await page.getByRole('button',{name:'开始生成',exact:true}).click();const gr=await gen;assert.ok(gr.ok(),await gr.text());const generated=await gr.json();await save(current+'/candidate.json',generated);assert.ok(generated.candidate);outcome.checks.push('real A4 candidate generated');
    await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();await page.locator('.stage-actions').getByRole('button',{name:'验证能否运行',exact:true}).click();rep=await api('GET',base+'/report');phase='runtime-configuration';

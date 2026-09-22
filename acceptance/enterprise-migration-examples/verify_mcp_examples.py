@@ -20,9 +20,12 @@ async def verify():
     thread.start()
     count = 0
     try:
-        for root in sorted(ROOT.glob('0[2-4]-*')):
+        for root in sorted(ROOT.glob('0[1-4]-*')):
             config = json.loads((root / 'runtime-config.json').read_text(encoding='utf-8'))
-            config['context']['serviceUrl']['value'] = f'http://127.0.0.1:{business.server_port}'
+            if root.name == '01-expense':
+                config['context']['workspace']['value'] = str(root / 'workspace')
+            else:
+                config['context']['serviceUrl']['value'] = f'http://127.0.0.1:{business.server_port}'
             runtime = RuntimeContext(config, {'demo_sdk': {'entrypoint': 'auth_sdk:authenticate'}}, {'DEMO_APP_KEY': 'demo-app'})
             endpoint, stop = await start_candidate_service(root / 'reference', {'start': [sys.executable, '-B', 'mcp/server.py']})
             try:
@@ -32,14 +35,15 @@ async def verify():
                     async with Client(StreamableHttpTransport(endpoint, headers=headers)) as client:
                         cards = await client.list_tools()
                         card = next(card for card in cards if card.name == name)
-                        assert not {'user','credential','service_url','department_rules'} & set(card.inputSchema.get('properties', {}))
+                        assert not {'user','credential','service_url','department_rules','workspace'} & set(card.inputSchema.get('properties', {}))
                         result = await client.call_tool(name, arguments)
                         assert not result.is_error
                         count += 1
                         if result.structured_content is not None: return result.structured_content
                         return json.loads(result.content[0].text)
                 for item in json.loads((root / 'targets.json').read_text(encoding='utf-8')):
-                    if root.name == '02-balance': result = await call('get_balance', item['input'])
+                    if root.name == '01-expense': result = await call('check_expense', item['input'])
+                    elif root.name == '02-balance': result = await call('get_balance', item['input'])
                     elif root.name == '04-refund': result = await call('refund_eligibility', item['input'])
                     else:
                         request = await call('get_request', item['input'])
@@ -49,7 +53,7 @@ async def verify():
                         result = {'request_id': item['input']['request_id'], 'approved': not reasons, 'reasons': reasons}
                     assert result == item['expected'], (item['caseId'], result)
             finally: await stop()
-        print(f'Real MCP: 9 scenarios, {count} calls passed; SDK provider and hidden context checked.')
+        print(f'Real MCP: 12 scenarios, {count} calls passed; SDK provider and hidden context checked.')
     finally:
         business.shutdown()
         business.server_close()

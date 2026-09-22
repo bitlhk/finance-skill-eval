@@ -82,3 +82,17 @@ it('never picks a port something else is already on', async () => {
   expect(second).not.toBe(first);
   expect(first).toBeGreaterThan(0);
 });
+
+it('stops a service spawned through a launcher, including its child', async () => {
+  const worker = new LocalWorker();
+  const workspace = await open(worker, [
+    { path: 'server.mjs', content: serving },
+    { path: 'launcher.mjs', content: 'import {spawn} from "node:child_process"; spawn(process.execPath,["server.mjs"],{stdio:"inherit"});' },
+  ]);
+  const started = await startService({ worker, workspace, service: { start: ['node', 'launcher.mjs'] } });
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  try { expect(await reachable(started.running.port)).toBe(true); }
+  finally { await started.running.stop(); }
+  expect(await reachable(started.running.port)).toBe(false);
+});

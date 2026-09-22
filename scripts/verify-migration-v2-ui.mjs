@@ -88,8 +88,10 @@ const implementationFixture=async input=>{
       compilePassed:true,contractPassed:true},
   };
   return {status:'PRODUCED',
-    payload:{status:'PRODUCED',tools:Object.values(byTool)},
-    files:{'scripts/calculate_acceptance_total.py':Buffer.from(scriptSource).toString('base64'),
+    payload:{status:'PRODUCED',tools:Object.values(byTool),skillDelivery:{skillFile:'SKILL.md',files:[{source:'migration-skill/SKILL.md',path:'SKILL.md'},{source:'migration-skill/policy.md',path:'references/acceptance-policy.md'}]}},
+    files:{'migration-skill/SKILL.md':(await readFile(path.join(root,'acceptance/openjiuwen-portability/legacy-skill/SKILL.md'))).toString('base64'),
+      'migration-skill/policy.md':(await readFile(path.join(root,'acceptance/openjiuwen-portability/legacy-skill/references/acceptance-policy.md'))).toString('base64'),
+      'scripts/calculate_acceptance_total.py':Buffer.from(scriptSource).toString('base64'),
       'mcp-python/server.py':Buffer.from(serviceSource).toString('base64')}};
 };
 
@@ -108,7 +110,7 @@ const stubs=realAgents?{}:{migrationAnalyzer,migrationImplementer:implementation
   // The question writer is the platform's, so it is stood in here: what this script checks is that
   // the analysis reaches it and that the result is reachable from the page.
   migrationSuite:async input=>({summary:`从分析生成：${input.tools.join('、')}`,
-    cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn'}]})};
+    cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn',rubric:[{criterionId:'order-facts',label:'订单事实',dimension:'business_completeness',description:'返回订单金额与审批状态',weight:1,allOf:[],anyOf:[],noneOf:[]}]}]})};
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,
   publicDirectory:path.resolve(process.env.MIGRATION_TEST_WEB_DIR||path.join(root,'web-dist')),
   accessToken:token,publicDemo:false,...stubs});
@@ -155,7 +157,7 @@ try{
   await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
   await page.getByRole('button',{name:'新建迁移',exact:true}).click();
   await page.locator('input[type=file]').first().setInputFiles({name:'legacy-skill.zip',mimeType:'application/zip',buffer:legacyZip});
-  await page.getByRole('heading',{name:'诊断与依赖补充',exact:true}).waitFor({timeout:STEP});
+  await page.getByRole('heading',{name:'迁移改造方案',exact:true}).waitFor({timeout:STEP});
   if(realAgents){
     // What A2 reports is A2's judgement, and a real one is entitled to disagree with the stub's.
     // What the page owes is that the Tools it found are on it.
@@ -171,52 +173,55 @@ try{
   await page.locator('article').filter({hasText:'calculate_acceptance_total'}).getByLabel('转换形式').selectOption('SCRIPT');
   await page.locator('article').filter({hasText:'get_acceptance_order'}).getByLabel('转换形式').selectOption('MCP');
   await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();
-  await page.getByRole('button',{name:'生成迁移后的 Skill 包',exact:true}).click();
-  await expect(page.getByText('工具已经可以试运行。',{exact:true})).toHaveCount(2,{timeout:STEP});
-  await expect(page.getByText('已生成工具工程，还需要接入原有业务代码。',{exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'开始生成',exact:true}).click();
+  await expect(page.getByText('迁移代码已生成。',{exact:true})).toHaveCount(2,{timeout:STEP});
+  await expect(page.getByText('已生成工具工程，请先完成代码中的待办。',{exact:true})).toHaveCount(0);
   pass('mixed_choices_generated_with_business_code');
 
   // The interface-change report is carried to the UI. It is a report: both Tools passed regardless.
   if(!realAgents){
     const mcpCardReport=page.locator('article').filter({hasText:'get_acceptance_order'});
-    await mcpCardReport.getByText('迁移过程中接口有哪些改动',{exact:true}).click();
+    await mcpCardReport.getByText('查看生成说明和接口改动',{exact:true}).click();
     await expect(mcpCardReport.getByText('旧 runtime 不可用，接口参数本身未变',{exact:false})).toBeVisible();
-    await expect(mcpCardReport.getByText('基线为',{exact:false})).toBeVisible();
+    await expect(mcpCardReport.getByText('基线 ',{exact:false})).toBeVisible();
     pass('interface_change_report_visible');
   }
 
   await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();
-  await page.getByRole('button',{name:'验证能否运行',exact:true}).click();
+  await page.locator('.stage-actions').getByRole('button',{name:'验证能否运行',exact:true}).click();
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
-  await scriptCard.getByLabel('试运行时传给工具的内容（JSON）').fill('{"subtotal":"100.00","tax_rate":"0.06"}');
-  await scriptCard.getByRole('button',{name:'试运行',exact:true}).click();
-  await page.getByRole('heading',{name:'calculate_acceptance_total · 验证通过',exact:true}).waitFor({timeout:STEP});
+  await scriptCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
+  await scriptCard.locator('textarea').fill('{"subtotal":"100.00","tax_rate":"0.06"}');
+  await scriptCard.getByRole('button',{name:'开始试运行',exact:true}).click();
+  await expect(scriptCard.getByText('验证通过',{exact:true})).toBeVisible({timeout:STEP});
   const mcpCard=page.locator('article').filter({hasText:'get_acceptance_order'});
   // Nothing to type: the platform starts the delivered service itself, and the page says so.
-  await expect(mcpCard.getByText('平台会按交付物的启动命令把服务起起来',{exact:false})).toBeVisible();
+  await expect(mcpCard.getByText('试运行时会自动启动生成的 MCP 服务。',{exact:false})).toBeVisible();
   await expect(mcpCard.getByLabel('共享 MCP 服务地址')).toHaveCount(0);
-  await mcpCard.getByLabel('试运行时传给工具的内容（JSON）').fill('{"order_id":"ORDER-001"}');
-  await mcpCard.getByRole('button',{name:'试运行',exact:true}).click();
-  await page.getByRole('heading',{name:'get_acceptance_order · 验证通过',exact:true}).waitFor({timeout:STEP});
+  await mcpCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
+  await mcpCard.locator('textarea').fill('{"order_id":"ORDER-001"}');
+  await mcpCard.getByRole('button',{name:'开始试运行',exact:true}).click();
+  await expect(mcpCard.getByText('验证通过',{exact:true})).toBeVisible({timeout:STEP});
   pass('script_and_mcp_technical_validation');
 
   // The test set is written from the analysis, and a reader has to be able to reach it: generated
   // here, listed with its questions, and offered as the content for the whole-Skill validation.
-  await page.getByRole('button',{name:'从分析生成测试集',exact:true}).click();
-  await expect(page.getByText('AI 生成 · ',{exact:false})).toBeVisible({timeout:STEP});
-  await page.getByText('查看题目',{exact:true}).click();
-  await expect(page.getByRole('option',{name:/迁移测试集 · \d+ 道题/u})).toHaveCount(1);
+  await page.locator('.stage-actions').getByRole('button',{name:'验证实际效果',exact:true}).click();
+  await page.getByRole('button',{name:/提供测试集和目标/}).click();
+  await page.getByLabel('准备方式').selectOption('ai');
+  await page.getByRole('button',{name:'AI 生成',exact:true}).click();
+  await expect(page.locator('.assessment-config-grid select').first().locator('option')).toHaveCount(2,{timeout:STEP});
+  await page.getByText(/查看 \d+ 条用例与验收要求/).click();
   if(!realAgents){
-    await expect(page.getByText('AI 生成 · 1 道题',{exact:true})).toBeVisible();
-    await expect(page.getByText('从分析生成：get_acceptance_order、calculate_acceptance_total',{exact:true})).toBeVisible();
+    await expect(page.locator('.assessment-config-grid select').first().locator('option').last()).toContainText('从分析生成：get_acceptance_order、calculate_acceptance_total');
     await expect(page.getByText('查询订单 ORDER-001 的金额与审批状态',{exact:true})).toBeVisible();
   }
   pass('generated_test_set_visible_and_selectable');
 
-  await page.getByRole('button',{name:'7 下载结果',exact:true}).click();
-  await expect(page.getByText(/当前候选尚未通过完整业务验收/)).toBeVisible();
+  await page.getByRole('button',{name:'进入下载',exact:true}).click();
+  await expect(page.getByText('迁移包将标记为未验证',{exact:true})).toBeVisible();
   const pending=page.waitForEvent('download');
-  await page.getByRole('button',{name:'下载迁移后的 Skill 包',exact:true}).click();
+  await page.getByRole('button',{name:'下载迁移包',exact:true}).click();
   const download=await pending,target=path.join(downloads,'migration.zip');await download.saveAs(target);
   assert(download.suggestedFilename().endsWith('-unverified.zip'));
   const exported=unzipSync(await readFile(target));

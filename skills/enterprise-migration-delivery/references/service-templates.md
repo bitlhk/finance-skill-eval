@@ -32,7 +32,33 @@
 
 新生成 Python 服务使用独立包 **FastMCP 2.14.7**（`from fastmcp import FastMCP`），不要使用官方 SDK 内嵌的 `mcp.server.fastmcp` 或自行拼装低层 Server。用具名函数、类型注解和必要的 Pydantic 约束定义业务 Schema；复杂 Schema 应明确表达约束并实际发现核对，不能仅改展示 Schema 而让真实参数校验不一致。
 
-依赖写在 PEP 723 头里，`uv run --no-project mcp-python/server.py` 直接跑。下例展示余额类工具的请求边界；实际工具名、输入、Header、下游地址和错误语义必须来自源代码及诊断声明，不复制样例假设。
+依赖写在 PEP 723 头里，`uv run --no-project mcp-python/server.py` 直接跑。下面是可独立启动的协议骨架；`id` 和回显实现仅用于验收，实际工具的参数类型和业务实现必须替换为源契约。
+
+```
+=== mcp-python/server.py ===
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["fastmcp==2.14.7"]
+# ///
+import json
+import os
+from fastmcp import FastMCP
+from fastmcp.tools.tool import ToolResult
+from mcp.types import TextContent
+
+server = FastMCP("<skill>-mcp")
+
+@server.tool(name="<tool>")
+async def lookup(id: str) -> ToolResult:
+    return ToolResult(content=[TextContent(type="text", text=json.dumps({"received": {"id": id}}))])
+
+if __name__ == "__main__":
+    server.run(transport="http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), path="/mcp", stateless_http=True)
+```
+
+### Python 按请求消费凭据的业务示例
+
+下例展示余额类工具的请求边界；实际工具名、输入、Header、下游地址和错误语义必须来自源代码及诊断声明，不复制样例假设。它需要真实或测试业务服务及请求 Header，不能当作无需配置的协议骨架运行。
 
 ```
 === mcp-python/server.py ===
@@ -202,6 +228,11 @@ createServer(async (req, res) => {
   </dependencies>
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>

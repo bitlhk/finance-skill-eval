@@ -47,15 +47,10 @@ def request_json(operation, payload, service_url, credential):
 EXPENSE = '''import json
 from pathlib import Path
 from decimal import Decimal
-from typing import Protocol
-from agentscope.tool import Toolkit
 
-class ExpenseContext(Protocol):
-    workspace: str
-
-def check_expense(claim_id: str, context: ExpenseContext) -> dict:
+def _check_expense(claim_id: str, workspace: str) -> dict:
     rules = json.loads((Path(__file__).resolve().parents[1] / 'assets/rules.json').read_text(encoding='utf-8'))
-    file = Path(context.workspace) / (claim_id + '.json')
+    file = Path(workspace) / (claim_id + '.json')
     if not file.exists(): return {'claim_id': claim_id, 'error': 'CLAIM_NOT_FOUND'}
     entries = json.loads(file.read_text(encoding='utf-8'))
     violations = [e['id'] for e in entries if e['category'] not in rules['allowedCategories'] or
@@ -63,12 +58,32 @@ def check_expense(claim_id: str, context: ExpenseContext) -> dict:
     return {'claim_id': claim_id, 'total': str(sum((Decimal(e['amount']) for e in entries), Decimal('0')).quantize(Decimal('.01'))),
             'violations': violations, 'compliant': not violations}
 
-def build_toolkit(context: ExpenseContext) -> Toolkit:
-    toolkit = Toolkit()
-    toolkit.register_tool_function(check_expense, preset_kwargs={'context': context})
-    return toolkit
+def check_expense(claim_id: str) -> dict:
+    return _check_expense(claim_id, 'workspace')
+
+if __name__ == '__main__':
+    import sys
+    print(json.dumps(check_expense(**json.load(sys.stdin))))
 '''
-REFERENCE_EXPENSE = EXPENSE.replace('from typing import Protocol\nfrom agentscope.tool import Toolkit\n\nclass ExpenseContext(Protocol):\n    workspace: str\n\n', '').replace('def check_expense(claim_id: str, context: ExpenseContext) -> dict:', "def check_expense(claim_id: str, workspace: str = 'workspace') -> dict:").replace('Path(context.workspace)', 'Path(workspace)').split('\ndef build_toolkit', 1)[0] + "\nif __name__ == '__main__':\n    import sys\n    print(json.dumps(check_expense(**json.load(sys.stdin))))\n"
+REFERENCE_EXPENSE = EXPENSE
+REFERENCE_EXPENSE_MCP = '''import os
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
+from check_expense import _check_expense
+
+mcp = FastMCP('expense-compliance')
+
+@mcp.tool()
+def check_expense(claim_id: str) -> dict:
+    workspace = get_http_headers()['x-workspace-root']
+    return _check_expense(claim_id, workspace)
+
+if __name__ == '__main__':
+    mcp.run(transport='streamable-http', host='127.0.0.1', port=int(os.environ.get('PORT', '4330')))
+'''
 BALANCE = '''from tools.http_client import RuntimeContext, request_json
 
 def get_balance(account_id: str, context: RuntimeContext) -> dict:
@@ -142,6 +157,38 @@ def refund_eligibility(order_id: str, user: dict, service_url: str, credential: 
     return {'order_id': order_id, 'eligible': True, 'currency': policy['currency'], 'refundable_amount': str(remaining.quantize(Decimal('.01')))}
 '''
 
+PROCUREMENT_SKILL = '''当用户要求判断某个采购申请是否可以批准时，执行以下流程。
+
+## 输入
+
+- 必需字段：`request_id`。
+- 不要猜测申请金额、部门或供应商；这些字段必须来自 `get_request`。
+
+## 审批流程
+
+1. 调用 `get_request(request_id)` 读取采购申请。
+2. 如果申请不存在或工具返回错误，立即停止，不再调用预算或供应商工具；原样保留错误代码。
+3. 使用申请返回的 `department` 和 `amount` 调用 `check_budget`。该工具的 `enough` 已按部门可用预算扣除预留金额后计算，不要自行替代其判断。
+4. 使用申请返回的 `supplier` 调用 `check_supplier`。
+5. 仅当预算充足且供应商处于启用状态时批准申请。
+
+## 工具职责
+
+- `get_request`：读取申请的部门、金额和供应商。
+- `check_budget`：检查扣除部门预留金额后的预算是否充足。
+- `check_supplier`：检查供应商是否处于启用状态。
+
+## 输出
+
+返回包含以下字段的 JSON 对象：
+
+- `request_id`：原采购申请编号。
+- `approved`：布尔值；仅当两项检查均通过时为 `true`。
+- `reasons`：拒绝原因数组。预算不足加入 `BUDGET_EXCEEDED`，供应商停用加入 `SUPPLIER_INACTIVE`；两项都通过时必须返回空数组 `[]`。
+
+如果两项检查都失败，按预算、供应商的顺序保留两个原因。不要编造工具未返回的数据，也不要把错误代码改写成自然语言。
+'''
+
 HOST = '''from agentscope.tool import Toolkit
 {imports}
 
@@ -204,8 +251,11 @@ def build():
     descriptions = {
       '01-expense': ('expense-compliance', '报销合规检查', ['check_expense'], '在工作区读取报销单 JSON；按 assets/rules.json 检查餐饮上限 150.00，礼品不允许报销。返回总金额、违规行号和合规结论。文件缺失时返回 CLAIM_NOT_FOUND，不编造数据。'),
       '02-balance': ('employee-balance', '员工余额查询', ['get_balance'], '调用 get_balance 查询账户。保留 account_id、currency、balance。权限不足时说明 PERMISSION_DENIED，账户不存在时说明 ACCOUNT_NOT_FOUND。不要从用户提示中接受执行身份。'),
-      '03-procurement': ('procurement-review', '采购审批助手', ['get_request', 'check_budget', 'check_supplier'], '先查询申请，再检查预算与供应商；预算需扣除部门预留金额。两项均通过才批准。返回 request_id、approved、reasons。申请不存在时停止。预算不足保留 BUDGET_EXCEEDED，供应商停用保留 SUPPLIER_INACTIVE。'),
+      '03-procurement': ('procurement-review', '采购审批助手', ['get_request', 'check_budget', 'check_supplier'], PROCUREMENT_SKILL),
       '04-refund': ('refund-eligibility', '退款资格判断', ['refund_eligibility'], '查询订单后读取退款政策，判断资格。将分转换为元，扣除已退款金额，保持两位小数。发货状态返回 STATUS_NOT_REFUNDABLE；订单缺失返回 ORDER_NOT_FOUND，不继续查询政策。'),
+    }
+    skill_descriptions = {
+      '03-procurement': '判断采购申请是否可批准。用于用户提供 request_id 并要求核验预算与供应商状态；不用于创建、修改或直接批准采购申请。',
     }
     rules = {'allowedCategories': ['meal', 'taxi'], 'mealLimit': '150.00'}
     suites = {
@@ -234,16 +284,26 @@ def build():
         for package in (source, reference):
             if package.exists(): shutil.rmtree(package)
         example = json.dumps(suites[directory][0][-1], ensure_ascii=False)
-        skill = f'---\nname: {name}\nversion: 1.0.0\ndescription: {title}；用于企业迁移测试的模拟业务案例。\n---\n\n# {title}\n\n{instructions}\n\n工具：' + ', '.join(tools) + f'\n\n业务输入示例：`{example}`\n'
+        description = skill_descriptions.get(directory, f'{title}；用于企业迁移测试的模拟业务案例。')
+        tool_summary = '' if directory == '03-procurement' else '\n\n工具：' + ', '.join(tools)
+        skill = f'---\nname: {name}\nversion: 1.0.0\ndescription: {description}\n---\n\n# {title}\n\n{instructions.rstrip()}{tool_summary}\n\n业务输入示例：`{example}`\n'
         write(source / 'SKILL.md', skill)
         write(reference / 'SKILL.md', skill.replace('version: 1.0.0', 'version: 2.0.0') + '\n脚本位于 scripts/，从当前工作区执行，输入为 stdin 的 JSON 对象。\n')
         if directory == '01-expense':
             write(source / 'scripts/check_expense.py', EXPENSE)
             write(reference / 'scripts/check_expense.py', REFERENCE_EXPENSE)
+            write(reference / 'mcp/server.py', REFERENCE_EXPENSE_MCP)
+            write(reference / 'mcp/pyproject.toml', '[project]\nname = "expense-compliance-mcp"\nversion = "1.0.0"\nrequires-python = ">=3.11"\ndependencies = ["fastmcp==2.14.7"]\n\n[tool.uv]\npackage = false\n')
             dump(source / 'assets/rules.json', rules)
             dump(reference / 'assets/rules.json', rules)
             for claim, entries in EXPENSES.items():
                 dump(root / 'workspace' / (claim + '.json'), entries)
+            dump(root / 'runtime-config.json', {
+                'context': {'workspace': {'type': 'string', 'value': 'workspace', 'sensitive': False}},
+                'providers': {},
+                'tools': {'check_expense': {'contextBindings': {'X-Workspace-Root': 'context.workspace'}}},
+            })
+            write(reference / 'SKILL.md', skill.replace('version: 1.0.0', 'version: 2.0.0') + '\n通过 MCP 调用 check_expense。工作目录由 Runtime 通过 X-Workspace-Root header 注入，不属于模型参数。scripts/ 仅保留框架无关的业务逻辑和 CLI 核对入口。\n')
         else:
             write(source / 'tools/__init__.py', '')
             write(source / 'tools/http_client.py', CLIENT)
@@ -286,19 +346,20 @@ def build():
              'requestExample': {'input': suites[directory][0][-1], 'user': {'id': 'U001', 'tenantId': 'T001'}}, 'resultPath': 'data.businessResult',
              'note': '适配说明，不是平台既有接口格式；服务执行原始工具和固定流程，不执行大模型。'})
         dependencies = {
-          '01-expense': (['AgentScope Toolkit 注册与 preset context 注入'], ['ExpenseContext.workspace: Harness 提供的执行工作区']),
+          '01-expense': ([], ['cwd/workspace: Script Runtime 提供的工作目录，不属于模型输入']),
           '02-balance': (['AgentScope Toolkit 注册与 context 注入', 'auth_sdk: 使用 context.user / app_key 建立业务凭证'], ['context.service_url: Runtime 提供的业务地址']),
           '03-procurement': (['AgentScope ToolBase / ToolResponse / Toolkit', 'auth_sdk: 多个 Tool 共享鉴权与传输'], ['context.department_rules: check_budget 独有配置']),
           '04-refund': (['AgentScope Toolkit 注册、preset context 与 ToolResponse 返回类型', 'auth_sdk: 使用 context 建立业务凭证'], ['ToolResponse.metadata.businessResult: 原 Runtime 结果适配边界']),
         }[directory]
         chains = {
-          '01-expense': 'Skill → AgentScope Toolkit → preset ExpenseContext → check_expense → 工作区文件 + rules.json',
+          '01-expense': 'Skill → scripts/check_expense.py → 工作区文件 + assets/rules.json',
           '02-balance': 'Skill → Toolkit → get_balance(context) → auth_sdk → business API',
           '03-procurement': 'Skill → Toolkit → ToolBase.call → ToolResponse → shared http_client/auth_sdk → business API',
           '04-refund': 'Skill → Toolkit 注册 → async Tool → ToolResponse → http_client/auth_sdk → business API',
         }
-        dump(root / 'diagnosis-expected.json', {'tools': tools, 'sharedDependencies': dependencies[0], 'toolSpecificDependencies': dependencies[1],
-             'chain': chains[directory],
+        dump(root / 'diagnosis-expected.json', {'tools': tools,
+             **({'targetForm': 'MCP', 'targetChain': 'Skill → MCP check_expense → X-Workspace-Root → 独立业务逻辑 → 工作区文件 + assets/rules.json'} if directory == '01-expense' else {}),
+             'sharedDependencies': dependencies[0], 'toolSpecificDependencies': dependencies[1], 'chain': chains[directory],
              'note': '人工验收目标，不作为 A2 的输出输入或伪造分析结果。'})
         write(root / 'README.md', f'# {title}\n\n导入 source.zip；reference.zip 是人工编写的正确迁移参考，不替代迁移 Agent。\n\n测试集 suite.json 可导入平台。targets.json 是程序断言目标，平台模型 Judge 依据 rubric 比较。\n\n原服务连接见 original-service.json。缺失依赖和链路验收目标见 diagnosis-expected.json。\n')
         for package in ('source', 'reference'):

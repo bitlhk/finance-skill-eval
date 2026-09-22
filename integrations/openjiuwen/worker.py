@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -14,7 +15,22 @@ from .model_config import resolve_model
 from .runtime_context import RuntimeContext
 from .package_runtime import service_environment
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app):
+    async def sweep():
+        while True:
+            instances.expire()
+            await asyncio.sleep(1)
+    task = asyncio.create_task(sweep())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(lifespan=lifespan)
 active = set()
 cleanup_jobs = set()
 slots = asyncio.Semaphore(2)
@@ -98,15 +114,16 @@ async def delete_runtime_instance(instance_id: str):
 
 
 class InstanceExecutionRequest:
-    def __init__(self, body, source):
+    def __init__(self, body, source, instance_id):
         self.body = body
         self.source = source
+        self.instance_id = instance_id
 
     async def json(self):
         return self.body
 
     async def is_disconnected(self):
-        return await self.source.is_disconnected()
+        return instances.get(self.instance_id) is None or await self.source.is_disconnected()
 
 
 @app.post('/v1/runtime-instances/{instance_id}/execute')
@@ -119,7 +136,7 @@ async def execute_runtime_instance(instance_id: str, request: Request):
         raise HTTPException(400, str(exc)) from exc
     model = config().get('models', {}).get(body['model']['modelId'], {})
     body['model']['providerId'] = model.get('providerId', 'service-execution')
-    return await execute(InstanceExecutionRequest(body, request))
+    return await execute(InstanceExecutionRequest(body, request, instance_id))
 
 
 @app.post("/execute")

@@ -44,6 +44,18 @@ def request(secret='token-value'):
 
 
 class InstanceManagerTests(unittest.TestCase):
+    def test_capacity_idempotency_and_expiry(self):
+        manager = InstanceManager()
+        first = manager.create(request(), 'first')
+        manager.create(request(), 'second')
+        self.assertEqual(manager.create(request(), 'first')['instanceId'], first['instanceId'])
+        with self.assertRaisesRegex(RuntimeError, 'capacity'):
+            manager.create(request(), 'third')
+        first['_expires'] = 0
+        manager.create(request(), 'third')
+        self.assertIsNone(manager.get(first['instanceId']))
+        self.assertNotIn('first', manager.idempotency)
+
     def test_hydrates_archive_and_secrets_only_for_execution(self):
         manager = InstanceManager()
         item = manager.create(request(), 'same-request')

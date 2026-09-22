@@ -1,6 +1,7 @@
 import {runtimeToolConfigTemplate} from './migration-delivery-contract.js';
 import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
+import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
 import type { SkillAssetRecord } from './skill-store.js';
 import { recommendLanguage,type ProjectInspection,type ToolDecision } from './migration-model.js';
 import type { GeneratedToolImplementation } from './migration-code-generator.js';
@@ -17,6 +18,7 @@ export type PortableGeneration={toolId:string;toolName:string;form:ToolDecision[
   readyForValidation:boolean;todo:string[];generatedBy?:string;explanation?:string;attempts?:number;
   checks?:GeneratedToolImplementation['checks']};
 export type PortableDiff={path:string;operation:'ADD'|'MODIFY';before:string;after:string};
+export type SkillDocumentDelivery={files:Record<string,string>};
 
 /**
  * The candidate package is assembled, not generated.
@@ -37,36 +39,22 @@ function identifier(value:string,fallback:string){return `${/^[a-zA-Z]/u.test(va
 
 const withPep723=(source:string,dependencies:string[]=[])=>/^#\s*\/\/\/\s*script\s*$/mu.test(source)?source:`# /// script\n# requires-python = ">=3.11"\n# dependencies = [${dependencies.map(value=>JSON.stringify(value)).join(', ')}]\n# ///\n\n${source}`;
 
+function standardSkillFrontmatter(source:string){
+  const match=source.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u);
+  if(!match)return source;
+  const parsed=parseYaml(match[1]!);
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return source;
+  const metadata=parsed as Record<string,unknown>,allowed=['name','description','license','allowed-tools','metadata'];
+  const standard=Object.fromEntries(allowed.filter(key=>metadata[key]!==undefined).map(key=>[key,metadata[key]]));
+  return `---\n${stringifyYaml(standard,{lineWidth:0}).trimEnd()}\n---\n\n${source.slice(match[0].length).trimStart()}`;
+}
+
 /** A path the agent reported is about to become a file in the package. Nothing may leave it. */
 function packagePath(path:string):string{
   const normalized=path.replaceAll('\\','/').replace(/^\.\//u,'');
   if(!normalized||normalized.startsWith('/')||/^[a-zA-Z]:/u.test(normalized)||normalized.split('/').includes('..'))
     throw Object.assign(new Error(`生成文件路径不合法：${path}`),{statusCode:409});
   return normalized;
-}
-
-const MAX_INLINE_SKILL_LINES=500;
-function lines(value:string){return value.replaceAll('\r\n','\n').split('\n').length;}
-function compactShortReferences(files:Record<string,Uint8Array>,skillTarget:string){
-  const root=skillTarget.slice(0,skillTarget.length-'SKILL.md'.length);
-  const references=Object.keys(files).filter(name=>name.startsWith(`${root}references/`)&&/\.md$/iu.test(name)).sort();
-  if(!references.length)return;
-  let skill=Buffer.from(files[skillTarget]!).toString('utf8');
-  const material=references.map(path=>({path,content:Buffer.from(files[path]!).toString('utf8').trim()}));
-  if(lines(skill)+material.reduce((sum,item)=>sum+lines(item.content)+3,0)>MAX_INLINE_SKILL_LINES)return;
-  for(const item of material){
-    const relative=item.path.slice(root.length),basename=posix.basename(relative,'.md');
-    const heading=item.content.match(/^#\s+(.+)$/mu)?.[1]?.trim()||basename.replaceAll('-',' ');
-    const body=item.content.replace(/^#\s+.+\r?\n+/u,'').trim();
-    const escaped=relative.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
-    skill=skill
-      .replace(new RegExp(`(?:请)?(?:阅读|参见|查看)\\s*[\`“\"]?${escaped}[\`”\"]?[。.]?`,'giu'),'')
-      .replaceAll(`\`${relative}\``,heading)
-      .replaceAll(`](${relative})`,']');
-    if(body)skill+=`\n\n## ${heading}\n\n${body}`;
-    delete files[item.path];
-  }
-  files[skillTarget]=strToU8(skill.trimEnd()+'\n');
 }
 
 /** Remove Python package markers whose package no longer contains implementation files. */
@@ -88,7 +76,7 @@ function reusable(tool:ProjectInspection['tools'][number],archive:Record<string,
   return bytes?{language,sourcePath:tool.entrypoint.path,source:Buffer.from(bytes).toString('utf8'),additionalFiles:[],dependencies:[]}:null;
 }
 
-export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>}){
+export function generatePortableCandidate(input:{archive:Record<string,Uint8Array>;base:SkillAssetRecord;inspection:ProjectInspection;decisions:ToolDecision[];version:string;implementations?:Record<string,GeneratedToolImplementation>;skillDelivery?:SkillDocumentDelivery}){
   const implementations=input.implementations??{};
   const files:Record<string,Uint8Array>={},generations:PortableGeneration[]=[];
   const hasMcp=input.decisions.some(decision=>decision.form==='MCP');
@@ -117,6 +105,13 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   };
   const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
   const normalizedSkill=normalizeSkillPackage(sourceArchive,input.base.skillFile,input.base.skillId,input.version);
+  if(input.skillDelivery){
+    // Document structure is an editorial migration decision made by A4.  The packager may check
+    // paths and the final Skill contract, but must not merge or split references after the model
+    // has delivered them.  The manifest is complete for human-readable Skill documentation.
+    for(const name of Object.keys(normalizedSkill.files))if(name==='SKILL.md'||/^references\/.*\.(?:md|mdx|txt)$/iu.test(name))delete normalizedSkill.files[name];
+    for(const [name,content] of Object.entries(input.skillDelivery.files))normalizedSkill.files[name]=strToU8(content);
+  }
   pruneOrphanPythonPackageMarkers(normalizedSkill.files);
   for(const [name,bytes] of Object.entries(normalizedSkill.files))files[hasMcp?`skill/${name}`:name]=bytes;
   const skillTarget=hasMcp?'skill/SKILL.md':'SKILL.md';
@@ -238,17 +233,17 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     }
   }
 
-  const guide = generations.map(g=>g.form==='SCRIPT'
-    ? `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`
-    : `- ${g.toolName}: 通过 MCP 调用同名工具；服务参数从声明的环境变量读取，业务 arguments 与按调用 Runtime Header 分开，包级配置声明见 runtime-tool-config.template.json。`).join('\n');
-  const originalInstructions=Buffer.from(files[skillTarget]!).toString('utf8');
+  const scriptGuide=generations.filter(g=>g.form==='SCRIPT').map(g=>
+    `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`);
+  const mcpTools=generations.filter(g=>g.form==='MCP').map(g=>`\`${g.toolName.replaceAll('`','')}\``);
+  const guide=[...scriptGuide,...(mcpTools.length?[`- MCP 工具：${mcpTools.join('、')}。按照本 Skill 上文定义的业务流程、调用顺序和输出规则使用这些工具。服务地址、身份、凭证及 Runtime Header 均由平台配置，不是业务参数，不要向用户索取；部署配置见 \`runtime-tool-config.template.json\`。`]:[])].join('\n');
+  const originalInstructions=standardSkillFrontmatter(Buffer.from(files[skillTarget]!).toString('utf8'));
   // Regeneration may start from the previous immutable candidate.  Remove the guide we own
   // before appending its replacement; otherwise every regeneration duplicates the section and
   // gradually drowns out the business instructions.
   const cleanInstructions=originalInstructions.replace(/\n## 迁移后的执行方式\n[\s\S]*?(?=\n## |\s*$)/u,'').trimEnd();
   files[skillTarget]=strToU8(cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
     '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n');
-  compactShortReferences(files,skillTarget);
   if(hasMcp){
     const templatePath='runtime-tool-config.template.json';
     const template=JSON.stringify(runtimeToolConfigTemplate(input.inspection,input.decisions),null,2)+'\n';
