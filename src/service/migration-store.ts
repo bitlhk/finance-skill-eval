@@ -1,5 +1,3 @@
-import { z } from 'zod';
-import { zipSync } from 'fflate';
 import type { SkillStore } from './skill-store.js';
 import type { EvaluationRunManager } from './run-manager.js';
 import type { EvaluationJobStore } from './job-store.js';
@@ -8,9 +6,7 @@ import type { PreparationStore } from './preparation-store.js';
 import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
 import { MigrationDiagnostics } from './migration-diagnostics.js';
-import { generateCandidateFiles, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
-import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
@@ -26,6 +22,7 @@ import { MigrationEvaluationService } from '../migration/application/migration-e
 import { MigrationOpenJiuwenService } from '../migration/application/migration-openjiuwen-service.js';
 import { MigrationOptimizationService } from '../migration/application/migration-optimization-service.js';
 import { MigrationExportService } from '../migration/application/migration-export-service.js';
+import { MigrationLegacyService } from '../migration/application/migration-legacy-service.js';
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
@@ -41,13 +38,14 @@ export class MigrationStore {
   private readonly openJiuwenService: MigrationOpenJiuwenService;
   private readonly optimizationService: MigrationOptimizationService;
   private readonly exportService: MigrationExportService;
-  constructor(private root:string, private skills:SkillStore, runs:EvaluationRunManager,
+  private readonly legacyService: MigrationLegacyService;
+  constructor(root:string, skills:SkillStore, runs:EvaluationRunManager,
     jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
-    optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
-    private codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
+    optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:EnvironmentStore,
+    codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
     analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
-    private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+    implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
     projects?: MigrationProjectRepository) {
@@ -62,22 +60,10 @@ export class MigrationStore {
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
+    this.legacyService = new MigrationLegacyService(root, this.projects, this.projectService, skills, diagnostics, environments);
   }
-  private async migrationEnvironment(environmentId:string){
-    return await this.environments?.get(environmentId)??null;
-  }
-  async target(){try{return {available:true,target:await nativeTarget()};}catch{return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};}}
-  async verifyTarget(id:string,input:unknown){return this.serial(id,async()=>{
-    const p=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.get(id);
-    if(!value.candidate||p.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请刷新后验证');
-    if(!value.simulationProfile||value.generation?.candidateDigest!==value.candidate.artifactSha256)return conflict('请先审阅映射并生成当前候选；修改后需重新审阅');
-    const runner=new MigrationTargetRuns(this.root,this.skills);
-    for(const runId of value.targetRuns??[])if((await runner.get(runId)).status==='RUNNING')return conflict('当前项目已有验证正在运行');
-    const run=await runner.start(value.candidate,value.simulationProfile);(value.targetRuns??=[]).push(run.id);await this.projects.save(value);return run;
-  });}
-  private serial<T>(id:string,fn:()=>Promise<T>):Promise<T> {
-    return this.projects.runExclusive(id,fn);
-  }
+  async target(){return this.legacyService.target();}
+  async verifyTarget(id:string,input:unknown){return this.legacyService.verifyTarget(id,input);}
   async list() {return this.projectService.list();}
   async get(id:string):Promise<MigrationProject> {return this.projectService.get(id);}
   async create(input:unknown) {return this.projectService.create(input);}
@@ -102,46 +88,14 @@ export class MigrationStore {
   async plan(id:string){return this.inspectionService.plan(id);}
   async runtimeRequirements(id:string){return this.inspectionService.runtimeRequirements(id);}
   async runtimeRequirementsYaml(id:string){return this.inspectionService.runtimeRequirementsYaml(id);}
-  private async generatePortable(id:string,input:unknown){return this.generationService.generate(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.technicalValidation.list(id);}
   async validateOpenJiuwen(id:string,input:unknown){return this.openJiuwenService.validate(id,input);}
   async openJiuwenValidations(id:string){return this.openJiuwenService.validations(id);}
   async generate(id:string,input:unknown){
-    if(input&&typeof input==='object'&&'runtime' in input)return this.generateLegacy(id,input);
-    return this.generatePortable(id,input);
+    if(input&&typeof input==='object'&&'runtime' in input)return this.legacyService.generate(id,input);
+    return this.generationService.generate(id,input);
   }
-  private async generateLegacy(id:string,input:unknown){return this.serial(id,async()=>{
-    const p=z.strictObject({runtime:z.enum(['openjiuwen']),environmentId:z.string().optional(),
-      intent:z.enum(['portable_method_and_adapters','preserve_business_method']),baseAssetId:z.string(),simulationProfile:z.string().optional(),acknowledgeSimulation:z.literal(true).optional()}).parse(input);
-    const value=await this.get(id);
-    if(p.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
-    if(p.environmentId){const env=await this.migrationEnvironment(p.environmentId);
-      if(!env||env.type!=='runtime_launcher'||env.runtimeType!=='openjiuwen')return conflict('目标必须是已配置的 OpenJiuwen Runtime Launcher');}
-    const base=value.candidate??value.source;
-    const originalArchive=await this.skills.readArchive(base.assetId);
-    if(value.generation)for(const [name,bytes] of Object.entries(originalArchive).filter(([name])=>name.startsWith('migration-generated/'))){
-      const expected=value.generation.diff.find(d=>d.path===name)?.after;
-      if(expected===undefined||Buffer.from(bytes).toString()!==expected)return conflict('适配生成文件已修改；为避免覆盖工程改动，请先人工处理冲突');
-    }
-    const archive=regenerationArchive(originalArchive,base);
-    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(base):await this.diagnose(id);
-    const version=`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`;
-    const target={runtime:p.runtime,...(p.environmentId?{environmentId:p.environmentId}:{}),intent:p.intent};
-    if(p.simulationProfile&&!p.acknowledgeSimulation)return conflict('请确认模拟端口、资源映射与业务待确认边界');
-    const simulation=p.simulationProfile?{id:p.simulationProfile,target:await nativeTarget()}:undefined;
-    const generated=generateCandidateFiles(archive,base,diagnosis,version,target,simulation);
-    const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
-    // The legacy request shape intentionally enters the 0.1 workflow. Keeping
-    // that identity prevents its simulated target evidence from being mistaken
-    // for a 2.0 OpenJiuwen validation.
-    value.schemaVersion='finance.skill-migration.v0.1';
-    value.candidate=candidate;value.candidateNotes='基于当前版本生成声明与薄适配；保留方法修改和资源，等待本版本验证。';
-    value.simulationProfile=p.simulationProfile;
-    value.generation={candidateDigest:candidate.artifactSha256,target,diff:generated.diff,generatedAt:new Date().toISOString()};
-    (value.candidateHistory??=[]).push({asset:candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'migration'});
-    await this.projects.save(value);return value;
-  });}
   async candidate(id:string,input:unknown) {return this.candidateService.import(id,input);}
   async draft(id:string,input:unknown) {return this.candidateService.saveDraft(id,input);}
   async analyze(id:string) {return this.candidateService.analyze(id);}
