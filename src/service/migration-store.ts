@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { zipSync, strToU8 } from 'fflate';
 import { fingerprint } from '../contracts.js';
@@ -33,8 +33,8 @@ import {MigrationSupplements,supplementFiles} from './migration-supplements.js';
 import {analyzeDependencies,validateDependencyData,type Supplement} from './migration-dependencies.js';
 import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
 import type { MigrationProject } from '../migration/domain/migration-project.js';
+import { MigrationProjectService } from '../migration/application/migration-project-service.js';
 
-const createSchema = z.strictObject({sourceAssetId:z.string().min(1), name:z.string().min(1).max(120)});
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
 const draftSchema = z.strictObject({
   source:z.string().min(1).max(128000), notes:z.string().min(1).max(8000),
@@ -78,6 +78,7 @@ function automaticTestInput(tool:ToolInspection,provided:unknown):TestInput{
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
   private readonly projects: MigrationProjectRepository;
+  private readonly projectService: MigrationProjectService;
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -89,6 +90,7 @@ export class MigrationStore {
     private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
     projects?: MigrationProjectRepository) {
     this.projects = projects ?? new MigrationProjectRepository(root);
+    this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -105,34 +107,11 @@ export class MigrationStore {
   private serial<T>(id:string,fn:()=>Promise<T>):Promise<T> {
     return this.projects.runExclusive(id,fn);
   }
-  async list() {return this.projects.list();}
-  async get(id:string):Promise<MigrationProject> {return this.projects.get(id);}
-  async create(input:unknown) {
-    const value=await this.serial('create',async()=>{
-    const p=createSchema.parse(input), source=await this.skills.get(p.sourceAssetId);
-    if (!source) return conflict('源 Skill 不可用');
-    const existing=(await this.list()).find(item=>item.source.artifactSha256===source.artifactSha256&&item.name===p.name);
-    if(existing)return existing;
-    const value:MigrationProject={schemaVersion:'finance.skill-migration.v2',id:'migration-'+randomUUID(),name:p.name,
-      createdAt:new Date().toISOString(),source,candidate:null,candidateNotes:'',runs:[],assessment:'NOT_VALIDATED'};
-    await this.projects.save(value); return value;
-    });
-    void this.diagnostics?.diagnose(value.source).catch(()=>undefined);return value;
-  }
-  async upgrade(id:string){
-    const legacy=await this.get(id),asset=legacy.candidate??legacy.source;
-    if(legacy.schemaVersion==='finance.skill-migration.v2')return legacy;
-    const upgraded=await this.create({sourceAssetId:asset.assetId,name:`${legacy.name} 2.0`});
-    return this.serial(upgraded.id,async()=>{
-      const current=await this.get(upgraded.id);
-      if(current.legacySourceProjectId!==legacy.id){current.legacySourceProjectId=legacy.id;await this.projects.save(current);}
-      return current;
-    });
-  }
-  async diagnose(id:string,retry=false){const value=await this.get(id);
-    if(!this.diagnostics)return conflict('静态诊断服务不可用');
-    return this.diagnostics.diagnose(value.source,retry);
-  }
+  async list() {return this.projectService.list();}
+  async get(id:string):Promise<MigrationProject> {return this.projectService.get(id);}
+  async create(input:unknown) {return this.projectService.create(input);}
+  async upgrade(id:string){return this.projectService.upgrade(id);}
+  async diagnose(id:string,retry=false){return this.projectService.diagnose(id,retry);}
   async inspect(id:string,sourceOnly=false){return this.serial(id,async()=>{
     const value=await this.get(id),asset=sourceOnly?value.source:value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const originalFiles:Record<string,string>={};for(const [name,bytes] of Object.entries(archive))try{originalFiles[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{}
