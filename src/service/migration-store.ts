@@ -12,11 +12,9 @@ import { MigrationDiagnostics } from './migration-diagnostics.js';
 import { generateCandidateFiles, regenerationArchive } from './migration-candidate.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
-import {runtimeBuildRequirements} from './migration-harness.js';
-import {MigrationRuntimeConfig,configurationDigest,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
+import {MigrationRuntimeConfig,configurationDigest} from './migration-runtime-config.js';
 import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
-import {pythonCommand} from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
 import type { MigrationProject } from '../migration/domain/migration-project.js';
@@ -27,6 +25,7 @@ import { MigrationCandidateService } from '../migration/application/migration-ca
 import { MigrationGenerationService } from '../migration/application/migration-generation-service.js';
 import { MigrationTechnicalValidationWorkflow } from '../migration/application/migration-technical-validation-service.js';
 import { MigrationEvaluationService } from '../migration/application/migration-evaluation-service.js';
+import { MigrationOpenJiuwenService } from '../migration/application/migration-openjiuwen-service.js';
 const conflict = (message:string):never => {throw Object.assign(new Error(message),{statusCode:409});};
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
@@ -39,6 +38,7 @@ export class MigrationStore {
   private readonly generationService: MigrationGenerationService;
   private readonly technicalValidation: MigrationTechnicalValidationWorkflow;
   private readonly evaluationService: MigrationEvaluationService;
+  private readonly openJiuwenService: MigrationOpenJiuwenService;
   constructor(private root:string, private skills:SkillStore, runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
@@ -57,6 +57,7 @@ export class MigrationStore {
     this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills);
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations, optimizers, diagnostics, environments);
+    this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -101,48 +102,8 @@ export class MigrationStore {
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.technicalValidation.list(id);}
   private async currentTechnicalState(value:MigrationProject){return this.technicalValidation.currentState(value);}
-  async validateOpenJiuwen(id:string,input:unknown){
-    const value=await this.get(id),state=await this.currentTechnicalState(value);
-    if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
-    if(!state.ready)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
-    const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string}}};
-    const selectedRuntime=body?.configuration?.runtime;
-    if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('OpenJiuwen 验证必须选择 Runtime Launcher');
-    const environmentId=selectedRuntime.environmentId;
-    const environment=environmentId?await this.migrationEnvironment(environmentId):null;
-    if(!environment||environment.type!=='runtime_launcher'||environment.runtimeType!=='openjiuwen')return conflict('目标必须是已配置的 OpenJiuwen Runtime Launcher');
-    const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
-    const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
-      .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;
-        while(true){const prefix=cursor?`${cursor}/`:'';if(archive[`${prefix}pyproject.toml`]||archive[`${prefix}package.json`]){root=cursor;break;}if(!cursor)break;cursor=cursor.split('/').slice(0,-1).join('/');}
-        const filePaths=Object.keys(archive).filter(name=>(!root||name.startsWith(`${root}/`))&&/\.(?:py|js|mjs|cjs|json|toml|lock)$/iu.test(name));
-        return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,
-          launch:tool.entrypoint!.kind==='PYTHON'?pythonCommand(archive,entry):{program:'node',args:[entry]},
-          ...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
-    const services:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environmentReference?:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string}}>=[];
-    for(const generation of value.portableGenerations??[]){
-      if(generation.form!=='MCP')continue;
-      if(!generation.start?.length)return conflict(`候选 MCP ${generation.toolName} 缺少启动命令`);
-      const existing=services.find(service=>JSON.stringify([service.start,service.prepare])===JSON.stringify([generation.start,generation.prepare]));
-      if(existing){existing.toolNames.push(generation.toolName);existing.filePaths=[...new Set([...existing.filePaths,...generation.files])];}
-      else services.push({assetDigest:asset.artifactSha256,toolNames:[generation.toolName],filePaths:generation.files,start:generation.start,...(generation.prepare?{prepare:generation.prepare}:{})});
-    }
-    const config=await new MigrationRuntimeConfig(this.root).get(id);
-    const deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
-    for(const service of services){
-      const toolIds=inspection.tools.filter(tool=>service.toolNames.includes(tool.name)).map(tool=>tool.toolId);
-      const serviceDeps=deps.filter(dep=>dep.toolIds.some(id=>toolIds.includes(id))&&dep.binding?.kind==='SERVICE_ENV');
-      serviceEnvironment(serviceDeps,config.values);
-      if(serviceDeps.length)service.environmentReference={migrationId:id,revision:config.revision,assetDigest:asset.artifactSha256,configurationDigest:configurationDigest(config,deps)};
-    }
-    const comparison=(body.configuration as Record<string,unknown>).evaluationMode==='service_comparison';
-    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime Harness 改造需求；自动 Runtime Builder 功能开发中，当前版本暂不能执行对比评测');
-    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},...(deps.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
-    return this.validate(id,normalized);
-  }
-  async openJiuwenValidations(id:string){
-    return (await this.report(id)).openJiuwenValidations;
-  }
+  async validateOpenJiuwen(id:string,input:unknown){return this.openJiuwenService.validate(id,input);}
+  async openJiuwenValidations(id:string){return this.openJiuwenService.validations(id);}
   async generate(id:string,input:unknown){
     if(input&&typeof input==='object'&&'runtime' in input)return this.generateLegacy(id,input);
     return this.generatePortable(id,input);
