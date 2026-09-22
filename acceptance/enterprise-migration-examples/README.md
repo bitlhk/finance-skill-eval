@@ -3,12 +3,12 @@
 全部使用模拟业务数据。4 个原始包、4 个手工迁移参考包、12 个固定业务目标；
 每个案例均支持目标评估和原服务对比。参考包不作为 Agent 迁移成功的证据。
 
-报销包内的 workspace/ 提供首次演示的输入文件，默认从 cwd/workspace 读取。
-verify_examples.py 则从包外独立工作区执行同一脚本，传 workspace="."，验证它没有依赖 Skill 目录作为 cwd。
+报销案例目录的 workspace/ 提供演示输入文件，但不打进 source.zip；独立脚本从 cwd/workspace 读取，
+工具输入只包含 claim_id，工作目录由 Script Runtime 设置，不交给模型填写。
 
 | 案例 | 重点 | 业务分支 |
 |---|---|---|
-| 01-expense 报销合规 | Toolkit 注册；通过 preset context 注入工作区 | 合规、两项违规、文件缺失 |
+| 01-expense 报销合规 | 框架无关的独立 Script → MCP；工作目录改为 Runtime header | 合规、两项违规、文件缺失 |
 | 02-balance 员工余额 | context 与鉴权 SDK 混合耦合；执行身份不属于模型参数 | 成功、越权、账户缺失 |
 | 03-procurement 采购审批 | 三个 ToolBase 实现；ToolResponse；共享鉴权与独有部门配置 | 批准、预算不足、供应商停用 |
 | 04-refund 退款资格 | async Tool 注册；preset context；Runtime ToolResponse 适配 | 成功、状态拒绝、订单缺失 |
@@ -36,7 +36,7 @@ python -B acceptance/enterprise-migration-examples/server.py --port 4327
 .venv-openjiuwen/Scripts/python.exe -B acceptance/enterprise-migration-examples/verify_mcp_examples.py
 ```
 
-它启动三个参考 MCP 服务，检查 9 个场景、15 次工具调用，并验证模型 schema 不含执行依赖。
+它启动四个参考 MCP 服务，检查 12 个场景、18 次工具调用，并验证模型 schema 不含执行依赖。
 
 演示步骤：
 
@@ -54,10 +54,10 @@ worker-auth-providers.json 中 authProviders 合入私有 Worker 配置。不要
 案例 02–04 的 reference/mcp/server.py 从 headers 读取执行依赖，Tool schema 只含业务参数；
 scripts/ 是手工调试和业务逻辑核对入口，不通过平台注入鉴权。
 
-原服务接口执行原始源码和预定业务工作流，harness 构造每轮 context、SDK、Toolkit 与执行身份；
+原服务接口执行原始源码和预定业务工作流；案例 01 直接执行独立脚本，案例 02–04 由 harness 构造每轮 context、SDK、Toolkit 与执行身份；
 它不是原企业线上 Agent，也不使用 LLM。请求的 user 仅用于模拟切换测试身份。
 因此本案例可验证工具语义、调用链和服务适配；无法证明真实旧 Agent 的推理行为等价。
 
-案例 01 使用 Script，案例 02–04 的参考部署使用 MCP。当前 Runtime 不支持 Script 上下文／鉴权注入，
+案例 01 的源是可运行 Script，但验收目标明确要求改为 MCP；案例 02–04 的参考部署也使用 MCP。当前 Runtime 不支持 Script 上下文／鉴权注入，
 所以采购预算工具不推荐选择依赖注入的 Script；混合形式需额外明确 Script 的独立执行依赖契约。
 MCP 参考启动：在包内运行 `uv run --project mcp python mcp/server.py`，端口由 PORT 指定。

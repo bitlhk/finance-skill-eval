@@ -6,6 +6,7 @@ import inspect
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 from threading import Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,18 +65,25 @@ def load(path):
 
 
 def invoke_original(case_name, inputs, port, user):
-    # The harness owns framework objects and per-run values; source ZIPs only consume them.
-    install_agentscope_fixture()
-    sys.modules['auth_sdk'] = load(ROOT / 'supplements/auth_sdk.py')
     source = ROOT / case_name / 'source'
     sys.path[:] = [str(source)] + [p for p in sys.path if not (p.startswith(str(ROOT)) and p.endswith('/source'))]
+    if case_name == '01-expense':
+        completed = subprocess.run(
+            [sys.executable, '-B', str(source / 'scripts/check_expense.py')],
+            input=json.dumps(inputs), text=True, capture_output=True,
+            cwd=ROOT / case_name, timeout=10,
+        )
+        if completed.returncode: raise RuntimeError(completed.stderr)
+        return json.loads(completed.stdout)
+    # Cases 02–04 deliberately model framework-bound source runtimes. The harness owns
+    # the AgentScope objects and per-run values; business modules only consume them.
+    install_agentscope_fixture()
+    sys.modules['auth_sdk'] = load(ROOT / 'supplements/auth_sdk.py')
     for name in list(sys.modules):
         if name == 'tools' or name.startswith('tools.'): del sys.modules[name]
     context = types.SimpleNamespace(user=user, service_url=f'http://127.0.0.1:{port}', app_key='demo-app',
                                     workspace=str(ROOT / case_name / 'workspace'),
                                     department_rules={'D001': {'reserve': '100.00'}})
-    if case_name == '01-expense':
-        return load(source / 'scripts/check_expense.py').build_toolkit(context).invoke('check_expense', **inputs)
     toolkit = load(source / 'runtime.py').build_toolkit(context)
     if case_name == '02-balance': return toolkit.invoke('get_balance', **inputs)
     if case_name == '03-procurement':

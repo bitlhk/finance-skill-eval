@@ -1,0 +1,17 @@
+{
+  "context": {
+    "workspace": {
+      "type": "string",
+      "value": "workspace",
+      "sensitive": false
+    }
+  },
+  "providers": {},
+  "tools": {
+    "check_expense": {
+      "contextBindings": {
+        "X-Workspace-Root": "context.workspace"
+      }
+    }
+  }
+}

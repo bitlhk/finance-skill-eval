@@ -1,6 +1,7 @@
 import {runtimeToolConfigTemplate} from './migration-delivery-contract.js';
 import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
+import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
 import type { SkillAssetRecord } from './skill-store.js';
 import { recommendLanguage,type ProjectInspection,type ToolDecision } from './migration-model.js';
 import type { GeneratedToolImplementation } from './migration-code-generator.js';
@@ -37,6 +38,16 @@ const nodeName=(name:string)=>identifier(name.toLowerCase().replace(/[^a-z0-9]+/
 function identifier(value:string,fallback:string){return `${/^[a-zA-Z]/u.test(value)?'':fallback}${value}`;}
 
 const withPep723=(source:string,dependencies:string[]=[])=>/^#\s*\/\/\/\s*script\s*$/mu.test(source)?source:`# /// script\n# requires-python = ">=3.11"\n# dependencies = [${dependencies.map(value=>JSON.stringify(value)).join(', ')}]\n# ///\n\n${source}`;
+
+function standardSkillFrontmatter(source:string){
+  const match=source.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u);
+  if(!match)return source;
+  const parsed=parseYaml(match[1]!);
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return source;
+  const metadata=parsed as Record<string,unknown>,allowed=['name','description','license','allowed-tools','metadata'];
+  const standard=Object.fromEntries(allowed.filter(key=>metadata[key]!==undefined).map(key=>[key,metadata[key]]));
+  return `---\n${stringifyYaml(standard,{lineWidth:0}).trimEnd()}\n---\n\n${source.slice(match[0].length).trimStart()}`;
+}
 
 /** A path the agent reported is about to become a file in the package. Nothing may leave it. */
 function packagePath(path:string):string{
@@ -222,10 +233,11 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     }
   }
 
-  const guide = generations.map(g=>g.form==='SCRIPT'
-    ? `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`
-    : `- ${g.toolName}: 通过 MCP 调用同名工具；服务参数从声明的环境变量读取，业务 arguments 与按调用 Runtime Header 分开，包级配置声明见 runtime-tool-config.template.json。`).join('\n');
-  const originalInstructions=Buffer.from(files[skillTarget]!).toString('utf8');
+  const scriptGuide=generations.filter(g=>g.form==='SCRIPT').map(g=>
+    `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`);
+  const mcpTools=generations.filter(g=>g.form==='MCP').map(g=>`\`${g.toolName.replaceAll('`','')}\``);
+  const guide=[...scriptGuide,...(mcpTools.length?[`- MCP 工具：${mcpTools.join('、')}。按照本 Skill 上文定义的业务流程、调用顺序和输出规则使用这些工具。服务地址、身份、凭证及 Runtime Header 均由平台配置，不是业务参数，不要向用户索取；部署配置见 \`runtime-tool-config.template.json\`。`]:[])].join('\n');
+  const originalInstructions=standardSkillFrontmatter(Buffer.from(files[skillTarget]!).toString('utf8'));
   // Regeneration may start from the previous immutable candidate.  Remove the guide we own
   // before appending its replacement; otherwise every regeneration duplicates the section and
   // gradually drowns out the business instructions.

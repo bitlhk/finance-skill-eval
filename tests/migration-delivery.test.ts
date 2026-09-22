@@ -111,8 +111,10 @@ it('resolves a Java service directory entrypoint only from its declared main cla
 
 it('packages matching Skill execution instructions and MCP configuration',()=>{
  const {inspection,decisions,tool}=fixture();
- const generated=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD),'balance.mjs':strToU8('old')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions,version:'2.0.0',implementations:{[tool.toolId]:{language:'node',sourcePath:'mcp/server.mjs',source:'// server',additionalFiles:[],dependencies:[],smokeInput:{},generatedBy:'A4',explanation:'',attempts:1,checks:[],start:['node','mcp/server.mjs']}}});
- const instructions=Buffer.from(generated.files['skill/SKILL.md']!).toString();expect(instructions).toContain('通过 MCP 调用同名工具');expect(instructions).toContain('runtime-tool-config.template.json');
+ const legacySkill=SKILL_MD.replace('description: 夹具 Skill，用来说明分析结果怎样喂进平台。','description: 夹具 Skill，用来说明分析结果怎样喂进平台。\nversion: 1.0.0');
+ const generated=generatePortableCandidate({archive:{'SKILL.md':strToU8(legacySkill),'balance.mjs':strToU8('old')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions,version:'2.0.0',implementations:{[tool.toolId]:{language:'node',sourcePath:'mcp/server.mjs',source:'// server',additionalFiles:[],dependencies:[],smokeInput:{},generatedBy:'A4',explanation:'',attempts:1,checks:[],start:['node','mcp/server.mjs']}}});
+ const instructions=Buffer.from(generated.files['skill/SKILL.md']!).toString();expect(instructions).toContain('按照本 Skill 上文定义的业务流程');expect(instructions).toContain('MCP 工具：`balance`');expect(instructions).not.toContain('通过 MCP 调用同名工具');expect(instructions).toContain('runtime-tool-config.template.json');
+ expect(instructions).not.toMatch(/^version:/mu);
  const config=JSON.parse(Buffer.from(generated.files['runtime-tool-config.template.json']!).toString());expect(config.runtimeToolConfig.tools.balance).toBeDefined();expect(config.requiredEnvironment).toHaveLength(1);
  expect(generated.files['mcp/runtime-tool-config.template.json']).toBeUndefined();
 });

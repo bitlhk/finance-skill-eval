@@ -423,7 +423,7 @@ export class MigrationStore {
       const declarations=generationInspection.tools.map(tool=>({tool:tool.name,dependencies:generationInspection.dependencyAnalysis!.dependencies.filter(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT').map(d=>({name:d.name,key:d.key,purpose:d.purpose,required:d.blocking,sensitive:d.sensitive,schema:d.schema,binding:d.binding}))}));
       const content=JSON.stringify({schemaVersion:'finance.tool-runtime-dependencies.v1',tools:declarations},null,2)+'\n';generated.files[path]=strToU8(content);generated.diff.push({path,operation:'ADD',before:'',after:content});
     }
-    const candidate=await this.publishCandidate(generated.files);
+    const candidate=await this.publishCandidate(generated.files,version);
     const candidateInspection=await this.inspectCandidate({candidate,files:generated.files,inspection:generationInspection,decisions:value.decisions!,baseAssetId:currentAsset.assetId,generations:generated.generations});
     // The candidate inspection describes the same logical tools on a new immutable asset. Carry
     // the authorized decisions forward to that asset; otherwise the report immediately claims
@@ -436,8 +436,8 @@ export class MigrationStore {
   });}
   /** Turn placed files into an asset. Separate from generating them: this is the step that makes
    * the result referenceable, and it has nothing to say about whether the code is any good. */
-  private async publishCandidate(files:Record<string,Uint8Array>):Promise<SkillAssetRecord>{
-    return this.skills.uploadZip(Buffer.from(zipSync(files)));
+  private async publishCandidate(files:Record<string,Uint8Array>,version:string):Promise<SkillAssetRecord>{
+    return this.skills.uploadZip(Buffer.from(zipSync(files)),{version});
   }
   /**
    * The candidate's own check, after it exists.

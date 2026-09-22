@@ -58,7 +58,8 @@ export function normalizeSkillPackage(archive:Record<string,Uint8Array>,skillFil
   if(!body.trim())throw Object.assign(new Error('原始 Skill 正文为空，不能用通用模板替代业务流程'),{statusCode:409});
   const fallback=slug(skillId,'migrated-skill');
   metadata.name=slug(typeof metadata.name==='string'?metadata.name:skillId,fallback);
-  metadata.version=version;
+  // Skill versions belong to the immutable asset record, not Agent Skills frontmatter.
+  delete metadata.version;
   const existingDescription=typeof metadata.description==='string'?metadata.description.trim():'';
   metadata.description=(existingDescription||`Migrated Skill ${metadata.name}. Review the instructions and use the packaged tools when applicable.`).slice(0,1024);
   let normalizedBody=body;
