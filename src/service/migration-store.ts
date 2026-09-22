@@ -6,7 +6,7 @@ import type { SkillStore, SkillAssetRecord } from './skill-store.js';
 import type { EvaluationRunManager } from './run-manager.js';
 import type { EvaluationJobStore } from './job-store.js';
 import type { EvalPackCatalog } from './catalog.js';
-import { runConfigurationSchema, manualPreparationSchema } from './contracts.js';
+import { runConfigurationSchema } from './contracts.js';
 import type { PreparationStore } from './preparation-store.js';
 import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
@@ -15,24 +15,23 @@ import { generateCandidateFiles, versionedMethod, regenerationArchive } from './
 import type { EnvironmentStore } from './environment-store.js';
 import { MigrationTargetRuns, nativeTarget } from './migration-target.js';
 import { inspectProject } from './tool-inspector.js';
-import { validateSkill } from './skill-validator.js';
-import {buildMigrationPlan,languageOfSourcePaths,recommendLanguage,stableToolId,supportsImplicitScriptContext,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision,type ToolInspection } from './migration-model.js';
+import {buildMigrationPlan,languageOfSourcePaths,recommendLanguage,supportsImplicitScriptContext,type MigrationPlan,type ProjectInspection,type TechnicalValidation,type ToolDecision,type ToolInspection } from './migration-model.js';
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from './migration-delivery-contract.js';
 import {runtimeBuildRequirements} from './migration-harness.js';
 import {MigrationRuntimeConfig,configurationDigest,runtimeInjection,migrationExecutionConfig,serviceEnvironment} from './migration-runtime-config.js';
-import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toProjectInspection,toSkillDocumentDelivery,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
+import { analyzeWithAgent,contractSample,implementWithAgent,toGeneratedImplementations,toSkillDocumentDelivery,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import { generatePortableCandidate,type PortableGeneration } from './portable-candidate.js';
-import { baselineBrief,generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
+import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';
 import {originalServiceFingerprint} from '../original-service-runtime.js';
 import { TechnicalValidationService,pythonCommand } from './technical-validation.js';
 import { MigrationCodeGenerator } from './migration-code-generator.js';
 import { assessMigrationAcceptance } from './migration-acceptance.js';
-import {simpleMigrationSuiteSchema,simpleMigrationCases,normalizeOriginalServiceSuite} from './simple-migration-suite.js';
 import {MigrationSupplements} from './migration-supplements.js';
 import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
 import type { MigrationProject } from '../migration/domain/migration-project.js';
 import { MigrationProjectService } from '../migration/application/migration-project-service.js';
 import { MigrationInspectionService, type MigrationRuntimeReference } from '../migration/application/migration-inspection-service.js';
+import { MigrationSuiteService } from '../migration/application/migration-suite-service.js';
 
 const candidateSchema = z.strictObject({assetId:z.string().min(1), notes:z.string().min(1).max(8000)});
 const draftSchema = z.strictObject({
@@ -79,19 +78,21 @@ export class MigrationStore {
   private readonly projects: MigrationProjectRepository;
   private readonly projectService: MigrationProjectService;
   private readonly inspectionService: MigrationInspectionService;
+  private readonly suiteService: MigrationSuiteService;
   constructor(private root:string, private skills:SkillStore, private runs:EvaluationRunManager,
     private jobs:EvaluationJobStore, private catalog:EvalPackCatalog, private preparations?:PreparationStore,
     private optimizers?:OptimizationManager, private diagnostics?:MigrationDiagnostics, private environments?:EnvironmentStore,
     private codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
-    private analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+    analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     private implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
-    private suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
+    suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
     projects?: MigrationProjectRepository) {
     this.projects = projects ?? new MigrationProjectRepository(root);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
-    this.inspectionService = new MigrationInspectionService(root, this.projects, skills, this.analyzer);
+    this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer);
+    this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
   }
   private async migrationEnvironment(environmentId:string){
     return await this.environments?.get(environmentId)??null;
@@ -450,79 +451,9 @@ export class MigrationStore {
     (value.reviews??=[]).push({candidateDigest:value.candidate.artifactSha256,decision:p.decision,notes:p.notes,recordedAt:new Date().toISOString(),source:'PRIVATE_ADMIN_RECORDED'});
     await this.projects.save(value);return value;
   });}
-  async createSuite(id:string,input:unknown) {return this.serial(id,async()=>{
-    const p=manualPreparationSchema.parse(input),value=await this.get(id);
-    if (!this.preparations) return conflict('题集服务不可用');
-    const suite=await this.preparations.create({skill:value.source,summary:p.summary,cases:p.cases,holdoutCases:p.holdoutCases,source:'manual'});
-    (value.suiteIds??=[]).push(suite.preparationId);await this.projects.save(value);return suite;
-  });}
-  async importSimpleSuite(id:string,input:unknown){return this.serial(id,async()=>{
-    const originalServiceMode=!!input&&typeof input==='object'&&(input as {mode?:unknown}).mode==='service_comparison';
-    const parsed=originalServiceMode?normalizeOriginalServiceSuite(input):simpleMigrationSuiteSchema.parse(input),value=await this.get(id);
-    const comparisonOnly=originalServiceMode&&(input as {cases:Array<{criteria?:unknown}>}).cases.some(c=>c.criteria===undefined);
-    if(!this.preparations)return conflict('测试集服务不可用');
-    const suite=await this.preparations.create({skill:value.source,summary:parsed.name,cases:simpleMigrationCases(parsed),source:'manual',assessmentMode:'natural_language',...(comparisonOnly?{comparisonOnly:true}:{})});
-    (value.suiteIds??=[]).push(suite.preparationId);await this.projects.save(value);return suite;
-  });}
-  /**
-   * The test set, generated from the analysis rather than typed in by hand.
-   *
-   * It is built from the *source* asset, never the candidate: a test set written against what was
-   * just generated would be graded by the thing it is supposed to check. The analysis supplies the
-   * tool surface, so a question cannot require a Tool the Skill never had.
-   */
-  async generateSuite(id:string,input:unknown) {return this.serial(id,async()=>{
-    const p=z.strictObject({baseAssetId:z.string().min(1),maximumCases:z.number().int().min(1).max(8).optional(),assessmentMode:z.literal('natural_language').optional()}).parse(input);
-    const value=await this.get(id),current=value.candidate??value.source,asset=value.source;
-    if(p.baseAssetId!==current.assetId)return conflict('资产已变化，请刷新后重新生成测试集');
-    if(!value.inspection||value.inspection.assetId!==current.assetId)return conflict('测试集要从分析结果生成，请先检查当前资产');
-    if(!this.preparations)return conflict('题集服务不可用');
-    const decoded=await this.decodedSkillSource(asset);
-    let sourceInspection=value.sourceInspection??(value.inspection.assetId===asset.assetId?value.inspection:null);
-    // Upgrade existing projects without reading their candidate as the original baseline.
-    if(!sourceInspection){
-      const archive=await this.skills.readArchive(asset.assetId),files:Record<string,string>={};
-      for(const [name,bytes] of Object.entries(archive))try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
-      const result=await this.analyzer({assetDigest:asset.artifactSha256,runId:`${id}-source`,files:archive});
-      if(!result||result.status!=='PRODUCED')return conflict('原始资产分析未完成，不能使用候选分析替代出题依据');
-      sourceInspection=toProjectInspection(result.payload as never,asset.assetId,asset.artifactSha256,stableToolId,result.scanner??null,files);
-      sourceInspection.skill=validateSkill(files,asset.skillFile);
-      value.sourceInspection=structuredClone(sourceInspection);
-    }
-    if(!sourceInspection||sourceInspection.assetDigest!==asset.artifactSha256)return conflict('缺少原始资产的冻结分析，请重新分析原始资产后生成测试集');
-    const generated=await this.suiteGenerator({
-      skillId:asset.skillId,
-      skillSource:`${decoded}\n\n${baselineBrief(sourceInspection)}`,
-      tools:sourceInspection.tools.map(tool=>tool.name),
-      documentedInputs:sourceInspection.tools.flatMap(tool=>tool.samples.slice(0,2).map(sample=>({toolName:tool.name,input:sample.input}))),
-      ...(p.maximumCases===undefined?{}:{maximumCases:p.maximumCases}),
-      generationId:`migration-suite-${id}`,
-    });
-    // Generated cases already carry the analyzed Tool bindings and expectations. Converting them
-    // through the human-authored simple-suite format used to erase requiredTools, which made the
-    // Runtime execute a tool while the acceptance Judge was told there was no tool requirement.
-    const cases=p.assessmentMode==='natural_language'?generated.cases.map(item=>({...item,rubric:item.rubric.map(criterion=>({...criterion,allOf:[],anyOf:[],noneOf:[]}))})):generated.cases;
-    const suite=await this.preparations.create({skill:asset,summary:generated.summary,cases,source:'ai_generated',...(p.assessmentMode?{assessmentMode:p.assessmentMode}:{})});
-    (value.suiteIds??=[]).push(suite.preparationId);await this.projects.save(value);return suite;
-  });}
-  /** The Skill's own words, plus its references. Professional references only -- never a candidate's
-   * generated files, and never anything that looks like an answer key. */
-  private async decodedSkillSource(asset:SkillAssetRecord):Promise<string>{
-    const archive=await this.skills.readArchive(asset.assetId),decode=(name:string)=>{
-      const bytes=archive[name];if(!bytes)return '';try{return new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{return '';}
-    };
-    let remaining=24_000;
-    const parts=[`# SKILL.md\n${decode(asset.skillFile).slice(0,remaining)}`];
-    remaining-=Math.min(remaining,parts[0]!.length);
-    for(const name of Object.keys(archive).sort()){
-      if(remaining<=0)break;
-      const skillRoot=asset.skillFile.includes('/')?asset.skillFile.slice(0,asset.skillFile.lastIndexOf('/')+1):'';
-      if(!(name.startsWith(`${skillRoot}references/`)&&/\.md$/u.test(name))||/evals?\/|holdout|sealed|labels/iu.test(name))continue;
-      const text=decode(name).slice(0,Math.min(remaining,8_000));
-      parts.push(`# ${name}\n${text}`);remaining-=text.length;
-    }
-    return parts.join('\n\n');
-  }
+  async createSuite(id:string,input:unknown) {return this.suiteService.create(id,input);}
+  async importSimpleSuite(id:string,input:unknown){return this.suiteService.importSimple(id,input);}
+  async generateSuite(id:string,input:unknown) {return this.suiteService.generate(id,input);}
   async optimize(id:string,input:unknown) {return this.serial(id,async()=>{
     const p=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.get(id);
     if (!this.optimizers || !value.candidate) return conflict('优化器或候选不可用');
