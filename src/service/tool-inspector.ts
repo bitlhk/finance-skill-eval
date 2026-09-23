@@ -1,6 +1,6 @@
 import { SCAN_COMPLETE_STATUSES, type Diagnosis } from '../migration/infrastructure/migration-diagnostics.js';
 import type { ProjectInspection } from '../migration/domain/migration-model.js';
-import { validateSkill } from './skill-validator.js';
+import { validateSkill } from '../migration/domain/migration-skill-validator.js';
 
 /**
  * The rules path: the Skill-spec check plus coverage. It answers "is this package well-formed,

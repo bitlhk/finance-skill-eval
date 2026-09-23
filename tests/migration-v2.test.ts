@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach,expect,it,vi } from 'vitest';
 import { strToU8,unzipSync,zipSync } from 'fflate';
-import { validateSkill } from '../src/service/skill-validator.js';
+import { validateSkill } from '../src/migration/domain/migration-skill-validator.js';
 import { SKILL_MD, analysisFixture, analyzedTool, implementationFixture, inspectionFixture, toolFixture } from './analysis-fixture.js';
 import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { LocalWorker } from '../src/service/local-worker.js';

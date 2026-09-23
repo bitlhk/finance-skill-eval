@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { manualPreparationSchema } from '../src/service/contracts.js';
-import { validateSkill } from '../src/service/skill-validator.js';
+import { validateSkill } from '../src/migration/domain/migration-skill-validator.js';
 import { loadEvalPack } from '../src/eval-pack.js';
 
 const root=path.resolve('acceptance/openjiuwen-portability');

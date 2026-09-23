@@ -12,7 +12,7 @@ import {
   simpleMigrationSuiteSchema,
 } from "../domain/simple-migration-suite.js";
 import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
-import { validateSkill } from "../../service/skill-validator.js";
+import { validateSkill } from "../domain/migration-skill-validator.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 
