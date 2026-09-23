@@ -20,6 +20,7 @@ import { MigrationProjectService } from './application/migration-project-service
 import { MigrationInspectionService } from './application/migration-inspection-service.js';
 import { MigrationRuntimeConfigurationService,type MigrationRuntimeReference } from './application/migration-runtime-configuration-service.js';
 import { MigrationSupplementService } from './application/migration-supplement-service.js';
+import { MigrationImplementationService } from './application/migration-implementation-service.js';
 import { MigrationSuiteService } from './application/migration-suite-service.js';
 import { MigrationCandidateService } from './application/migration-candidate-service.js';
 import { MigrationGenerationService } from './application/migration-generation-service.js';
@@ -78,13 +79,14 @@ export class MigrationStore {
     const harnessSerializer=new YamlMigrationHarnessSerializer();
     const dependencyAnalyzer=new AgentMigrationDependencyAnalyzer();
     const agentResults=new AgentResultMapper();
+    const implementationService=new MigrationImplementationService(implementer,codeGenerator,agentResults);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
     this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,supplements,harnessSerializer,dependencyAnalyzer,agentResults);
     this.runtimeConfigurationService = new MigrationRuntimeConfigurationService(this.projects,runtimeConfigs,supplements,connectionProbe);
     this.supplementService = new MigrationSupplementService(this.projects,supplements);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, agentResults,preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
-    this.generationService = new MigrationGenerationService(this.projects, skills, implementer, codeGenerator, supplements,candidatePackager,agentResults,diagnostics);
+    this.generationService = new MigrationGenerationService(this.projects, skills, supplements,candidatePackager,implementationService,diagnostics);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(this.projects, skills,runtimeConfigs,technicalValidator);
     this.evaluationService = new MigrationEvaluationService(this.projects, skills, runs, jobs, catalog, preparations,
       preparations?new FileMigrationPreparationPackFactory(root):undefined,
