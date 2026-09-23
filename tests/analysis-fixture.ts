@@ -1,5 +1,5 @@
 import { strToU8 } from 'fflate';
-import type { MigrationAnalyzer, MigrationImplementer } from '../src/service/migration-agent.js';
+import type { MigrationAnalyzer, MigrationImplementer } from '../src/migration/application/migration-agent-port.js';
 import { stableToolId, type ProjectInspection, type ToolInspection, type ToolPortability } from '../src/migration/domain/migration-model.js';
 
 /**

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { MigrationAnalyzer } from "../../service/migration-agent.js";
+import type { MigrationAnalyzer } from "./migration-agent-port.js";
 import { toProjectInspection } from "../../service/migration-agent.js";
 import {
   analyzeDependencies,

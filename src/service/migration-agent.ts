@@ -7,6 +7,7 @@ import { SCAN_COMPLETE_STATUSES } from "../migration/infrastructure/migration-di
 import { languageOfSourcePaths, recommendLanguage } from "../migration/domain/migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
 import {isAdaptableHarnessCapability} from '../migration/domain/migration-harness.js';
+import type {MigrationAnalysis,MigrationImplementation} from '../migration/application/migration-agent-port.js';
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -65,15 +66,6 @@ export type AgentResult<T = Record<string, unknown>> = StageEnvelope<AgentPayloa
  * agent's own account of what went wrong; flattening either into `null` is what made both arrive
  * as a faceless "analysis unavailable", which tells whoever has to act on it nothing at all.
  */
-export type MigrationAnalysis =
-  | { status: "PRODUCED"; payload: unknown; workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory; scanner?: Record<string, unknown> | null }
-  | { status: "ABSTAINED"; reason: string; missing: string[]; payload?:unknown;workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory;scanner?:Record<string,unknown>|null }
-  | { status: "FAILED"; reason: string };
-export type MigrationAnalyzer = (input: {
-  assetDigest: string; runId: string; files: Record<string, Uint8Array>;
-  supplements?:import('../migration/domain/migration-dependency.js').AnalysisSupplement[];
-}) => Promise<MigrationAnalysis | null>;
-
 /**
  * The real analyzer: run the A2 agent. A seam rather than a direct call because the analysis is
  * the store's upstream dependency -- tests stand in a recorded analysis for the same reason they
@@ -105,14 +97,6 @@ export async function analyzeWithAgent(input: { assetDigest: string; runId: stri
  * for. An agent that ran and did not finish says `FAILED` and is reported as such -- falling back
  * there hides the reason and hands the work to a generator that cannot build a service.
  */
-export type MigrationImplementation =
-  | { status: "PRODUCED" | "ABSTAINED"; payload: unknown; files: Record<string, string> }
-  | { status: "FAILED"; reason: string };
-export type MigrationImplementer = (input: {
-  assetDigest: string; runId: string; files: Record<string, Uint8Array>;
-  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;deliveryContract?:Record<string,unknown>;
-}) => Promise<MigrationImplementation | null>;
-
 /** The real implementer: run the A4 agent. Injectable for the same reason as the analyzer. */
 export async function implementWithAgent(input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;

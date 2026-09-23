@@ -20,7 +20,7 @@ import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
 import { MigrationStore } from './migration-store.js';
 import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
-import type { MigrationAnalyzer, MigrationImplementer } from './migration-agent.js';
+import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";

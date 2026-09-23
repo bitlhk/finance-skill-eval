@@ -4,8 +4,8 @@ import {
   contractSample,
   toGeneratedImplementations,
   toSkillDocumentDelivery,
-  type MigrationImplementer,
 } from "../../service/migration-agent.js";
+import type { MigrationImplementer } from "./migration-agent-port.js";
 import type { MigrationCodeGenerator } from "../infrastructure/migration-code-generator.js";
 import { runtimeToolConfigTemplate, validateAgentRuntimeDelivery } from "../domain/migration-delivery-contract.js";
 import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
