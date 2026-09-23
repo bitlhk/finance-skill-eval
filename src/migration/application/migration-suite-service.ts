@@ -14,12 +14,12 @@ import {
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";
-import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 
 export class MigrationSuiteService {
   constructor(
-    private readonly projects: MigrationProjectRepository,
+    private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
     private readonly suiteGenerator: MigrationSuiteGenerator,

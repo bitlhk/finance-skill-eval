@@ -10,7 +10,7 @@ import {
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { TechnicalValidationService } from "../infrastructure/migration-technical-validator.js";
 import type { MigrationProject } from "../domain/migration-project.js";
-import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -59,7 +59,7 @@ function automaticTestInput(tool: ToolInspection, provided: unknown): TestInput 
 export class MigrationTechnicalValidationWorkflow {
   constructor(
     private readonly root: string,
-    private readonly projects: MigrationProjectRepository,
+    private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
   ) {}
 

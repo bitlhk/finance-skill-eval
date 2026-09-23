@@ -23,14 +23,14 @@ import type { PortableGeneration } from "../domain/migration-candidate-artifact.
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { inspectProject } from "../domain/migration-project-inspector.js";
-import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 
 const CODE_FILE = /\.(?:java|py|js|mjs|cjs|ts)$/iu;
 export class MigrationGenerationService {
   constructor(
     private readonly root: string,
-    private readonly projects: MigrationProjectRepository,
+    private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly implementer: MigrationImplementer,
     private readonly codeGenerator: MigrationCodeGenerator,

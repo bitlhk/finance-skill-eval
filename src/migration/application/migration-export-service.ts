@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { strToU8, zipSync } from 'fflate';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
-import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
+import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 
 export class MigrationExportService {
   constructor(
-    private readonly projects:MigrationProjectRepository,
+    private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
     private readonly evaluation:MigrationEvaluationService,
   ) {}

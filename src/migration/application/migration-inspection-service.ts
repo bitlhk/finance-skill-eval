@@ -28,7 +28,7 @@ import { MigrationSupplements, supplementFiles } from "../infrastructure/migrati
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";
 import { stageEnvelope, staleAgainst } from "../domain/migration-stage-envelope.js";
-import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 
 export type MigrationRuntimeReference = {
@@ -41,7 +41,7 @@ export type MigrationRuntimeReference = {
 export class MigrationInspectionService {
   constructor(
     private readonly root: string,
-    private readonly projects: MigrationProjectRepository,
+    private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
   ) {}

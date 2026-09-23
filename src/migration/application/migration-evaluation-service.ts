@@ -16,7 +16,7 @@ import type { OptimizationManager } from '../../service/optimization-manager.js'
 import type { PreparationStore } from '../../service/preparation-store.js';
 import type { EvaluationRunManager } from '../../service/run-manager.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
-import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
+import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 
 const planSchema = z.strictObject({
@@ -28,7 +28,7 @@ const planSchema = z.strictObject({
 export class MigrationEvaluationService {
   constructor(
     private readonly root:string,
-    private readonly projects:MigrationProjectRepository,
+    private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
     private readonly runs:EvaluationRunManager,
     private readonly jobs:EvaluationJobStore,

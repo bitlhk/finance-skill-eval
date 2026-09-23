@@ -5,7 +5,7 @@ import type { MigrationDiagnostics } from '../infrastructure/migration-diagnosti
 import { MigrationTargetRuns, nativeTarget } from '../infrastructure/migration-target.js';
 import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
-import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
+import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationProjectService } from './migration-project-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 
@@ -13,7 +13,7 @@ import { migrationConflict as conflict } from './migration-errors.js';
 export class MigrationLegacyService {
   constructor(
     private readonly root:string,
-    private readonly projects:MigrationProjectRepository,
+    private readonly projects:MigrationProjectStore,
     private readonly projectService:MigrationProjectService,
     private readonly skills:MigrationSkillRepository,
     private readonly diagnostics?:MigrationDiagnostics,

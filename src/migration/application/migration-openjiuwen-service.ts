@@ -8,7 +8,7 @@ import {
 } from '../infrastructure/migration-runtime-config.js';
 import { pythonCommand } from '../infrastructure/migration-technical-validator.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
-import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
+import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
@@ -17,7 +17,7 @@ import { migrationConflict as conflict } from './migration-errors.js';
 export class MigrationOpenJiuwenService {
   constructor(
     private readonly root:string,
-    private readonly projects:MigrationProjectRepository,
+    private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly evaluation:MigrationEvaluationService,

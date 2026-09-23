@@ -6,8 +6,9 @@ import {
 } from "../domain/migration-project.js";
 import { KeyedQueue } from "../../shared/keyed-queue.js";
 import { listJsonFiles, readJson, writeJsonAtomic } from "../../service/file-store.js";
+import type { MigrationProjectStore } from "../application/migration-project-store.js";
 
-export class MigrationProjectRepository {
+export class MigrationProjectRepository implements MigrationProjectStore {
   private readonly directory: string;
   private readonly mutations = new KeyedQueue();
 

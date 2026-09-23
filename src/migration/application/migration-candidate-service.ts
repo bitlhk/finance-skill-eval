@@ -4,7 +4,7 @@ import { z } from "zod";
 import { versionedMethod } from "../domain/migration-method-version.js";
 import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
-import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
+import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 
 const candidateSchema = z.strictObject({
@@ -27,7 +27,7 @@ const reviewSchema = z.strictObject({
 
 export class MigrationCandidateService {
   constructor(
-    private readonly projects: MigrationProjectRepository,
+    private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly diagnostics?: MigrationDiagnostics,
   ) {}

@@ -13,6 +13,7 @@ import {generateSuiteWithAnalyzer} from './infrastructure/migration-suite-genera
 import type {MigrationSuiteGenerator} from './application/migration-suite-generator.js';
 import { MigrationCodeGenerator } from './infrastructure/migration-code-generator.js';
 import { MigrationProjectRepository } from './infrastructure/migration-project-repository.js';
+import type { MigrationProjectStore } from './application/migration-project-store.js';
 import type { MigrationProject } from './domain/migration-project.js';
 import { MigrationProjectService } from './application/migration-project-service.js';
 import { MigrationInspectionService, type MigrationRuntimeReference } from './application/migration-inspection-service.js';
@@ -29,7 +30,7 @@ import { migrationConflict as conflict } from './application/migration-errors.js
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
-  private readonly projects: MigrationProjectRepository;
+  private readonly projects: MigrationProjectStore;
   private readonly projectService: MigrationProjectService;
   private readonly inspectionService: MigrationInspectionService;
   private readonly suiteService: MigrationSuiteService;
@@ -50,7 +51,7 @@ export class MigrationStore {
     implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
-    projects?: MigrationProjectRepository) {
+    projects?: MigrationProjectStore) {
     this.projects = projects ?? new MigrationProjectRepository(root);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
     this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer);
