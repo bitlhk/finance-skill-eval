@@ -7,6 +7,7 @@ import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../d
 import type { GeneratedToolImplementation } from '../domain/generated-tool-implementation.js';
 import type { PortableDiff, PortableGeneration, SkillDocumentDelivery } from '../domain/migration-candidate-artifact.js';
 import { normalizeSkillPackage } from '../../service/skill-normalizer.js';
+import type { MigrationCandidatePackager } from '../application/migration-candidate-packager.js';
 
 /**
  * The candidate package is assembled, not generated.
@@ -249,4 +250,10 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     return [{path:name,operation:before?'MODIFY':'ADD',before:before?Buffer.from(before).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')} as PortableDiff];
   });
   return {files,generations,diff};
+}
+
+export class PortableCandidatePackager implements MigrationCandidatePackager {
+  package(input:Parameters<typeof generatePortableCandidate>[0]){
+    return generatePortableCandidate(input);
+  }
 }

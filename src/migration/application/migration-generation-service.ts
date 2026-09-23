@@ -17,7 +17,6 @@ import {
   type ProjectInspection,
   type ToolDecision,
 } from "../domain/migration-model.js";
-import { generatePortableCandidate } from "../infrastructure/migration-candidate-packager.js";
 import type { PortableGeneration } from "../domain/migration-candidate-artifact.js";
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
@@ -25,6 +24,7 @@ import { inspectProject } from "../domain/migration-project-inspector.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
+import type { MigrationCandidatePackager } from './migration-candidate-packager.js';
 
 const CODE_FILE = /\.(?:java|py|js|mjs|cjs|ts)$/iu;
 export class MigrationGenerationService {
@@ -34,6 +34,7 @@ export class MigrationGenerationService {
     private readonly implementer: MigrationImplementer,
     private readonly codeGenerator: MigrationCodeGeneratorPort,
     private readonly supplements:MigrationSupplementRepository,
+    private readonly packager:MigrationCandidatePackager,
     private readonly diagnostics?: MigrationDiagnosisPort,
   ) {}
 
@@ -67,7 +68,7 @@ export class MigrationGenerationService {
       }
       const decisions = project.decisions!.filter(decision => decision.baseAssetId === currentAsset.assetId);
       const delivery = await this.generateImplementations(archive, generationInspection, decisions, project.source, plan);
-      const generated = generatePortableCandidate({
+      const generated = this.packager.package({
         archive,
         base: project.source,
         inspection: generationInspection,

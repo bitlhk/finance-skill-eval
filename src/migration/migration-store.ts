@@ -32,6 +32,7 @@ import { MigrationRuntimeConfig } from './infrastructure/migration-runtime-confi
 import { MigrationTargetRuns } from './infrastructure/migration-target.js';
 import { TechnicalValidationService } from './infrastructure/migration-technical-validator.js';
 import { MigrationSupplements } from './infrastructure/migration-supplements.js';
+import { PortableCandidatePackager } from './infrastructure/migration-candidate-packager.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -62,11 +63,12 @@ export class MigrationStore {
     const targets=new MigrationTargetRuns(root,skills);
     const technicalValidator=new TechnicalValidationService();
     const supplements=new MigrationSupplements(root);
+    const candidatePackager=new PortableCandidatePackager();
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
     this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
-    this.generationService = new MigrationGenerationService(this.projects, skills, implementer, codeGenerator, supplements,diagnostics);
+    this.generationService = new MigrationGenerationService(this.projects, skills, implementer, codeGenerator, supplements,candidatePackager,diagnostics);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(this.projects, skills,runtimeConfigs,technicalValidator);
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations,
       preparations?new FileMigrationPreparationPackFactory(root):undefined,
