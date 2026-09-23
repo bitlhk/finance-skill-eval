@@ -33,6 +33,7 @@ import { MigrationTargetRuns } from './infrastructure/migration-target.js';
 import { TechnicalValidationService } from './infrastructure/migration-technical-validator.js';
 import { MigrationSupplements } from './infrastructure/migration-supplements.js';
 import { PortableCandidatePackager } from './infrastructure/migration-candidate-packager.js';
+import { LegacyCandidateGenerator } from './infrastructure/legacy-candidate-generator.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -64,6 +65,7 @@ export class MigrationStore {
     const technicalValidator=new TechnicalValidationService();
     const supplements=new MigrationSupplements(root);
     const candidatePackager=new PortableCandidatePackager();
+    const legacyCandidateGenerator=new LegacyCandidateGenerator();
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
     this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
@@ -77,7 +79,7 @@ export class MigrationStore {
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments,runtimeConfigs);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments,runtimeConfigs);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
-    this.legacyService = new MigrationLegacyService(root, this.projects, this.projectService, skills, diagnostics, environments,targets);
+    this.legacyService = new MigrationLegacyService(this.projects, this.projectService, skills, legacyCandidateGenerator,diagnostics, environments,targets);
   }
   async target(){return this.legacyService.target();}
   async verifyTarget(id:string,input:unknown){return this.legacyService.verifyTarget(id,input);}

@@ -1,6 +1,5 @@
 import { zipSync } from 'fflate';
 import { z } from 'zod';
-import { generateCandidateFiles, regenerationArchive } from '../infrastructure/legacy-candidate-generator.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import type { MigrationTargetGateway } from './migration-target-gateway.js';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
@@ -8,14 +7,15 @@ import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationProjectService } from './migration-project-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
+import type { MigrationLegacyCandidateGenerator } from './migration-legacy-candidate-generator.js';
 
 /** Compatibility boundary for the deprecated finance.skill-migration.v0.1 workflow. */
 export class MigrationLegacyService {
   constructor(
-    private readonly root:string,
     private readonly projects:MigrationProjectStore,
     private readonly projectService:MigrationProjectService,
     private readonly skills:MigrationSkillRepository,
+    private readonly candidateGenerator:MigrationLegacyCandidateGenerator,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly targets?:MigrationTargetGateway,
@@ -62,13 +62,13 @@ export class MigrationLegacyService {
         const expected=value.generation.diff.find(change=>change.path===name)?.after;
         if(expected===undefined||Buffer.from(bytes).toString()!==expected)return conflict('适配生成文件已修改；为避免覆盖工程改动，请先人工处理冲突');
       }
-      const archive=regenerationArchive(originalArchive,base);
+      const archive=this.candidateGenerator.regenerationArchive(originalArchive,base);
       const diagnosis=this.diagnostics?await this.diagnostics.diagnose(base):await this.projectService.diagnose(id);
       const version=`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`;
       const target={runtime:parsed.runtime,...(parsed.environmentId?{environmentId:parsed.environmentId}:{}),intent:parsed.intent};
       if(parsed.simulationProfile&&!parsed.acknowledgeSimulation)return conflict('请确认模拟端口、资源映射与业务待确认边界');
       const simulation=parsed.simulationProfile?{id:parsed.simulationProfile,target:await this.targets!.target()}:undefined;
-      const generated=generateCandidateFiles(archive,base,diagnosis,version,target,simulation);
+      const generated=this.candidateGenerator.generate({archive,base,diagnosis,version,target,simulation});
       const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
       // The legacy request shape intentionally enters the 0.1 workflow. Keeping
       // that identity prevents its simulated target evidence from being mistaken

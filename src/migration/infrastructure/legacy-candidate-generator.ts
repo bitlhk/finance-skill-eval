@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { strToU8 } from 'fflate';
 import type { Diagnosis } from '../domain/migration-diagnosis.js';
-import type { SkillAssetRecord } from '../../service/skill-store.js';
-import type { NativeTarget } from './migration-target.js';
+import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
+import type { MigrationNativeTarget } from '../domain/migration-target.js';
+import type { MigrationLegacyCandidateGenerator } from '../application/migration-legacy-candidate-generator.js';
 import { versionedMethod } from '../domain/migration-method-version.js';
 
 const generatedNames=new Set(['neutral-contract.json','neutral_result.py','agentscope_result_adapter.py','OpenJiuwenMigrationTool.java','review.json','README.md']);
@@ -23,7 +24,7 @@ export function regenerationArchive(archive:Record<string,Uint8Array>,base:Skill
 }
 
 export function generateCandidateFiles(archive:Record<string,Uint8Array>,base:SkillAssetRecord,diagnosis:Diagnosis,
-  version:string,target:{runtime:string;environmentId?:string;intent:string},simulation?:{id:string;target:NativeTarget}){
+  version:string,target:{runtime:string;environmentId?:string;intent:string},simulation?:{id:string;target:MigrationNativeTarget}){
   const original=Buffer.from(archive[base.skillFile]!).toString('utf8');
   const folder='migration-generated';
   if(Object.keys(archive).some(name=>name.startsWith(folder+'/')))throw Object.assign(new Error('已有生成目录；请从原始项目生成新的候选，避免覆盖'),{statusCode:409});
@@ -141,4 +142,13 @@ public final class OpenJiuwenMigrationTool {
     .map(([name,bytes])=>({path:name,operation:name in archive?'MODIFY':'ADD',
       before:name in archive?Buffer.from(archive[name]!).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')}));
   return {files,diff,resources};
+}
+
+export class LegacyCandidateGenerator implements MigrationLegacyCandidateGenerator {
+  regenerationArchive(archive:Record<string,Uint8Array>,base:SkillAssetRecord){
+    return regenerationArchive(archive,base);
+  }
+  generate(input:Parameters<MigrationLegacyCandidateGenerator['generate']>[0]){
+    return generateCandidateFiles(input.archive,input.base,input.diagnosis,input.version,input.target,input.simulation);
+  }
 }
