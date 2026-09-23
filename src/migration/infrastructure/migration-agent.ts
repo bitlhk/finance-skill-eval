@@ -4,10 +4,11 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { modelTimeoutMs, type ModelRole } from "../../service/config.js";
 import { SCAN_COMPLETE_STATUSES } from "../domain/migration-diagnosis.js";
-import { languageOfSourcePaths, recommendLanguage } from "../domain/migration-model.js";
+import { languageOfSourcePaths, recommendLanguage,stableToolId } from "../domain/migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "../domain/migration-stage-envelope.js";
 import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
 import type {MigrationAnalysis,MigrationImplementation} from '../application/migration-agent-port.js';
+import type {MigrationAgentResultMapper} from '../application/migration-agent-result-mapper.js';
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -604,6 +605,21 @@ export function toGeneratedImplementations(
     };
   }
   return out;
+}
+
+export class AgentResultMapper implements MigrationAgentResultMapper {
+  inspection(input:Parameters<MigrationAgentResultMapper['inspection']>[0]){
+    return toProjectInspection(input.payload as Parameters<typeof toProjectInspection>[0],input.assetId,input.assetDigest,stableToolId,input.scanner,input.files);
+  }
+  contractSample(tool:Parameters<MigrationAgentResultMapper['contractSample']>[0]){
+    return contractSample(tool);
+  }
+  generatedImplementations(payload:unknown,files:Record<string,string>,toolNameById:Record<string,string>){
+    return toGeneratedImplementations(payload as Parameters<typeof toGeneratedImplementations>[0],files,toolNameById);
+  }
+  skillDocumentDelivery(payload:unknown,files:Record<string,string>){
+    return toSkillDocumentDelivery(payload as Parameters<typeof toSkillDocumentDelivery>[0],files);
+  }
 }
 
 /** Run one migration agent. Never throws for an agent-side failure: FAILED is a result. */

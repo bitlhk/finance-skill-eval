@@ -1,13 +1,11 @@
 import { z } from "zod";
 import type { MigrationAnalyzer } from "./migration-agent-port.js";
-import { toProjectInspection } from "../infrastructure/migration-agent.js";
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
 import type { Supplement } from "../domain/migration-dependency.js";
 import { runtimeBuildRequirements } from "../domain/migration-harness.js";
 import {
   buildMigrationPlan,
   recommendLanguage,
-  stableToolId,
   supportsImplicitScriptContext,
   type ProjectInspection,
   type ToolDecision,
@@ -24,6 +22,7 @@ import type { MigrationSupplementRepository } from './migration-supplement-repos
 import type { MigrationBusinessConnectionProbe } from './migration-business-connection-probe.js';
 import type { MigrationHarnessSerializer } from './migration-harness-serializer.js';
 import type { MigrationDependencyAnalyzer } from './migration-dependency-analyzer.js';
+import type { MigrationAgentResultMapper } from './migration-agent-result-mapper.js';
 
 export type MigrationRuntimeReference = {
   migrationId: string;
@@ -42,6 +41,7 @@ export class MigrationInspectionService {
     private readonly connectionProbe:MigrationBusinessConnectionProbe,
     private readonly harnessSerializer:MigrationHarnessSerializer,
     private readonly dependencyAnalyzer:MigrationDependencyAnalyzer,
+    private readonly agentResults:MigrationAgentResultMapper,
   ) {}
 
   async inspect(id: string, sourceOnly = false) {
@@ -88,7 +88,7 @@ export class MigrationInspectionService {
       let inspection: ProjectInspection | null = null;
       if (agent?.status === "PRODUCED" || agent?.status === "ABSTAINED") {
         try {
-          const candidate = toProjectInspection(agent.payload as never, asset.assetId, asset.artifactSha256, stableToolId, agent.scanner ?? null, files);
+          const candidate = this.agentResults.inspection({payload:agent.payload,assetId:asset.assetId,assetDigest:asset.artifactSha256,scanner:agent.scanner ?? null,files});
           if (candidate.tools.length || candidate.runtimeCapabilities?.length || candidate.skill.status !== "UNKNOWN") inspection = candidate;
         } catch { inspection = null; }
       }

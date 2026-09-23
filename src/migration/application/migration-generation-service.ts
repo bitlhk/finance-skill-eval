@@ -1,10 +1,5 @@
 import { strToU8, zipSync } from "fflate";
 import { z } from "zod";
-import {
-  contractSample,
-  toGeneratedImplementations,
-  toSkillDocumentDelivery,
-} from "../infrastructure/migration-agent.js";
 import type { MigrationImplementer } from "./migration-agent-port.js";
 import type { MigrationCodeGeneratorPort } from "./migration-code-generator-port.js";
 import { runtimeToolConfigTemplate, validateAgentRuntimeDelivery } from "../domain/migration-delivery-contract.js";
@@ -25,6 +20,7 @@ import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
 import type { MigrationCandidatePackager } from './migration-candidate-packager.js';
+import type { MigrationAgentResultMapper } from './migration-agent-result-mapper.js';
 
 const CODE_FILE = /\.(?:java|py|js|mjs|cjs|ts)$/iu;
 export class MigrationGenerationService {
@@ -35,6 +31,7 @@ export class MigrationGenerationService {
     private readonly codeGenerator: MigrationCodeGeneratorPort,
     private readonly supplements:MigrationSupplementRepository,
     private readonly packager:MigrationCandidatePackager,
+    private readonly agentResults:MigrationAgentResultMapper,
     private readonly diagnostics?: MigrationDiagnosisPort,
   ) {}
 
@@ -143,7 +140,7 @@ export class MigrationGenerationService {
       const tool = inspection.tools.find(item => item.toolId === decision.toolId);
       const language = plan.items.find(item => item.toolId === decision.toolId)?.language
         ?? recommendLanguage(decision.form, tool?.language ?? null);
-      const sample = contractSample(tool);
+      const sample = this.agentResults.contractSample(tool);
       contract[decision.toolId] = {
         form: decision.form,
         language,
@@ -205,8 +202,8 @@ export class MigrationGenerationService {
           continue;
         }
         const nameById = Object.fromEntries(inspection.tools.map(tool => [tool.toolId, tool.name]));
-        const implementations = toGeneratedImplementations(result.payload as never, result.files, nameById);
-        const skillDelivery = toSkillDocumentDelivery(result.payload as never, result.files);
+        const implementations = this.agentResults.generatedImplementations(result.payload, result.files, nameById);
+        const skillDelivery = this.agentResults.skillDocumentDelivery(result.payload, result.files);
         const missing = decisions.filter(decision =>
           !implementations[decision.toolId]
           || implementations[decision.toolId]!.language !== plan.items.find(item => item.toolId === decision.toolId)?.language);

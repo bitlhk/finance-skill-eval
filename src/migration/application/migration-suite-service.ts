@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { manualPreparationSchema } from "../../shared/contracts/manual-preparation.js";
 import type { MigrationAnalyzer } from "./migration-agent-port.js";
-import { toProjectInspection } from "../infrastructure/migration-agent.js";
-import { stableToolId } from "../domain/migration-model.js";
 import type { MigrationSuiteGenerator } from "./migration-suite-generator.js";
 import { baselineBrief } from "../domain/migration-suite-brief.js";
 import type { MigrationPreparationRepository } from "./migration-preparation-repository.js";
@@ -16,6 +14,7 @@ import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
+import type { MigrationAgentResultMapper } from './migration-agent-result-mapper.js';
 
 export class MigrationSuiteService {
   constructor(
@@ -23,6 +22,7 @@ export class MigrationSuiteService {
     private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
     private readonly suiteGenerator: MigrationSuiteGenerator,
+    private readonly agentResults:MigrationAgentResultMapper,
     private readonly preparations?: MigrationPreparationRepository,
   ) {}
 
@@ -92,14 +92,13 @@ export class MigrationSuiteService {
         }
         const result = await this.analyzer({ assetDigest: source.artifactSha256, runId: `${id}-source`, files: archive });
         if (!result || result.status !== "PRODUCED") return conflict("原始资产分析未完成，不能使用候选分析替代出题依据");
-        sourceInspection = toProjectInspection(
-          result.payload as never,
-          source.assetId,
-          source.artifactSha256,
-          stableToolId,
-          result.scanner ?? null,
+        sourceInspection = this.agentResults.inspection({
+          payload:result.payload,
+          assetId:source.assetId,
+          assetDigest:source.artifactSha256,
+          scanner:result.scanner ?? null,
           files,
-        );
+        });
         sourceInspection.skill = validateSkill(files, source.skillFile);
         project.sourceInspection = structuredClone(sourceInspection);
       }
