@@ -2,10 +2,10 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID,createHash} from 'node:crypto';
 import path from 'node:path';
 import {z} from 'zod';
-import {canonicalNeutralArchive} from './neutral-archive.js';
-import {runtimeExecutionEvidenceSchema,stableJson} from '../contracts.js';
-import {readJson,writeJsonAtomic} from './file-store.js';
-import type {SkillAssetRecord,SkillStore} from './skill-store.js';
+import {canonicalNeutralArchive} from '../../service/neutral-archive.js';
+import {runtimeExecutionEvidenceSchema,stableJson} from '../../contracts.js';
+import {readJson,writeJsonAtomic} from '../../service/file-store.js';
+import type {SkillAssetRecord,SkillStore} from '../../service/skill-store.js';
 
 const tool=z.object({name:z.string(),description:z.string(),inputSchema:z.record(z.unknown()),outputSchema:z.record(z.unknown())});
 const profile=z.object({label:z.string(),skillId:z.string(),schemaBasis:z.string(),tools:z.array(tool),cases:z.array(z.object({caseId:z.string(),label:z.string(),expect:z.enum(['completed','denied']),prompt:z.string()}))});

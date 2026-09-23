@@ -3,7 +3,7 @@ import { strToU8 } from 'fflate';
 import { parse as parseYaml, stringify } from 'yaml';
 import type { Diagnosis } from './migration-diagnostics.js';
 import type { SkillAssetRecord } from './skill-store.js';
-import type { NativeTarget } from './migration-target.js';
+import type { NativeTarget } from '../migration/infrastructure/migration-target.js';
 
 const generatedNames=new Set(['neutral-contract.json','neutral_result.py','agentscope_result_adapter.py','OpenJiuwenMigrationTool.java','review.json','README.md']);
 

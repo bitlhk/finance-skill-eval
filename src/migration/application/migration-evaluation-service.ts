@@ -11,7 +11,7 @@ import type { MigrationDiagnostics } from '../../service/migration-diagnostics.j
 import { runtimeBuildRequirements } from '../../service/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
-import { MigrationTargetRuns } from '../../service/migration-target.js';
+import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
 import type { PreparationStore } from '../../service/preparation-store.js';
 import type { EvaluationRunManager } from '../../service/run-manager.js';
