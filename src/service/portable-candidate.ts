@@ -5,20 +5,8 @@ import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
 import type { SkillAssetRecord } from './skill-store.js';
 import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../migration/domain/migration-model.js';
 import type { GeneratedToolImplementation } from '../migration/domain/generated-tool-implementation.js';
+import type { PortableDiff, PortableGeneration, SkillDocumentDelivery } from '../migration/domain/migration-candidate-artifact.js';
 import { normalizeSkillPackage } from './skill-normalizer.js';
-
-export type PortableGeneration={toolId:string;toolName:string;form:ToolDecision['form'];files:string[];entrypoint?:string;
-  callExecuted?:boolean;runtimeDependenciesPending?:string[];
-  runtimeBindings?:GeneratedToolImplementation['runtimeBindings'];
-  /** How to start it. The code is the agent's, so how to run it is the agent's answer too. */
-  start?:string[];prepare?:string[];
-  /** What moved relative to the baseline and why. Carried to the report so a human can judge the
-   * adaptation; it never blocks the package. */
-  drift?:GeneratedToolImplementation['drift'];changes?:GeneratedToolImplementation['changes'];
-  readyForValidation:boolean;todo:string[];generatedBy?:string;explanation?:string;attempts?:number;
-  checks?:GeneratedToolImplementation['checks']};
-export type PortableDiff={path:string;operation:'ADD'|'MODIFY';before:string;after:string};
-export type SkillDocumentDelivery={files:Record<string,string>};
 
 /**
  * The candidate package is assembled, not generated.

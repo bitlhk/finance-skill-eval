@@ -6,7 +6,7 @@ import type {
   TechnicalValidation,
   ToolDecision,
 } from "./migration-model.js";
-import type { PortableDiff, PortableGeneration } from "../../service/portable-candidate.js";
+import type { PortableDiff, PortableGeneration } from "./migration-candidate-artifact.js";
 import type { SkillAssetRecord } from "../../service/skill-store.js";
 import type { StageEnvelope } from "../../service/stage-envelope.js";
 

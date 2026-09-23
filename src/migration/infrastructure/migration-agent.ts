@@ -516,7 +516,7 @@ type AgentSkillDelivery={skillFile?:string;files?:Array<{source?:string;path?:st
  * A4 replace a root SKILL.md without mutating the uploaded source in place. */
 export function toSkillDocumentDelivery(
   payload:{skillDelivery?:AgentSkillDelivery},files:Record<string,string>,
-):import('../../service/portable-candidate.js').SkillDocumentDelivery|null{
+):import('../domain/migration-candidate-artifact.js').SkillDocumentDelivery|null{
   const delivery=payload.skillDelivery;
   if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)return null;
   const result:Record<string,string>={},targets=new Set<string>();
