@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {SourceEvidenceValidator} from '../domain/migration-source-evidence.js';
 import {z} from 'zod';
-import {verifyDependencyLibrary,type DependencyLibrary,type RuntimeLibraryInventory} from '../../service/dependency-library.js';
+import {verifyDependencyLibrary,type DependencyLibrary,type RuntimeLibraryInventory} from '../domain/migration-dependency-library.js';
 import {validServiceEnvironmentName} from '../../service/service-environment.js';
 import type {ProjectInspection} from '../domain/migration-model.js';
 import type {Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../domain/migration-dependency.js';
