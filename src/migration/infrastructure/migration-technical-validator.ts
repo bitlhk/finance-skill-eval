@@ -1,6 +1,7 @@
 import { createHash,randomUUID } from 'node:crypto';
-import type { SkillAssetRecord } from '../../service/skill-store.js';
+import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import type { TechnicalValidation,ToolInspection } from '../domain/migration-model.js';
+import type { MigrationTechnicalValidator } from '../application/migration-technical-validator.js';
 import { LocalWorker,type LocalWorkerWorkspace } from '../../service/local-worker.js';
 import { startService,type Launchable } from '../../service/service-launch.js';
 import { validateMcpTool } from '../../mcp-preflight.js';
@@ -38,7 +39,7 @@ export function pythonCommand(archive:Record<string,Uint8Array>,entrypoint:strin
   return {program:'uv',args:['run','--no-project','python','-I',entrypoint]};
 }
 
-export class TechnicalValidationService{
+export class TechnicalValidationService implements MigrationTechnicalValidator{
   constructor(private worker=new LocalWorker()){}
   async validateScript(input:{asset:SkillAssetRecord;archive:Record<string,Uint8Array>;tool:ToolInspection;request?:unknown;context?:Record<string,unknown>;signal?:AbortSignal}):Promise<TechnicalValidation>{
     const startedAt=new Date().toISOString(),validationId='technical-'+randomUUID(),entry=input.tool.entrypoint;

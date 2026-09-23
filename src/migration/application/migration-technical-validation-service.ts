@@ -7,11 +7,11 @@ import {
 } from "../infrastructure/migration-runtime-config.js";
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
-import { TechnicalValidationService } from "../infrastructure/migration-technical-validator.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
+import type { MigrationTechnicalValidator } from './migration-technical-validator.js';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -58,10 +58,10 @@ function automaticTestInput(tool: ToolInspection, provided: unknown): TestInput 
 
 export class MigrationTechnicalValidationWorkflow {
   constructor(
-    private readonly root: string,
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
+    private readonly validator:MigrationTechnicalValidator,
   ) {}
 
   async validate(id: string, input: unknown, signal?: AbortSignal) {
@@ -87,7 +87,6 @@ export class MigrationTechnicalValidationWorkflow {
       const generated = project.portableGenerations?.find(item => item.toolId === tool.toolId);
       if (generated && !generated.readyForValidation) return conflict("生成候选仍有待办，不能标记技术验证通过");
 
-      const service = new TechnicalValidationService();
       const archive = await this.skills.readArchive(asset.assetId);
       const runtimeConfig = await this.runtimeConfigs.get(id);
       const runtimeDependencies = project.sourceInspection?.dependencyAnalysis?.dependencies
@@ -106,7 +105,7 @@ export class MigrationTechnicalValidationWorkflow {
       if (injection.missing.length) return conflict(`工具试运行缺少测试配置：${injection.missing.join("、")}`);
       const migrated = Boolean(generated?.start?.length) || Boolean(generated && tool.kind === "MCP");
       const result = tool.kind === "MCP"
-        ? await service.validateMcp({
+        ? await this.validator.validateMcp({
           asset,
           tool,
           archive,
@@ -116,7 +115,7 @@ export class MigrationTechnicalValidationWorkflow {
           signal,
           ...(migrated ? { service: { start: generated?.start, prepare: generated?.prepare } } : { endpoint: parsed.endpoint ?? "" }),
         })
-        : await service.validateScript({ asset, archive, tool, request: testInput.value, context: injection.context, signal });
+        : await this.validator.validateScript({ asset, archive, tool, request: testInput.value, context: injection.context, signal });
       result.inputSource = testInput.source;
       result.inputFields = testInput.fields;
       if (runtimeDependencies.length) {
