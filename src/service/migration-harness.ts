@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {stringify} from 'yaml';
-import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
+import type {ProjectInspection,RuntimeHarnessCapability} from '../migration/domain/migration-model.js';
 
 const callableHarnessName=/^[\p{L}_][\p{L}\p{N}_.:-]*$/u;
 const frameworkPlumbing=/\b(?:ToolBase|BaseTool|ToolResponse|Toolkit|TextBlock|register_tool|register_tool_function)\b/iu;

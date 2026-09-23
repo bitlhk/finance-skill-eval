@@ -3,7 +3,7 @@ import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
 import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
 import type { SkillAssetRecord } from './skill-store.js';
-import { recommendLanguage,type ProjectInspection,type ToolDecision } from './migration-model.js';
+import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../migration/domain/migration-model.js';
 import type { GeneratedToolImplementation } from './migration-code-generator.js';
 import { normalizeSkillPackage } from './skill-normalizer.js';
 

@@ -1,6 +1,6 @@
 import { strToU8 } from 'fflate';
 import type { MigrationAnalyzer, MigrationImplementer } from '../src/service/migration-agent.js';
-import { stableToolId, type ProjectInspection, type ToolInspection, type ToolPortability } from '../src/service/migration-model.js';
+import { stableToolId, type ProjectInspection, type ToolInspection, type ToolPortability } from '../src/migration/domain/migration-model.js';
 
 /**
  * Fixtures for the shape the platform actually receives.

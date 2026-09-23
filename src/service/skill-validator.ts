@@ -1,5 +1,5 @@
 import { parse as parseYaml } from 'yaml';
-import type { SkillFinding,SkillInspection } from './migration-model.js';
+import type { SkillFinding,SkillInspection } from '../migration/domain/migration-model.js';
 
 function lineOf(source:string,index:number){return source.slice(0,index).split(/\r?\n/u).length;}
 function finding(code:string,severity:SkillFinding['severity'],path:string,line:number,message:string,suggestion:string):SkillFinding{

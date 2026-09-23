@@ -4,7 +4,7 @@ import path from 'node:path';
 import { strToU8,zipSync } from 'fflate';
 import { afterEach,expect,it,vi } from 'vitest';
 import { loadEvalPack } from '../src/eval-pack.js';
-import { buildMigrationPlan } from '../src/service/migration-model.js';
+import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { MigrationDiagnostics } from '../src/service/migration-diagnostics.js';
 import { MigrationStore } from '../src/service/migration-store.js';
 import { SkillStore } from '../src/service/skill-store.js';

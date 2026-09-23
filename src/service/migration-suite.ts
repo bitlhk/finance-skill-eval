@@ -1,7 +1,7 @@
 import { analyzeSkillAndGenerateCases } from "../analyzer.js";
 import type { EvalCase } from "../contracts.js";
 import type { ConfiguredModelRole } from "./config.js";
-import type { ProjectInspection } from "./migration-model.js";
+import type { ProjectInspection } from "../migration/domain/migration-model.js";
 
 /**
  * The migration test set, generated from the analysis.

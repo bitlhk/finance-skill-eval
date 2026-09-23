@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildMigrationPlan, recommendLanguage, unmigratableLanguages, type ProjectInspection, type ToolDecision, type ToolInspection } from '../src/service/migration-model.js';
+import { buildMigrationPlan, recommendLanguage, unmigratableLanguages, type ProjectInspection, type ToolDecision, type ToolInspection } from '../src/migration/domain/migration-model.js';
 import { inspectionFixture, toolFixture } from './analysis-fixture.js';
 
 const tool=(overrides:Partial<ToolInspection>):ToolInspection=>({

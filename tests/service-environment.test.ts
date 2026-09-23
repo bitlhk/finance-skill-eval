@@ -12,7 +12,7 @@ import {TechnicalValidationService} from '../src/service/technical-validation.js
 import {MigrationStore} from '../src/service/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
-import {buildMigrationPlan} from '../src/service/migration-model.js';
+import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 
 function fixture(name='BUSINESS_SERVICE_URL'){
  const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);

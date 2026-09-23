@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ConfiguredModelRole } from './config.js';
-import { recommendLanguage, type ProjectInspection, type ToolDecision } from './migration-model.js';
+import { recommendLanguage, type ProjectInspection, type ToolDecision } from '../migration/domain/migration-model.js';
 import { LocalWorker } from './local-worker.js';
 
 export type GeneratedToolImplementation={

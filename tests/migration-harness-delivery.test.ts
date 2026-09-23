@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {strToU8,zipSync} from 'fflate';
 import {isAdaptableHarnessCapability,runtimeBuildRequirements,runtimeBuildRequirementsYaml} from '../src/service/migration-harness.js';
-import {buildMigrationPlan} from '../src/service/migration-model.js';
+import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {createEvaluationService} from '../src/service/server.js';
 import {analysisFixture,inspectionFixture} from './analysis-fixture.js';
 

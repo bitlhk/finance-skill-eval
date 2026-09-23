@@ -14,7 +14,7 @@ import {
   supportsImplicitScriptContext,
   type ProjectInspection,
   type ToolDecision,
-} from "../../service/migration-model.js";
+} from "../domain/migration-model.js";
 import {
   configurationDigest,
   migrationExecutionConfig,

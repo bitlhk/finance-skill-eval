@@ -8,7 +8,7 @@ import {createEvaluationService} from '../src/service/server.js';
 import {analyzeDependencies,dependencyId} from '../src/service/migration-dependencies.js';
 import {runtimeInjection,probeBusinessInterface,migrationExecutionConfig} from '../src/service/migration-runtime-config.js';
 import {supplementFiles} from '../src/service/migration-supplements.js';
-import {buildMigrationPlan} from '../src/service/migration-model.js';
+import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {SKILL_MD,analyzedTool,inspectionFixture,toolFixture,implementationFixture} from './analysis-fixture.js';
 import type {MigrationAnalyzer} from '../src/service/migration-agent.js';
 import {TechnicalValidationService} from '../src/service/technical-validation.js';

@@ -8,7 +8,7 @@ import { generatePortableCandidate } from '../src/service/portable-candidate.js'
 import { normalizeSkillPackage } from '../src/service/skill-normalizer.js';
 import { TechnicalValidationService,pythonCommand } from '../src/service/technical-validation.js';
 import { assessMigrationAcceptance } from '../src/service/migration-acceptance.js';
-import { buildMigrationPlan } from '../src/service/migration-model.js';
+import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { runtimeInjection } from '../src/service/migration-runtime-config.js';
 import { analyzeSkillAndGenerateCases } from '../src/analyzer.js';
 import { createEvaluationService } from '../src/service/server.js';

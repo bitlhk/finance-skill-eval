@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { runtimeBuildRequirements } from "../../service/migration-harness.js";
-import { supportsImplicitScriptContext, type TechnicalValidation, type ToolInspection } from "../../service/migration-model.js";
+import { supportsImplicitScriptContext, type TechnicalValidation, type ToolInspection } from "../domain/migration-model.js";
 import {
   configurationDigest,
   MigrationRuntimeConfig,

@@ -1,6 +1,6 @@
 import { createHash,randomUUID } from 'node:crypto';
 import type { SkillAssetRecord } from './skill-store.js';
-import type { TechnicalValidation,ToolInspection } from './migration-model.js';
+import type { TechnicalValidation,ToolInspection } from '../migration/domain/migration-model.js';
 import { LocalWorker,type LocalWorkerWorkspace } from './local-worker.js';
 import { startService,type Launchable } from './service-launch.js';
 import { validateMcpTool } from '../mcp-preflight.js';

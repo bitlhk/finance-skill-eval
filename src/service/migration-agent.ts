@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { modelTimeoutMs, type ModelRole } from "./config.js";
 import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
-import { languageOfSourcePaths, recommendLanguage } from "./migration-model.js";
+import { languageOfSourcePaths, recommendLanguage } from "../migration/domain/migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
 import {isAdaptableHarnessCapability} from './migration-harness.js';
 
@@ -298,7 +298,7 @@ export function toProjectInspection(
   stableToolId: (name: string, paths: string[]) => string,
   scanner?: Record<string, unknown> | null,
   files: Record<string, string> = {},
-): import("./migration-model.js").ProjectInspection {
+): import("../migration/domain/migration-model.js").ProjectInspection {
   /**
    * The asset path behind a path the agent reported.
    *
@@ -379,7 +379,7 @@ export function toProjectInspection(
       suggestion: String(finding.suggestion ?? ""),
     }];
   });
-  const runtimeCapabilities:import('./migration-model.js').RuntimeHarnessCapability[]=[];
+  const runtimeCapabilities:import('../migration/domain/migration-model.js').RuntimeHarnessCapability[]=[];
   for(const claim of payload.runtimeCapabilities??[]){
     if(!claim||typeof claim.name!=='string'||!claim.name.trim()||typeof claim.reason!=='string'||!claim.reason.trim()
       ||typeof claim.usageContract!=='string'||!claim.usageContract.trim()||!Array.isArray(claim.evidence))continue;
@@ -418,7 +418,7 @@ export function toProjectInspection(
     // The baseline is the analysis, and an analysis claim is worth exactly as much as the place
     // it points at. A contract the agent cannot locate is reported as unread, not as a guess:
     // downstream compares the migration against this, so a fabricated one would be a straw man.
-    const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("./migration-model.js").InspectionEvidence; schema: unknown } | null => {
+    const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("../migration/domain/migration-model.js").InspectionEvidence; schema: unknown } | null => {
       const at = locate(String(claim?.path ?? ""), claim?.snippet);
       if (at === null) return null;
       return { evidence: { path: at.path, line: at.line, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };

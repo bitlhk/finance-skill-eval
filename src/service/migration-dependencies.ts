@@ -4,14 +4,9 @@ import {SourceEvidenceValidator} from './source-evidence.js';
 import {z} from 'zod';
 import {verifyDependencyLibrary,type DependencyLibrary,type RuntimeLibraryInventory} from './dependency-library.js';
 import {validServiceEnvironmentName} from './service-environment.js';
-import type {ProjectInspection} from './migration-model.js';
-
-export type DependencyEvidence={path:string;line:number;snippet:string};
-export type Dependency={library?:DependencyLibrary;id:string;key:string;name:string;kind:'DATA'|'SDK'|'CONFIG'|'RESOURCE';owner:'TOOL'|'RUNTIME'|'UNKNOWN';action:'KEEP'|'INJECT'|'MOVE_TO_RUNTIME';contractStatus:'KNOWN'|'UNKNOWN';sensitive:boolean;binding:{kind:'HTTP_HEADER'|'SCRIPT_CONTEXT'|'SERVICE_ENV';name:string}|null;toolIds:string[];purpose:string;availability:'AVAILABLE'|'MISSING'|'UNKNOWN';provided:'NONE'|'PENDING'|'CONFIRMED'|'INVALID';blocking:boolean;evidence:DependencyEvidence[];resolvedPaths:string[];schema:Record<string,unknown>|null;schemaCompleteness:'UNKNOWN'|'PARTIAL'|'COMPLETE';issue?:string};
-export type ToolChain={toolId:string;nodes:Array<{id:string;title:string;detail:string;dependencyIds:string[];evidence:DependencyEvidence[]}>;edges:Array<{from:string;to:string;condition?:string}>};
-export type DependencyAnalysis={status:'COMPLETE'|'PARTIAL'|'UNAVAILABLE';revision:number;materialsDigest:string;reason?:string;dependencies:Dependency[];chains:ToolChain[];rejectedClaims:number};
-export type Supplement={dependencyId:string;kind:Dependency['kind'];value?:unknown;files?:Record<string,string>;filename?:string;updatedAt:string};
-export type AnalysisSupplement={dependencyId:string;key:string;kind:Dependency['kind'];provided:true;paths:string[]};
+import type {ProjectInspection} from '../migration/domain/migration-model.js';
+import type {Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../migration/domain/migration-dependency.js';
+export type {AnalysisSupplement,Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../migration/domain/migration-dependency.js';
 
 const citation=z.object({path:z.string().min(1),snippet:z.string().min(8)});
 const wireLibrary=z.object({type:z.enum(['STANDARD_LIBRARY','PACKAGE','CUSTOM_SDK','UNKNOWN']),language:z.enum(['python','node']),module:z.string().min(1).max(200),packageName:z.string().min(1).max(200).nullish().transform(v=>v??undefined),version:z.string().max(200).nullish().transform(v=>v??undefined),declarationPaths:z.array(z.string()).max(20).nullish().transform(v=>v??[])});

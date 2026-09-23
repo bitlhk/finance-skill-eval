@@ -5,7 +5,7 @@ import type {
   ProjectInspection,
   TechnicalValidation,
   ToolDecision,
-} from "../../service/migration-model.js";
+} from "./migration-model.js";
 import type { PortableDiff, PortableGeneration } from "../../service/portable-candidate.js";
 import type { SkillAssetRecord } from "../../service/skill-store.js";
 import type { StageEnvelope } from "../../service/stage-envelope.js";

@@ -1,7 +1,7 @@
 import {builtinModules} from 'node:module';
+import type {DependencyLibrary,RuntimeLibraryInventory} from '../migration/domain/migration-dependency.js';
 
-export type RuntimeLibraryInventory={python:{version:string;standardModules:string[];packageDistributions?:Record<string,string[]>}};
-export type DependencyLibrary={type:'STANDARD_LIBRARY'|'PACKAGE'|'CUSTOM_SDK'|'UNKNOWN';language:'python'|'node';module:string;packageName?:string;version?:string;declarationPaths?:string[];verified?:boolean;environmentVersion?:string};
+export type {DependencyLibrary,RuntimeLibraryInventory} from '../migration/domain/migration-dependency.js';
 const nodeModules=new Set(builtinModules.map(name=>name.replace(/^node:/u,'')));
 const canonical=(name:string)=>name.toLowerCase().replace(/[-_.]+/gu,'-');
 

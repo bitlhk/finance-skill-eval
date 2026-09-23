@@ -2,7 +2,7 @@ import { z } from "zod";
 import { manualPreparationSchema } from "../../service/contracts.js";
 import type { MigrationAnalyzer } from "../../service/migration-agent.js";
 import { toProjectInspection } from "../../service/migration-agent.js";
-import { stableToolId } from "../../service/migration-model.js";
+import { stableToolId } from "../domain/migration-model.js";
 import { baselineBrief, type MigrationSuiteGenerator } from "../../service/migration-suite.js";
 import type { PreparationStore } from "../../service/preparation-store.js";
 import {
