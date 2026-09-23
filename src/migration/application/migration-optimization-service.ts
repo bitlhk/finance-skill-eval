@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
-import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
+import { configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
+import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 
 export class MigrationOptimizationService {
   constructor(
@@ -17,6 +18,7 @@ export class MigrationOptimizationService {
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly optimizers?:MigrationOptimizationPort,
     private readonly environments?:MigrationEnvironmentRepository,
+    private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {
@@ -39,7 +41,7 @@ export class MigrationOptimizationService {
         if(!environment||environment.runtimeType!=='openjiuwen')return conflict('请先完成当前候选的本地 OpenJiuwen 评估');
       }
       if(value.sourceInspection?.dependencyAnalysis?.dependencies.some(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT')
-        &&experiment.runtimeConfigurationDigest!==configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection.dependencyAnalysis.dependencies)) {
+        &&experiment.runtimeConfigurationDigest!==configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection.dependencyAnalysis.dependencies)) {
         return conflict('运行配置已变化，请重新评估后再优化');
       }
       const job=this.jobs.get(parsed.jobId),variant=job?.report?.variants.right;

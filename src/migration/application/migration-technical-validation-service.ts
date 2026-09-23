@@ -3,7 +3,6 @@ import { runtimeBuildRequirements } from "../domain/migration-harness.js";
 import { supportsImplicitScriptContext, type TechnicalValidation, type ToolInspection } from "../domain/migration-model.js";
 import {
   configurationDigest,
-  MigrationRuntimeConfig,
   runtimeInjection,
   serviceEnvironment,
 } from "../infrastructure/migration-runtime-config.js";
@@ -12,6 +11,7 @@ import { TechnicalValidationService } from "../infrastructure/migration-technica
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
+import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -61,6 +61,7 @@ export class MigrationTechnicalValidationWorkflow {
     private readonly root: string,
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
+    private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
   ) {}
 
   async validate(id: string, input: unknown, signal?: AbortSignal) {
@@ -88,8 +89,7 @@ export class MigrationTechnicalValidationWorkflow {
 
       const service = new TechnicalValidationService();
       const archive = await this.skills.readArchive(asset.assetId);
-      const runtimeStore = new MigrationRuntimeConfig(this.root);
-      const runtimeConfig = await runtimeStore.get(id);
+      const runtimeConfig = await this.runtimeConfigs.get(id);
       const runtimeDependencies = project.sourceInspection?.dependencyAnalysis?.dependencies
         .filter(dependency => dependency.toolIds.includes(tool.toolId)) ?? [];
       if (tool.kind === "SCRIPT" && runtimeDependencies.some(dependency =>
@@ -125,7 +125,7 @@ export class MigrationTechnicalValidationWorkflow {
           result.error = result.status === "PASSED" ? null : "工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。";
           result.stages = result.stages.map(stage => stage.passed ? stage : { ...stage, message: "此步骤未通过，原始错误未保存以保护运行依赖。" });
         }
-        await runtimeStore.check(id, {
+        await this.runtimeConfigs.check(id, {
           toolId: tool.toolId,
           kind: project.candidate ? "GENERATED_TOOL" : "SOURCE_TOOL",
           status: result.status,
@@ -150,7 +150,7 @@ export class MigrationTechnicalValidationWorkflow {
     const inspection = project.inspection;
     if (!inspection) return { ready: false, reasons: ["请先完成 Tool 检查"] };
     const runtimeDigest = configurationDigest(
-      await new MigrationRuntimeConfig(this.root).get(project.id),
+      await this.runtimeConfigs.get(project.id),
       project.sourceInspection?.dependencyAnalysis?.dependencies,
     );
     const latest = new Map<string, TechnicalValidation>();

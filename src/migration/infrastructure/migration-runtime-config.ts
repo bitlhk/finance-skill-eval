@@ -7,6 +7,8 @@ import {validateDependencyData} from './migration-dependencies.js';
 import type {Dependency} from '../domain/migration-dependency.js';
 import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool-config.js';
 import {supportsImplicitScriptContext} from '../domain/migration-model.js';
+import type {ConnectionCheck,MigrationRuntimeConfigurationRepository,RuntimeTestConfig} from '../application/migration-runtime-configuration-repository.js';
+export type {ConnectionCheck,RuntimeTestConfig} from '../application/migration-runtime-configuration-repository.js';
 
 /** Migration is a producer of the shared contract, never a Runtime execution protocol. */
 export function migrationExecutionConfig(dependencies:Dependency[],values:Record<string,unknown>,tools:Array<{toolId:string;name:string;kind?:string}>):RuntimeToolConfig{
@@ -31,10 +33,8 @@ export function migrationExecutionConfig(dependencies:Dependency[],values:Record
  return runtimeToolConfigSchema.parse(config);
 }
 
-export type ConnectionCheck={id:string;toolId:string;kind:'BUSINESS_INTERFACE'|'GENERATED_TOOL'|'SOURCE_TOOL';status:'PASSED'|'FAILED';configurationDigest:string;assetDigest:string;checkedAt:string;message:string;httpStatus?:number;validationId?:string};
-export type RuntimeTestConfig={revision:number;values:Record<string,unknown>;checks:ConnectionCheck[]};
 export const configurationDigest=(config:RuntimeTestConfig,dependencies:Dependency[]=[])=>fingerprint([config.revision,config.values,dependencies]);
-export class MigrationRuntimeConfig{
+export class MigrationRuntimeConfig implements MigrationRuntimeConfigurationRepository {
  constructor(private root:string){}
  private file(id:string){if(!/^migration-[a-f0-9-]+$/u.test(id))throw new Error('迁移项目不合法');return path.join(this.root,'migration-runtime-config',id+'.json')}
  async get(id:string):Promise<RuntimeTestConfig>{try{return await readJson(this.file(id))}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return {revision:0,values:{},checks:[]};throw e}}

@@ -28,6 +28,7 @@ import { MigrationOptimizationService } from './application/migration-optimizati
 import { MigrationExportService } from './application/migration-export-service.js';
 import { MigrationLegacyService } from './application/migration-legacy-service.js';
 import { migrationConflict as conflict } from './application/migration-errors.js';
+import { MigrationRuntimeConfig } from './infrastructure/migration-runtime-config.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -54,18 +55,19 @@ export class MigrationStore {
     suiteGenerator:MigrationSuiteGenerator=(input,)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')),
     projects?: MigrationProjectStore) {
     this.projects = projects ?? new MigrationProjectRepository(root);
+    const runtimeConfigs=new MigrationRuntimeConfig(root);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
-    this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer);
+    this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer,runtimeConfigs);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
     this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
-    this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills);
+    this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills,runtimeConfigs);
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations,
       preparations?new FileMigrationPreparationPackFactory(root):undefined,
       {analyzer:()=>configuredModelRole('ANALYZER').model,judge:()=>configuredModelRole('JUDGE').model},
-      optimizers, diagnostics, environments);
-    this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
-    this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments);
+      optimizers, diagnostics, environments,runtimeConfigs);
+    this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments,runtimeConfigs);
+    this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments,runtimeConfigs);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
     this.legacyService = new MigrationLegacyService(root, this.projects, this.projectService, skills, diagnostics, environments);
   }

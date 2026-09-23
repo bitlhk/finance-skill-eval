@@ -9,7 +9,7 @@ import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
-import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
+import { configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationEvaluationModels } from './migration-evaluation-models.js';
@@ -18,6 +18,7 @@ import type { MigrationPreparationPackFactory } from './migration-preparation-pa
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
+import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
@@ -39,6 +40,7 @@ export class MigrationEvaluationService {
     private readonly optimizers?:MigrationOptimizationPort,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
+    private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {
@@ -74,7 +76,7 @@ export class MigrationEvaluationService {
       }
       if(p.pair==='BC'&&p.configuration.evaluationMode!=='candidate_assessment')return conflict('BC 是对迁移候选的质量评估，不是左右胜负比较');
       if (p.pair==='AB' && p.configuration.runtimeBindings.left.environmentId!==p.configuration.runtimeBindings.right.environmentId) return conflict('AB 对照必须保持原 Runtime 环境一致');
-      const runtimeConfigurationDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
+      const runtimeConfigurationDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
       const comparisonFingerprint=fingerprint({runtimeConfigurationDigest,pack:pack.packFingerprint, model:p.configuration.executionModel,
         cases:p.configuration.selectedCaseIds, data:p.dataSnapshot, permissions:p.permissionBasis,
         sourceProject:p.sourceProjectRef, lock:p.dependencyLockRef,evaluationMode:p.configuration.evaluationMode,
@@ -95,7 +97,7 @@ export class MigrationEvaluationService {
     const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>targetRunner.get(runId)));
     const current=targetRuns.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1);
     const currentAsset=value.candidate??value.source;
-    const runtimeDigest=configurationDigest(await new MigrationRuntimeConfig(this.root).get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
+    const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
     const technicalValidations=(value.technicalValidations??[]).map(result=>({...result,current:result.assetDigest===currentAsset.artifactSha256&&(!result.runtimeConfigurationDigest||result.runtimeConfigurationDigest===runtimeDigest)}));
     const migrationPlan=value.inspection?buildMigrationPlan(value.inspection,value.decisions??[],value.inspection.assetId):null;
     const experiments=value.runs.map(r=>{

@@ -1,7 +1,6 @@
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import {
-  MigrationRuntimeConfig,
   configurationDigest,
   migrationExecutionConfig,
   serviceEnvironment,
@@ -12,6 +11,7 @@ import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
+import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 
 /** Builds the OpenJiuwen launcher bindings from the inspected and generated candidate. */
 export class MigrationOpenJiuwenService {
@@ -22,6 +22,7 @@ export class MigrationOpenJiuwenService {
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly evaluation:MigrationEvaluationService,
     private readonly environments?:MigrationEnvironmentRepository,
+    private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {
@@ -54,7 +55,7 @@ export class MigrationOpenJiuwenService {
       if(existing){existing.toolNames.push(generation.toolName);existing.filePaths=[...new Set([...existing.filePaths,...generation.files])];}
       else services.push({assetDigest:asset.artifactSha256,toolNames:[generation.toolName],filePaths:generation.files,start:generation.start,...(generation.prepare?{prepare:generation.prepare}:{})});
     }
-    const config=await new MigrationRuntimeConfig(this.root).get(id);
+    const config=await this.runtimeConfigs!.get(id);
     const deps=value.sourceInspection?.dependencyAnalysis?.dependencies??[];
     for(const service of services){
       const toolIds=inspection.tools.filter(tool=>service.toolNames.includes(tool.name)).map(tool=>tool.toolId);

@@ -19,7 +19,6 @@ import {
 import {
   configurationDigest,
   migrationExecutionConfig,
-  MigrationRuntimeConfig,
   probeBusinessInterface,
   runtimeInjection,
   serviceEnvironment,
@@ -30,6 +29,7 @@ import { validateSkill } from "../domain/migration-skill-validator.js";
 import { stageEnvelope, staleAgainst } from "../domain/migration-stage-envelope.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
+import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 
 export type MigrationRuntimeReference = {
   migrationId: string;
@@ -44,6 +44,7 @@ export class MigrationInspectionService {
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
+    private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
   ) {}
 
   async inspect(id: string, sourceOnly = false) {
@@ -156,7 +157,7 @@ export class MigrationInspectionService {
     const dependency = value.sourceInspection?.dependencyAnalysis?.dependencies.find(item => item.id === dependencyId);
     if (!dependency || !["DATA", "CONFIG"].includes(dependency.kind)) return conflict("当前诊断中不存在此数据项");
     if (dependency.owner === "RUNTIME") {
-      const config = await new MigrationRuntimeConfig(this.root).get(id);
+      const config = await this.runtimeConfigs.get(id);
       return { provided: dependencyId in config.values, value: config.values[dependencyId] ?? null };
     }
     const item = (await new MigrationSupplements(this.root).get(id)).items.find(supplement => supplement.dependencyId === dependencyId);
@@ -165,7 +166,7 @@ export class MigrationInspectionService {
 
   async runtimeConfiguration(id: string) {
     const value = await this.projects.get(id);
-    const config = await new MigrationRuntimeConfig(this.root).get(id);
+    const config = await this.runtimeConfigs.get(id);
     const dependencies = value.sourceInspection?.dependencyAnalysis?.dependencies ?? [];
     return {
       revision: config.revision,
@@ -193,14 +194,14 @@ export class MigrationInspectionService {
       const value = await this.projects.get(id);
       const dependency = value.sourceInspection?.dependencyAnalysis?.dependencies.find(item => item.id === dependencyId);
       if (!dependency || dependency.owner !== "RUNTIME" || dependency.action !== "INJECT") return conflict("当前诊断没有这项可注入的运行时依赖");
-      const config = await new MigrationRuntimeConfig(this.root).save(id, dependency, parsed.value, parsed.revision);
+      const config = await this.runtimeConfigs.save(id, dependency, parsed.value, parsed.revision);
       return { revision: config.revision };
     });
   }
 
   async resolveRuntimeDependencies(reference: MigrationRuntimeReference) {
     const value = await this.projects.get(reference.migrationId);
-    const config = await new MigrationRuntimeConfig(this.root).get(reference.migrationId);
+    const config = await this.runtimeConfigs.get(reference.migrationId);
     const dependencies = value.sourceInspection?.dependencyAnalysis?.dependencies ?? [];
     if (!value.candidate || value.candidate.artifactSha256 !== reference.assetDigest || config.revision !== reference.revision
       || configurationDigest(config, dependencies) !== reference.configurationDigest) {
@@ -211,7 +212,7 @@ export class MigrationInspectionService {
 
   async resolveServiceEnvironment(reference: MigrationRuntimeReference, toolNames: string[]) {
     const value = await this.projects.get(reference.migrationId);
-    const config = await new MigrationRuntimeConfig(this.root).get(reference.migrationId);
+    const config = await this.runtimeConfigs.get(reference.migrationId);
     const dependencies = value.sourceInspection?.dependencyAnalysis?.dependencies ?? [];
     if (!value.candidate || value.candidate.artifactSha256 !== reference.assetDigest || config.revision !== reference.revision
       || configurationDigest(config, dependencies) !== reference.configurationDigest) {
@@ -242,14 +243,13 @@ export class MigrationInspectionService {
       const value = await this.projects.get(id);
       const inspection = value.sourceInspection;
       if (!inspection?.tools.some(tool => tool.toolId === parsed.toolId)) return conflict("请先完成源工具诊断");
-      const store = new MigrationRuntimeConfig(this.root);
-      const config = await store.get(id);
+      const config = await this.runtimeConfigs.get(id);
       if (config.revision !== parsed.revision) return conflict("测试配置已变化，请刷新");
       const dependencies = inspection.dependencyAnalysis?.dependencies.filter(dependency => dependency.toolIds.includes(parsed.toolId)) ?? [];
       const injection = runtimeInjection(dependencies, config.values, "HTTP_HEADER");
       if (injection.missing.length) return conflict(`请先提供测试依赖：${injection.missing.join("、")}`);
       const result = await probeBusinessInterface(parsed.endpoint, parsed.method, injection.headers, signal);
-      return store.check(id, {
+      return this.runtimeConfigs.check(id, {
         ...result,
         toolId: parsed.toolId,
         kind: "BUSINESS_INTERFACE",
