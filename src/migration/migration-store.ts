@@ -14,7 +14,7 @@ import type { MigrationRuntimeReference } from './application/migration-runtime-
 import { migrationConflict as conflict } from './application/migration-errors.js';
 import {createMigrationServices,type MigrationServices} from './migration-composition.js';
 
-/** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
+/** Stable migration facade; concrete adapters are assembled only by migration-composition. */
 export class MigrationStore {
   private readonly services:MigrationServices;
   constructor(root:string, skills:MigrationSkillRepository, runs:MigrationEvaluationRunner,

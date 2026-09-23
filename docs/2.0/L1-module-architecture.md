@@ -27,17 +27,20 @@
 ## 2. 模块划分
 
 ```text
-src/service/
-├── migration-model.ts          # 2.0 类型、状态计算和逐 Tool 计划
-├── skill-validator.ts          # 企业 Skill 规范静态检查
-├── tool-inspector.ts           # Tool 发现与可移植性检查
-├── portable-candidate.ts       # 2.0 不可变候选与 Diff
-├── local-worker.ts             # 本机一次性任务执行
-├── technical-validation.ts     # MCP / Script 技术验证编排
-├── run-manager.ts              # OpenJiuwen 端到端验证与评估编排
-├── migration-store.ts          # 项目聚合、持久化和兼容读取
-└── server.ts                   # HTTP 接口
+src/migration/
+├── domain/                     # 2.0 领域类型、状态、规则和验收计算；不依赖外层
+├── application/                # 按用户流程拆分的用例服务及其端口
+├── infrastructure/             # 文件存储、Agent、打包、扫描和本机执行适配器
+├── migration-composition.ts    # 唯一依赖装配点
+└── migration-store.ts          # 对 HTTP 层保持稳定的轻量门面
+
+src/interfaces/http/
+└── migration-routes.ts         # HTTP 路由，只调用 MigrationStore
 ```
+
+依赖方向固定为 `interfaces → store/composition → application → domain`。基础设施在
+`migration-composition.ts` 中注入 application 端口；application 与 domain 不直接导入
+`infrastructure` 或 `src/service`。`MigrationStore` 不创建具体实现。
 
 现有 `MigrationDiagnostics` 的扫描器保留，降级为 A2 agent 可调用的工具。
 

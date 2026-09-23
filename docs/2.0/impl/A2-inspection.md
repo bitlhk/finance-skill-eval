@@ -64,10 +64,10 @@ A2 回答三个问题：
 
 | 文件 | 现状 |
 | --- | --- |
-| `src/service/tool-inspector.ts` | **只剩 Skill 规范检查 + 覆盖率装配**。工具发现与 Schema 读取整条删掉；它返回 `tools: []` 而不是猜 |
-| `src/service/migration-agent.ts` | A2 的进程边界与出处校验（`locate()`）；把 agent 的产出映射成平台的 `ProjectInspection` |
-| `src/service/migration-diagnostics.ts` | 确定性扫描 + 原子发现的证据裁决（文件 + 行号 + 逐字片段） |
-| `src/service/skill-validator.ts` | 规则检查 |
+| `src/migration/application/migration-inspection-service.ts` | A2 检查用例编排；没有 Agent 基线时不猜测 Tool 与 Schema |
+| `src/migration/infrastructure/migration-agent-result-mapper.ts` | 出处校验（`locate()`），把 Agent 产出映射成 `ProjectInspection` |
+| `src/migration/infrastructure/migration-diagnostics.ts` | 确定性扫描 + 原子发现的证据裁决（文件 + 行号 + 逐字片段） |
+| `src/migration/domain/migration-skill-validator.ts` | Skill 规则检查 |
 | `integrations/openjiuwen/harness_tools.py` | `AbsoluteLineReadFileTool`：harness 的读文件工具给行号，但对带 offset 的读取按窗口编号；这里改成按文件的真实行号 |
 
 **没有分析时的行为**：`inspect()` 直接 409，不再退到规则路径；弃权与失败各带 agent 自己给的理由（见 A2-6）。
@@ -82,7 +82,7 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 
 ## 语言判据落在哪
 
-判据写在 [L0 §2](../L0-overall-architecture.md) 的决策表里，实现在 `src/service/migration-model.ts` 的 `recommendLanguage()`：
+判据写在 [L0 §2](../L0-overall-architecture.md) 的决策表里，实现在 `src/migration/domain/migration-model.ts` 的 `recommendLanguage()`：
 
 ```
 同语言优先  →  源语言可用就用源语言
