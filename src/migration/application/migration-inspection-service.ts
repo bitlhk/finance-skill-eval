@@ -27,7 +27,7 @@ import {
 import { MigrationSupplements, supplementFiles } from "../infrastructure/migration-supplements.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import { validateSkill } from "../../service/skill-validator.js";
-import { stageEnvelope, staleAgainst } from "../../service/stage-envelope.js";
+import { stageEnvelope, staleAgainst } from "../domain/migration-stage-envelope.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 

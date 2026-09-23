@@ -5,7 +5,7 @@ import path from "node:path";
 import { modelTimeoutMs, type ModelRole } from "../../service/config.js";
 import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
 import { languageOfSourcePaths, recommendLanguage } from "../domain/migration-model.js";
-import { stageEnvelope, type StageEnvelope } from "../../service/stage-envelope.js";
+import { stageEnvelope, type StageEnvelope } from "../domain/migration-stage-envelope.js";
 import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
 import type {MigrationAnalysis,MigrationImplementation} from '../application/migration-agent-port.js';
 
