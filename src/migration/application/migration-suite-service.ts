@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { manualPreparationSchema } from "../../service/contracts.js";
+import { manualPreparationSchema } from "../../shared/contracts/manual-preparation.js";
 import type { MigrationAnalyzer } from "./migration-agent-port.js";
 import { toProjectInspection } from "../infrastructure/migration-agent.js";
 import { stableToolId } from "../domain/migration-model.js";
