@@ -7,20 +7,23 @@ import {runtimeExecutionEvidenceSchema,stableJson} from '../../contracts.js';
 import {readJson,writeJsonAtomic} from '../../service/file-store.js';
 import type {SkillAssetRecord} from '../../shared/contracts/skill-asset.js';
 import type {MigrationSkillRepository} from '../application/migration-skill-repository.js';
+import type {MigrationTargetGateway} from '../application/migration-target-gateway.js';
+import type {MigrationNativeTarget,MigrationTargetRun} from '../domain/migration-target.js';
 
 const tool=z.object({name:z.string(),description:z.string(),inputSchema:z.record(z.unknown()),outputSchema:z.record(z.unknown())});
 const profile=z.object({label:z.string(),skillId:z.string(),schemaBasis:z.string(),tools:z.array(tool),cases:z.array(z.object({caseId:z.string(),label:z.string(),expect:z.enum(['completed','denied']),prompt:z.string()}))});
 const healthSchema=z.object({hostId:z.literal('finance-migration-openjiuwen-reference-v1'),version:z.literal('0.1.13'),hostSha256:z.string().regex(/^[a-f0-9]{64}$/),sdkSha256:z.literal('65561515ace2d44a1f2448d54fcdf2a2e09eadb8ba5be715836975f3fc4d64ea'),modelId:z.string().min(1),modelConfigured:z.literal(true),sourceKind:z.literal('CONTROLLED_SYNTHETIC_BANK'),fixturesSha256:z.string(),portsSha256:z.string(),profiles:z.record(profile)});
-export type NativeTarget= z.infer<typeof healthSchema>;
-export type TargetRun={id:string;candidateDigest:string;assetId:string;startedAt:string;finishedAt?:string;status:'RUNNING'|'PASSED'|'FAILED'|'INTERRUPTED';error?:string;profile:string;runnerInstanceId?:string;target:NativeTarget;cases:Array<{caseId:string;label:string;passed:boolean;evidence:z.infer<typeof runtimeExecutionEvidenceSchema>}>};
+export type NativeTarget=MigrationNativeTarget;
+export type TargetRun=MigrationTargetRun;
 const pending=new Set<string>();
 const runnerInstanceId=randomUUID();
 async function headers(){const file=process.env.FINANCE_MIGRATION_NATIVE_TOKEN_FILE;if(!file)throw new Error('目标 Host 尚未配置');return {Authorization:'Bearer '+(await readFile(file,'utf8')).trim(),'Content-Type':'application/json'};}
 function endpoint(){const value=process.env.FINANCE_MIGRATION_NATIVE_ENDPOINT;if(!value)throw new Error('目标 Host 尚未配置');const url=new URL(value);if(url.hostname!=='127.0.0.1'||url.protocol!=='http:')throw new Error('迁移 Host 必须使用可信本机连接');return url;}
 export async function nativeTarget(){const url=endpoint();url.pathname='/health';const response=await fetch(url,{headers:await headers(),signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('目标 Host 健康检查失败');return healthSchema.parse(await response.json());}
-export class MigrationTargetRuns {
+export class MigrationTargetRuns implements MigrationTargetGateway {
   constructor(private root:string,private skills:MigrationSkillRepository){}
   private file(id:string){if(!/^target-[a-f0-9-]+$/.test(id))throw new Error('Invalid target run');return path.join(this.root,'migration-target-runs',id+'.json');}
+  target(){return nativeTarget();}
   async get(id:string):Promise<TargetRun>{
     const value=await readJson<TargetRun>(this.file(id));
     if(value.status==='RUNNING'&&value.runnerInstanceId!==runnerInstanceId)

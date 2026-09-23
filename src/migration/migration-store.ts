@@ -29,6 +29,7 @@ import { MigrationExportService } from './application/migration-export-service.j
 import { MigrationLegacyService } from './application/migration-legacy-service.js';
 import { migrationConflict as conflict } from './application/migration-errors.js';
 import { MigrationRuntimeConfig } from './infrastructure/migration-runtime-config.js';
+import { MigrationTargetRuns } from './infrastructure/migration-target.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -56,6 +57,7 @@ export class MigrationStore {
     projects?: MigrationProjectStore) {
     this.projects = projects ?? new MigrationProjectRepository(root);
     const runtimeConfigs=new MigrationRuntimeConfig(root);
+    const targets=new MigrationTargetRuns(root,skills);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
     this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer,runtimeConfigs);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
@@ -65,11 +67,11 @@ export class MigrationStore {
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations,
       preparations?new FileMigrationPreparationPackFactory(root):undefined,
       {analyzer:()=>configuredModelRole('ANALYZER').model,judge:()=>configuredModelRole('JUDGE').model},
-      optimizers, diagnostics, environments,runtimeConfigs);
+      optimizers, diagnostics, environments,runtimeConfigs,targets);
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments,runtimeConfigs);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments,runtimeConfigs);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
-    this.legacyService = new MigrationLegacyService(root, this.projects, this.projectService, skills, diagnostics, environments);
+    this.legacyService = new MigrationLegacyService(root, this.projects, this.projectService, skills, diagnostics, environments,targets);
   }
   async target(){return this.legacyService.target();}
   async verifyTarget(id:string,input:unknown){return this.legacyService.verifyTarget(id,input);}

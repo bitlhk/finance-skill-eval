@@ -10,7 +10,6 @@ import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
-import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationEvaluationModels } from './migration-evaluation-models.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
@@ -19,6 +18,7 @@ import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
+import type { MigrationTargetGateway } from './migration-target-gateway.js';
 
 const planSchema = z.strictObject({
   pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
@@ -41,6 +41,7 @@ export class MigrationEvaluationService {
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
+    private readonly targets?:MigrationTargetGateway,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {
@@ -93,8 +94,7 @@ export class MigrationEvaluationService {
     const runtimeInspection=value.sourceInspection??value.inspection;
     const runtimeRequirements=runtimeInspection?runtimeBuildRequirements(runtimeInspection):null;
     const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
-    const targetRunner=new MigrationTargetRuns(this.root,this.skills);
-    const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>targetRunner.get(runId)));
+    const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>this.targets!.get(runId)));
     const current=targetRuns.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1);
     const currentAsset=value.candidate??value.source;
     const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);

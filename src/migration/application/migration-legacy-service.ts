@@ -2,7 +2,7 @@ import { zipSync } from 'fflate';
 import { z } from 'zod';
 import { generateCandidateFiles, regenerationArchive } from '../infrastructure/legacy-candidate-generator.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
-import { MigrationTargetRuns, nativeTarget } from '../infrastructure/migration-target.js';
+import type { MigrationTargetGateway } from './migration-target-gateway.js';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
@@ -18,6 +18,7 @@ export class MigrationLegacyService {
     private readonly skills:MigrationSkillRepository,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
+    private readonly targets?:MigrationTargetGateway,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {
@@ -26,7 +27,7 @@ export class MigrationLegacyService {
 
   async target() {
     try {
-      return {available:true,target:await nativeTarget()};
+      return {available:true,target:await this.targets!.target()};
     } catch {
       return {available:false,message:'目标 Host 未就绪或模型连接不可用，请联系维护者。'};
     }
@@ -37,9 +38,8 @@ export class MigrationLegacyService {
       const parsed=z.strictObject({baseAssetId:z.string()}).parse(input),value=await this.projects.get(id);
       if(!value.candidate||parsed.baseAssetId!==value.candidate.assetId)return conflict('候选已变化，请刷新后验证');
       if(!value.simulationProfile||value.generation?.candidateDigest!==value.candidate.artifactSha256)return conflict('请先审阅映射并生成当前候选；修改后需重新审阅');
-      const runner=new MigrationTargetRuns(this.root,this.skills);
-      for(const runId of value.targetRuns??[])if((await runner.get(runId)).status==='RUNNING')return conflict('当前项目已有验证正在运行');
-      const run=await runner.start(value.candidate,value.simulationProfile);
+      for(const runId of value.targetRuns??[])if((await this.targets!.get(runId)).status==='RUNNING')return conflict('当前项目已有验证正在运行');
+      const run=await this.targets!.start(value.candidate,value.simulationProfile);
       (value.targetRuns??=[]).push(run.id);
       await this.projects.save(value);
       return run;
@@ -67,7 +67,7 @@ export class MigrationLegacyService {
       const version=`0.1.0-migration.${(value.candidateHistory?.length??0)+1}`;
       const target={runtime:parsed.runtime,...(parsed.environmentId?{environmentId:parsed.environmentId}:{}),intent:parsed.intent};
       if(parsed.simulationProfile&&!parsed.acknowledgeSimulation)return conflict('请确认模拟端口、资源映射与业务待确认边界');
-      const simulation=parsed.simulationProfile?{id:parsed.simulationProfile,target:await nativeTarget()}:undefined;
+      const simulation=parsed.simulationProfile?{id:parsed.simulationProfile,target:await this.targets!.target()}:undefined;
       const generated=generateCandidateFiles(archive,base,diagnosis,version,target,simulation);
       const candidate=await this.skills.uploadZip(Buffer.from(zipSync(generated.files)));
       // The legacy request shape intentionally enters the 0.1 workflow. Keeping
