@@ -18,7 +18,7 @@ import { EvaluationRunManager } from "./run-manager.js";
 import { SkillStore } from "./skill-store.js";
 import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
-import { MigrationStore } from './migration-store.js';
+import { MigrationStore } from '../migration/migration-store.js';
 import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';

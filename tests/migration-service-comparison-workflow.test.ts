@@ -3,7 +3,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {zipSync,strToU8} from 'fflate';
-import {MigrationStore} from '../src/service/migration-store.js';
+import {MigrationStore} from '../src/migration/migration-store.js';
 import {SkillStore} from '../src/service/skill-store.js';
 import {PreparationStore} from '../src/service/preparation-store.js';
 import {analysisFixture} from './analysis-fixture.js';

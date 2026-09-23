@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
-import { MigrationStore } from '../src/service/migration-store.js';
+import { MigrationStore } from '../src/migration/migration-store.js';
 import { SkillStore } from '../src/service/skill-store.js';
 import { EvalPackCatalog } from '../src/service/catalog.js';
 import type { EvaluationRunManager } from '../src/service/run-manager.js';

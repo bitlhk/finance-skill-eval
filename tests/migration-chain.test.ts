@@ -6,7 +6,7 @@ import { afterEach,expect,it,vi } from 'vitest';
 import { loadEvalPack } from '../src/eval-pack.js';
 import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { MigrationDiagnostics } from '../src/migration/infrastructure/migration-diagnostics.js';
-import { MigrationStore } from '../src/service/migration-store.js';
+import { MigrationStore } from '../src/migration/migration-store.js';
 import { SkillStore } from '../src/service/skill-store.js';
 import type { EvaluationJobStore } from '../src/service/job-store.js';
 import type { EvaluationRunManager } from '../src/service/run-manager.js';

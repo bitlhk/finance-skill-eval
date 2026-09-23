@@ -9,7 +9,7 @@ import {serviceEnvironment,runtimeInjection,migrationExecutionConfig,MigrationRu
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';
 import {TechnicalValidationService} from '../src/service/technical-validation.js';
-import {MigrationStore} from '../src/service/migration-store.js';
+import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';

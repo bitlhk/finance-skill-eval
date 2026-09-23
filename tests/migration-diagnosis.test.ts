@@ -12,7 +12,7 @@ import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {SKILL_MD,analyzedTool,inspectionFixture,toolFixture,implementationFixture} from './analysis-fixture.js';
 import type {MigrationAnalyzer} from '../src/migration/application/migration-agent-port.js';
 import {TechnicalValidationService} from '../src/service/technical-validation.js';
-import {MigrationStore} from '../src/service/migration-store.js';
+import {MigrationStore} from '../src/migration/migration-store.js';
 import {MigrationRuntimeConfig,configurationDigest} from '../src/migration/infrastructure/migration-runtime-config.js';
 
 const SOURCE='const user = runtime.user;\n/** @type {string} */ const token = auth_sdk.getToken(user);\nreturn business_client.query(account_id, {Authorization: token});\n';

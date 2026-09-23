@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ModelRef } from "../../contracts.js";
 import type { EnvironmentStore } from "../../service/environment-store.js";
-import type { MigrationStore } from "../../service/migration-store.js";
+import type { MigrationStore } from "../../migration/migration-store.js";
 import { simpleMigrationSuiteExample } from "../../migration/domain/simple-migration-suite.js";
 import type { SkillStore } from "../../service/skill-store.js";
 
