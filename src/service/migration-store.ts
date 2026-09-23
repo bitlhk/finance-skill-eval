@@ -5,7 +5,7 @@ import type { EvalPackCatalog } from './catalog.js';
 import type { PreparationStore } from './preparation-store.js';
 import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
-import { MigrationDiagnostics } from './migration-diagnostics.js';
+import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { EnvironmentStore } from './environment-store.js';
 import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer,type MigrationSuiteGenerator } from './migration-suite.js';

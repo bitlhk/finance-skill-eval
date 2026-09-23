@@ -19,7 +19,7 @@ import { SkillStore } from "./skill-store.js";
 import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
 import { MigrationStore } from './migration-store.js';
-import { MigrationDiagnostics } from './migration-diagnostics.js';
+import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { MigrationAnalyzer, MigrationImplementer } from './migration-agent.js';
 import type { MigrationSuiteGenerator } from './migration-suite.js';
 import { runConfigurationSchema } from "./contracts.js";

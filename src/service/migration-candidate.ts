@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { strToU8 } from 'fflate';
 import { parse as parseYaml, stringify } from 'yaml';
-import type { Diagnosis } from './migration-diagnostics.js';
+import type { Diagnosis } from '../migration/infrastructure/migration-diagnostics.js';
 import type { SkillAssetRecord } from './skill-store.js';
 import type { NativeTarget } from '../migration/infrastructure/migration-target.js';
 

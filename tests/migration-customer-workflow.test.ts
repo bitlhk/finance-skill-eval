@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {zipSync,strToU8,unzipSync} from 'fflate';
 import {SkillStore} from '../src/service/skill-store.js';
-import {MigrationDiagnostics} from '../src/service/migration-diagnostics.js';
+import {MigrationDiagnostics} from '../src/migration/infrastructure/migration-diagnostics.js';
 import {generateCandidateFiles,regenerationArchive} from '../src/service/migration-candidate.js';
 import {importMigrationFiles} from '../web/src/migration-import.js';
 import {createEvaluationService} from '../src/service/server.js';

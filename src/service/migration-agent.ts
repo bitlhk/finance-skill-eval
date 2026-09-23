@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { modelTimeoutMs, type ModelRole } from "./config.js";
-import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
+import { SCAN_COMPLETE_STATUSES } from "../migration/infrastructure/migration-diagnostics.js";
 import { languageOfSourcePaths, recommendLanguage } from "../migration/domain/migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
 import {isAdaptableHarnessCapability} from './migration-harness.js';

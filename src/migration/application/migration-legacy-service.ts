@@ -1,7 +1,7 @@
 import { zipSync } from 'fflate';
 import { z } from 'zod';
 import { generateCandidateFiles, regenerationArchive } from '../../service/migration-candidate.js';
-import type { MigrationDiagnostics } from '../../service/migration-diagnostics.js';
+import type { MigrationDiagnostics } from '../infrastructure/migration-diagnostics.js';
 import { MigrationTargetRuns, nativeTarget } from '../infrastructure/migration-target.js';
 import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { SkillStore } from '../../service/skill-store.js';

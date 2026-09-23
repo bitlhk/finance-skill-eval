@@ -1,12 +1,12 @@
-import {SourceEvidenceValidator} from './source-evidence.js';
+import {SourceEvidenceValidator} from '../../service/source-evidence.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import type { SkillStore, SkillAssetRecord } from './skill-store.js';
-import { readJson, writeJsonAtomic } from './file-store.js';
-import { configuredModelRole, type ConfiguredModelRole } from './config.js';
+import type { SkillStore, SkillAssetRecord } from '../../service/skill-store.js';
+import { readJson, writeJsonAtomic } from '../../service/file-store.js';
+import { configuredModelRole, type ConfiguredModelRole } from '../../service/config.js';
 
 export type Finding = {id:string;path:string;line:number;endLine:number;snippet:string;dependencyType:string;
   reason:string;impact:string;suggestion:string;confidence:string;layer:string;symbol?:string|null;

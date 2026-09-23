@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { strToU8, zipSync } from "fflate";
 import { z } from "zod";
 import { versionedMethod } from "../../service/migration-candidate.js";
-import type { MigrationDiagnostics } from "../../service/migration-diagnostics.js";
+import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
