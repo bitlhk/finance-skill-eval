@@ -3,8 +3,8 @@ import type { MigrationAnalyzer } from "./migration-agent-port.js";
 import { toProjectInspection } from "../infrastructure/migration-agent.js";
 import {
   analyzeDependencies,
-  validateDependencyData,
 } from "../infrastructure/migration-dependencies.js";
+import {validateDependencyData} from '../domain/migration-dependency-schema.js';
 import type { Supplement } from "../domain/migration-dependency.js";
 import { runtimeBuildRequirements } from "../domain/migration-harness.js";
 import { runtimeBuildRequirementsYaml } from "../infrastructure/migration-harness-serializer.js";
@@ -16,12 +16,8 @@ import {
   type ProjectInspection,
   type ToolDecision,
 } from "../domain/migration-model.js";
-import {
-  migrationExecutionConfig,
-  probeBusinessInterface,
-  runtimeInjection,
-  serviceEnvironment,
-} from "../infrastructure/migration-runtime-config.js";
+import {probeBusinessInterface} from "../infrastructure/migration-runtime-config.js";
+import {migrationExecutionConfig,runtimeInjection,serviceEnvironment} from '../domain/migration-runtime-rules.js';
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";

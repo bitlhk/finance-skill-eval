@@ -3,7 +3,7 @@ import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import {
   migrationExecutionConfig,
   serviceEnvironment,
-} from '../infrastructure/migration-runtime-config.js';
+} from '../domain/migration-runtime-rules.js';
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import { pythonCommand } from '../infrastructure/migration-technical-validator.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';

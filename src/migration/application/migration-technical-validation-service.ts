@@ -4,7 +4,7 @@ import { supportsImplicitScriptContext, type TechnicalValidation, type ToolInspe
 import {
   runtimeInjection,
   serviceEnvironment,
-} from "../infrastructure/migration-runtime-config.js";
+} from "../domain/migration-runtime-rules.js";
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import type { MigrationProject } from "../domain/migration-project.js";
