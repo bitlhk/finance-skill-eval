@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { fingerprint } from '../../contracts.js';
 import { originalServiceFingerprint } from '../../original-service-runtime.js';
-import type { EvalPackCatalog } from '../../service/catalog.js';
+import type { MigrationEvalPackCatalog } from './migration-eval-pack-catalog.js';
 import { configuredModelRole } from '../../service/config.js';
 import { runConfigurationSchema } from '../../shared/contracts/run-configuration.js';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
@@ -32,7 +32,7 @@ export class MigrationEvaluationService {
     private readonly skills:MigrationSkillRepository,
     private readonly runs:MigrationEvaluationRunner,
     private readonly jobs:MigrationEvaluationJobReader,
-    private readonly catalog:EvalPackCatalog,
+    private readonly catalog:MigrationEvalPackCatalog,
     private readonly preparations?:MigrationPreparationRepository,
     private readonly preparationPacks?:MigrationPreparationPackFactory,
     private readonly optimizers?:OptimizationManager,
