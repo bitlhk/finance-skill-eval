@@ -290,6 +290,15 @@ export function App() {
   };
   const sameConfiguration = leftVariantSelection === rightVariantSelection && leftModelKey === rightModelKey;
   const mixedVariables = leftVariantSelection !== rightVariantSelection && leftModelKey !== rightModelKey;
+  const selectedVariantsHaveArtifacts = [leftVariantSelection, rightVariantSelection].every(value => {
+    if (value === "without_target_skill") return true;
+    const option = versionOptions.find(item => `version:${item.version}` === value);
+    return Boolean(option && catalog?.uploadedSkills.some(asset =>
+      asset.skillId === targetSkillId
+      && asset.version === option.version
+      && (!option.artifactSha256 || asset.artifactSha256 === option.artifactSha256),
+    ));
+  });
   const changeRightVariant = (value: string) => {
     setRightVariantSelection(value);
   };
@@ -410,7 +419,9 @@ export function App() {
   const canStart = Boolean(
     selection && (dynamicQuestions ? catalog?.modelRoles.analyzer.configured && judgeMode === "model" : selectedCases.length && selectedCases.every(id=>cases.some(c=>c.caseId===id)))
     && !environmentChecking
+    && (runtime !== "replay" || Boolean(selectedPack?.replayReady))
     && (runtime === "replay" || [selectedLeftModel, selectedRightModel].every(m => m && (!m.availability || m.availability === "ready")))
+    && (runtime !== "runtime_http" || selectedVariantsHaveArtifacts)
     && (runtime !== "runtime_http" || runtimeEnvironmentId)
     && (runtime !== "runtime_http" || environmentInspection?.status === "ready")
     && !(runtime === "direct_model" && (!catalog || !directExecutionRole(catalog).configured))
@@ -494,6 +505,7 @@ export function App() {
             onCancel={cancelRun}
             onRetry={() => activeJob && retryRun(activeJob)}
             canStart={canStart && !busy}
+            selectedVariantsHaveArtifacts={selectedVariantsHaveArtifacts}
             onBack={() => setView("catalog")}
           />
         ) : null}
@@ -604,6 +616,7 @@ function EvaluationView(props: {
   onCancel(): void;
   onRetry(): void;
   canStart: boolean;
+  selectedVariantsHaveArtifacts: boolean;
   onBack(): void;
 }) {
   const isPreparation = props.selection.startsWith("prep:");
@@ -643,7 +656,7 @@ function EvaluationView(props: {
         <div className="shared-environment-title"><div><Network size={18} /><span><strong>统一测试环境</strong><small>Runtime、MCP 和题目由左右两侧共享，避免引入额外变量。</small></span></div>{props.runtime === "runtime_http" ? <button className="button secondary compact" onClick={props.onInspectEnvironment} disabled={props.environmentChecking || !props.runtimeEnvironmentId}><RefreshCw className={props.environmentChecking ? "spin" : ""} size={15} />重新预检</button> : null}</div>
         <div className="environment-controls">
           <label className="field"><span>执行方式</span><select disabled={Boolean(active)} value={props.runtime} onChange={event => props.setRuntime(event.target.value as typeof props.runtime)}>
-            {!isPreparation && !props.catalog.publicDemo ? <option value="replay">冻结证据回放</option> : null}
+            {!isPreparation && !props.catalog.publicDemo ? <option value="replay" disabled={!(target && 'replayReady' in target && target.replayReady)}>冻结证据回放{target && 'replayReady' in target && !target.replayReady ? " · 当前评测包未提供" : ""}</option> : null}
             {isPreparation ? <option value="direct_model" disabled={!directExecutionRole(props.catalog).configured || !props.directModelAllowed}>文本 Skill 直测</option> : null}
             <option value="runtime_http">在线 Agent Runtime</option>
           </select></label>
@@ -669,6 +682,7 @@ function EvaluationView(props: {
       </div>
 
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
+      {props.runtime === "runtime_http" && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
 
       <section className="cases-section">
         <div className="section-title"><div><h2>评测任务</h2></div>{!isPreparation && props.runtime !== "replay" ? <div className="question-mode" role="group" aria-label="题目来源">
