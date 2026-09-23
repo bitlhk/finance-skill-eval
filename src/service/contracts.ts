@@ -12,4 +12,3 @@ export const prepareSkillSchema = z.strictObject({
   maximumCases: z.number().int().min(1).max(8).default(4),
   model: modelRefSchema.optional(),
 });
-
