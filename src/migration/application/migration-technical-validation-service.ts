@@ -7,7 +7,7 @@ import {
   runtimeInjection,
   serviceEnvironment,
 } from "../infrastructure/migration-runtime-config.js";
-import type { SkillStore } from "../../service/skill-store.js";
+import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { TechnicalValidationService } from "../infrastructure/migration-technical-validator.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
@@ -60,7 +60,7 @@ export class MigrationTechnicalValidationWorkflow {
   constructor(
     private readonly root: string,
     private readonly projects: MigrationProjectRepository,
-    private readonly skills: SkillStore,
+    private readonly skills: MigrationSkillRepository,
   ) {}
 
   async validate(id: string, input: unknown, signal?: AbortSignal) {

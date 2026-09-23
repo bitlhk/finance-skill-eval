@@ -11,7 +11,8 @@ import {
   simpleMigrationCases,
   simpleMigrationSuiteSchema,
 } from "../domain/simple-migration-suite.js";
-import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
+import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
+import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
@@ -19,7 +20,7 @@ import { migrationConflict as conflict } from "./migration-errors.js";
 export class MigrationSuiteService {
   constructor(
     private readonly projects: MigrationProjectRepository,
-    private readonly skills: SkillStore,
+    private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
     private readonly suiteGenerator: MigrationSuiteGenerator,
     private readonly preparations?: PreparationStore,

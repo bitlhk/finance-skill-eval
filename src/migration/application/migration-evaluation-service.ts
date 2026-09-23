@@ -15,7 +15,7 @@ import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
 import type { PreparationStore } from '../../service/preparation-store.js';
 import type { EvaluationRunManager } from '../../service/run-manager.js';
-import type { SkillStore } from '../../service/skill-store.js';
+import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 
@@ -29,7 +29,7 @@ export class MigrationEvaluationService {
   constructor(
     private readonly root:string,
     private readonly projects:MigrationProjectRepository,
-    private readonly skills:SkillStore,
+    private readonly skills:MigrationSkillRepository,
     private readonly runs:EvaluationRunManager,
     private readonly jobs:EvaluationJobStore,
     private readonly catalog:EvalPackCatalog,

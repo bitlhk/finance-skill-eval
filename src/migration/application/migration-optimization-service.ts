@@ -3,7 +3,7 @@ import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
-import type { SkillStore } from '../../service/skill-store.js';
+import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
@@ -12,7 +12,7 @@ export class MigrationOptimizationService {
   constructor(
     private readonly root:string,
     private readonly projects:MigrationProjectRepository,
-    private readonly skills:SkillStore,
+    private readonly skills:MigrationSkillRepository,
     private readonly jobs:EvaluationJobStore,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly optimizers?:OptimizationManager,

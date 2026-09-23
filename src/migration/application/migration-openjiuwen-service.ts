@@ -7,7 +7,7 @@ import {
   serviceEnvironment,
 } from '../infrastructure/migration-runtime-config.js';
 import { pythonCommand } from '../infrastructure/migration-technical-validator.js';
-import type { SkillStore } from '../../service/skill-store.js';
+import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
@@ -18,7 +18,7 @@ export class MigrationOpenJiuwenService {
   constructor(
     private readonly root:string,
     private readonly projects:MigrationProjectRepository,
-    private readonly skills:SkillStore,
+    private readonly skills:MigrationSkillRepository,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly evaluation:MigrationEvaluationService,
     private readonly environments?:EnvironmentStore,

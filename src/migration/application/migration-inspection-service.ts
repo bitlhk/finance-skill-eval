@@ -25,7 +25,7 @@ import {
   serviceEnvironment,
 } from "../infrastructure/migration-runtime-config.js";
 import { MigrationSupplements, supplementFiles } from "../infrastructure/migration-supplements.js";
-import type { SkillStore } from "../../service/skill-store.js";
+import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";
 import { stageEnvelope, staleAgainst } from "../domain/migration-stage-envelope.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
@@ -42,7 +42,7 @@ export class MigrationInspectionService {
   constructor(
     private readonly root: string,
     private readonly projects: MigrationProjectRepository,
-    private readonly skills: SkillStore,
+    private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
   ) {}
 

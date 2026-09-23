@@ -5,7 +5,8 @@ import {z} from 'zod';
 import {canonicalNeutralArchive} from '../../service/neutral-archive.js';
 import {runtimeExecutionEvidenceSchema,stableJson} from '../../contracts.js';
 import {readJson,writeJsonAtomic} from '../../service/file-store.js';
-import type {SkillAssetRecord,SkillStore} from '../../service/skill-store.js';
+import type {SkillAssetRecord} from '../../shared/contracts/skill-asset.js';
+import type {MigrationSkillRepository} from '../application/migration-skill-repository.js';
 
 const tool=z.object({name:z.string(),description:z.string(),inputSchema:z.record(z.unknown()),outputSchema:z.record(z.unknown())});
 const profile=z.object({label:z.string(),skillId:z.string(),schemaBasis:z.string(),tools:z.array(tool),cases:z.array(z.object({caseId:z.string(),label:z.string(),expect:z.enum(['completed','denied']),prompt:z.string()}))});
@@ -18,7 +19,7 @@ async function headers(){const file=process.env.FINANCE_MIGRATION_NATIVE_TOKEN_F
 function endpoint(){const value=process.env.FINANCE_MIGRATION_NATIVE_ENDPOINT;if(!value)throw new Error('目标 Host 尚未配置');const url=new URL(value);if(url.hostname!=='127.0.0.1'||url.protocol!=='http:')throw new Error('迁移 Host 必须使用可信本机连接');return url;}
 export async function nativeTarget(){const url=endpoint();url.pathname='/health';const response=await fetch(url,{headers:await headers(),signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('目标 Host 健康检查失败');return healthSchema.parse(await response.json());}
 export class MigrationTargetRuns {
-  constructor(private root:string,private skills:SkillStore){}
+  constructor(private root:string,private skills:MigrationSkillRepository){}
   private file(id:string){if(!/^target-[a-f0-9-]+$/.test(id))throw new Error('Invalid target run');return path.join(this.root,'migration-target-runs',id+'.json');}
   async get(id:string):Promise<TargetRun>{
     const value=await readJson<TargetRun>(this.file(id));

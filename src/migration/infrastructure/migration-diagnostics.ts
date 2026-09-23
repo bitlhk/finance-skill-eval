@@ -4,7 +4,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
-import type { SkillStore, SkillAssetRecord } from '../../service/skill-store.js';
+import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
+import type { MigrationSkillRepository } from '../application/migration-skill-repository.js';
 import { readJson, writeJsonAtomic } from '../../service/file-store.js';
 import { configuredModelRole, type ConfiguredModelRole } from '../../service/config.js';
 import { SCAN_COMPLETE_STATUSES, type Diagnosis, type Finding } from '../domain/migration-diagnosis.js';
@@ -44,7 +45,7 @@ export class MigrationDiagnostics {
   private pending=new Map<string,Promise<Diagnosis>>();
   private explanations=new Map<string,Promise<void>>();
   private explanationTail:Promise<void>=Promise.resolve();
-  constructor(private root:string,private data:string,private skills:SkillStore,
+  constructor(private root:string,private data:string,private skills:MigrationSkillRepository,
     private model:()=>ConfiguredModelRole=()=>configuredModelRole('ANALYZER')){}
   private file(asset:SkillAssetRecord){return path.join(this.data,'migration-diagnostics',asset.artifactSha256+'.json');}
   async diagnose(asset:SkillAssetRecord,retry=false):Promise<Diagnosis>{

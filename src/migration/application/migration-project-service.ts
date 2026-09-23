@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
-import type { SkillStore } from "../../service/skill-store.js";
+import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
@@ -14,7 +14,7 @@ const createMigrationProjectSchema = z.strictObject({
 export class MigrationProjectService {
   constructor(
     private readonly projects: MigrationProjectRepository,
-    private readonly skills: SkillStore,
+    private readonly skills: MigrationSkillRepository,
     private readonly diagnostics?: MigrationDiagnostics,
   ) {}
 

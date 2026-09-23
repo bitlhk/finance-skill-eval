@@ -20,7 +20,8 @@ import {
 import { MigrationSupplements } from "../infrastructure/migration-supplements.js";
 import { generatePortableCandidate } from "../infrastructure/migration-candidate-packager.js";
 import type { PortableGeneration } from "../domain/migration-candidate-artifact.js";
-import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
+import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
+import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { inspectProject } from "../domain/migration-project-inspector.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
@@ -30,7 +31,7 @@ export class MigrationGenerationService {
   constructor(
     private readonly root: string,
     private readonly projects: MigrationProjectRepository,
-    private readonly skills: SkillStore,
+    private readonly skills: MigrationSkillRepository,
     private readonly implementer: MigrationImplementer,
     private readonly codeGenerator: MigrationCodeGenerator,
     private readonly diagnostics?: MigrationDiagnostics,

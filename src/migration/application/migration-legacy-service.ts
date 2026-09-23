@@ -4,7 +4,7 @@ import { generateCandidateFiles, regenerationArchive } from '../infrastructure/l
 import type { MigrationDiagnostics } from '../infrastructure/migration-diagnostics.js';
 import { MigrationTargetRuns, nativeTarget } from '../infrastructure/migration-target.js';
 import type { EnvironmentStore } from '../../service/environment-store.js';
-import type { SkillStore } from '../../service/skill-store.js';
+import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import type { MigrationProjectService } from './migration-project-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
@@ -15,7 +15,7 @@ export class MigrationLegacyService {
     private readonly root:string,
     private readonly projects:MigrationProjectRepository,
     private readonly projectService:MigrationProjectService,
-    private readonly skills:SkillStore,
+    private readonly skills:MigrationSkillRepository,
     private readonly diagnostics?:MigrationDiagnostics,
     private readonly environments?:EnvironmentStore,
   ) {}

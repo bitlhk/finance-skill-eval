@@ -1,4 +1,4 @@
-import type { SkillStore } from '../service/skill-store.js';
+import type { MigrationSkillRepository } from './application/migration-skill-repository.js';
 import type { EvaluationRunManager } from '../service/run-manager.js';
 import type { EvaluationJobStore } from '../service/job-store.js';
 import type { EvalPackCatalog } from '../service/catalog.js';
@@ -41,7 +41,7 @@ export class MigrationStore {
   private readonly optimizationService: MigrationOptimizationService;
   private readonly exportService: MigrationExportService;
   private readonly legacyService: MigrationLegacyService;
-  constructor(root:string, skills:SkillStore, runs:EvaluationRunManager,
+  constructor(root:string, skills:MigrationSkillRepository, runs:EvaluationRunManager,
     jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
     optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:EnvironmentStore,
     codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
