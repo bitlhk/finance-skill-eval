@@ -17,6 +17,14 @@ function imports(source:string){
 }
 
 describe('migration architecture boundaries',()=>{
+  it('keeps the public store facade free of infrastructure and platform service construction',()=>{
+    const file=path.join(migrationRoot,'migration-store.ts');
+    const violations=imports(readFileSync(file,'utf8'))
+      .filter(specifier=>specifier.includes('/infrastructure/')||specifier.startsWith('./infrastructure/')
+        ||specifier.includes('/service/')||specifier.startsWith('../service/'));
+    expect(violations).toEqual([]);
+  });
+
   it('keeps application workflows independent of infrastructure and service implementations',()=>{
     const violations=sourceFiles('application').flatMap(file=>imports(readFileSync(file,'utf8'))
       .filter(specifier=>specifier.includes('/infrastructure/')||specifier.startsWith('../infrastructure/')||specifier.includes('/service/')||specifier.startsWith('../../service/'))
