@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 SOURCE = {"source": "finance-eval-role-fixtures", "snapshotVersion": "roles-demo-v1", "asOf": "2026-09-05", "synthetic": True}
-DATA = json.loads(Path(__file__).with_name("role-fixtures.json").read_text())
+DATA = json.loads(Path(__file__).with_name("role-fixtures.json").read_text(encoding="utf-8"))
 
 
 def insurance_customer(customer_id):

@@ -48,7 +48,7 @@ async def run(body):
     from openjiuwen.core.foundation.llm import Model
     from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, ModelRequestConfig
 
-    config = json.loads(Path(os.environ["FINANCE_RUNTIME_CONFIG"]).read_text())
+    config = json.loads(Path(os.environ["FINANCE_RUNTIME_CONFIG"]).read_text(encoding="utf-8"))
     model_id = body["model"]["modelId"]
     model = resolve_model(config, body["model"])
     model_settings = request_settings(model, model_id)
