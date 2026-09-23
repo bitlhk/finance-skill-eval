@@ -3,7 +3,8 @@ import { manualPreparationSchema } from "../../service/contracts.js";
 import type { MigrationAnalyzer } from "../../service/migration-agent.js";
 import { toProjectInspection } from "../../service/migration-agent.js";
 import { stableToolId } from "../domain/migration-model.js";
-import { baselineBrief, type MigrationSuiteGenerator } from "../../service/migration-suite.js";
+import type { MigrationSuiteGenerator } from "./migration-suite-generator.js";
+import { baselineBrief } from "../domain/migration-suite-brief.js";
 import type { PreparationStore } from "../../service/preparation-store.js";
 import {
   normalizeOriginalServiceSuite,

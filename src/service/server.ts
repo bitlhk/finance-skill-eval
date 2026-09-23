@@ -21,7 +21,7 @@ import { DemoAccess } from "./demo-access.js";
 import { MigrationStore } from './migration-store.js';
 import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { MigrationAnalyzer, MigrationImplementer } from './migration-agent.js';
-import type { MigrationSuiteGenerator } from './migration-suite.js';
+import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
 import { MigrationCodeGenerator } from './migration-code-generator.js';
