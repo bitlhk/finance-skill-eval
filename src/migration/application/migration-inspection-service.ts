@@ -7,7 +7,6 @@ import {
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
 import type { Supplement } from "../domain/migration-dependency.js";
 import { runtimeBuildRequirements } from "../domain/migration-harness.js";
-import { runtimeBuildRequirementsYaml } from "../infrastructure/migration-harness-serializer.js";
 import {
   buildMigrationPlan,
   recommendLanguage,
@@ -26,6 +25,7 @@ import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
 import type { MigrationBusinessConnectionProbe } from './migration-business-connection-probe.js';
+import type { MigrationHarnessSerializer } from './migration-harness-serializer.js';
 
 export type MigrationRuntimeReference = {
   migrationId: string;
@@ -42,6 +42,7 @@ export class MigrationInspectionService {
     private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
     private readonly supplements:MigrationSupplementRepository,
     private readonly connectionProbe:MigrationBusinessConnectionProbe,
+    private readonly harnessSerializer:MigrationHarnessSerializer,
   ) {}
 
   async inspect(id: string, sourceOnly = false) {
@@ -363,7 +364,7 @@ export class MigrationInspectionService {
     const value = await this.projects.get(id);
     const inspection = value.sourceInspection ?? value.inspection;
     if (!inspection) return conflict("请先完成源码诊断");
-    const yaml = runtimeBuildRequirementsYaml(inspection);
+    const yaml = this.harnessSerializer.serialize(inspection);
     if (!yaml) return conflict("当前迁移没有 Runtime Harness 改造需求");
     return yaml;
   }
