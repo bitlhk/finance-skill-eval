@@ -1,4 +1,4 @@
-import type {RuntimeBuildRequirements} from '../migration/domain/migration-harness.js';
+import type {RuntimeBuildRequirements} from '../domain/migration-harness.js';
 
 /** Reserved integration seam for the future service that builds and registers a Runtime.
  * Migration diagnosis produces RuntimeBuildRequirements today, but no implementation is
