@@ -7,7 +7,7 @@ import { runConfigurationSchema } from '../../shared/contracts/run-configuration
 import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
-import type { MigrationDiagnostics } from '../infrastructure/migration-diagnostics.js';
+import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
@@ -35,7 +35,7 @@ export class MigrationEvaluationService {
     private readonly catalog:EvalPackCatalog,
     private readonly preparations?:PreparationStore,
     private readonly optimizers?:OptimizationManager,
-    private readonly diagnostics?:MigrationDiagnostics,
+    private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:EnvironmentStore,
   ) {}
 

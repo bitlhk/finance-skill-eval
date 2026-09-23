@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
+import type { MigrationDiagnosisPort } from "./migration-diagnosis-port.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
@@ -15,7 +15,7 @@ export class MigrationProjectService {
   constructor(
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
-    private readonly diagnostics?: MigrationDiagnostics,
+    private readonly diagnostics?: MigrationDiagnosisPort,
   ) {}
 
   list(): Promise<MigrationProject[]> {

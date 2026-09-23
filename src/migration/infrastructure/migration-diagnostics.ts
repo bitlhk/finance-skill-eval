@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import type { MigrationSkillRepository } from '../application/migration-skill-repository.js';
+import type { MigrationDiagnosisPort } from '../application/migration-diagnosis-port.js';
 import { readJson, writeJsonAtomic } from '../../service/file-store.js';
 import { configuredModelRole, type ConfiguredModelRole } from '../../service/config.js';
 import { SCAN_COMPLETE_STATUSES, type Diagnosis, type Finding } from '../domain/migration-diagnosis.js';
@@ -41,7 +42,7 @@ async function parsePython(root:string,files:Record<string,string>):Promise<Pick
   });
 }
 
-export class MigrationDiagnostics {
+export class MigrationDiagnostics implements MigrationDiagnosisPort {
   private pending=new Map<string,Promise<Diagnosis>>();
   private explanations=new Map<string,Promise<void>>();
   private explanationTail:Promise<void>=Promise.resolve();

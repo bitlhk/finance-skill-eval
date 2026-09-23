@@ -8,7 +8,7 @@ import {
 import type { MigrationImplementer } from "./migration-agent-port.js";
 import type { MigrationCodeGenerator } from "../infrastructure/migration-code-generator.js";
 import { runtimeToolConfigTemplate, validateAgentRuntimeDelivery } from "../domain/migration-delivery-contract.js";
-import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
+import type { MigrationDiagnosisPort } from "./migration-diagnosis-port.js";
 import {
   buildMigrationPlan,
   languageOfSourcePaths,
@@ -34,7 +34,7 @@ export class MigrationGenerationService {
     private readonly skills: MigrationSkillRepository,
     private readonly implementer: MigrationImplementer,
     private readonly codeGenerator: MigrationCodeGenerator,
-    private readonly diagnostics?: MigrationDiagnostics,
+    private readonly diagnostics?: MigrationDiagnosisPort,
   ) {}
 
   async generate(id: string, input: unknown) {

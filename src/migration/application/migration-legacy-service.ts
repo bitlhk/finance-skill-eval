@@ -1,7 +1,7 @@
 import { zipSync } from 'fflate';
 import { z } from 'zod';
 import { generateCandidateFiles, regenerationArchive } from '../infrastructure/legacy-candidate-generator.js';
-import type { MigrationDiagnostics } from '../infrastructure/migration-diagnostics.js';
+import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { MigrationTargetRuns, nativeTarget } from '../infrastructure/migration-target.js';
 import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
@@ -16,7 +16,7 @@ export class MigrationLegacyService {
     private readonly projects:MigrationProjectStore,
     private readonly projectService:MigrationProjectService,
     private readonly skills:MigrationSkillRepository,
-    private readonly diagnostics?:MigrationDiagnostics,
+    private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:EnvironmentStore,
   ) {}
 
