@@ -1,9 +1,9 @@
 import path from 'node:path';
 import { strToU8 } from 'fflate';
-import { parse as parseYaml, stringify } from 'yaml';
-import type { Diagnosis } from '../migration/infrastructure/migration-diagnostics.js';
-import type { SkillAssetRecord } from './skill-store.js';
-import type { NativeTarget } from '../migration/infrastructure/migration-target.js';
+import type { Diagnosis } from './migration-diagnostics.js';
+import type { SkillAssetRecord } from '../../service/skill-store.js';
+import type { NativeTarget } from './migration-target.js';
+import { versionedMethod } from '../domain/migration-method-version.js';
 
 const generatedNames=new Set(['neutral-contract.json','neutral_result.py','agentscope_result_adapter.py','OpenJiuwenMigrationTool.java','review.json','README.md']);
 
@@ -20,15 +20,6 @@ export function regenerationArchive(archive:Record<string,Uint8Array>,base:Skill
     for(const name of generated)delete files[name];
   }
   return files;
-}
-
-export function versionedMethod(source:string,skillId:string,version:string){
-  const match=source.match(/^---\s*\n([\s\S]*?)\n---[^\S\n]*(?:\n|$)/)
-    ??source.match(/^(name:[^\n]*\n[\s\S]{0,8000}?)\n---[^\S\n]*(?:\n|$)/);
-  const metadata=match?parseYaml(match[1]!):{};
-  if(!metadata||typeof metadata!=='object'||Array.isArray(metadata))throw new Error('元数据不合法');
-  if(metadata.name&&metadata.name!==skillId)throw Object.assign(new Error('不能在方法编辑中变更业务标识'),{statusCode:409});
-  return `---\n${stringify({...metadata,name:skillId,version})}---\n${match?source.slice(match[0].length):source}`;
 }
 
 export function generateCandidateFiles(archive:Record<string,Uint8Array>,base:SkillAssetRecord,diagnosis:Diagnosis,
