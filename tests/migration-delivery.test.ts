@@ -1,5 +1,5 @@
 import {afterEach,it,expect,vi} from 'vitest';
-import {strToU8} from 'fflate';
+import {strToU8,unzipSync} from 'fflate';
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
@@ -9,6 +9,7 @@ import {toGeneratedImplementations,toSkillDocumentDelivery} from '../src/migrati
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {GenerationStatus,generatedCallState} from '../web/src/GenerationStatus.js';
+import {MigrationExportService} from '../src/migration/application/migration-export-service.js';
 
 afterEach(()=>vi.unstubAllEnvs());
 
@@ -81,6 +82,23 @@ it('does not let the generated document manifest restore workspace fixtures',()=
  const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD)},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[],version:'2.0.0',skillDelivery});
  expect(result.files['references/workflow.md']).toBeDefined();
  expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
+});
+
+it('filters workspace fixtures when exporting an already-persisted v2 candidate',async()=>{
+ const service=new MigrationExportService(
+  {get:async()=>({schemaVersion:'finance.skill-migration.v2',candidate:{assetId:'candidate'}})} as any,
+  {readArchive:async()=>({
+   'skill/SKILL.md':strToU8(SKILL_MD),
+   'skill/references/workflow.md':strToU8('# Workflow'),
+   'skill/references/workspace/EXP-001.json':strToU8('{"id":"EXP-001"}'),
+   'workspace/EXP-002.json':strToU8('{"id":"EXP-002"}'),
+  })} as any,
+  {} as any,
+ );
+ const files=unzipSync(await service.exportCandidate('migration'));
+ expect(files['skill/SKILL.md']).toBeDefined();
+ expect(files['skill/references/workflow.md']).toBeDefined();
+ expect(Object.keys(files).some(name=>name.includes('/workspace/')||name.startsWith('workspace/'))).toBe(false);
 });
 
 it('does not rewrite short references after generation',()=>{
