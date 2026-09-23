@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { generateCandidateFiles, regenerationArchive } from '../infrastructure/legacy-candidate-generator.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { MigrationTargetRuns, nativeTarget } from '../infrastructure/migration-target.js';
-import type { EnvironmentStore } from '../../service/environment-store.js';
+import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationProjectService } from './migration-project-service.js';
@@ -17,7 +17,7 @@ export class MigrationLegacyService {
     private readonly projectService:MigrationProjectService,
     private readonly skills:MigrationSkillRepository,
     private readonly diagnostics?:MigrationDiagnosisPort,
-    private readonly environments?:EnvironmentStore,
+    private readonly environments?:MigrationEnvironmentRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {

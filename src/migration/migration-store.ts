@@ -7,7 +7,7 @@ import { FileMigrationPreparationPackFactory } from './infrastructure/migration-
 import type { OptimizationManager } from '../service/optimization-manager.js';
 import { configuredModelRole } from '../service/config.js';
 import { MigrationDiagnostics } from './infrastructure/migration-diagnostics.js';
-import type { EnvironmentStore } from '../service/environment-store.js';
+import type { MigrationEnvironmentRepository } from './application/migration-environment-repository.js';
 import { analyzeWithAgent,implementWithAgent } from './infrastructure/migration-agent.js';
 import type {MigrationAnalyzer,MigrationImplementer} from './application/migration-agent-port.js';
 import {generateSuiteWithAnalyzer} from './infrastructure/migration-suite-generator.js';
@@ -46,7 +46,7 @@ export class MigrationStore {
   private readonly legacyService: MigrationLegacyService;
   constructor(root:string, skills:MigrationSkillRepository, runs:EvaluationRunManager,
     jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:MigrationPreparationRepository,
-    optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:EnvironmentStore,
+    optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:MigrationEnvironmentRepository,
     codeGenerator:MigrationCodeGeneratorPort=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
     analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),

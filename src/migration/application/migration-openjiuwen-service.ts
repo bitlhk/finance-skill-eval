@@ -1,4 +1,4 @@
-import type { EnvironmentStore } from '../../service/environment-store.js';
+import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import {
   MigrationRuntimeConfig,
@@ -21,7 +21,7 @@ export class MigrationOpenJiuwenService {
     private readonly skills:MigrationSkillRepository,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly evaluation:MigrationEvaluationService,
-    private readonly environments?:EnvironmentStore,
+    private readonly environments?:MigrationEnvironmentRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {

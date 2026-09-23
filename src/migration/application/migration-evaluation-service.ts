@@ -4,7 +4,7 @@ import { originalServiceFingerprint } from '../../original-service-runtime.js';
 import type { EvalPackCatalog } from '../../service/catalog.js';
 import { configuredModelRole } from '../../service/config.js';
 import { runConfigurationSchema } from '../../shared/contracts/run-configuration.js';
-import type { EnvironmentStore } from '../../service/environment-store.js';
+import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
@@ -38,7 +38,7 @@ export class MigrationEvaluationService {
     private readonly preparationPacks?:MigrationPreparationPackFactory,
     private readonly optimizers?:OptimizationManager,
     private readonly diagnostics?:MigrationDiagnosisPort,
-    private readonly environments?:EnvironmentStore,
+    private readonly environments?:MigrationEnvironmentRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {

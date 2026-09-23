@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { EnvironmentStore } from '../../service/environment-store.js';
+import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
@@ -16,7 +16,7 @@ export class MigrationOptimizationService {
     private readonly jobs:EvaluationJobStore,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly optimizers?:OptimizationManager,
-    private readonly environments?:EnvironmentStore,
+    private readonly environments?:MigrationEnvironmentRepository,
   ) {}
 
   private async migrationEnvironment(environmentId:string) {
