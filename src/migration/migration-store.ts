@@ -3,6 +3,7 @@ import type { EvaluationRunManager } from '../service/run-manager.js';
 import type { EvaluationJobStore } from '../service/job-store.js';
 import type { EvalPackCatalog } from '../service/catalog.js';
 import type { MigrationPreparationRepository } from './application/migration-preparation-repository.js';
+import { FileMigrationPreparationPackFactory } from './infrastructure/migration-preparation-pack-factory.js';
 import type { OptimizationManager } from '../service/optimization-manager.js';
 import { configuredModelRole } from '../service/config.js';
 import { MigrationDiagnostics } from './infrastructure/migration-diagnostics.js';
@@ -60,7 +61,8 @@ export class MigrationStore {
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
     this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills);
-    this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations, optimizers, diagnostics, environments);
+    this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations,
+      preparations?new FileMigrationPreparationPackFactory(root):undefined,optimizers, diagnostics, environments);
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);

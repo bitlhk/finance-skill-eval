@@ -14,6 +14,7 @@ import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/m
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
+import type { MigrationPreparationPackFactory } from './migration-preparation-pack-factory.js';
 import type { EvaluationRunManager } from '../../service/run-manager.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
@@ -34,6 +35,7 @@ export class MigrationEvaluationService {
     private readonly jobs:EvaluationJobStore,
     private readonly catalog:EvalPackCatalog,
     private readonly preparations?:MigrationPreparationRepository,
+    private readonly preparationPacks?:MigrationPreparationPackFactory,
     private readonly optimizers?:OptimizationManager,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:EnvironmentStore,
@@ -54,7 +56,7 @@ export class MigrationEvaluationService {
       if (p.configuration.preparationId) {
         if (!value.suiteIds?.includes(p.configuration.preparationId)) return conflict('请选择属于本次迁移的冻结测试集');
         const preparation=await this.preparations?.get(p.configuration.preparationId);
-        if (preparation) pack=this.preparations!.buildPack({preparation,analyzerModel:configuredModelRole('ANALYZER').model,
+        if (preparation) pack=this.preparationPacks!.build({preparation,analyzerModel:configuredModelRole('ANALYZER').model,
           executionModel:p.configuration.executionModel!,judgeModel:configuredModelRole('JUDGE').model});
       }
       if (!pack || p.configuration.includeHoldout) return conflict('请选择一个冻结的开发题集；留出题留给独立复评');
