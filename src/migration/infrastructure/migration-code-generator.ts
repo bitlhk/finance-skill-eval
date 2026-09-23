@@ -3,6 +3,7 @@ import type { ConfiguredModelRole } from '../../service/config.js';
 import { recommendLanguage, type ProjectInspection, type ToolDecision } from '../domain/migration-model.js';
 import type { GeneratedToolImplementation } from '../domain/generated-tool-implementation.js';
 import { LocalWorker } from '../../service/local-worker.js';
+import type { MigrationCodeGeneratorPort } from '../application/migration-code-generator-port.js';
 
 const fileSchema=z.strictObject({path:z.string().min(1).max(240),content:z.string().min(1).max(300_000)});
 const implementationSchema=z.strictObject({
@@ -30,7 +31,7 @@ function executable(dependencies:string[]){
 const pep723=(source:string,dependencies:string[])=>dependencies.length&&!/^#\s*\/\/\/\s*script\s*$/mu.test(source)
   ?`# /// script\n# requires-python = ">=3.11"\n# dependencies = [${dependencies.map(value=>JSON.stringify(value)).join(', ')}]\n# ///\n\n${source}`:source;
 
-export class MigrationCodeGenerator{
+export class MigrationCodeGenerator implements MigrationCodeGeneratorPort {
   constructor(private model:()=>ConfiguredModelRole,private worker=new LocalWorker(),private maxAttempts=3){}
 
   async generate(input:{archive:Record<string,Uint8Array>;inspection:ProjectInspection;decisions:ToolDecision[];

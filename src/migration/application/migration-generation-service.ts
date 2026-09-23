@@ -6,7 +6,7 @@ import {
   toSkillDocumentDelivery,
 } from "../infrastructure/migration-agent.js";
 import type { MigrationImplementer } from "./migration-agent-port.js";
-import type { MigrationCodeGenerator } from "../infrastructure/migration-code-generator.js";
+import type { MigrationCodeGeneratorPort } from "./migration-code-generator-port.js";
 import { runtimeToolConfigTemplate, validateAgentRuntimeDelivery } from "../domain/migration-delivery-contract.js";
 import type { MigrationDiagnosisPort } from "./migration-diagnosis-port.js";
 import {
@@ -33,7 +33,7 @@ export class MigrationGenerationService {
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly implementer: MigrationImplementer,
-    private readonly codeGenerator: MigrationCodeGenerator,
+    private readonly codeGenerator: MigrationCodeGeneratorPort,
     private readonly diagnostics?: MigrationDiagnosisPort,
   ) {}
 

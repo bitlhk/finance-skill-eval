@@ -12,6 +12,7 @@ import type {MigrationAnalyzer,MigrationImplementer} from './application/migrati
 import {generateSuiteWithAnalyzer} from './infrastructure/migration-suite-generator.js';
 import type {MigrationSuiteGenerator} from './application/migration-suite-generator.js';
 import { MigrationCodeGenerator } from './infrastructure/migration-code-generator.js';
+import type { MigrationCodeGeneratorPort } from './application/migration-code-generator-port.js';
 import { MigrationProjectRepository } from './infrastructure/migration-project-repository.js';
 import type { MigrationProjectStore } from './application/migration-project-store.js';
 import type { MigrationProject } from './domain/migration-project.js';
@@ -45,7 +46,7 @@ export class MigrationStore {
   constructor(root:string, skills:MigrationSkillRepository, runs:EvaluationRunManager,
     jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
     optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:EnvironmentStore,
-    codeGenerator=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
+    codeGenerator:MigrationCodeGeneratorPort=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
     analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),
     implementer:MigrationImplementer=(input,)=>implementWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
