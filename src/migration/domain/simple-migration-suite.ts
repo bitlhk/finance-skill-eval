@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {evalCaseSchema} from '../contracts.js';
+import {evalCaseSchema} from '../../contracts.js';
 export const simpleMigrationSuiteSchema=z.strictObject({name:z.string().trim().min(1).max(200),cases:z.array(z.strictObject({id:z.string().trim().min(1).max(100),input:z.string().trim().min(1).max(12000),criteria:z.array(z.string().trim().min(1).max(2000)).min(1).max(20)})).min(1).max(8)}).superRefine((suite,ctx)=>{if(new Set(suite.cases.map(c=>c.id)).size!==suite.cases.length)ctx.addIssue({code:z.ZodIssueCode.custom,path:['cases'],message:'测试用例 id 不能重复'})});
 export function simpleMigrationCases(suite:z.infer<typeof simpleMigrationSuiteSchema>){return suite.cases.map(c=>evalCaseSchema.parse({caseId:c.id,name:c.id,prompt:c.input,evaluationGoal:c.criteria.join('\n'),requiredTools:[],rubric:c.criteria.map((description,index)=>({criterionId:`goal-${index+1}`,label:description,description,dimension:'business_completeness',weight:1,required:true}))}));}
 export const originalServiceSuiteSchema=z.strictObject({mode:z.literal('service_comparison'),name:z.string().trim().min(1).max(200),cases:z.array(z.strictObject({id:z.string().trim().min(1).max(100),input:z.string().trim().min(1).max(12000),criteria:z.array(z.string().trim().min(1).max(2000)).min(1).max(20).optional()})).min(1).max(8)});

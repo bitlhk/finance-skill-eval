@@ -7,7 +7,7 @@ import { strToU8,zipSync } from 'fflate';
 import { generatePortableCandidate } from '../src/service/portable-candidate.js';
 import { normalizeSkillPackage } from '../src/service/skill-normalizer.js';
 import { TechnicalValidationService,pythonCommand } from '../src/service/technical-validation.js';
-import { assessMigrationAcceptance } from '../src/service/migration-acceptance.js';
+import { assessMigrationAcceptance } from '../src/migration/domain/migration-acceptance.js';
 import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { runtimeInjection } from '../src/service/migration-runtime-config.js';
 import { analyzeSkillAndGenerateCases } from '../src/analyzer.js';

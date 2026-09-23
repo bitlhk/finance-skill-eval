@@ -9,7 +9,7 @@ import {
   normalizeOriginalServiceSuite,
   simpleMigrationCases,
   simpleMigrationSuiteSchema,
-} from "../../service/simple-migration-suite.js";
+} from "../domain/simple-migration-suite.js";
 import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
 import { validateSkill } from "../../service/skill-validator.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";

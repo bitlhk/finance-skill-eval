@@ -1,5 +1,5 @@
-import type { EvalCase } from '../contracts.js';
-import type { EvaluationReport } from '../report.js';
+import type { EvalCase } from '../../contracts.js';
+import type { EvaluationReport } from '../../report.js';
 
 /** This is automatic candidate acceptance, not original-runtime equivalence or human sign-off. */
 export function assessMigrationAcceptance(report:EvaluationReport|null,cases:EvalCase[],artifactVerified:boolean){

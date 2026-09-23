@@ -6,7 +6,7 @@ import { configuredModelRole } from '../../service/config.js';
 import { runConfigurationSchema } from '../../service/contracts.js';
 import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
-import { assessMigrationAcceptance } from '../../service/migration-acceptance.js';
+import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnostics } from '../../service/migration-diagnostics.js';
 import { runtimeBuildRequirements } from '../../service/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
