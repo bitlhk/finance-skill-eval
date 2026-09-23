@@ -1,14 +1,26 @@
 import {SourceEvidenceValidator} from "../domain/migration-source-evidence.js";
-import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { modelTimeoutMs, type ModelRole } from "../../service/config.js";
 import { SCAN_COMPLETE_STATUSES } from "../domain/migration-diagnosis.js";
 import { languageOfSourcePaths, recommendLanguage,stableToolId } from "../domain/migration-model.js";
-import { stageEnvelope, type StageEnvelope } from "../domain/migration-stage-envelope.js";
 import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
 import type {MigrationAnalysis,MigrationImplementation} from '../application/migration-agent-port.js';
 import type {MigrationAgentResultMapper} from '../application/migration-agent-result-mapper.js';
+import {
+  MigrationAgentUnavailable,
+  encodeArchive,
+  migrationAgentEnabled,
+  runMigrationAgent,
+  type AgentResult,
+  type MigrationAgentOptions,
+} from './migration-agent-runner.js';
+export {
+  MigrationAgentUnavailable,
+  agentIterations,
+  agentMaxTokens,
+  encodeArchive,
+  migrationAgentEnabled,
+  runMigrationAgent,
+} from './migration-agent-runner.js';
+export type {AgentPayload,AgentResult,AgentStage,AgentStatus,MigrationAgentOptions} from './migration-agent-runner.js';
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -18,47 +30,6 @@ import type {MigrationAgentResultMapper} from '../application/migration-agent-re
  * their own request. One agent run per call, isolated process, stdout carries the
  * result as a single JSON line.
  */
-
-export type AgentStage = "A2" | "A4";
-export type AgentStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
-
-/** The result line the agent process writes. Framing, not a stage product. */
-type WireResult<T> = {
-  workspaceRoot?:string;libraryInventory?:import('../domain/migration-dependency.js').RuntimeLibraryInventory; assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
-  scanner?: Record<string, unknown> | null; trace?: { rounds: Array<Record<string, unknown>> };
-  elapsedMs?: number; modelId?: string; error?: string; rawOutput?: string;
-};
-
-/**
- * Why the agent failed, from whichever field carries it.
- *
- * A failed agent either names the reason on `error` or leaves it in what it printed. Reading only
- * `error` turned "the model answered in prose instead of JSON" into "no reason given" -- the same
- * loss as dropping the reason, since the printed output *is* the evidence for that failure.
- *
- * The fallback is only for a result that did not succeed: a run that produced its payload has no
- * failure to explain, and quoting its output as one would invent an error that never happened.
- */
-function failureReason(wire: WireResult<unknown>, produced: boolean): string {
-  const said = String(wire.error ?? "").trim();
-  if (said || produced) return said;
-  const tail = String(wire.rawOutput ?? "").trim().slice(-600);
-  return tail ? `agent 没有说明失败原因，它的原始输出末尾是：${tail}` : "";
-}
-
-/** What the agent produced, beyond the envelope's own binding and status. */
-export type AgentPayload<T> = {
-  judgement: T;
-  /** Trusted process metadata, never read from the model judgement. */
-  workspaceRoot?:string;libraryInventory?:import('../domain/migration-dependency.js').RuntimeLibraryInventory;
-  /** A4: the files it wrote. */
-  files?: Record<string, string>;
-  /** A2: the static scanner's own result, when the agent ran it. */
-  scanner?: Record<string, unknown> | null;
-};
-
-/** The agent process speaks its own JSON on the wire; this is the stage product the platform uses. */
-export type AgentResult<T = Record<string, unknown>> = StageEnvelope<AgentPayload<T>>;
 
 /**
  * What the analysis hand-off looks like from the store's side: "give me an analysis".
@@ -113,111 +84,6 @@ export async function implementWithAgent(input: {
   return { status: result.status, payload: result.payload.judgement, files: result.payload.files ?? {} };
 }
 
-export type MigrationAgentOptions = {
-  /** Repository root: where integrations/ and .venv-openjiuwen live. NOT the data directory. */
-  projectRoot: string;
-  /** Model key inside .runtime.local.json's `models` map. */
-  modelId: string;
-  providerId?: string;
-  maxIterations?: number;
-  maxTokens?: number;
-  /** One model call inside the agent, not the whole run -- `timeoutMs` below is the run. */
-  modelTimeoutMs?: number;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-};
-
-const ENTRY: Record<AgentStage, string> = {
-  A2: path.join("integrations", "openjiuwen", "analyze_agent.py"),
-  A4: path.join("integrations", "openjiuwen", "migrate_agent.py"),
-};
-
-/** The model role each stage runs as. A2 inspects and diagnoses, A4 migrates. */
-const STAGE_ROLE: Record<AgentStage, ModelRole> = { A2: "ANALYZER", A4: "MIGRATION" };
-
-/**
- * How many ReAct iterations an agent gets.
- *
- * A round is a model turn, not a tool call: a model that narrates what it is about to do spends a
- * round without touching a tool, so the number has to fit a working style rather than a call count.
- * Field runs on this repo's own acceptance fixture burned 15 rounds in A2 with a single scanner
- * call, and 25 in A4 with three -- both are the platform failing a task that was going fine, and
- * the fix is a bigger budget or a smaller task, never fewer words in the contract.
- *
- * The platform owns the number because the platform is the side that knows the task, and because
- * the failure it prevents is only actionable if it can be raised.
- */
-export function agentIterations(stage: AgentStage): number {
-  const configured = Number(process.env.FINANCE_EVAL_AGENT_MAX_ITERATIONS);
-  if (Number.isFinite(configured) && configured > 0) return Math.floor(configured);
-  return stage === "A2" ? 60 : 120;
-}
-
-/**
- * How many tokens one model call inside the agent may produce.
- *
- * The budget has to cover the model's reasoning *and* its answer: on a reasoning model
- * `reasoning_content` and `content` come out of the same `max_tokens`, so a cap that looks
- * generous for the answer alone leaves nothing for the thinking in front of it. That is how A2
- * failed -- asked for a whole analysis in one object, capped at 6000, it spent the budget reasoning
- * and returned an empty answer with no error. Measured: 3 of 3 runs empty at 6000, 2 of 3 complete
- * at 32000.
- *
- * It is read here rather than left to the agent's own default so that it can be raised where the
- * failure is seen. The Python side reads `maxTokens` from the request; until this existed the
- * platform never sent the field, so the only way to change it was to edit the agent's source.
- *
- * Two knobs, in order: the role's own, then one for both agents. Named by role rather than by
- * stage because that is what the rest of the configuration is named by -- `FINANCE_EVAL_ANALYZER_*`
- * and `FINANCE_EVAL_MIGRATION_*` already select the model, its endpoint and its deadline, and the
- * budget belongs to the same sentence. The two jobs are different sizes -- A2 answers with an
- * analysis, A4 writes whole programs -- so raising one should not force the other up with it.
- */
-export function agentMaxTokens(stage: AgentStage): number {
-  for (const name of [`FINANCE_EVAL_${STAGE_ROLE[stage]}_MAX_TOKENS`, "FINANCE_EVAL_AGENT_MAX_TOKENS"]) {
-    const configured = Number(process.env[name]);
-    if (Number.isFinite(configured) && configured > 0) return Math.floor(configured);
-  }
-  return 32_000;
-}
-
-export class MigrationAgentUnavailable extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "MigrationAgentUnavailable";
-  }
-}
-
-/**
- * Agents are the product path, so they are on by default. Set
- * FINANCE_EVAL_MIGRATION_AGENT=off to force the deterministic rules path -- tests do
- * this so they never reach a live model.
- */
-export function migrationAgentEnabled(): boolean {
-  const flag = process.env.FINANCE_EVAL_MIGRATION_AGENT?.trim().toLowerCase();
-  if (flag === "off") return false;
-  if (flag === "on") return true;
-  // Default on for the product; never reach a live model from a test run. This is
-  // checked here rather than in vitest config because the guard must not depend on
-  // the config actually reaching the process.
-  return !process.env.VITEST;
-}
-
-function interpreter(projectRoot: string): string {
-  const configured = process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim();
-  if (configured) return configured;
-  // The agent needs openjiuwen, which lives in the launcher's venv -- not the
-  // interpreter that happens to be on PATH.
-  return process.platform === "win32"
-    ? path.join(projectRoot, ".venv-openjiuwen", "Scripts", "python.exe")
-    : path.join(projectRoot, ".venv-openjiuwen", "bin", "python");
-}
-
-export function encodeArchive(archive: Record<string, Uint8Array>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(archive).map(([name, bytes]) => [name, Buffer.from(bytes).toString("base64")]),
-  );
-}
 
 /** A claim about the source. Whatever it says is only accepted once it lands on a real file and
  * a real line, exactly like a finding. */
@@ -620,125 +486,4 @@ export class AgentResultMapper implements MigrationAgentResultMapper {
   skillDocumentDelivery(payload:unknown,files:Record<string,string>){
     return toSkillDocumentDelivery(payload as Parameters<typeof toSkillDocumentDelivery>[0],files);
   }
-}
-
-/** Run one migration agent. Never throws for an agent-side failure: FAILED is a result. */
-export async function runMigrationAgent<T = Record<string, unknown>>(
-  stage: AgentStage,
-  request: Record<string, unknown>,
-  options: MigrationAgentOptions,
-): Promise<AgentResult<T>> {
-  const program = interpreter(options.projectRoot);
-  const entry = path.join(options.projectRoot, ENTRY[stage]);
-  const runtimeConfig = process.env.FINANCE_RUNTIME_CONFIG?.trim()
-    ?? path.join(options.projectRoot, ".runtime.local.json");
-  const assetDigest = String(request.assetDigest ?? "");
-  const failed = (error: string, elapsedMs = 0): AgentResult<T> => stageEnvelope({
-    assetDigest, stageId: stage, producer: "AGENT", status: "FAILED",
-    payload: { judgement: {} as T }, run: { elapsedMs, error },
-  });
-
-  // Cheapest possible unavailable check: without the interpreter or the runtime
-  // config there is nothing to spawn, and callers fall back to the rules path.
-  if (!existsSync(program) || !existsSync(runtimeConfig)) {
-    return failed("migration agent runtime is not available");
-  }
-
-  const requestedDecisions=stage==='A4'&&Array.isArray((request as {decisions?:unknown[]}).decisions)
-    ?(request as {decisions:unknown[]}).decisions.length:0;
-  // A4 used to receive the same 120-turn ceiling for one Tool and for a large mixed project.
-  // That let a mistaken implementation shape consume many model turns before it eventually
-  // corrected itself.  Keep enough room for read/write/compile/test/fix, but scale it with the
-  // actual number of authorized Tool decisions.
-  const iterationBudget=options.maxIterations??(stage==='A4'
-    ?Math.min(agentIterations(stage),Math.max(28,20+requestedDecisions*8))
-    :agentIterations(stage));
-  const body = JSON.stringify({
-    stage,
-    model: { modelId: options.modelId, providerId: options.providerId ?? "service-execution" },
-    maxIterations: iterationBudget,
-    maxTokens: options.maxTokens ?? agentMaxTokens(stage),
-    // The harness's own default is 60 s per model call, which a reasoning model passes routinely:
-    // measured, the same request ranged 36 s to 185 s. The role's deadline is the number that
-    // already means "how long one call for this role may take", so the agent gets that one.
-    modelTimeoutMs: options.modelTimeoutMs ?? modelTimeoutMs(STAGE_ROLE[stage]),
-    ...request,
-  });
-
-  return await new Promise<AgentResult<T>>((resolve, reject) => {
-    const child = spawn(program, [entry], {
-      cwd: options.projectRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      env: { ...process.env, FINANCE_RUNTIME_CONFIG: runtimeConfig, PYTHONUTF8: "1", PYTHONUNBUFFERED: "1" },
-    });
-    let stdout = "", stderr = "", settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill("SIGKILL");
-      reject(new MigrationAgentUnavailable(`${stage} agent exceeded ${options.timeoutMs ?? 900_000}ms`));
-    }, options.timeoutMs ?? 900_000);
-    const abort = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.kill("SIGKILL");
-      reject(new MigrationAgentUnavailable(`${stage} agent cancelled`));
-    };
-    options.signal?.addEventListener("abort", abort, { once: true });
-
-    child.stdout.on("data", chunk => { stdout += String(chunk); });
-    child.stderr.on("data", chunk => {
-      // Keep the tail only: the harness is extremely verbose on startup.
-      stderr = (stderr + String(chunk)).slice(-4000);
-    });
-    child.on("error", error => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      options.signal?.removeEventListener("abort", abort);
-      reject(new MigrationAgentUnavailable(`${stage} agent could not start: ${error.message}`));
-    });
-    child.on("close", () => {
-      if (settled) return;
-      settled = true; clearTimeout(timer);
-      options.signal?.removeEventListener("abort", abort);
-      // The entry writes exactly one result line; anything earlier is harness noise.
-      const line = stdout.split("\n").map(part => part.trim()).filter(Boolean).reverse()
-        .find(part => part.startsWith("{") && part.includes("\"result\""));
-      if (!line) {
-        resolve(failed(`agent produced no result line${stderr ? `: ${stderr.slice(-500)}` : ""}`));
-        return;
-      }
-      try {
-        // The process speaks its own JSON. Its framing is not the stage product: the product is the
-        // envelope below, and this is where the two meet.
-        const wire = (JSON.parse(line) as { result?: WireResult<T> }).result ?? {};
-        const status = String(wire.status ?? "").toUpperCase();
-        const reason = failureReason(wire, status === "PRODUCED" || status === "ABSTAINED");
-        resolve(stageEnvelope({
-          assetDigest: String(wire.assetDigest ?? assetDigest),
-          stageId: stage,
-          producer: "AGENT",
-          status: status === "PRODUCED" || status === "ABSTAINED" ? status : "FAILED",
-          payload: {
-            judgement: (wire.payload ?? {}) as T,
-            ...(wire.libraryInventory?{libraryInventory:wire.libraryInventory}:{}),
-            ...(typeof wire.workspaceRoot==="string"?{workspaceRoot:wire.workspaceRoot}:{}),
-            ...(wire.files ? { files: wire.files } : {}),
-            ...(wire.scanner ? { scanner: wire.scanner } : {}),
-          },
-          ...(wire.trace ? { trace: wire.trace } : {}),
-          run: {
-            ...(wire.modelId ? { modelId: String(wire.modelId) } : {}),
-            ...(typeof wire.elapsedMs === "number" ? { elapsedMs: wire.elapsedMs } : {}),
-            ...(reason ? { error: reason } : {}),
-          },
-        }));
-      } catch (error) {
-        resolve(failed(`agent result was not JSON: ${error instanceof Error ? error.message : String(error)}`));
-      }
-    });
-    child.stdin.end(body);
-  });
 }
