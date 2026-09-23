@@ -28,7 +28,6 @@ const planSchema = z.strictObject({
 
 export class MigrationEvaluationService {
   constructor(
-    private readonly root:string,
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
     private readonly runs:MigrationEvaluationRunner,

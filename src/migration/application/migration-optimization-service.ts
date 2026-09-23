@@ -11,7 +11,6 @@ import type { MigrationRuntimeConfigurationRepository } from './migration-runtim
 
 export class MigrationOptimizationService {
   constructor(
-    private readonly root:string,
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
     private readonly jobs:MigrationEvaluationJobReader,
