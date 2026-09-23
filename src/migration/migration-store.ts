@@ -61,7 +61,9 @@ export class MigrationStore {
     this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(root, this.projects, skills);
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations,
-      preparations?new FileMigrationPreparationPackFactory(root):undefined,optimizers, diagnostics, environments);
+      preparations?new FileMigrationPreparationPackFactory(root):undefined,
+      {analyzer:()=>configuredModelRole('ANALYZER').model,judge:()=>configuredModelRole('JUDGE').model},
+      optimizers, diagnostics, environments);
     this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);

@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { fingerprint } from '../../contracts.js';
 import { originalServiceFingerprint } from '../../original-service-runtime.js';
 import type { MigrationEvalPackCatalog } from './migration-eval-pack-catalog.js';
-import { configuredModelRole } from '../../service/config.js';
 import { runConfigurationSchema } from '../../shared/contracts/run-configuration.js';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationEvaluationJobReader,MigrationEvaluationRunner } from './migration-evaluation-ports.js';
@@ -13,6 +12,7 @@ import { buildMigrationPlan } from '../domain/migration-model.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
+import type { MigrationEvaluationModels } from './migration-evaluation-models.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationPreparationPackFactory } from './migration-preparation-pack-factory.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
@@ -35,6 +35,7 @@ export class MigrationEvaluationService {
     private readonly catalog:MigrationEvalPackCatalog,
     private readonly preparations?:MigrationPreparationRepository,
     private readonly preparationPacks?:MigrationPreparationPackFactory,
+    private readonly models?:MigrationEvaluationModels,
     private readonly optimizers?:MigrationOptimizationPort,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
@@ -55,8 +56,8 @@ export class MigrationEvaluationService {
       if (p.configuration.preparationId) {
         if (!value.suiteIds?.includes(p.configuration.preparationId)) return conflict('请选择属于本次迁移的冻结测试集');
         const preparation=await this.preparations?.get(p.configuration.preparationId);
-        if (preparation) pack=this.preparationPacks!.build({preparation,analyzerModel:configuredModelRole('ANALYZER').model,
-          executionModel:p.configuration.executionModel!,judgeModel:configuredModelRole('JUDGE').model});
+        if (preparation) pack=this.preparationPacks!.build({preparation,analyzerModel:this.models!.analyzer(),
+          executionModel:p.configuration.executionModel!,judgeModel:this.models!.judge()});
       }
       if (!pack || p.configuration.includeHoldout) return conflict('请选择一个冻结的开发题集；留出题留给独立复评');
       const serviceComparison=p.pair==='SC'&&p.configuration.evaluationMode==='service_comparison';
