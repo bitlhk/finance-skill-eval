@@ -70,6 +70,19 @@ it('excludes runtime workspace data from the delivered Skill package',()=>{
  expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
 });
 
+it('does not let the generated document manifest restore workspace fixtures',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const skillDelivery={skillFile:'SKILL.md',files:{
+  'SKILL.md':SKILL_MD,
+  'references/workflow.md':'# Workflow',
+  'references/workspace/EXP-001.json':'{"id":"EXP-001"}',
+  'workspace/EXP-002.json':'{"id":"EXP-002"}',
+ }};
+ const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD)},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[],version:'2.0.0',skillDelivery});
+ expect(result.files['references/workflow.md']).toBeDefined();
+ expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
+});
+
 it('does not rewrite short references after generation',()=>{
  const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
  const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD+'\n请阅读 `references/workflow.md`。','references/workflow.md':'# 处理流程\n\n先核对，再返回。','scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));

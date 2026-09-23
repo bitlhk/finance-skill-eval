@@ -99,7 +99,13 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     // paths and the final Skill contract, but must not merge or split references after the model
     // has delivered them.  The manifest is complete for human-readable Skill documentation.
     for(const name of Object.keys(normalizedSkill.files))if(name==='SKILL.md'||/^references\/.*\.(?:md|mdx|txt)$/iu.test(name))delete normalizedSkill.files[name];
-    for(const [name,content] of Object.entries(input.skillDelivery.files))normalizedSkill.files[name]=strToU8(content);
+    for(const [name,content] of Object.entries(input.skillDelivery.files)){
+      // The model-authored document manifest is authoritative for documentation layout, but it
+      // cannot override the delivery boundary: workspace fixtures are evaluation inputs, not
+      // portable Skill documentation.
+      if(isWorkspaceData(name))continue;
+      normalizedSkill.files[name]=strToU8(content);
+    }
   }
   pruneOrphanPythonPackageMarkers(normalizedSkill.files);
   for(const [name,bytes] of Object.entries(normalizedSkill.files))files[hasMcp?`skill/${name}`:name]=bytes;

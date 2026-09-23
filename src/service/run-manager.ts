@@ -396,7 +396,9 @@ export class EvaluationRunManager {
             job.questionSet = await generateRunQuestions({
               pack, skill, adapter: analyzer.adapter, model: analyzer.model,
               count: job.configuration.generatedCaseCount, generationId: job.jobId,
-              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]),
+              // The Analyzer adapter owns its role-specific timeout. Keeping a second, shorter
+              // deadline here made slow-but-healthy models fail before that configured budget.
+              signal: controller.signal,
             });
           } catch (error) {
             controller.signal.throwIfAborted();
