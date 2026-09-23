@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { strToU8 } from 'fflate';
-import type { Diagnosis } from './migration-diagnostics.js';
+import type { Diagnosis } from '../domain/migration-diagnosis.js';
 import type { SkillAssetRecord } from '../../service/skill-store.js';
 import type { NativeTarget } from './migration-target.js';
 import { versionedMethod } from '../domain/migration-method-version.js';

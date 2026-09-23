@@ -7,38 +7,8 @@ import { z } from 'zod';
 import type { SkillStore, SkillAssetRecord } from '../../service/skill-store.js';
 import { readJson, writeJsonAtomic } from '../../service/file-store.js';
 import { configuredModelRole, type ConfiguredModelRole } from '../../service/config.js';
-
-export type Finding = {id:string;path:string;line:number;endLine:number;snippet:string;dependencyType:string;
-  reason:string;impact:string;suggestion:string;confidence:string;layer:string;symbol?:string|null;
-  source?:'STATIC'|'MODEL';verification?:'VERIFIED'};
-/**
- * The coverage statuses that mean "the scanner saw this file".
- *
- * `TEXT_INSPECTED` is a file read as text, `AST_PARSED` a Python file that parsed; both complete.
- * Everything else the scanner emits -- `PARSE_FAILED`, `LEXICAL_ONLY`, `UNSUPPORTED_LANGUAGE`,
- * `SIZE_LIMIT`, `BINARY_NOT_PARSED` -- describes a file it did not fully see, and so does any
- * status this list does not know: the gate exists to make a human look, so an unrecognised value
- * must not open it.
- *
- * One list, because it used to be two. The second copy was written as `PARSED|OK`, which is not
- * among the statuses the scanner emits, so every package came back partially analysed and the
- * confirmation became a dialog with nothing behind it.
- */
-export const SCAN_COMPLETE_STATUSES: readonly string[] = ['AST_PARSED','TEXT_INSPECTED'];
-export type Diagnosis = {
-  schemaVersion:'migration-diagnosis.v1';assetId:string;digest:string;createdAt:string;
-  status:'COMPLETE'|'PARTIAL';dependencyStatus:'EXPLICIT_BINDING'|'NO_BINDING_IN_CHECKED_SCOPE'|'UNKNOWN';
-  findings:Finding[];coverage:Array<{path:string;status:string}>;
-  declarations:Array<{path:string;line:number;name:string;parameters:string[];asyncFunction:boolean;status:string}>;
-  files:Array<{path:string;sha256:string;bytes:number}>;
-  ai:{status:'RUNNING'|'COMPLETE'|'NOT_CONFIGURED'|'FAILED';summary?:string;error?:string;
-    suggestions?:Array<{findingId:string;explanation:string;nextStep:string}>;model?:string;retryable:boolean;inputTruncated?:boolean;
-    acceptedRuntimeBindings?:number;rejectedRuntimeBindings?:number};
-  scriptsExecuted:false;nativeExecution:'NOT_RUN';
-  scannerDigest:string;
-  frameworks?:string[];
-  plan?:Array<{category:'AUTOMATIC'|'OWNER_CONFIRMATION'|'ENGINEERING';findingIds:string[];problem:string;change:string;impact:string}>;
-};
+import { SCAN_COMPLETE_STATUSES, type Diagnosis, type Finding } from '../domain/migration-diagnosis.js';
+export type { Diagnosis, Finding } from '../domain/migration-diagnosis.js';
 const runtimeBindingSchema=z.strictObject({
   path:z.string().min(1).max(500),line:z.number().int().positive(),endLine:z.number().int().positive(),snippet:z.string().min(1).max(2000),
   dependencyType:z.enum(['SDK_IMPORT','SDK_INPUT','SDK_RESULT','TOOL_REGISTRATION','RUNTIME_CONTEXT','RUNTIME_STATE','RESOURCE_INJECTION','DYNAMIC_RUNTIME_BINDING']),

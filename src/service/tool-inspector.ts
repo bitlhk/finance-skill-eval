@@ -1,4 +1,4 @@
-import { SCAN_COMPLETE_STATUSES, type Diagnosis } from '../migration/infrastructure/migration-diagnostics.js';
+import { SCAN_COMPLETE_STATUSES, type Diagnosis } from '../migration/domain/migration-diagnosis.js';
 import type { ProjectInspection } from '../migration/domain/migration-model.js';
 import { validateSkill } from '../migration/domain/migration-skill-validator.js';
 
