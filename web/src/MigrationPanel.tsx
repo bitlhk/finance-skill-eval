@@ -5,7 +5,7 @@ import { OptimizationPanel } from './OptimizationPanel';
 import { DiagnosisStep, RuntimeTestConfiguration } from './DiagnosisStep';
 import {GenerationStatus} from './GenerationStatus';
 import {MigrationAssessmentStep,type OriginalServiceInput} from './MigrationAssessmentStep';
-import type {DependencyAnalysis} from '../../src/service/migration-dependencies';
+import type {DependencyAnalysis} from '../../src/migration/domain/migration-dependency';
 import type {RuntimeHarnessCapability} from '../../src/migration/domain/migration-model';
 import { downloadApi } from './api-path';
 import './migration.css';

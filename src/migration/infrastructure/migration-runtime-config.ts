@@ -3,7 +3,7 @@ import {validateServiceEnvironment} from '../../service/service-environment.js';
 import {randomUUID} from 'node:crypto';
 import {fingerprint} from '../../contracts.js';
 import {readJson,writeJsonAtomic} from '../../service/file-store.js';
-import {validateDependencyData} from '../../service/migration-dependencies.js';
+import {validateDependencyData} from './migration-dependencies.js';
 import type {Dependency} from '../domain/migration-dependency.js';
 import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool-config.js';
 import {supportsImplicitScriptContext} from '../domain/migration-model.js';

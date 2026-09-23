@@ -71,7 +71,7 @@ export type MigrationAnalysis =
   | { status: "FAILED"; reason: string };
 export type MigrationAnalyzer = (input: {
   assetDigest: string; runId: string; files: Record<string, Uint8Array>;
-  supplements?:import('./migration-dependencies.js').AnalysisSupplement[];
+  supplements?:import('../migration/domain/migration-dependency.js').AnalysisSupplement[];
 }) => Promise<MigrationAnalysis | null>;
 
 /**
@@ -81,7 +81,7 @@ export type MigrationAnalyzer = (input: {
  *
  * `null` means only one thing now: this platform is not set up to run the agent at all.
  */
-export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array>;supplements?:import('./migration-dependencies.js').AnalysisSupplement[] }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
+export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array>;supplements?:import('../migration/domain/migration-dependency.js').AnalysisSupplement[] }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
   if (!migrationAgentEnabled()) return null;
   let result:AgentResult<{reason?:string;missing?:string[]}>;
   try{result=await runMigrationAgent("A2",{...input,files:encodeArchive(input.files)},options)}catch(error){return {status:"FAILED",reason:error instanceof MigrationAgentUnavailable?error.message:"A2 执行失败，请查看平台日志"}}

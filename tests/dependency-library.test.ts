@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {analyzeDependencies} from '../src/service/migration-dependencies.js';
+import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {verifyDependencyLibrary} from '../src/service/dependency-library.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';
 import {createElement} from 'react';

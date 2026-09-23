@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {analyzeDependencies} from '../src/service/migration-dependencies.js';
+import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {serviceEnvironment,runtimeInjection,migrationExecutionConfig,MigrationRuntimeConfig,configurationDigest} from '../src/migration/infrastructure/migration-runtime-config.js';
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/service/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';

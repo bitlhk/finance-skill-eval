@@ -4,8 +4,8 @@ import { toProjectInspection } from "../../service/migration-agent.js";
 import {
   analyzeDependencies,
   validateDependencyData,
-  type Supplement,
-} from "../../service/migration-dependencies.js";
+} from "../infrastructure/migration-dependencies.js";
+import type { Supplement } from "../domain/migration-dependency.js";
 import { runtimeBuildRequirements, runtimeBuildRequirementsYaml } from "../../service/migration-harness.js";
 import {
   buildMigrationPlan,

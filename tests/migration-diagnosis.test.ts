@@ -5,7 +5,7 @@ import path from 'node:path';
 import {createServer} from 'node:http';
 import {zipSync,strToU8} from 'fflate';
 import {createEvaluationService} from '../src/service/server.js';
-import {analyzeDependencies,dependencyId} from '../src/service/migration-dependencies.js';
+import {analyzeDependencies,dependencyId} from '../src/migration/infrastructure/migration-dependencies.js';
 import {runtimeInjection,probeBusinessInterface,migrationExecutionConfig} from '../src/migration/infrastructure/migration-runtime-config.js';
 import {supplementFiles} from '../src/migration/infrastructure/migration-supplements.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';

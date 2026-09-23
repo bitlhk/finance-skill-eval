@@ -1,12 +1,11 @@
 import {createHash} from 'node:crypto';
 import path from 'node:path';
-import {SourceEvidenceValidator} from './source-evidence.js';
+import {SourceEvidenceValidator} from '../../service/source-evidence.js';
 import {z} from 'zod';
-import {verifyDependencyLibrary,type DependencyLibrary,type RuntimeLibraryInventory} from './dependency-library.js';
-import {validServiceEnvironmentName} from './service-environment.js';
-import type {ProjectInspection} from '../migration/domain/migration-model.js';
-import type {Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../migration/domain/migration-dependency.js';
-export type {AnalysisSupplement,Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../migration/domain/migration-dependency.js';
+import {verifyDependencyLibrary,type DependencyLibrary,type RuntimeLibraryInventory} from '../../service/dependency-library.js';
+import {validServiceEnvironmentName} from '../../service/service-environment.js';
+import type {ProjectInspection} from '../domain/migration-model.js';
+import type {Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../domain/migration-dependency.js';
 
 const citation=z.object({path:z.string().min(1),snippet:z.string().min(8)});
 const wireLibrary=z.object({type:z.enum(['STANDARD_LIBRARY','PACKAGE','CUSTOM_SDK','UNKNOWN']),language:z.enum(['python','node']),module:z.string().min(1).max(200),packageName:z.string().min(1).max(200).nullish().transform(v=>v??undefined),version:z.string().max(200).nullish().transform(v=>v??undefined),declarationPaths:z.array(z.string()).max(20).nullish().transform(v=>v??[])});
