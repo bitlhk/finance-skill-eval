@@ -3,23 +3,9 @@ import path from "node:path";
 import type { EvalCase, EvalPack, EvaluationContextSnapshot, ModelRef } from "../contracts.js";
 import { fingerprint } from "../contracts.js";
 import type { SkillAssetRecord } from "./skill-store.js";
+import type { PreparedEvaluation } from '../shared/contracts/prepared-evaluation.js';
+export type { PreparedEvaluation } from '../shared/contracts/prepared-evaluation.js';
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
-
-export type PreparedEvaluation = {
-  schemaVersion: "finance.skill-eval.preparation.v1";
-  preparationId: string;
-  skillAssetId: string;
-  skillId: string;
-  skillVersion: string;
-  summary: string;
-  cases: EvalCase[];
-  holdoutCases?: EvalCase[];
-  source: "ai_generated" | "manual";
-  evaluationContext: EvaluationContextSnapshot | null;
-  createdAt: string;
-  assessmentMode?:'natural_language';
-  comparisonOnly?:boolean;
-};
 
 export class PreparationStore {
   private readonly directory: string;

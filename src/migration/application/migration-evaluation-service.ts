@@ -13,7 +13,7 @@ import { buildMigrationPlan } from '../domain/migration-model.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
-import type { PreparationStore } from '../../service/preparation-store.js';
+import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { EvaluationRunManager } from '../../service/run-manager.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
@@ -33,7 +33,7 @@ export class MigrationEvaluationService {
     private readonly runs:EvaluationRunManager,
     private readonly jobs:EvaluationJobStore,
     private readonly catalog:EvalPackCatalog,
-    private readonly preparations?:PreparationStore,
+    private readonly preparations?:MigrationPreparationRepository,
     private readonly optimizers?:OptimizationManager,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:EnvironmentStore,

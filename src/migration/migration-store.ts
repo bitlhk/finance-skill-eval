@@ -2,7 +2,7 @@ import type { MigrationSkillRepository } from './application/migration-skill-rep
 import type { EvaluationRunManager } from '../service/run-manager.js';
 import type { EvaluationJobStore } from '../service/job-store.js';
 import type { EvalPackCatalog } from '../service/catalog.js';
-import type { PreparationStore } from '../service/preparation-store.js';
+import type { MigrationPreparationRepository } from './application/migration-preparation-repository.js';
 import type { OptimizationManager } from '../service/optimization-manager.js';
 import { configuredModelRole } from '../service/config.js';
 import { MigrationDiagnostics } from './infrastructure/migration-diagnostics.js';
@@ -44,7 +44,7 @@ export class MigrationStore {
   private readonly exportService: MigrationExportService;
   private readonly legacyService: MigrationLegacyService;
   constructor(root:string, skills:MigrationSkillRepository, runs:EvaluationRunManager,
-    jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:PreparationStore,
+    jobs:EvaluationJobStore, catalog:EvalPackCatalog, preparations?:MigrationPreparationRepository,
     optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:EnvironmentStore,
     codeGenerator:MigrationCodeGeneratorPort=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
     analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),

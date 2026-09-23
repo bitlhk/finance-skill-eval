@@ -5,7 +5,7 @@ import { toProjectInspection } from "../infrastructure/migration-agent.js";
 import { stableToolId } from "../domain/migration-model.js";
 import type { MigrationSuiteGenerator } from "./migration-suite-generator.js";
 import { baselineBrief } from "../domain/migration-suite-brief.js";
-import type { PreparationStore } from "../../service/preparation-store.js";
+import type { MigrationPreparationRepository } from "./migration-preparation-repository.js";
 import {
   normalizeOriginalServiceSuite,
   simpleMigrationCases,
@@ -23,7 +23,7 @@ export class MigrationSuiteService {
     private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
     private readonly suiteGenerator: MigrationSuiteGenerator,
-    private readonly preparations?: PreparationStore,
+    private readonly preparations?: MigrationPreparationRepository,
   ) {}
 
   async create(id: string, input: unknown) {
