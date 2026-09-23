@@ -6,7 +6,7 @@ import { modelTimeoutMs, type ModelRole } from "./config.js";
 import { SCAN_COMPLETE_STATUSES } from "../migration/infrastructure/migration-diagnostics.js";
 import { languageOfSourcePaths, recommendLanguage } from "../migration/domain/migration-model.js";
 import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
-import {isAdaptableHarnessCapability} from './migration-harness.js';
+import {isAdaptableHarnessCapability} from '../migration/domain/migration-harness.js';
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).

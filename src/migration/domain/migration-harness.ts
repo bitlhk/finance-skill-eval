@@ -1,6 +1,5 @@
 import {createHash} from 'node:crypto';
-import {stringify} from 'yaml';
-import type {ProjectInspection,RuntimeHarnessCapability} from '../migration/domain/migration-model.js';
+import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
 
 const callableHarnessName=/^[\p{L}_][\p{L}\p{N}_.:-]*$/u;
 const frameworkPlumbing=/\b(?:ToolBase|BaseTool|ToolResponse|Toolkit|TextBlock|register_tool|register_tool_function)\b/iu;
@@ -49,9 +48,4 @@ export function runtimeBuildRequirements(inspection:ProjectInspection):RuntimeBu
   };
   const requirementsDigest=createHash('sha256').update(JSON.stringify(body)).digest('hex');
   return {...body,requirementsDigest};
-}
-
-export function runtimeBuildRequirementsYaml(inspection:ProjectInspection):string|null{
-  const requirements=runtimeBuildRequirements(inspection);
-  return requirements?stringify(requirements,{lineWidth:0}):null;
 }

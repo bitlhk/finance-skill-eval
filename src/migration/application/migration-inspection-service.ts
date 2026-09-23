@@ -6,7 +6,8 @@ import {
   validateDependencyData,
 } from "../infrastructure/migration-dependencies.js";
 import type { Supplement } from "../domain/migration-dependency.js";
-import { runtimeBuildRequirements, runtimeBuildRequirementsYaml } from "../../service/migration-harness.js";
+import { runtimeBuildRequirements } from "../domain/migration-harness.js";
+import { runtimeBuildRequirementsYaml } from "../infrastructure/migration-harness-serializer.js";
 import {
   buildMigrationPlan,
   recommendLanguage,

@@ -1,5 +1,5 @@
 import type { EnvironmentStore } from '../../service/environment-store.js';
-import { runtimeBuildRequirements } from '../../service/migration-harness.js';
+import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import {
   MigrationRuntimeConfig,
   configurationDigest,

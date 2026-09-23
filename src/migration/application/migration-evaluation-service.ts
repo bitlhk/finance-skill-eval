@@ -8,7 +8,7 @@ import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnostics } from '../infrastructure/migration-diagnostics.js';
-import { runtimeBuildRequirements } from '../../service/migration-harness.js';
+import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
