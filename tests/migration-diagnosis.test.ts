@@ -6,14 +6,14 @@ import {createServer} from 'node:http';
 import {zipSync,strToU8} from 'fflate';
 import {createEvaluationService} from '../src/service/server.js';
 import {analyzeDependencies,dependencyId} from '../src/service/migration-dependencies.js';
-import {runtimeInjection,probeBusinessInterface,migrationExecutionConfig} from '../src/service/migration-runtime-config.js';
-import {supplementFiles} from '../src/service/migration-supplements.js';
+import {runtimeInjection,probeBusinessInterface,migrationExecutionConfig} from '../src/migration/infrastructure/migration-runtime-config.js';
+import {supplementFiles} from '../src/migration/infrastructure/migration-supplements.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {SKILL_MD,analyzedTool,inspectionFixture,toolFixture,implementationFixture} from './analysis-fixture.js';
 import type {MigrationAnalyzer} from '../src/service/migration-agent.js';
 import {TechnicalValidationService} from '../src/service/technical-validation.js';
 import {MigrationStore} from '../src/service/migration-store.js';
-import {MigrationRuntimeConfig,configurationDigest} from '../src/service/migration-runtime-config.js';
+import {MigrationRuntimeConfig,configurationDigest} from '../src/migration/infrastructure/migration-runtime-config.js';
 
 const SOURCE='const user = runtime.user;\n/** @type {string} */ const token = auth_sdk.getToken(user);\nreturn business_client.query(account_id, {Authorization: token});\n';
 export function diagnosisPayload(includeCode=false,codePath?:string){

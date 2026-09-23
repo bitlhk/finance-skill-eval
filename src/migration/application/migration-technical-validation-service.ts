@@ -6,7 +6,7 @@ import {
   MigrationRuntimeConfig,
   runtimeInjection,
   serviceEnvironment,
-} from "../../service/migration-runtime-config.js";
+} from "../infrastructure/migration-runtime-config.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import { TechnicalValidationService } from "../../service/technical-validation.js";
 import type { MigrationProject } from "../domain/migration-project.js";

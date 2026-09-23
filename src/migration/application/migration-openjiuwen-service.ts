@@ -5,7 +5,7 @@ import {
   configurationDigest,
   migrationExecutionConfig,
   serviceEnvironment,
-} from '../../service/migration-runtime-config.js';
+} from '../infrastructure/migration-runtime-config.js';
 import { pythonCommand } from '../../service/technical-validation.js';
 import type { SkillStore } from '../../service/skill-store.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';

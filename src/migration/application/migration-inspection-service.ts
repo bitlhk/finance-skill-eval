@@ -22,8 +22,8 @@ import {
   probeBusinessInterface,
   runtimeInjection,
   serviceEnvironment,
-} from "../../service/migration-runtime-config.js";
-import { MigrationSupplements, supplementFiles } from "../../service/migration-supplements.js";
+} from "../infrastructure/migration-runtime-config.js";
+import { MigrationSupplements, supplementFiles } from "../infrastructure/migration-supplements.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import { validateSkill } from "../../service/skill-validator.js";
 import { stageEnvelope, staleAgainst } from "../../service/stage-envelope.js";

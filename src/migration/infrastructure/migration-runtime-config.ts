@@ -1,11 +1,12 @@
 import path from 'node:path';
-import {validateServiceEnvironment} from './service-environment.js';
+import {validateServiceEnvironment} from '../../service/service-environment.js';
 import {randomUUID} from 'node:crypto';
-import {fingerprint} from '../contracts.js';
-import {readJson,writeJsonAtomic} from './file-store.js';
-import {validateDependencyData,type Dependency} from './migration-dependencies.js';
-import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../runtime-tool-config.js';
-import {supportsImplicitScriptContext} from '../migration/domain/migration-model.js';
+import {fingerprint} from '../../contracts.js';
+import {readJson,writeJsonAtomic} from '../../service/file-store.js';
+import {validateDependencyData} from '../../service/migration-dependencies.js';
+import type {Dependency} from '../domain/migration-dependency.js';
+import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool-config.js';
+import {supportsImplicitScriptContext} from '../domain/migration-model.js';
 
 /** Migration is a producer of the shared contract, never a Runtime execution protocol. */
 export function migrationExecutionConfig(dependencies:Dependency[],values:Record<string,unknown>,tools:Array<{toolId:string;name:string;kind?:string}>):RuntimeToolConfig{

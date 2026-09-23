@@ -17,7 +17,7 @@ import {
   type ProjectInspection,
   type ToolDecision,
 } from "../domain/migration-model.js";
-import { MigrationSupplements } from "../../service/migration-supplements.js";
+import { MigrationSupplements } from "../infrastructure/migration-supplements.js";
 import { generatePortableCandidate, type PortableGeneration } from "../../service/portable-candidate.js";
 import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
 import { inspectProject } from "../../service/tool-inspector.js";

@@ -1,8 +1,8 @@
 import path from 'node:path';
 import {unzipSync} from 'fflate';
-import {fingerprint} from '../contracts.js';
-import {readJson,writeJsonAtomic} from './file-store.js';
-import type {Supplement} from './migration-dependencies.js';
+import {fingerprint} from '../../contracts.js';
+import {readJson,writeJsonAtomic} from '../../service/file-store.js';
+import type {Supplement} from '../domain/migration-dependency.js';
 
 function safeName(name:string){const p=name.replaceAll('\\','/');if(!p||p.startsWith('/')||/[:\x00]/u.test(p)||p.split('/').some(s=>s==='..'||s==='.'||!s))throw Object.assign(new Error('文件路径不安全'),{statusCode:400});return p}
 export function supplementFiles(dependencyId:string,filename:string,bytes:Buffer):Record<string,string>{

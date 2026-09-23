@@ -10,7 +10,7 @@ import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnostics } from '../../service/migration-diagnostics.js';
 import { runtimeBuildRequirements } from '../../service/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
-import { MigrationRuntimeConfig, configurationDigest } from '../../service/migration-runtime-config.js';
+import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from '../../service/migration-target.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
 import type { PreparationStore } from '../../service/preparation-store.js';
