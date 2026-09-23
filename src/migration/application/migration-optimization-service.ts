@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
-import { configurationDigest } from '../infrastructure/migration-runtime-config.js';
+import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';

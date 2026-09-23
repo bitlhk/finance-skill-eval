@@ -1,7 +1,6 @@
 import path from 'node:path';
 import {validateServiceEnvironment} from '../../service/service-environment.js';
 import {randomUUID} from 'node:crypto';
-import {fingerprint} from '../../contracts.js';
 import {readJson,writeJsonAtomic} from '../../service/file-store.js';
 import {validateDependencyData} from './migration-dependencies.js';
 import type {Dependency} from '../domain/migration-dependency.js';
@@ -9,6 +8,7 @@ import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool
 import {supportsImplicitScriptContext} from '../domain/migration-model.js';
 import type {ConnectionCheck,MigrationRuntimeConfigurationRepository,RuntimeTestConfig} from '../application/migration-runtime-configuration-repository.js';
 export type {ConnectionCheck,RuntimeTestConfig} from '../application/migration-runtime-configuration-repository.js';
+export {configurationDigest} from '../domain/migration-runtime-configuration.js';
 
 /** Migration is a producer of the shared contract, never a Runtime execution protocol. */
 export function migrationExecutionConfig(dependencies:Dependency[],values:Record<string,unknown>,tools:Array<{toolId:string;name:string;kind?:string}>):RuntimeToolConfig{
@@ -33,7 +33,6 @@ export function migrationExecutionConfig(dependencies:Dependency[],values:Record
  return runtimeToolConfigSchema.parse(config);
 }
 
-export const configurationDigest=(config:RuntimeTestConfig,dependencies:Dependency[]=[])=>fingerprint([config.revision,config.values,dependencies]);
 export class MigrationRuntimeConfig implements MigrationRuntimeConfigurationRepository {
  constructor(private root:string){}
  private file(id:string){if(!/^migration-[a-f0-9-]+$/u.test(id))throw new Error('迁移项目不合法');return path.join(this.root,'migration-runtime-config',id+'.json')}

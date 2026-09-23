@@ -9,7 +9,7 @@ import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
-import { configurationDigest } from '../infrastructure/migration-runtime-config.js';
+import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationEvaluationModels } from './migration-evaluation-models.js';

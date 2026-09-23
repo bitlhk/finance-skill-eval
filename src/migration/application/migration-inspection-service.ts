@@ -17,12 +17,12 @@ import {
   type ToolDecision,
 } from "../domain/migration-model.js";
 import {
-  configurationDigest,
   migrationExecutionConfig,
   probeBusinessInterface,
   runtimeInjection,
   serviceEnvironment,
 } from "../infrastructure/migration-runtime-config.js";
+import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import { MigrationSupplements, supplementFiles } from "../infrastructure/migration-supplements.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";

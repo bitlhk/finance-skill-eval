@@ -1,10 +1,10 @@
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import {
-  configurationDigest,
   migrationExecutionConfig,
   serviceEnvironment,
 } from '../infrastructure/migration-runtime-config.js';
+import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import { pythonCommand } from '../infrastructure/migration-technical-validator.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
