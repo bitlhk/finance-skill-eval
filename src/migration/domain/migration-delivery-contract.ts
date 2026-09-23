@@ -1,6 +1,6 @@
-import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../runtime-tool-config.js';
-import {fingerprint} from '../contracts.js';
-import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} from '../migration/domain/migration-model.js';
+import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool-config.js';
+import {fingerprint} from '../../contracts.js';
+import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} from './migration-model.js';
 
 export function runtimeToolConfigTemplate(inspection:ProjectInspection,decisions:ToolDecision[]){
  const runtimeToolConfig:RuntimeToolConfig={context:{},providers:{},tools:{}};

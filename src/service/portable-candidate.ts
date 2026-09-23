@@ -1,4 +1,4 @@
-import {runtimeToolConfigTemplate} from './migration-delivery-contract.js';
+import {runtimeToolConfigTemplate} from '../migration/domain/migration-delivery-contract.js';
 import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
 import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';

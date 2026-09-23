@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {serviceEnvironment,runtimeInjection,migrationExecutionConfig,MigrationRuntimeConfig,configurationDigest} from '../src/migration/infrastructure/migration-runtime-config.js';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/service/migration-delivery-contract.js';
+import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';
 import {TechnicalValidationService} from '../src/service/technical-validation.js';
 import {MigrationStore} from '../src/service/migration-store.js';

@@ -1,6 +1,6 @@
 import {afterEach,it,expect,vi} from 'vitest';
 import {strToU8} from 'fflate';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/service/migration-delivery-contract.js';
+import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {generatePortableCandidate} from '../src/service/portable-candidate.js';
