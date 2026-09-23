@@ -559,13 +559,13 @@ export function toGeneratedImplementations(
   payload: { tools?: AgentGeneration[] },
   files: Record<string, string>,
   toolNameById: Record<string, string>,
-): Record<string, import("./migration-code-generator.js").GeneratedToolImplementation> {
+): Record<string, import("../migration/domain/generated-tool-implementation.js").GeneratedToolImplementation> {
   const decode = (name: string): string | null => {
     const encoded = files[name];
     if (typeof encoded !== "string") return null;
     try { return Buffer.from(encoded, "base64").toString("utf8"); } catch { return null; }
   };
-  const out: Record<string, import("./migration-code-generator.js").GeneratedToolImplementation> = {};
+  const out: Record<string, import("../migration/domain/generated-tool-implementation.js").GeneratedToolImplementation> = {};
   for (const tool of payload.tools ?? []) {
     const toolId = String(tool.toolId ?? "");
     let entrypoint = String(tool.entrypoint ?? "");

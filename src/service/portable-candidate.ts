@@ -4,7 +4,7 @@ import {posix} from 'node:path';
 import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
 import type { SkillAssetRecord } from './skill-store.js';
 import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../migration/domain/migration-model.js';
-import type { GeneratedToolImplementation } from './migration-code-generator.js';
+import type { GeneratedToolImplementation } from '../migration/domain/generated-tool-implementation.js';
 import { normalizeSkillPackage } from './skill-normalizer.js';
 
 export type PortableGeneration={toolId:string;toolName:string;form:ToolDecision['form'];files:string[];entrypoint?:string;

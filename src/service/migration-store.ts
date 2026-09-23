@@ -10,7 +10,7 @@ import type { EnvironmentStore } from './environment-store.js';
 import { analyzeWithAgent,implementWithAgent,type MigrationAnalyzer,type MigrationImplementer } from './migration-agent.js';
 import {generateSuiteWithAnalyzer} from '../migration/infrastructure/migration-suite-generator.js';
 import type {MigrationSuiteGenerator} from '../migration/application/migration-suite-generator.js';
-import { MigrationCodeGenerator } from './migration-code-generator.js';
+import { MigrationCodeGenerator } from '../migration/infrastructure/migration-code-generator.js';
 import { MigrationProjectRepository } from '../migration/infrastructure/migration-project-repository.js';
 import type { MigrationProject } from '../migration/domain/migration-project.js';
 import { MigrationProjectService } from '../migration/application/migration-project-service.js';

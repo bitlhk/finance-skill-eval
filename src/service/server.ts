@@ -24,7 +24,7 @@ import type { MigrationAnalyzer, MigrationImplementer } from './migration-agent.
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
 import { runConfigurationSchema } from "./contracts.js";
 import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
-import { MigrationCodeGenerator } from './migration-code-generator.js';
+import { MigrationCodeGenerator } from '../migration/infrastructure/migration-code-generator.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [

@@ -1,22 +1,8 @@
 import { z } from 'zod';
-import type { ConfiguredModelRole } from './config.js';
-import { recommendLanguage, type ProjectInspection, type ToolDecision } from '../migration/domain/migration-model.js';
-import { LocalWorker } from './local-worker.js';
-
-export type GeneratedToolImplementation={
-  callExecuted?:boolean;runtimeDependenciesPending?:string[];
-  runtimeBindings?:Array<{key:string;header:string}>;
-  language:'python'|'java'|'node';sourcePath:string;source:string;additionalFiles:Array<{path:string;content:string}>;dependencies:string[];
-  /** How to start it. The agent wrote the code, so it is the one that knows. `prepare` is an
-   * optional one-shot step (install dependencies, build); `start` is the long-running one. */
-  start?:string[];prepare?:string[];
-  /** How far the interface moved from the baseline, and why. A report for a human to read --
-   * migration adapts on purpose, so a difference is expected and never a stop. */
-  drift?:Array<{where?:string;baseline?:unknown;observed?:unknown}>;
-  changes?:Array<{path?:string;change?:string;reason?:string}>;
-  smokeInput:Record<string,unknown>;generatedBy:string;explanation:string;attempts:number;
-  checks:Array<{name:'PYTHON_COMPILE'|'JSON_SMOKE'|'JAVA_COMPILE'|'NODE_CHECK';passed:true;message:string}>;
-};
+import type { ConfiguredModelRole } from '../../service/config.js';
+import { recommendLanguage, type ProjectInspection, type ToolDecision } from '../domain/migration-model.js';
+import type { GeneratedToolImplementation } from '../domain/generated-tool-implementation.js';
+import { LocalWorker } from '../../service/local-worker.js';
 
 const fileSchema=z.strictObject({path:z.string().min(1).max(240),content:z.string().min(1).max(300_000)});
 const implementationSchema=z.strictObject({

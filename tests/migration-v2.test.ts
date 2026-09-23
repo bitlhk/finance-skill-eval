@@ -10,7 +10,7 @@ import { LocalWorker } from '../src/service/local-worker.js';
 import { findMissingRequiredTools } from '../src/service/run-manager.js';
 import { createEvaluationService } from '../src/service/server.js';
 import { generatePortableCandidate } from '../src/service/portable-candidate.js';
-import { MigrationCodeGenerator } from '../src/service/migration-code-generator.js';
+import { MigrationCodeGenerator } from '../src/migration/infrastructure/migration-code-generator.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});

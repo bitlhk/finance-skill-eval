@@ -6,7 +6,7 @@ import {
   toSkillDocumentDelivery,
   type MigrationImplementer,
 } from "../../service/migration-agent.js";
-import type { MigrationCodeGenerator } from "../../service/migration-code-generator.js";
+import type { MigrationCodeGenerator } from "../infrastructure/migration-code-generator.js";
 import { runtimeToolConfigTemplate, validateAgentRuntimeDelivery } from "../domain/migration-delivery-contract.js";
 import type { MigrationDiagnostics } from "../infrastructure/migration-diagnostics.js";
 import {
