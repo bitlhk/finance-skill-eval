@@ -16,7 +16,6 @@ import {
   type ProjectInspection,
   type ToolDecision,
 } from "../domain/migration-model.js";
-import {probeBusinessInterface} from "../infrastructure/migration-runtime-config.js";
 import {migrationExecutionConfig,runtimeInjection,serviceEnvironment} from '../domain/migration-runtime-rules.js';
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
@@ -26,6 +25,7 @@ import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
+import type { MigrationBusinessConnectionProbe } from './migration-business-connection-probe.js';
 
 export type MigrationRuntimeReference = {
   migrationId: string;
@@ -41,6 +41,7 @@ export class MigrationInspectionService {
     private readonly analyzer: MigrationAnalyzer,
     private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
     private readonly supplements:MigrationSupplementRepository,
+    private readonly connectionProbe:MigrationBusinessConnectionProbe,
   ) {}
 
   async inspect(id: string, sourceOnly = false) {
@@ -243,7 +244,7 @@ export class MigrationInspectionService {
       const dependencies = inspection.dependencyAnalysis?.dependencies.filter(dependency => dependency.toolIds.includes(parsed.toolId)) ?? [];
       const injection = runtimeInjection(dependencies, config.values, "HTTP_HEADER");
       if (injection.missing.length) return conflict(`请先提供测试依赖：${injection.missing.join("、")}`);
-      const result = await probeBusinessInterface(parsed.endpoint, parsed.method, injection.headers, signal);
+      const result = await this.connectionProbe.probe(parsed.endpoint, parsed.method, injection.headers, signal);
       return this.runtimeConfigs.check(id, {
         ...result,
         toolId: parsed.toolId,

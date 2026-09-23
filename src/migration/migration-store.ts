@@ -34,6 +34,7 @@ import { TechnicalValidationService } from './infrastructure/migration-technical
 import { MigrationSupplements } from './infrastructure/migration-supplements.js';
 import { PortableCandidatePackager } from './infrastructure/migration-candidate-packager.js';
 import { LegacyCandidateGenerator } from './infrastructure/legacy-candidate-generator.js';
+import { HttpMigrationBusinessConnectionProbe } from './infrastructure/migration-runtime-config.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -66,8 +67,9 @@ export class MigrationStore {
     const supplements=new MigrationSupplements(root);
     const candidatePackager=new PortableCandidatePackager();
     const legacyCandidateGenerator=new LegacyCandidateGenerator();
+    const connectionProbe=new HttpMigrationBusinessConnectionProbe();
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
-    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements);
+    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements,connectionProbe);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
     this.generationService = new MigrationGenerationService(this.projects, skills, implementer, codeGenerator, supplements,candidatePackager,diagnostics);
