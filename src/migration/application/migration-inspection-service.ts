@@ -1,9 +1,6 @@
 import { z } from "zod";
 import type { MigrationAnalyzer } from "./migration-agent-port.js";
 import { toProjectInspection } from "../infrastructure/migration-agent.js";
-import {
-  analyzeDependencies,
-} from "../infrastructure/migration-dependencies.js";
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
 import type { Supplement } from "../domain/migration-dependency.js";
 import { runtimeBuildRequirements } from "../domain/migration-harness.js";
@@ -26,6 +23,7 @@ import type { MigrationRuntimeConfigurationRepository } from './migration-runtim
 import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
 import type { MigrationBusinessConnectionProbe } from './migration-business-connection-probe.js';
 import type { MigrationHarnessSerializer } from './migration-harness-serializer.js';
+import type { MigrationDependencyAnalyzer } from './migration-dependency-analyzer.js';
 
 export type MigrationRuntimeReference = {
   migrationId: string;
@@ -43,6 +41,7 @@ export class MigrationInspectionService {
     private readonly supplements:MigrationSupplementRepository,
     private readonly connectionProbe:MigrationBusinessConnectionProbe,
     private readonly harnessSerializer:MigrationHarnessSerializer,
+    private readonly dependencyAnalyzer:MigrationDependencyAnalyzer,
   ) {}
 
   async inspect(id: string, sourceOnly = false) {
@@ -100,16 +99,16 @@ export class MigrationInspectionService {
         finding.code !== "DIRECTORY_NAME_MISMATCH"
         && !/(?:目录名|文件夹名).{0,20}(?:name|名称)|(?:name|名称).{0,20}(?:目录名|文件夹名)/iu.test(`${finding.message} ${finding.suggestion}`));
       inspection.skill = { status: byRules.status, findings: [...byRules.findings, ...agentSkillFindings] };
-      inspection.dependencyAnalysis = analyzeDependencies(
-        agent!.payload,
+      inspection.dependencyAnalysis = this.dependencyAnalyzer.analyze({
+        payload:agent!.payload,
         inspection,
         files,
-        supplementItems,
-        record.revision,
-        this.supplements.digest(record),
-        agent?.status === "PRODUCED" || agent?.status === "ABSTAINED" ? agent.workspaceRoot : undefined,
-        agent?.status === "PRODUCED" || agent?.status === "ABSTAINED" ? agent.libraryInventory : undefined,
-      );
+        supplements:supplementItems,
+        revision:record.revision,
+        materialsDigest:this.supplements.digest(record),
+        workspaceRoot:agent?.status === "PRODUCED" || agent?.status === "ABSTAINED" ? agent.workspaceRoot : undefined,
+        libraryInventory:agent?.status === "PRODUCED" || agent?.status === "ABSTAINED" ? agent.libraryInventory : undefined,
+      });
       if (agent?.status === "ABSTAINED") {
         inspection.dependencyAnalysis.status = "PARTIAL";
         inspection.dependencyAnalysis.reason = agent.reason;

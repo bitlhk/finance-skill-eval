@@ -7,6 +7,7 @@ import {validServiceEnvironmentName} from '../../shared/contracts/service-enviro
 import type {ProjectInspection} from '../domain/migration-model.js';
 import type {Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../domain/migration-dependency.js';
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
+import type {MigrationDependencyAnalyzer} from '../application/migration-dependency-analyzer.js';
 export {validateDependencyData} from '../domain/migration-dependency-schema.js';
 
 const citation=z.object({path:z.string().min(1),snippet:z.string().min(8)});
@@ -87,4 +88,10 @@ export function analyzeDependencies(payload:unknown,inspection:ProjectInspection
  }
  const partial=rejected>0||inspection.tools.some(t=>!chains.some(c=>c.toolId===t.toolId&&c.nodes.length))||dependencies.some(d=>d.blocking&&(d.owner==='UNKNOWN'||d.contractStatus!=='KNOWN'||(d.owner==='TOOL'&&(d.availability!=='AVAILABLE'||d.provided==='INVALID'))));
  return {status:partial?'PARTIAL':'COMPLETE',revision,materialsDigest,dependencies,chains,rejectedClaims:rejected,...(raw.reason?{reason:raw.reason}:{})};
+}
+
+export class AgentMigrationDependencyAnalyzer implements MigrationDependencyAnalyzer {
+ analyze(input:Parameters<MigrationDependencyAnalyzer['analyze']>[0]){
+  return analyzeDependencies(input.payload,input.inspection,input.files,input.supplements,input.revision,input.materialsDigest,input.workspaceRoot,input.libraryInventory);
+ }
 }

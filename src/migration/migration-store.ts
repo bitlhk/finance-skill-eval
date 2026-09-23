@@ -36,6 +36,7 @@ import { PortableCandidatePackager } from './infrastructure/migration-candidate-
 import { LegacyCandidateGenerator } from './infrastructure/legacy-candidate-generator.js';
 import { HttpMigrationBusinessConnectionProbe } from './infrastructure/migration-runtime-config.js';
 import { YamlMigrationHarnessSerializer } from './infrastructure/migration-harness-serializer.js';
+import { AgentMigrationDependencyAnalyzer } from './infrastructure/migration-dependencies.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -71,8 +72,9 @@ export class MigrationStore {
     const legacyCandidateGenerator=new LegacyCandidateGenerator();
     const connectionProbe=new HttpMigrationBusinessConnectionProbe();
     const harnessSerializer=new YamlMigrationHarnessSerializer();
+    const dependencyAnalyzer=new AgentMigrationDependencyAnalyzer();
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
-    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements,connectionProbe,harnessSerializer);
+    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements,connectionProbe,harnessSerializer,dependencyAnalyzer);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
     this.generationService = new MigrationGenerationService(this.projects, skills, implementer, codeGenerator, supplements,candidatePackager,diagnostics);
