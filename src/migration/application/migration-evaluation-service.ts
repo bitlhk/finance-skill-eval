@@ -5,7 +5,7 @@ import type { EvalPackCatalog } from '../../service/catalog.js';
 import { configuredModelRole } from '../../service/config.js';
 import { runConfigurationSchema } from '../../shared/contracts/run-configuration.js';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
-import type { EvaluationJobStore } from '../../service/job-store.js';
+import type { MigrationEvaluationJobReader,MigrationEvaluationRunner } from './migration-evaluation-ports.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
@@ -15,7 +15,6 @@ import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
 import type { OptimizationManager } from '../../service/optimization-manager.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationPreparationPackFactory } from './migration-preparation-pack-factory.js';
-import type { EvaluationRunManager } from '../../service/run-manager.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
@@ -31,8 +30,8 @@ export class MigrationEvaluationService {
     private readonly root:string,
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
-    private readonly runs:EvaluationRunManager,
-    private readonly jobs:EvaluationJobStore,
+    private readonly runs:MigrationEvaluationRunner,
+    private readonly jobs:MigrationEvaluationJobReader,
     private readonly catalog:EvalPackCatalog,
     private readonly preparations?:MigrationPreparationRepository,
     private readonly preparationPacks?:MigrationPreparationPackFactory,
