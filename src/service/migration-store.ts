@@ -7,7 +7,7 @@ import type { OptimizationManager } from './optimization-manager.js';
 import { configuredModelRole } from './config.js';
 import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { EnvironmentStore } from './environment-store.js';
-import { analyzeWithAgent,implementWithAgent } from './migration-agent.js';
+import { analyzeWithAgent,implementWithAgent } from '../migration/infrastructure/migration-agent.js';
 import type {MigrationAnalyzer,MigrationImplementer} from '../migration/application/migration-agent-port.js';
 import {generateSuiteWithAnalyzer} from '../migration/infrastructure/migration-suite-generator.js';
 import type {MigrationSuiteGenerator} from '../migration/application/migration-suite-generator.js';

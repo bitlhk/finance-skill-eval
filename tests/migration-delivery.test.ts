@@ -5,7 +5,7 @@ import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {generatePortableCandidate} from '../src/service/portable-candidate.js';
 import {LocalWorker} from '../src/service/local-worker.js';
-import {toGeneratedImplementations,toSkillDocumentDelivery} from '../src/service/migration-agent.js';
+import {toGeneratedImplementations,toSkillDocumentDelivery} from '../src/migration/infrastructure/migration-agent.js';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {GenerationStatus,generatedCallState} from '../web/src/GenerationStatus.js';

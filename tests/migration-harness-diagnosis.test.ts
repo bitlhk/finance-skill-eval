@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {toProjectInspection} from '../src/service/migration-agent.js';
+import {toProjectInspection} from '../src/migration/infrastructure/migration-agent.js';
 import {buildMigrationPlan,stableToolId} from '../src/migration/domain/migration-model.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 

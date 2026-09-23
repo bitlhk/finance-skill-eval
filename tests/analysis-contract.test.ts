@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { contractSample, toProjectInspection } from '../src/service/migration-agent.js';
+import { contractSample, toProjectInspection } from '../src/migration/infrastructure/migration-agent.js';
 import { stableToolId } from '../src/migration/domain/migration-model.js';
 
 const FILES = {

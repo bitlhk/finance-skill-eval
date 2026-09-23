@@ -1,13 +1,13 @@
-import {SourceEvidenceValidator} from "./source-evidence.js";
+import {SourceEvidenceValidator} from "../../service/source-evidence.js";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { modelTimeoutMs, type ModelRole } from "./config.js";
-import { SCAN_COMPLETE_STATUSES } from "../migration/infrastructure/migration-diagnostics.js";
-import { languageOfSourcePaths, recommendLanguage } from "../migration/domain/migration-model.js";
-import { stageEnvelope, type StageEnvelope } from "./stage-envelope.js";
-import {isAdaptableHarnessCapability} from '../migration/domain/migration-harness.js';
-import type {MigrationAnalysis,MigrationImplementation} from '../migration/application/migration-agent-port.js';
+import { modelTimeoutMs, type ModelRole } from "../../service/config.js";
+import { SCAN_COMPLETE_STATUSES } from "./migration-diagnostics.js";
+import { languageOfSourcePaths, recommendLanguage } from "../domain/migration-model.js";
+import { stageEnvelope, type StageEnvelope } from "../../service/stage-envelope.js";
+import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
+import type {MigrationAnalysis,MigrationImplementation} from '../application/migration-agent-port.js';
 
 /**
  * TS <-> Python boundary for the migration agents (X-2).
@@ -23,7 +23,7 @@ export type AgentStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
 
 /** The result line the agent process writes. Framing, not a stage product. */
 type WireResult<T> = {
-  workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory; assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
+  workspaceRoot?:string;libraryInventory?:import('../domain/migration-dependency.js').RuntimeLibraryInventory; assetDigest?: string; status?: string; payload?: T; files?: Record<string, string>;
   scanner?: Record<string, unknown> | null; trace?: { rounds: Array<Record<string, unknown>> };
   elapsedMs?: number; modelId?: string; error?: string; rawOutput?: string;
 };
@@ -49,7 +49,7 @@ function failureReason(wire: WireResult<unknown>, produced: boolean): string {
 export type AgentPayload<T> = {
   judgement: T;
   /** Trusted process metadata, never read from the model judgement. */
-  workspaceRoot?:string;libraryInventory?:import('./dependency-library.js').RuntimeLibraryInventory;
+  workspaceRoot?:string;libraryInventory?:import('../domain/migration-dependency.js').RuntimeLibraryInventory;
   /** A4: the files it wrote. */
   files?: Record<string, string>;
   /** A2: the static scanner's own result, when the agent ran it. */
@@ -73,7 +73,7 @@ export type AgentResult<T = Record<string, unknown>> = StageEnvelope<AgentPayloa
  *
  * `null` means only one thing now: this platform is not set up to run the agent at all.
  */
-export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array>;supplements?:import('../migration/domain/migration-dependency.js').AnalysisSupplement[] }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
+export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array>;supplements?:import('../domain/migration-dependency.js').AnalysisSupplement[] }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
   if (!migrationAgentEnabled()) return null;
   let result:AgentResult<{reason?:string;missing?:string[]}>;
   try{result=await runMigrationAgent("A2",{...input,files:encodeArchive(input.files)},options)}catch(error){return {status:"FAILED",reason:error instanceof MigrationAgentUnavailable?error.message:"A2 执行失败，请查看平台日志"}}
@@ -282,7 +282,7 @@ export function toProjectInspection(
   stableToolId: (name: string, paths: string[]) => string,
   scanner?: Record<string, unknown> | null,
   files: Record<string, string> = {},
-): import("../migration/domain/migration-model.js").ProjectInspection {
+): import("../domain/migration-model.js").ProjectInspection {
   /**
    * The asset path behind a path the agent reported.
    *
@@ -363,7 +363,7 @@ export function toProjectInspection(
       suggestion: String(finding.suggestion ?? ""),
     }];
   });
-  const runtimeCapabilities:import('../migration/domain/migration-model.js').RuntimeHarnessCapability[]=[];
+  const runtimeCapabilities:import('../domain/migration-model.js').RuntimeHarnessCapability[]=[];
   for(const claim of payload.runtimeCapabilities??[]){
     if(!claim||typeof claim.name!=='string'||!claim.name.trim()||typeof claim.reason!=='string'||!claim.reason.trim()
       ||typeof claim.usageContract!=='string'||!claim.usageContract.trim()||!Array.isArray(claim.evidence))continue;
@@ -402,7 +402,7 @@ export function toProjectInspection(
     // The baseline is the analysis, and an analysis claim is worth exactly as much as the place
     // it points at. A contract the agent cannot locate is reported as unread, not as a guess:
     // downstream compares the migration against this, so a fabricated one would be a straw man.
-    const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("../migration/domain/migration-model.js").InspectionEvidence; schema: unknown } | null => {
+    const contract = (kind: "INPUT_CONTRACT" | "OUTPUT_CONTRACT", claim: AgentTool["input"]): { evidence: import("../domain/migration-model.js").InspectionEvidence; schema: unknown } | null => {
       const at = locate(String(claim?.path ?? ""), claim?.snippet);
       if (at === null) return null;
       return { evidence: { path: at.path, line: at.line, kind, detail: String(claim?.description ?? "") }, schema: claim?.schema ?? null };
@@ -516,7 +516,7 @@ type AgentSkillDelivery={skillFile?:string;files?:Array<{source?:string;path?:st
  * A4 replace a root SKILL.md without mutating the uploaded source in place. */
 export function toSkillDocumentDelivery(
   payload:{skillDelivery?:AgentSkillDelivery},files:Record<string,string>,
-):import('./portable-candidate.js').SkillDocumentDelivery|null{
+):import('../../service/portable-candidate.js').SkillDocumentDelivery|null{
   const delivery=payload.skillDelivery;
   if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)return null;
   const result:Record<string,string>={},targets=new Set<string>();
@@ -543,13 +543,13 @@ export function toGeneratedImplementations(
   payload: { tools?: AgentGeneration[] },
   files: Record<string, string>,
   toolNameById: Record<string, string>,
-): Record<string, import("../migration/domain/generated-tool-implementation.js").GeneratedToolImplementation> {
+): Record<string, import("../domain/generated-tool-implementation.js").GeneratedToolImplementation> {
   const decode = (name: string): string | null => {
     const encoded = files[name];
     if (typeof encoded !== "string") return null;
     try { return Buffer.from(encoded, "base64").toString("utf8"); } catch { return null; }
   };
-  const out: Record<string, import("../migration/domain/generated-tool-implementation.js").GeneratedToolImplementation> = {};
+  const out: Record<string, import("../domain/generated-tool-implementation.js").GeneratedToolImplementation> = {};
   for (const tool of payload.tools ?? []) {
     const toolId = String(tool.toolId ?? "");
     let entrypoint = String(tool.entrypoint ?? "");
