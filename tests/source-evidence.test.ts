@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {SourceEvidenceValidator,normalizeSourceNewlines} from '../src/service/source-evidence.js';
+import {SourceEvidenceValidator,normalizeSourceNewlines} from '../src/migration/domain/migration-source-evidence.js';
 it('matches CRLF, LF and CR in either source or citation and reports the real line',()=>{
  for(const newline of ['\r\n','\n','\r'])for(const quoted of ['\r\n','\n','\r']){
   const text=['# header','def query():','    return "value"',''].join(newline),view=new SourceEvidenceValidator({'code.py':text});

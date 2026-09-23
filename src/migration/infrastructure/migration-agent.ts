@@ -1,4 +1,4 @@
-import {SourceEvidenceValidator} from "../../service/source-evidence.js";
+import {SourceEvidenceValidator} from "../domain/migration-source-evidence.js";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
