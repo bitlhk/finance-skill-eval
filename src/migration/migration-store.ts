@@ -7,7 +7,7 @@ import type { MigrationOptimizationPort } from './application/migration-optimiza
 import { configuredModelRole } from '../service/config.js';
 import { MigrationDiagnostics } from './infrastructure/migration-diagnostics.js';
 import type { MigrationEnvironmentRepository } from './application/migration-environment-repository.js';
-import { AgentResultMapper } from './infrastructure/migration-agent.js';
+import { AgentResultMapper } from './infrastructure/migration-agent-result-mapper.js';
 import { analyzeWithAgent,implementWithAgent } from './infrastructure/migration-agent-gateway.js';
 import type {MigrationAnalyzer,MigrationImplementer} from './application/migration-agent-port.js';
 import {generateSuiteWithAnalyzer} from './infrastructure/migration-suite-generator.js';
