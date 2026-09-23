@@ -1,12 +1,12 @@
-import {runtimeToolConfigTemplate} from '../migration/domain/migration-delivery-contract.js';
+import {runtimeToolConfigTemplate} from '../domain/migration-delivery-contract.js';
 import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
 import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
-import type { SkillAssetRecord } from './skill-store.js';
-import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../migration/domain/migration-model.js';
-import type { GeneratedToolImplementation } from '../migration/domain/generated-tool-implementation.js';
-import type { PortableDiff, PortableGeneration, SkillDocumentDelivery } from '../migration/domain/migration-candidate-artifact.js';
-import { normalizeSkillPackage } from './skill-normalizer.js';
+import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
+import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../domain/migration-model.js';
+import type { GeneratedToolImplementation } from '../domain/generated-tool-implementation.js';
+import type { PortableDiff, PortableGeneration, SkillDocumentDelivery } from '../domain/migration-candidate-artifact.js';
+import { normalizeSkillPackage } from '../../service/skill-normalizer.js';
 
 /**
  * The candidate package is assembled, not generated.

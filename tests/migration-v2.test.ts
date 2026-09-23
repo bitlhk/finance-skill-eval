@@ -9,7 +9,7 @@ import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { LocalWorker } from '../src/service/local-worker.js';
 import { findMissingRequiredTools } from '../src/service/run-manager.js';
 import { createEvaluationService } from '../src/service/server.js';
-import { generatePortableCandidate } from '../src/service/portable-candidate.js';
+import { generatePortableCandidate } from '../src/migration/infrastructure/migration-candidate-packager.js';
 import { MigrationCodeGenerator } from '../src/migration/infrastructure/migration-code-generator.js';
 
 const dirs:string[]=[];

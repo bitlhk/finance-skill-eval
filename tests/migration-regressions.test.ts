@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach,expect,it } from 'vitest';
 import { strToU8,zipSync } from 'fflate';
-import { generatePortableCandidate } from '../src/service/portable-candidate.js';
+import { generatePortableCandidate } from '../src/migration/infrastructure/migration-candidate-packager.js';
 import { normalizeSkillPackage } from '../src/service/skill-normalizer.js';
 import { TechnicalValidationService,pythonCommand } from '../src/service/technical-validation.js';
 import { assessMigrationAcceptance } from '../src/migration/domain/migration-acceptance.js';
