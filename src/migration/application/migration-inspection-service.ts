@@ -23,13 +23,13 @@ import {
   serviceEnvironment,
 } from "../infrastructure/migration-runtime-config.js";
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
-import { MigrationSupplements, supplementFiles } from "../infrastructure/migration-supplements.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { validateSkill } from "../domain/migration-skill-validator.js";
 import { stageEnvelope, staleAgainst } from "../domain/migration-stage-envelope.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
+import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
 
 export type MigrationRuntimeReference = {
   migrationId: string;
@@ -40,11 +40,11 @@ export type MigrationRuntimeReference = {
 
 export class MigrationInspectionService {
   constructor(
-    private readonly root: string,
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly analyzer: MigrationAnalyzer,
     private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
+    private readonly supplements:MigrationSupplementRepository,
   ) {}
 
   async inspect(id: string, sourceOnly = false) {
@@ -57,8 +57,7 @@ export class MigrationInspectionService {
         try { originalFiles[name] = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch {}
       }
 
-      const materials = new MigrationSupplements(this.root);
-      const record = await materials.get(id);
+      const record = await this.supplements.get(id);
       const supplementItems = asset.assetId === value.source.assetId ? record.items : [];
       for (const item of supplementItems) {
         for (const [file, bytes] of Object.entries(item.files ?? {})) archive[file] = Buffer.from(bytes, "base64");
@@ -109,7 +108,7 @@ export class MigrationInspectionService {
         files,
         supplementItems,
         record.revision,
-        materials.digest(record),
+        this.supplements.digest(record),
         agent?.status === "PRODUCED" || agent?.status === "ABSTAINED" ? agent.workspaceRoot : undefined,
         agent?.status === "PRODUCED" || agent?.status === "ABSTAINED" ? agent.libraryInventory : undefined,
       );
@@ -142,7 +141,7 @@ export class MigrationInspectionService {
         stageId: "A2",
         producer: "AGENT",
         status: agent?.status === "ABSTAINED" ? "ABSTAINED" : "PRODUCED",
-        inputDigests: { supplements: materials.digest(record) },
+        inputDigests: { supplements: this.supplements.digest(record) },
         payload: inspection,
       });
       value.decisions = (value.decisions ?? []).filter(decision =>
@@ -160,7 +159,7 @@ export class MigrationInspectionService {
       const config = await this.runtimeConfigs.get(id);
       return { provided: dependencyId in config.values, value: config.values[dependencyId] ?? null };
     }
-    const item = (await new MigrationSupplements(this.root).get(id)).items.find(supplement => supplement.dependencyId === dependencyId);
+    const item = (await this.supplements.get(id)).items.find(supplement => supplement.dependencyId === dependencyId);
     return { provided: !!item, value: item?.value ?? null };
   }
 
@@ -269,13 +268,13 @@ export class MigrationInspectionService {
 
   async uploadDependency(id: string, dependencyId: string, revision: number, filename: string, bytes: Buffer) {
     return this.projects.runExclusive(id, () =>
-      this.saveDependency(id, dependencyId, revision, { files: supplementFiles(dependencyId, filename, bytes), filename }));
+      this.saveDependency(id, dependencyId, revision, { files: this.supplements.unpack(dependencyId, filename, bytes), filename }));
   }
 
   async explainDependency(id: string, dependencyId: string, input: unknown) {
     return this.projects.runExclusive(id, async () => {
       const parsed = z.strictObject({ revision: z.number().int().nonnegative(), explanation: z.string().trim().min(1).max(16000) }).parse(input);
-      const previous = (await new MigrationSupplements(this.root).get(id)).items.find(item => item.dependencyId === dependencyId);
+      const previous = (await this.supplements.get(id)).items.find(item => item.dependencyId === dependencyId);
       const supplementPath = `.diagnosis-supplements/${dependencyId}/dependency-contract.md`;
       return this.saveDependency(id, dependencyId, parsed.revision, {
         files: { ...previous?.files, [supplementPath]: Buffer.from(parsed.explanation, "utf8").toString("base64") },
@@ -290,8 +289,7 @@ export class MigrationInspectionService {
     const dependency = diagnostic?.dependencies.find(item => item.id === dependencyId);
     if (!dependency) return conflict("缺项已变化，请刷新诊断");
     if (dependency.owner !== "TOOL" && !explanation) return conflict("运行时依赖请在运行配置中提供；归属未确认的依赖请补充契约说明");
-    const materials = new MigrationSupplements(this.root);
-    const record = await materials.get(id);
+    const record = await this.supplements.get(id);
     if (!Number.isInteger(revision) || revision !== record.revision) return conflict("补充内容已变化，请刷新后再提交");
     if (content.files && !["SDK", "RESOURCE", "CONFIG"].includes(dependency.kind) && !explanation) return conflict("此依赖需要直接填写数据");
     if ("value" in content && !["DATA", "CONFIG"].includes(dependency.kind)) return conflict("此依赖需要上传文件");
@@ -300,9 +298,9 @@ export class MigrationInspectionService {
       if (errors.length) throw Object.assign(new Error(errors.join("；")), { statusCode: 400 });
       if (Buffer.byteLength(JSON.stringify(content.value)) > 128000) throw Object.assign(new Error("补充数据超过 128 KB"), { statusCode: 400 });
     }
-    const saved = await materials.save(id, { dependencyId, kind: dependency.kind, ...content, updatedAt: new Date().toISOString() });
+    const saved = await this.supplements.save(id, { dependencyId, kind: dependency.kind, ...content, updatedAt: new Date().toISOString() });
     diagnostic!.revision = saved.revision;
-    diagnostic!.materialsDigest = materials.digest(saved);
+    diagnostic!.materialsDigest = this.supplements.digest(saved);
     diagnostic!.status = "PARTIAL";
     dependency.provided = "PENDING";
     dependency.issue = "已提供，等待继续分析";

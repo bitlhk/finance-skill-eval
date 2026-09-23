@@ -31,6 +31,7 @@ import { migrationConflict as conflict } from './application/migration-errors.js
 import { MigrationRuntimeConfig } from './infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from './infrastructure/migration-target.js';
 import { TechnicalValidationService } from './infrastructure/migration-technical-validator.js';
+import { MigrationSupplements } from './infrastructure/migration-supplements.js';
 
 /** Separate migration snapshots from optimization jobs. No uploaded code is executed here. */
 export class MigrationStore {
@@ -60,11 +61,12 @@ export class MigrationStore {
     const runtimeConfigs=new MigrationRuntimeConfig(root);
     const targets=new MigrationTargetRuns(root,skills);
     const technicalValidator=new TechnicalValidationService();
+    const supplements=new MigrationSupplements(root);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
-    this.inspectionService = new MigrationInspectionService(root, this.projects, skills, analyzer,runtimeConfigs);
+    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,runtimeConfigs,supplements);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, preparations);
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
-    this.generationService = new MigrationGenerationService(root, this.projects, skills, implementer, codeGenerator, diagnostics);
+    this.generationService = new MigrationGenerationService(this.projects, skills, implementer, codeGenerator, supplements,diagnostics);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(this.projects, skills,runtimeConfigs,technicalValidator);
     this.evaluationService = new MigrationEvaluationService(root, this.projects, skills, runs, jobs, catalog, preparations,
       preparations?new FileMigrationPreparationPackFactory(root):undefined,

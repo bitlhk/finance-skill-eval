@@ -17,7 +17,6 @@ import {
   type ProjectInspection,
   type ToolDecision,
 } from "../domain/migration-model.js";
-import { MigrationSupplements } from "../infrastructure/migration-supplements.js";
 import { generatePortableCandidate } from "../infrastructure/migration-candidate-packager.js";
 import type { PortableGeneration } from "../domain/migration-candidate-artifact.js";
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
@@ -25,15 +24,16 @@ import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import { inspectProject } from "../domain/migration-project-inspector.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
+import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
 
 const CODE_FILE = /\.(?:java|py|js|mjs|cjs|ts)$/iu;
 export class MigrationGenerationService {
   constructor(
-    private readonly root: string,
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly implementer: MigrationImplementer,
     private readonly codeGenerator: MigrationCodeGeneratorPort,
+    private readonly supplements:MigrationSupplementRepository,
     private readonly diagnostics?: MigrationDiagnosisPort,
   ) {}
 
@@ -62,7 +62,7 @@ export class MigrationGenerationService {
       if (!plan.generationAllowed) return conflict("当前逐 Tool 决策尚不能生成候选");
       const archive = await this.skills.readArchive(project.source.assetId);
       const version = `2.0.0-migration.${(project.candidateHistory?.length ?? 0) + 1}`;
-      for (const supplement of (await new MigrationSupplements(this.root).get(id)).items) {
+      for (const supplement of (await this.supplements.get(id)).items) {
         for (const [name, content] of Object.entries(supplement.files ?? {})) archive[name] = Buffer.from(content, "base64");
       }
       const decisions = project.decisions!.filter(decision => decision.baseAssetId === currentAsset.assetId);
