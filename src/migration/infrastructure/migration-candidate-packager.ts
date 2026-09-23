@@ -6,7 +6,7 @@ import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import { recommendLanguage,type ProjectInspection,type ToolDecision } from '../domain/migration-model.js';
 import type { GeneratedToolImplementation } from '../domain/generated-tool-implementation.js';
 import type { PortableDiff, PortableGeneration, SkillDocumentDelivery } from '../domain/migration-candidate-artifact.js';
-import { normalizeSkillPackage } from '../../service/skill-normalizer.js';
+import { normalizeSkillPackage } from './migration-skill-normalizer.js';
 import type { MigrationCandidatePackager } from '../application/migration-candidate-packager.js';
 
 /**
