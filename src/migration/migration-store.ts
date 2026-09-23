@@ -27,6 +27,7 @@ import { MigrationCandidateService } from './application/migration-candidate-ser
 import { MigrationGenerationService } from './application/migration-generation-service.js';
 import { MigrationTechnicalValidationWorkflow } from './application/migration-technical-validation-service.js';
 import { MigrationEvaluationService } from './application/migration-evaluation-service.js';
+import { MigrationReportService } from './application/migration-report-service.js';
 import { MigrationOpenJiuwenService } from './application/migration-openjiuwen-service.js';
 import { MigrationOptimizationService } from './application/migration-optimization-service.js';
 import { MigrationExportService } from './application/migration-export-service.js';
@@ -54,6 +55,7 @@ export class MigrationStore {
   private readonly generationService: MigrationGenerationService;
   private readonly technicalValidation: MigrationTechnicalValidationWorkflow;
   private readonly evaluationService: MigrationEvaluationService;
+  private readonly reportService: MigrationReportService;
   private readonly openJiuwenService: MigrationOpenJiuwenService;
   private readonly optimizationService: MigrationOptimizationService;
   private readonly exportService: MigrationExportService;
@@ -90,13 +92,14 @@ export class MigrationStore {
     this.candidateService = new MigrationCandidateService(this.projects, skills, diagnostics);
     this.generationService = new MigrationGenerationService(this.projects, skills, supplements,candidatePackager,implementationService,candidateInspection);
     this.technicalValidation = new MigrationTechnicalValidationWorkflow(this.projects, skills,runtimeConfigs,technicalValidator);
-    this.evaluationService = new MigrationEvaluationService(this.projects, skills, runs, jobs, catalog, preparations,
+    this.evaluationService = new MigrationEvaluationService(this.projects, runs, catalog, preparations,
       preparations?new FileMigrationPreparationPackFactory(root):undefined,
       {analyzer:()=>configuredModelRole('ANALYZER').model,judge:()=>configuredModelRole('JUDGE').model},
-      optimizers, diagnostics, environments,runtimeConfigs,targets);
-    this.openJiuwenService = new MigrationOpenJiuwenService(this.projects, skills, this.technicalValidation, this.evaluationService, commandResolver,environments,runtimeConfigs);
+      runtimeConfigs);
+    this.reportService = new MigrationReportService(this.projects,jobs,preparations,optimizers,diagnostics,environments,runtimeConfigs,targets);
+    this.openJiuwenService = new MigrationOpenJiuwenService(this.projects, skills, this.technicalValidation, this.evaluationService, this.reportService, commandResolver,environments,runtimeConfigs);
     this.optimizationService = new MigrationOptimizationService(this.projects, skills, jobs, this.technicalValidation, optimizers, environments,runtimeConfigs);
-    this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
+    this.exportService = new MigrationExportService(this.projects, skills, this.reportService);
     this.legacyService = new MigrationLegacyService(this.projects, this.projectService, skills, legacyCandidateGenerator,diagnostics, environments,targets);
   }
   async target(){return this.legacyService.target();}
@@ -143,7 +146,7 @@ export class MigrationStore {
   async optimize(id:string,input:unknown) {return this.optimizationService.optimize(id,input);}
   async adoptOptimization(id:string,input:unknown) {return this.optimizationService.adopt(id,input);}
   async validate(id:string,input:unknown) {return this.evaluationService.validate(id,input);}
-  async report(id:string) {return this.evaluationService.report(id);}
+  async report(id:string) {return this.reportService.report(id);}
   async exportCandidate(id:string) {return this.exportService.exportCandidate(id);}
   release():never {return conflict('发布已阻止：原环境基线、目标 Host 接入、依赖验证与独立业务验收都还没有验证');}
 }

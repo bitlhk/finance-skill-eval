@@ -8,6 +8,7 @@ import { configurationDigest } from '../domain/migration-runtime-configuration.j
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
+import type { MigrationReportService } from './migration-report-service.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
@@ -20,6 +21,7 @@ export class MigrationOpenJiuwenService {
     private readonly skills:MigrationSkillRepository,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly evaluation:MigrationEvaluationService,
+    private readonly reports:MigrationReportService,
     private readonly commands:MigrationCommandResolver,
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
@@ -70,6 +72,6 @@ export class MigrationOpenJiuwenService {
   }
 
   async validations(id:string) {
-    return (await this.evaluation.report(id)).openJiuwenValidations;
+    return (await this.reports.report(id)).openJiuwenValidations;
   }
 }

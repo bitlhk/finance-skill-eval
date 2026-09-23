@@ -2,14 +2,14 @@ import { createHash } from 'node:crypto';
 import { strToU8, zipSync } from 'fflate';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
-import type { MigrationEvaluationService } from './migration-evaluation-service.js';
+import type { MigrationReportService } from './migration-report-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 
 export class MigrationExportService {
   constructor(
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
-    private readonly evaluation:MigrationEvaluationService,
+    private readonly reports:MigrationReportService,
   ) {}
 
   async exportCandidate(id:string) {
@@ -26,7 +26,7 @@ export class MigrationExportService {
     // remains available from /report and must not pollute the specified package.
     if(value.schemaVersion==='finance.skill-migration.v2')return Buffer.from(zipSync(files));
 
-    const report=await this.evaluation.report(id);
+    const report=await this.reports.report(id);
     const state=report.verification.targetExecution==='PASSED'?'TARGET_VERIFIED_CANDIDATE':'DRAFT_NOT_VALIDATED';
     const manifest={schemaVersion:'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
       state,builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
