@@ -7,7 +7,7 @@ import type {
   ToolDecision,
 } from "./migration-model.js";
 import type { PortableDiff, PortableGeneration } from "./migration-candidate-artifact.js";
-import type { SkillAssetRecord } from "../../service/skill-store.js";
+import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { StageEnvelope } from "./migration-stage-envelope.js";
 
 export const migrationProjectIdSchema = z.string().regex(/^migration-[a-f0-9-]+$/u);
