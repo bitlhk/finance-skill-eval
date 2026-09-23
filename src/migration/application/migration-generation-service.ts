@@ -21,7 +21,7 @@ import { MigrationSupplements } from "../infrastructure/migration-supplements.js
 import { generatePortableCandidate } from "../infrastructure/migration-candidate-packager.js";
 import type { PortableGeneration } from "../domain/migration-candidate-artifact.js";
 import type { SkillAssetRecord, SkillStore } from "../../service/skill-store.js";
-import { inspectProject } from "../../service/tool-inspector.js";
+import { inspectProject } from "../domain/migration-project-inspector.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 

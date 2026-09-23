@@ -5,7 +5,7 @@ import { afterEach, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
 import { MigrationDiagnostics } from '../src/migration/infrastructure/migration-diagnostics.js';
-import { inspectProject } from '../src/service/tool-inspector.js';
+import { inspectProject } from '../src/migration/domain/migration-project-inspector.js';
 import { createEvaluationService } from '../src/service/server.js';
 import type { ConfiguredModelRole } from '../src/service/config.js';
 
