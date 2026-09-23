@@ -8,7 +8,7 @@ import {
   serviceEnvironment,
 } from "../infrastructure/migration-runtime-config.js";
 import type { SkillStore } from "../../service/skill-store.js";
-import { TechnicalValidationService } from "../../service/technical-validation.js";
+import { TechnicalValidationService } from "../infrastructure/migration-technical-validator.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectRepository } from "../infrastructure/migration-project-repository.js";
 import { migrationConflict as conflict } from "./migration-errors.js";

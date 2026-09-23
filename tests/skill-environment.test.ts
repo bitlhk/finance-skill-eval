@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { strToU8 } from 'fflate';
-import { pythonCommand } from '../src/service/technical-validation.js';
+import { pythonCommand } from '../src/migration/infrastructure/migration-technical-validator.js';
 
 const pep723=(body:string)=>`# /// script\n# requires-python = ">=3.11"\n# dependencies = ["pandas==2.3.3"]\n# ///\n${body}`;
 

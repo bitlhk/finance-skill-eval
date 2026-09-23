@@ -6,7 +6,7 @@ import {
   migrationExecutionConfig,
   serviceEnvironment,
 } from '../infrastructure/migration-runtime-config.js';
-import { pythonCommand } from '../../service/technical-validation.js';
+import { pythonCommand } from '../infrastructure/migration-technical-validator.js';
 import type { SkillStore } from '../../service/skill-store.js';
 import type { MigrationProjectRepository } from '../infrastructure/migration-project-repository.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';

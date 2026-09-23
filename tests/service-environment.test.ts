@@ -8,7 +8,7 @@ import {analyzeDependencies} from '../src/migration/infrastructure/migration-dep
 import {serviceEnvironment,runtimeInjection,migrationExecutionConfig,MigrationRuntimeConfig,configurationDigest} from '../src/migration/infrastructure/migration-runtime-config.js';
 import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';
-import {TechnicalValidationService} from '../src/service/technical-validation.js';
+import {TechnicalValidationService} from '../src/migration/infrastructure/migration-technical-validator.js';
 import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
