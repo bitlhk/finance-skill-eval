@@ -5,22 +5,22 @@ import {
   serviceEnvironment,
 } from '../domain/migration-runtime-rules.js';
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
-import { pythonCommand } from '../infrastructure/migration-technical-validator.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
+import type { MigrationCommandResolver } from './migration-command-resolver.js';
 
 /** Builds the OpenJiuwen launcher bindings from the inspected and generated candidate. */
 export class MigrationOpenJiuwenService {
   constructor(
-    private readonly root:string,
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
     private readonly evaluation:MigrationEvaluationService,
+    private readonly commands:MigrationCommandResolver,
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
   ) {}
@@ -45,7 +45,7 @@ export class MigrationOpenJiuwenService {
         while(true){const prefix=cursor?`${cursor}/`:'';if(archive[`${prefix}pyproject.toml`]||archive[`${prefix}package.json`]){root=cursor;break;}if(!cursor)break;cursor=cursor.split('/').slice(0,-1).join('/');}
         const filePaths=Object.keys(archive).filter(name=>(!root||name.startsWith(`${root}/`))&&/\.(?:py|js|mjs|cjs|json|toml|lock)$/iu.test(name));
         return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,
-          launch:tool.entrypoint!.kind==='PYTHON'?pythonCommand(archive,entry):{program:'node',args:[entry]},
+          launch:this.commands.resolve(archive,entry,tool.entrypoint!.kind),
           ...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
     const services:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environmentReference?:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string}}>=[];
     for(const generation of value.portableGenerations??[]){

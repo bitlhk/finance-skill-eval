@@ -30,7 +30,7 @@ import { MigrationLegacyService } from './application/migration-legacy-service.j
 import { migrationConflict as conflict } from './application/migration-errors.js';
 import { MigrationRuntimeConfig } from './infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from './infrastructure/migration-target.js';
-import { TechnicalValidationService } from './infrastructure/migration-technical-validator.js';
+import { LocalMigrationCommandResolver,TechnicalValidationService } from './infrastructure/migration-technical-validator.js';
 import { MigrationSupplements } from './infrastructure/migration-supplements.js';
 import { PortableCandidatePackager } from './infrastructure/migration-candidate-packager.js';
 import { LegacyCandidateGenerator } from './infrastructure/legacy-candidate-generator.js';
@@ -63,7 +63,8 @@ export class MigrationStore {
     this.projects = projects ?? new MigrationProjectRepository(root);
     const runtimeConfigs=new MigrationRuntimeConfig(root);
     const targets=new MigrationTargetRuns(root,skills);
-    const technicalValidator=new TechnicalValidationService();
+    const commandResolver=new LocalMigrationCommandResolver();
+    const technicalValidator=new TechnicalValidationService(undefined,commandResolver);
     const supplements=new MigrationSupplements(root);
     const candidatePackager=new PortableCandidatePackager();
     const legacyCandidateGenerator=new LegacyCandidateGenerator();
@@ -78,7 +79,7 @@ export class MigrationStore {
       preparations?new FileMigrationPreparationPackFactory(root):undefined,
       {analyzer:()=>configuredModelRole('ANALYZER').model,judge:()=>configuredModelRole('JUDGE').model},
       optimizers, diagnostics, environments,runtimeConfigs,targets);
-    this.openJiuwenService = new MigrationOpenJiuwenService(root, this.projects, skills, this.technicalValidation, this.evaluationService, environments,runtimeConfigs);
+    this.openJiuwenService = new MigrationOpenJiuwenService(this.projects, skills, this.technicalValidation, this.evaluationService, commandResolver,environments,runtimeConfigs);
     this.optimizationService = new MigrationOptimizationService(root, this.projects, skills, jobs, this.technicalValidation, optimizers, environments,runtimeConfigs);
     this.exportService = new MigrationExportService(this.projects, skills, this.evaluationService);
     this.legacyService = new MigrationLegacyService(this.projects, this.projectService, skills, legacyCandidateGenerator,diagnostics, environments,targets);

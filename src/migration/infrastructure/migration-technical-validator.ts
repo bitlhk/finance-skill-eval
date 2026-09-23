@@ -2,6 +2,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import type { TechnicalValidation,ToolInspection } from '../domain/migration-model.js';
 import type { MigrationTechnicalValidator } from '../application/migration-technical-validator.js';
+import type { MigrationCommandResolver } from '../application/migration-command-resolver.js';
 import { LocalWorker,type LocalWorkerWorkspace } from '../../service/local-worker.js';
 import { startService,type Launchable } from '../../service/service-launch.js';
 import { validateMcpTool } from '../../mcp-preflight.js';
@@ -39,14 +40,20 @@ export function pythonCommand(archive:Record<string,Uint8Array>,entrypoint:strin
   return {program:'uv',args:['run','--no-project','python','-I',entrypoint]};
 }
 
+export class LocalMigrationCommandResolver implements MigrationCommandResolver {
+  resolve(archive:Record<string,Uint8Array>,entrypoint:string,kind:'PYTHON'|'NODE'){
+    return kind==='PYTHON'?pythonCommand(archive,entrypoint):{program:'node',args:[entrypoint]};
+  }
+}
+
 export class TechnicalValidationService implements MigrationTechnicalValidator{
-  constructor(private worker=new LocalWorker()){}
+  constructor(private worker=new LocalWorker(),private commands:MigrationCommandResolver=new LocalMigrationCommandResolver()){}
   async validateScript(input:{asset:SkillAssetRecord;archive:Record<string,Uint8Array>;tool:ToolInspection;request?:unknown;context?:Record<string,unknown>;signal?:AbortSignal}):Promise<TechnicalValidation>{
     const startedAt=new Date().toISOString(),validationId='technical-'+randomUUID(),entry=input.tool.entrypoint;
     const implementationDigest=digest(input.tool.sourcePaths.map(path=>[path,Buffer.from(input.archive[path]??[]).toString('base64')]));
     const casesDigest=digest([input.request??{}]);
     if(!entry?.path||!['PYTHON','NODE'].includes(entry.kind))return this.failed(validationId,input.asset,input.tool.toolId,implementationDigest,casesDigest,'LOCAL_TRUSTED',startedAt,'没有可执行的 Script 入口');
-    const command=entry.kind==='PYTHON'?pythonCommand(input.archive,entry.path):{program:'node',args:[entry.path]};
+    const command=this.commands.resolve(input.archive,entry.path,entry.kind);
     try{
       const result=await this.worker.run({requestId:validationId,program:command.program,args:command.args,separateWorkspace:true,files:Object.entries(input.archive).map(([path,content])=>({path,content})),stdin:JSON.stringify(input.request??{}),context:input.context,timeoutMs:30_000,maxOutputBytes:256*1024,signal:input.signal});
       const stages=[
