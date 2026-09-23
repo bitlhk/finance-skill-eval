@@ -3,7 +3,7 @@ import type { MigrationEvaluationJobReader,MigrationEvaluationRunner } from './a
 import type { MigrationEvalPackCatalog } from './application/migration-eval-pack-catalog.js';
 import type { MigrationPreparationRepository } from './application/migration-preparation-repository.js';
 import { FileMigrationPreparationPackFactory } from './infrastructure/migration-preparation-pack-factory.js';
-import type { OptimizationManager } from '../service/optimization-manager.js';
+import type { MigrationOptimizationPort } from './application/migration-optimization-port.js';
 import { configuredModelRole } from '../service/config.js';
 import { MigrationDiagnostics } from './infrastructure/migration-diagnostics.js';
 import type { MigrationEnvironmentRepository } from './application/migration-environment-repository.js';
@@ -45,7 +45,7 @@ export class MigrationStore {
   private readonly legacyService: MigrationLegacyService;
   constructor(root:string, skills:MigrationSkillRepository, runs:MigrationEvaluationRunner,
     jobs:MigrationEvaluationJobReader, catalog:MigrationEvalPackCatalog, preparations?:MigrationPreparationRepository,
-    optimizers?:OptimizationManager, diagnostics?:MigrationDiagnostics, environments?:MigrationEnvironmentRepository,
+    optimizers?:MigrationOptimizationPort, diagnostics?:MigrationDiagnostics, environments?:MigrationEnvironmentRepository,
     codeGenerator:MigrationCodeGeneratorPort=new MigrationCodeGenerator(()=>configuredModelRole('MIGRATION')),
     analyzer:MigrationAnalyzer=(input,)=>analyzeWithAgent(input,{projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
       modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model'}),

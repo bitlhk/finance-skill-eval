@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
-import type { OptimizationManager } from '../../service/optimization-manager.js';
+import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
@@ -15,7 +15,7 @@ export class MigrationOptimizationService {
     private readonly skills:MigrationSkillRepository,
     private readonly jobs:MigrationEvaluationJobReader,
     private readonly technicalValidation:MigrationTechnicalValidationWorkflow,
-    private readonly optimizers?:OptimizationManager,
+    private readonly optimizers?:MigrationOptimizationPort,
     private readonly environments?:MigrationEnvironmentRepository,
   ) {}
 

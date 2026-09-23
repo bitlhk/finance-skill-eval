@@ -12,7 +12,7 @@ import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
 import { MigrationRuntimeConfig, configurationDigest } from '../infrastructure/migration-runtime-config.js';
 import { MigrationTargetRuns } from '../infrastructure/migration-target.js';
-import type { OptimizationManager } from '../../service/optimization-manager.js';
+import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationPreparationPackFactory } from './migration-preparation-pack-factory.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
@@ -35,7 +35,7 @@ export class MigrationEvaluationService {
     private readonly catalog:MigrationEvalPackCatalog,
     private readonly preparations?:MigrationPreparationRepository,
     private readonly preparationPacks?:MigrationPreparationPackFactory,
-    private readonly optimizers?:OptimizationManager,
+    private readonly optimizers?:MigrationOptimizationPort,
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
   ) {}
