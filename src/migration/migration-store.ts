@@ -18,6 +18,7 @@ import type { MigrationProjectStore } from './application/migration-project-stor
 import type { MigrationProject } from './domain/migration-project.js';
 import { MigrationProjectService } from './application/migration-project-service.js';
 import { MigrationInspectionService } from './application/migration-inspection-service.js';
+import { MigrationPlanningService } from './application/migration-planning-service.js';
 import { MigrationRuntimeConfigurationService,type MigrationRuntimeReference } from './application/migration-runtime-configuration-service.js';
 import { MigrationSupplementService } from './application/migration-supplement-service.js';
 import { MigrationImplementationService } from './application/migration-implementation-service.js';
@@ -48,6 +49,7 @@ export class MigrationStore {
   private readonly projects: MigrationProjectStore;
   private readonly projectService: MigrationProjectService;
   private readonly inspectionService: MigrationInspectionService;
+  private readonly planningService:MigrationPlanningService;
   private readonly runtimeConfigurationService:MigrationRuntimeConfigurationService;
   private readonly supplementService:MigrationSupplementService;
   private readonly suiteService: MigrationSuiteService;
@@ -85,7 +87,8 @@ export class MigrationStore {
     const implementationService=new MigrationImplementationService(implementer,codeGenerator,agentResults);
     const candidateInspection=new MigrationCandidateInspectionService(diagnostics);
     this.projectService = new MigrationProjectService(this.projects, skills, diagnostics);
-    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,supplements,harnessSerializer,dependencyAnalyzer,agentResults);
+    this.inspectionService = new MigrationInspectionService(this.projects, skills, analyzer,supplements,dependencyAnalyzer,agentResults);
+    this.planningService = new MigrationPlanningService(this.projects,harnessSerializer);
     this.runtimeConfigurationService = new MigrationRuntimeConfigurationService(this.projects,runtimeConfigs,supplements,connectionProbe);
     this.supplementService = new MigrationSupplementService(this.projects,supplements);
     this.suiteService = new MigrationSuiteService(this.projects, skills, analyzer, suiteGenerator, agentResults,preparations);
@@ -124,10 +127,10 @@ export class MigrationStore {
   async uploadDependency(id:string,dependencyId:string,revision:number,filename:string,bytes:Buffer){return this.supplementService.uploadDependency(id,dependencyId,revision,filename,bytes);}
   async explainDependency(id:string,dependencyId:string,input:unknown){return this.supplementService.explainDependency(id,dependencyId,input);}
   async inspection(id:string){return this.inspectionService.inspection(id);}
-  async decide(id:string,toolId:string,input:unknown){return this.inspectionService.decide(id,toolId,input);}
-  async plan(id:string){return this.inspectionService.plan(id);}
-  async runtimeRequirements(id:string){return this.inspectionService.runtimeRequirements(id);}
-  async runtimeRequirementsYaml(id:string){return this.inspectionService.runtimeRequirementsYaml(id);}
+  async decide(id:string,toolId:string,input:unknown){return this.planningService.decide(id,toolId,input);}
+  async plan(id:string){return this.planningService.plan(id);}
+  async runtimeRequirements(id:string){return this.planningService.runtimeRequirements(id);}
+  async runtimeRequirementsYaml(id:string){return this.planningService.runtimeRequirementsYaml(id);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.technicalValidation.list(id);}
   async validateOpenJiuwen(id:string,input:unknown){return this.openJiuwenService.validate(id,input);}
