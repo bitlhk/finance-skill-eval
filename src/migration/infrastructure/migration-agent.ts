@@ -2,16 +2,8 @@ import {SourceEvidenceValidator} from "../domain/migration-source-evidence.js";
 import { SCAN_COMPLETE_STATUSES } from "../domain/migration-diagnosis.js";
 import { languageOfSourcePaths, recommendLanguage,stableToolId } from "../domain/migration-model.js";
 import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
-import type {MigrationAnalysis,MigrationImplementation} from '../application/migration-agent-port.js';
 import type {MigrationAgentResultMapper} from '../application/migration-agent-result-mapper.js';
-import {
-  MigrationAgentUnavailable,
-  encodeArchive,
-  migrationAgentEnabled,
-  runMigrationAgent,
-  type AgentResult,
-  type MigrationAgentOptions,
-} from './migration-agent-runner.js';
+export {analyzeWithAgent,implementWithAgent} from './migration-agent-gateway.js';
 export {
   MigrationAgentUnavailable,
   agentIterations,
@@ -21,69 +13,6 @@ export {
   runMigrationAgent,
 } from './migration-agent-runner.js';
 export type {AgentPayload,AgentResult,AgentStage,AgentStatus,MigrationAgentOptions} from './migration-agent-runner.js';
-
-/**
- * TS <-> Python boundary for the migration agents (X-2).
- *
- * The existing runtime contract (finance.skill-eval.runtime-request.v1) is
- * evaluation-shaped -- it demands case/side/variant -- so the migration agents get
- * their own request. One agent run per call, isolated process, stdout carries the
- * result as a single JSON line.
- */
-
-/**
- * What the analysis hand-off looks like from the store's side: "give me an analysis".
- *
- * Three states, all of them results. `ABSTAINED` is the agent's judgement and `FAILED` carries the
- * agent's own account of what went wrong; flattening either into `null` is what made both arrive
- * as a faceless "analysis unavailable", which tells whoever has to act on it nothing at all.
- */
-/**
- * The real analyzer: run the A2 agent. A seam rather than a direct call because the analysis is
- * the store's upstream dependency -- tests stand in a recorded analysis for the same reason they
- * stand in a model, and the payload still goes through the same citation checks.
- *
- * `null` means only one thing now: this platform is not set up to run the agent at all.
- */
-export async function analyzeWithAgent(input: { assetDigest: string; runId: string; files: Record<string, Uint8Array>;supplements?:import('../domain/migration-dependency.js').AnalysisSupplement[] }, options: MigrationAgentOptions): Promise<MigrationAnalysis | null> {
-  if (!migrationAgentEnabled()) return null;
-  let result:AgentResult<{reason?:string;missing?:string[]}>;
-  try{result=await runMigrationAgent("A2",{...input,files:encodeArchive(input.files)},options)}catch(error){return {status:"FAILED",reason:error instanceof MigrationAgentUnavailable?error.message:"A2 执行失败，请查看平台日志"}}
-  if (result?.status === "ABSTAINED") return {
-    status: "ABSTAINED",
-    reason: String(result.payload.judgement?.reason ?? "").trim() || "分析 agent 没有说明弃权原因",
-    missing: (result.payload.judgement?.missing ?? []).map(String).filter(Boolean),
-    workspaceRoot:result.payload.workspaceRoot,libraryInventory:result.payload.libraryInventory,payload:result.payload.judgement,scanner:result.payload.scanner,
-  };
-  if (result?.status !== "PRODUCED") return {
-    status: "FAILED",
-    reason: String(result?.run?.error ?? "").trim() || "分析 agent 没有产出结果，也没有说明原因",
-  };
-  return { status: "PRODUCED", workspaceRoot:result.payload.workspaceRoot,libraryInventory:result.payload.libraryInventory,payload: result.payload.judgement, scanner: result.payload.scanner ?? null };
-}
-
-/**
- * What the A4 hand-off looks like from the store's side: "build me these Tools".
- *
- * `null` means this platform cannot run the agent at all, which is what the fallback generator is
- * for. An agent that ran and did not finish says `FAILED` and is reported as such -- falling back
- * there hides the reason and hands the work to a generator that cannot build a service.
- */
-/** The real implementer: run the A4 agent. Injectable for the same reason as the analyzer. */
-export async function implementWithAgent(input: {
-  assetDigest: string; runId: string; files: Record<string, Uint8Array>;
-  decisions: unknown[]; tools: unknown[]; contract: Record<string, unknown>;deliveryContract?:Record<string,unknown>;
-}, options: MigrationAgentOptions): Promise<MigrationImplementation | null> {
-  if (!migrationAgentEnabled()) return null;
-  let result:AgentResult<{tools?:unknown[]}>;
-  try{result=await runMigrationAgent("A4",{...input,files:encodeArchive(input.files)},options)}catch(error){return {status:"FAILED",reason:error instanceof MigrationAgentUnavailable?error.message:"A4 执行失败，请查看平台日志"}}
-  if (result?.status !== "PRODUCED" && result?.status !== "ABSTAINED") return {
-    status: "FAILED",
-    reason: String(result?.run?.error ?? "").trim() || "迁移 agent 没有产出结果，也没有说明原因",
-  };
-  return { status: result.status, payload: result.payload.judgement, files: result.payload.files ?? {} };
-}
-
 
 /** A claim about the source. Whatever it says is only accepted once it lands on a real file and
  * a real line, exactly like a finding. */
