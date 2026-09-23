@@ -3,7 +3,7 @@ import { fingerprint } from '../../contracts.js';
 import { originalServiceFingerprint } from '../../original-service-runtime.js';
 import type { EvalPackCatalog } from '../../service/catalog.js';
 import { configuredModelRole } from '../../service/config.js';
-import { runConfigurationSchema } from '../../service/contracts.js';
+import { runConfigurationSchema } from '../../shared/contracts/run-configuration.js';
 import type { EnvironmentStore } from '../../service/environment-store.js';
 import type { EvaluationJobStore } from '../../service/job-store.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';

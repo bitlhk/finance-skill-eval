@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { EvalPack } from "../../contracts.js";
-import type { RunConfiguration } from "../../service/contracts.js";
+import type { RunConfiguration } from "../../shared/contracts/run-configuration.js";
 import type {
   ProjectInspection,
   TechnicalValidation,
