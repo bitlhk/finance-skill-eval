@@ -13,7 +13,7 @@ import type { StageEnvelope } from "./migration-stage-envelope.js";
 export const migrationProjectIdSchema = z.string().regex(/^migration-[a-f0-9-]+$/u);
 
 const persistedMigrationProjectSchema = z.object({
-  schemaVersion: z.enum(["finance.skill-migration.v0.1", "finance.skill-migration.v2"]),
+  schemaVersion: z.literal("finance.skill-migration.v2"),
   id: migrationProjectIdSchema,
 }).passthrough();
 
@@ -27,11 +27,10 @@ export type MigrationRunDeclaration = {
 };
 
 export type MigrationProject = {
-  schemaVersion: "finance.skill-migration.v0.1" | "finance.skill-migration.v2";
+  schemaVersion: "finance.skill-migration.v2";
   id: string;
   name: string;
   createdAt: string;
-  legacySourceProjectId?: string;
   source: SkillAssetRecord;
   candidate: SkillAssetRecord | null;
   candidateNotes: string;
@@ -59,8 +58,6 @@ export type MigrationProject = {
     runtimeConfigurationDigest?: string;
   }>;
   assessment: "NOT_VALIDATED";
-  targetRuns?: string[];
-  simulationProfile?: string;
   reviews?: Array<{
     candidateDigest: string;
     decision: "ACCEPTED" | "NEEDS_CHANGES";
@@ -68,12 +65,6 @@ export type MigrationProject = {
     recordedAt: string;
     source: "PRIVATE_ADMIN_RECORDED";
   }>;
-  generation?: {
-    candidateDigest: string;
-    target: { runtime: string; environmentId?: string; intent: string };
-    diff: Array<{ path: string; operation: string; before: string; after: string }>;
-    generatedAt: string;
-  };
   inspection?: ProjectInspection;
   sourceInspection?: ProjectInspection;
   analysis?: StageEnvelope<ProjectInspection>;

@@ -1,15 +1,12 @@
-import { createHash } from 'node:crypto';
-import { strToU8, zipSync } from 'fflate';
+import { zipSync } from 'fflate';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
-import type { MigrationReportService } from './migration-report-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 
 export class MigrationExportService {
   constructor(
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
-    private readonly reports:MigrationReportService,
   ) {}
 
   async exportCandidate(id:string) {
@@ -28,27 +25,7 @@ export class MigrationExportService {
         return conflict('候选可能包含凭据，请先检查并移除敏感配置；未导出任何文件');
       }
     }
-    // V2 exports are the standard Skill/Tool delivery itself. Migration evidence
-    // remains available from /report and must not pollute the specified package.
-    if(value.schemaVersion==='finance.skill-migration.v2')return Buffer.from(zipSync(files));
-
-    const report=await this.reports.report(id);
-    const state=report.verification.targetExecution==='PASSED'?'TARGET_VERIFIED_CANDIDATE':'DRAFT_NOT_VALIDATED';
-    const manifest={schemaVersion:'finance.skill-migration.exchange.v0.1',projectId:id,source:value.source,candidate:value.candidate,
-      state,builderImport:'NOT_VERIFIED',installationLock:'ASSEMBLER_RESPONSIBILITY',
-      executionPolicy:'INERT_ARCHIVE_ONLY_NO_SCRIPT_EXECUTION',dependencies:'NOT_VALIDATED',
-      fileDigestAlgorithm:'SHA-256 of original file bytes',
-      files:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,createHash('sha256').update(content).digest('hex')]))};
-    return Buffer.from(zipSync({...files,'migration-manifest.json':strToU8(JSON.stringify(manifest,null,2)),
-      'migration-report.json':strToU8(JSON.stringify({schemaVersion:'migration.export-scope.v1',state,
-        candidateDigest:value.candidate.artifactSha256,inspection:report.inspection,decisions:report.decisions,migrationPlan:report.migrationPlan,
-        technicalValidations:report.technicalValidations.map(validation=>({validationId:validation.validationId,toolId:validation.toolId,assetDigest:validation.assetDigest,implementationDigest:validation.implementationDigest,casesDigest:validation.casesDigest,mode:validation.mode,status:validation.status,stages:validation.stages,current:validation.current})),openJiuwenValidations:report.openJiuwenValidations,verification:report.verification,
-        changes:(value.portableGenerationDiff??value.generation?.diff??[]).map(change=>({path:change.path,operation:change.operation})),
-        targetRuns:report.targetRuns.map(run=>({id:run.id,candidateDigest:run.candidateDigest,status:run.status,
-          cases:run.cases.map(testCase=>({caseId:testCase.caseId,passed:testCase.passed}))})),
-        professionalAcceptance:report.professionalReview?'ADMIN_RECORDED_NOT_INDEPENDENTLY_VERIFIED':'NOT_REVIEWED',
-        professionalReview:report.professionalReview?{decision:report.professionalReview.decision,source:report.professionalReview.source,recordedAt:report.professionalReview.recordedAt}:null,
-        originalEquivalence:'NOT_VERIFIED',
-        excluded:'No raw model answers, test payloads, connection configuration or complete experiment reports. Review your own method/resource files for private content before sharing.'},null,2))}));
+    // The delivery archive contains only the Skill and its tools. Evidence remains in the report API.
+    return Buffer.from(zipSync(files));
   }
 }

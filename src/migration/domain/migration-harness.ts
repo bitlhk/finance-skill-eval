@@ -6,7 +6,7 @@ const frameworkPlumbing=/\b(?:ToolBase|BaseTool|ToolResponse|Toolkit|TextBlock|r
 const plumbingRole=/(?:注册|结果构造|返回包装|适配层|框架(?:基类|容器|SDK)|registration|result wrapper|framework glue)/iu;
 
 /** Framework glue is replaced by the migrated MCP/Script boundary. Only independently callable
- * source-Runtime behavior becomes a future Runtime Builder requirement. */
+ * source-Runtime behavior becomes a contract for an external Runtime Builder. */
 export function isAdaptableHarnessCapability(capability:Pick<RuntimeHarnessCapability,'name'|'reason'|'usageContract'|'evidence'>):boolean{
   const name=capability.name.trim();
   if(!callableHarnessName.test(name))return false;

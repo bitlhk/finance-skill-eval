@@ -6,10 +6,10 @@ import { afterEach,expect,it } from 'vitest';
 import { strToU8,zipSync } from 'fflate';
 import { generatePortableCandidate } from '../src/migration/infrastructure/migration-candidate-packager.js';
 import { normalizeSkillPackage } from '../src/migration/infrastructure/migration-skill-normalizer.js';
-import { TechnicalValidationService,pythonCommand } from '../src/migration/infrastructure/migration-technical-validator.js';
+import { LocalMigrationValidationRunner,pythonCommand } from '../src/migration/infrastructure/migration-technical-validator.js';
 import { assessMigrationAcceptance } from '../src/migration/domain/migration-acceptance.js';
 import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
-import { runtimeInjection } from '../src/migration/infrastructure/migration-runtime-config.js';
+import { runtimeInjection } from '../src/migration/domain/migration-runtime-rules.js';
 import { analyzeSkillAndGenerateCases } from '../src/analyzer.js';
 import { createEvaluationService } from '../src/service/server.js';
 import { EvaluationRunManager } from '../src/service/run-manager.js';
@@ -77,7 +77,7 @@ it('fails MCP technical validation for a successful RPC carrying isError:true',a
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   try{
     const endpoint=`http://127.0.0.1:${(server.address() as {port:number}).port}/mcp`;
-    const result=await new TechnicalValidationService().validateMcp({asset,tool:toolFixture({name:'lookup',sourcePaths:['server.py']}),endpoint,arguments:{}});
+    const result=await new LocalMigrationValidationRunner().validateMcp({asset,tool:toolFixture({name:'lookup',sourcePaths:['server.py']}),endpoint,arguments:{}});
     expect(result.status).toBe('FAILED');expect(result.stages.find(stage=>stage.name==='TOOLS_CALL')?.passed).toBe(false);
     expect(result.error).toContain('database unavailable');
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}

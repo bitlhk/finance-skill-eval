@@ -1,9 +1,5 @@
-import type { Dependency } from '../domain/migration-dependency.js';
-import type { ConnectionCheck,RuntimeTestConfig } from '../domain/migration-runtime-configuration.js';
-export type { ConnectionCheck,RuntimeTestConfig } from '../domain/migration-runtime-configuration.js';
+import type { ExecutionConfiguration,ExecutionConfigurationCheck,ExecutionConfigurationRepository } from '../../execution-configuration/execution-configuration.js';
 
-export interface MigrationRuntimeConfigurationRepository {
-  get(migrationId:string):Promise<RuntimeTestConfig>;
-  save(migrationId:string,dependency:Dependency,value:unknown,revision:number):Promise<RuntimeTestConfig>;
-  check(migrationId:string,result:Omit<ConnectionCheck,'id'|'checkedAt'>):Promise<ConnectionCheck>;
-}
+export type ConnectionCheck=ExecutionConfigurationCheck&{toolId:string;kind:'BUSINESS_INTERFACE'|'GENERATED_TOOL'|'SOURCE_TOOL'};
+export type RuntimeTestConfig=ExecutionConfiguration<ConnectionCheck>;
+export type MigrationRuntimeConfigurationRepository=ExecutionConfigurationRepository<ConnectionCheck>;

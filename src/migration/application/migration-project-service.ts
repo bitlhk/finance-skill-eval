@@ -55,22 +55,6 @@ export class MigrationProjectService {
     return value;
   }
 
-  async upgrade(id: string): Promise<MigrationProject> {
-    const legacy = await this.get(id);
-    if (legacy.schemaVersion === "finance.skill-migration.v2") return legacy;
-
-    const source = legacy.candidate ?? legacy.source;
-    const upgraded = await this.create({ sourceAssetId: source.assetId, name: `${legacy.name} 2.0` });
-    return this.projects.runExclusive(upgraded.id, async () => {
-      const current = await this.get(upgraded.id);
-      if (current.legacySourceProjectId !== legacy.id) {
-        current.legacySourceProjectId = legacy.id;
-        await this.projects.save(current);
-      }
-      return current;
-    });
-  }
-
   async diagnose(id: string, retry = false) {
     const project = await this.get(id);
     if (!this.diagnostics) return conflict("静态诊断服务不可用");

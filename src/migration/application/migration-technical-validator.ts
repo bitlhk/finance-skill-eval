@@ -6,7 +6,8 @@ export type MigrationLaunchable = {
   prepare?: string[];
 };
 
-export interface MigrationTechnicalValidator {
+/** Execution boundary for untrusted candidate artifacts. Production may provide a remote runner. */
+export interface MigrationValidationRunner {
   validateScript(input:{
     asset:SkillAssetRecord;
     archive:Record<string,Uint8Array>;

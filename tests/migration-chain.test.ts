@@ -56,17 +56,15 @@ it('carries a migration from baseline to adopted optimization and retires the ev
     get:async(optimizationId:string)=>optimizationId==='opt-1'?optimization:null,
   } as unknown as OptimizationManager;
 
-  const store=new MigrationStore(data,skills,runs,jobs,catalog,undefined,optimizers,
-    new MigrationDiagnostics(path.resolve('.'),data,skills),environments,
-    undefined,
+  const store=new MigrationStore(data,{skills,runs,jobs,catalog,optimizers,
+    diagnostics:new MigrationDiagnostics(path.resolve('.'),data,skills),environments,
     // The A2 stand-in cites the Script where it actually is. The source keeps the layout it was
     // written in; the optimized package ships one where the platform places it.
-    async input=>{
-      const path=Object.keys(input.files).find(name=>/(^|\/)lookup\.py$/u.test(name))??'tool/scripts/lookup.py';
-      return await analysisFixture([analyzedTool({name:'lookup',sourcePaths:[path],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path}})])(input);
-    },
-    implementationFixture([{tool:'lookup',entrypoint:'scripts/lookup.py',language:'python',files:{'scripts/lookup.py':LOOKUP_PY}}]),
-    undefined);
+    implementer:implementationFixture([{tool:'lookup',entrypoint:'scripts/lookup.py',language:'python',files:{'scripts/lookup.py':LOOKUP_PY}}]),
+    analyzer:async input=>{
+      const sourcePath=Object.keys(input.files).find(name=>/(^|\/)lookup\.py$/u.test(name))??'tool/scripts/lookup.py';
+      return await analysisFixture([analyzedTool({name:'lookup',sourcePaths:[sourcePath],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path:sourcePath}})])(input);
+    }});
 
   const upload=async(files:Record<string,string>)=>{
     const zip=Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([name,content])=>[name,strToU8(content)]))));

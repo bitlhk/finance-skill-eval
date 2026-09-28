@@ -28,13 +28,11 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   });
 
   app.get("/api/migrations", () => migrations.list());
-  app.get("/api/migrations/target", () => migrations.target());
   app.post("/api/migrations/upload", async request => {
     if (!Buffer.isBuffer(request.body)) throw new Error("Request body must be a migration ZIP");
     return skills.uploadMigrationZip(request.body);
   });
   app.post("/api/migrations", request => migrations.create(request.body));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/upgrade", request => migrations.upgrade(request.params.id));
   app.get<{ Params: { id: string } }>("/api/migrations/:id", request => migrations.get(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/analyze", request => migrations.analyze(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/diagnose", request => migrations.diagnose(request.params.id, true));
@@ -69,7 +67,6 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{ Params: { id: string } }>("/api/migrations/:id/candidates", request => migrations.candidate(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/drafts", request => migrations.draft(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/validate", request => migrations.validate(request.params.id, request.body));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/verify-target", request => migrations.verifyTarget(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/validate/technical", request =>
     migrations.validateTechnical(request.params.id, request.body, requestSignal(request)));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/validations/technical", request => migrations.technicalValidations(request.params.id));

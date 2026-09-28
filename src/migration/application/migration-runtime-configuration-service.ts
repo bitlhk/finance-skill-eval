@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
 import {supportsImplicitScriptContext} from '../domain/migration-model.js';
-import {configurationDigest} from '../domain/migration-runtime-configuration.js';
+import {executionConfigurationDigest as configurationDigest} from '../../execution-configuration/execution-configuration.js';
 import {migrationExecutionConfig,runtimeInjection,serviceEnvironment} from '../domain/migration-runtime-rules.js';
 import type {MigrationBusinessConnectionProbe} from './migration-business-connection-probe.js';
 import {migrationConflict as conflict} from './migration-errors.js';
@@ -61,7 +61,14 @@ export class MigrationRuntimeConfigurationService {
       const value=await this.projects.get(id);
       const dependency=value.sourceInspection?.dependencyAnalysis?.dependencies.find(item=>item.id===dependencyId);
       if(!dependency||dependency.owner!=="RUNTIME"||dependency.action!=="INJECT")return conflict("当前诊断没有这项可注入的运行时依赖");
-      const config=await this.runtimeConfigs.save(id,dependency,parsed.value,parsed.revision);
+      if(dependency.binding?.kind==='SERVICE_ENV'){
+        try{serviceEnvironment([dependency],{[dependency.id]:parsed.value});}
+        catch(error){throw Object.assign(error instanceof Error?error:new Error('服务配置不合法'),{statusCode:400});}
+      }
+      const errors=validateDependencyData(parsed.value,dependency.schema);
+      if(errors.length)throw Object.assign(new Error(errors.join('；')),{statusCode:400});
+      if(Buffer.byteLength(JSON.stringify(parsed.value))>128000)throw Object.assign(new Error('测试数据超过 128 KB'),{statusCode:400});
+      const config=await this.runtimeConfigs.saveValue(id,dependency.id,parsed.value,parsed.revision);
       return {revision:config.revision};
     });
   }
@@ -106,7 +113,7 @@ export class MigrationRuntimeConfigurationService {
       const injection=runtimeInjection(dependencies,config.values,"HTTP_HEADER");
       if(injection.missing.length)return conflict(`请先提供测试依赖：${injection.missing.join("、")}`);
       const result=await this.connectionProbe.probe(parsed.endpoint,parsed.method,injection.headers,signal);
-      return this.runtimeConfigs.check(id,{...result,toolId:parsed.toolId,kind:"BUSINESS_INTERFACE",
+      return this.runtimeConfigs.appendCheck(id,{...result,toolId:parsed.toolId,kind:"BUSINESS_INTERFACE",
         configurationDigest:configurationDigest(config,inspection.dependencyAnalysis?.dependencies),assetDigest:value.source.artifactSha256});
     });
   }

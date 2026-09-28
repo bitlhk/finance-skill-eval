@@ -74,7 +74,7 @@ Worker 的可信配置支持 workspaceDirectory（外部已有工作区，不清
 
 ## Runtime Harness 改造需求
 
-候选包不携带或动态加载自定义 Harness 插件。诊断发现源 Skill 依赖目标 Runtime 尚未提供的独立能力时，平台输出 `finance.runtime-build-requirements.v1` YAML，并在诊断阶段停止当前迁移。未来 Runtime Builder 消费该声明，构建并返回可登记的 Runtime 接口；当前版本仅保留接口类型与需求文件，不伪造 Builder，也不进入候选生成或测试。
+候选包不携带或动态加载自定义 Harness 插件。诊断发现源 Skill 依赖目标 Runtime 尚未提供的独立能力时，平台输出 `finance.runtime-build-requirements.v1` YAML，并停止当前迁移。Runtime Builder 属于独立项目，消费该声明并交付可登记的 Runtime；本项目不保留虚假的 Builder 客户端接口，也不会绕过能力缺口进入测试。
 
 Runtime 自身已经声明并实现的内置能力仍通过 `harnessToolNames` 按需启用。这与迁移产物注入插件是两个边界：前者属于已登记 Runtime 的能力，后者已明确禁止。Worker 收到旧的 `candidateHarnessPlugins` 字段会直接拒绝。
 

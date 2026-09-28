@@ -26,7 +26,7 @@ export type ProjectInspection={assetId:string;assetDigest:string;inspectedAt:str
     incompleteFiles:Array<{path:string;status:string}>;toolIncompleteFiles?:Array<{path:string;status:string}>};
   runtimeAnalysis?:{status:'RUNNING'|'COMPLETE'|'NOT_CONFIGURED'|'FAILED';model?:string;acceptedBindings:number;rejectedBindings:number;inputTruncated?:boolean}};
 export type ToolDecision={toolId:string;form:ToolForm;language?:string;reason:string;baseAssetId:string;decidedAt:string};
-/** A source-Runtime capability that requires a future Runtime Builder before migration can continue. */
+/** A source-Runtime capability that must be fulfilled by an external Runtime Builder. */
 export type RuntimeHarnessCapability={name:string;owner:'RUNTIME_HARNESS';migrationAction:'REQUIRES_RUNTIME_BUILDER';blocking:true;
   reason:string;usageContract:string;targetCapability:string|null;testAvailability:'UNCHECKED';
   consumerTools:string[];evidence:InspectionEvidence[]};

@@ -5,12 +5,12 @@ import type { MigrationOptimizationPort } from './migration-optimization-port.js
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
-import type { MigrationTargetGateway } from './migration-target-gateway.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
 import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
-import { configurationDigest } from '../domain/migration-runtime-configuration.js';
+import { executionConfigurationDigest as configurationDigest } from '../../execution-configuration/execution-configuration.js';
+import { migrationWorkflow } from '../domain/migration-workflow.js';
 
 /** Builds the read model consumed by migration reporting, export and target validation views. */
 export class MigrationReportService {
@@ -22,7 +22,6 @@ export class MigrationReportService {
     private readonly diagnostics?:MigrationDiagnosisPort,
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
-    private readonly targets?:MigrationTargetGateway,
   ) {}
 
   async report(id:string) {
@@ -30,8 +29,6 @@ export class MigrationReportService {
     const runtimeInspection=value.sourceInspection??value.inspection;
     const runtimeRequirements=runtimeInspection?runtimeBuildRequirements(runtimeInspection):null;
     const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
-    const targetRuns=await Promise.all((value.targetRuns??[]).map(runId=>this.targets!.get(runId)));
-    const current=targetRuns.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1);
     const currentAsset=value.candidate??value.source;
     const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
     const technicalValidations=(value.technicalValidations??[]).map(result=>({...result,current:result.assetDigest===currentAsset.artifactSha256&&(!result.runtimeConfigurationDigest||result.runtimeConfigurationDigest===runtimeDigest)}));
@@ -64,13 +61,16 @@ export class MigrationReportService {
         status:experiment.execution==='completed'?experiment.acceptance.status:experiment.execution==='failed'?'FAILED':['queued','preparing','running','judging'].includes(experiment.execution)?'RUNNING':'NOT_VALIDATED'};
     }))).filter(item=>item!==null);
     const currentOpenJiuwen=openJiuwenValidations.filter(item=>item.current).at(-1);
-    const targetExecution=value.schemaVersion==='finance.skill-migration.v2'?(currentOpenJiuwen?.status??'NOT_RUN'):(current?.status??'NOT_RUN');
+    const targetExecution=currentOpenJiuwen?.status??'NOT_RUN';
     const originalBaseline=experiments.filter(r=>r.pair==='SC'&&r.current).at(-1);
-    return {project:value,diagnosis,inspection:value.inspection??null,decisions:value.decisions??[],migrationPlan,runtimeRequirements,portableGenerationDiff:value.portableGenerationDiff??[],technicalValidations,openJiuwenValidations,targetRuns,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:originalBaseline?.evidence==='SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'?'CAPTURED':originalBaseline?'NOT_COMPLETE':'NOT_RUN',targetExecution,
-      candidateChanged:!!value.generation&&value.generation.candidateDigest!==value.candidate?.artifactSha256,
+    const technicalReady=!!value.candidate&&!runtimeRequirements&&(value.inspection?.tools??[]).every(tool=>technicalValidations.some(result=>result.current&&result.toolId===tool.toolId&&result.status==='PASSED'));
+    const evaluationCompleted=experiments.some(experiment=>experiment.current&&!['queued','preparing','running','judging','MISSING'].includes(experiment.execution));
+    const workflow=migrationWorkflow(value,{migrationPlan,runtimeBuilderRequired:!!runtimeRequirements,technicalReady,evaluationCompleted});
+    return {project:value,workflow,diagnosis,inspection:value.inspection??null,decisions:value.decisions??[],migrationPlan,runtimeRequirements,portableGenerationDiff:value.portableGenerationDiff??[],technicalValidations,openJiuwenValidations,professionalReview:value.reviews?.filter(r=>r.candidateDigest===value.candidate?.artifactSha256).at(-1)??null,verification:{originalBaseline:originalBaseline?.evidence==='SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'?'CAPTURED':originalBaseline?'NOT_COMPLETE':'NOT_RUN',targetExecution,
+      candidateChanged:false,
       originalOwner:'原工程负责人',targetOwner:'Harness / Host 接入开发者',
       missingSource:diagnosis?.findings.filter(f=>f.layer==='UNKNOWN').map(f=>({path:f.path,line:f.line,reason:f.reason}))??[],
-      targetGaps:value.simulationProfile?['本目标只验证方法在模拟业务端口上的执行，不证明原环境等价或专业结论正确。','原工程、原环境对照与业务口径仍待负责人确认。']:[targetExecution==='PASSED'?'当前候选通过自动验收，但原环境对照与人类专业签署尚未完成':'当前候选尚未通过完整业务验收，请查看工具调用证据、必备规则和质量评分',
+      targetGaps:[targetExecution==='PASSED'?'当前候选通过自动验收，但原环境对照与人类专业签署尚未完成':'当前候选尚未通过完整业务验收，请查看工具调用证据、必备规则和质量评分',
         '需冻结等价测试数据与可信身份范围；配置声明不等于授权已核验']},
       suites:await Promise.all((value.suiteIds??[]).map(suiteId=>this.preparations?.get(suiteId)??null)),
       optimizations:await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)}))),

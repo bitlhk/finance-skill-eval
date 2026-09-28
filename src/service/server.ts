@@ -7,7 +7,7 @@ import { analyzeSkillAndGenerateCases } from "../analyzer.js";
 import { FINANCE_SKILL_EVAL_VERSION } from "../index.js";
 import { renderHtmlReport, type EvaluationReport } from "../report.js";
 import { EvalPackCatalog } from "./catalog.js";
-import { configuredModelRole, loadServiceConfig, type ConfiguredModelRole, type ServiceConfig } from "./config.js";
+import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./config.js";
 import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { registerMigrationRoutes } from "../interfaces/http/migration-routes.js";
@@ -23,7 +23,6 @@ import { MigrationDiagnostics } from '../migration/infrastructure/migration-diag
 import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
 import { runConfigurationSchema } from "./contracts.js";
-import { MigrationCodeGenerator } from '../migration/infrastructure/migration-code-generator.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -63,9 +62,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationModel?:()=>ConfiguredModelRole;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator} = {},
+  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator} = {},
 ): Promise<FastifyInstance> {
-  const {migrationModel,migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
+  const {migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
@@ -98,8 +97,8 @@ export async function createEvaluationService(
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  const migrations:MigrationStore = new MigrationStore(config.dataDirectory,skills,manager,jobs,catalog,preparations,optimizations,diagnostics,environments,
-    new MigrationCodeGenerator(migrationModel??(()=>configuredModelRole('MIGRATION'))),migrationAnalyzer,migrationImplementer,migrationSuite);
+  const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
+    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
   registerMigrationRoutes(app, {
     migrations,
     skills,

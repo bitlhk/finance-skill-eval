@@ -6,14 +6,14 @@ import {createServer} from 'node:http';
 import {zipSync,strToU8} from 'fflate';
 import {createEvaluationService} from '../src/service/server.js';
 import {analyzeDependencies,dependencyId} from '../src/migration/infrastructure/migration-dependencies.js';
-import {runtimeInjection,probeBusinessInterface,migrationExecutionConfig} from '../src/migration/infrastructure/migration-runtime-config.js';
+import {runtimeInjection,migrationExecutionConfig} from '../src/migration/domain/migration-runtime-rules.js';
+import {probeBusinessInterface} from '../src/migration/infrastructure/migration-business-connection-probe.js';
 import {supplementFiles} from '../src/migration/infrastructure/migration-supplements.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {SKILL_MD,analyzedTool,inspectionFixture,toolFixture,implementationFixture} from './analysis-fixture.js';
 import type {MigrationAnalyzer} from '../src/migration/application/migration-agent-port.js';
-import {TechnicalValidationService} from '../src/migration/infrastructure/migration-technical-validator.js';
+import {LocalMigrationValidationRunner} from '../src/migration/infrastructure/migration-technical-validator.js';
 import {MigrationStore} from '../src/migration/migration-store.js';
-import {MigrationRuntimeConfig,configurationDigest} from '../src/migration/infrastructure/migration-runtime-config.js';
 
 const SOURCE='const user = runtime.user;\n/** @type {string} */ const token = auth_sdk.getToken(user);\nreturn business_client.query(account_id, {Authorization: token});\n';
 export function diagnosisPayload(includeCode=false,codePath?:string){
@@ -106,6 +106,6 @@ it('rejects generation of Script with required runtime injection',async()=>{
 it('injects MCP credentials independently for each real Tool call without placing them in arguments',async()=>{
  const received:string[]=[];const business=createServer((req,res)=>{received.push(String(req.headers.authorization));res.writeHead(200,{'content-type':'application/json'}).end('{"balance":100}')});await new Promise<void>(r=>business.listen(0,'127.0.0.1',r));const port=(business.address() as {port:number}).port;
  const code=`import http from 'node:http';const server=http.createServer(async(req,res)=>{let text='';for await(const c of req)text+=c;const message=JSON.parse(text||'{}');if(!message.id){res.writeHead(202).end();return}let result={};if(message.method==='initialize')result={protocolVersion:'2025-06-18',serverInfo:{name:'fixture',version:'1'}};if(message.method==='tools/list')result={tools:[{name:'lookup',inputSchema:{type:'object',properties:{account_id:{type:'string'}}}}]};if(message.method==='tools/call'){if(Object.keys(message.params.arguments).join()!=='account_id'){res.writeHead(500).end();return}const response=await fetch('http://127.0.0.1:${port}/balance',{headers:{Authorization:req.headers.authorization}});result={content:[{type:'text',text:JSON.stringify(await response.json())}]}}res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:message.id,result}))});server.listen(Number(process.env.PORT),'127.0.0.1');`;
- const service=new TechnicalValidationService(),tool=toolFixture({name:'lookup',sourcePaths:['mcp/server.mjs'],kind:'MCP',portability:'PORTABLE_MCP'});
+ const service=new LocalMigrationValidationRunner(),tool=toolFixture({name:'lookup',sourcePaths:['mcp/server.mjs'],kind:'MCP',portability:'PORTABLE_MCP'});
  try{for(const credential of ['Bearer first-call','Bearer second-call']){const result=await service.validateMcp({asset:{assetId:'fixture',artifactSha256:'a'.repeat(64)} as any,tool,archive:{'mcp/server.mjs':strToU8(code)},service:{start:['node','mcp/server.mjs']},arguments:{account_id:'A1'},headers:{Authorization:credential}});expect(result.status,JSON.stringify(result)).toBe('PASSED');expect(JSON.stringify(result)).not.toContain(credential)}expect(received).toEqual(['Bearer first-call','Bearer second-call'])}finally{await new Promise<void>(r=>business.close(()=>r()))}
 });

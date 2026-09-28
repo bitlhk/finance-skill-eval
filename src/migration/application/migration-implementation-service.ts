@@ -3,13 +3,11 @@ import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../domain/
 import {recommendLanguage,type MigrationPlan,type ProjectInspection,type ToolDecision} from '../domain/migration-model.js';
 import type {MigrationAgentResultMapper} from './migration-agent-result-mapper.js';
 import type {MigrationImplementer} from './migration-agent-port.js';
-import type {MigrationCodeGeneratorPort} from './migration-code-generator-port.js';
 import {migrationConflict as conflict} from './migration-errors.js';
 
 export class MigrationImplementationService {
   constructor(
     private readonly implementer:MigrationImplementer,
-    private readonly codeGenerator:MigrationCodeGeneratorPort,
     private readonly agentResults:MigrationAgentResultMapper,
   ) {}
 
@@ -69,6 +67,6 @@ export class MigrationImplementationService {
       }
     }
     if(agentFailure)return conflict(`迁移 agent 跑完了但没交付可用结果：${agentFailure}。这是执行问题不是工程问题——不会退回只能产出脚本的回退生成器。请重试或查看 agent 日志。`);
-    return {implementations:await this.codeGenerator.generate({archive,inspection,decisions})};
+    return conflict('迁移 agent 未返回任何结果。请重试或查看 agent 日志；平台不会切换到另一套代码生成路径。');
   }
 }

@@ -1,7 +1,7 @@
 import { createHash,randomUUID } from 'node:crypto';
 import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import type { TechnicalValidation,ToolInspection } from '../domain/migration-model.js';
-import type { MigrationTechnicalValidator } from '../application/migration-technical-validator.js';
+import type { MigrationValidationRunner } from '../application/migration-technical-validator.js';
 import type { MigrationCommandResolver } from '../application/migration-command-resolver.js';
 import { LocalWorker,type LocalWorkerWorkspace } from '../../service/local-worker.js';
 import { startService,type Launchable } from '../../service/service-launch.js';
@@ -46,7 +46,8 @@ export class LocalMigrationCommandResolver implements MigrationCommandResolver {
   }
 }
 
-export class TechnicalValidationService implements MigrationTechnicalValidator{
+/** Local/private-workspace adapter. Deployments can replace it with an isolated remote runner. */
+export class LocalMigrationValidationRunner implements MigrationValidationRunner{
   constructor(private worker=new LocalWorker(),private commands:MigrationCommandResolver=new LocalMigrationCommandResolver()){}
   async validateScript(input:{asset:SkillAssetRecord;archive:Record<string,Uint8Array>;tool:ToolInspection;request?:unknown;context?:Record<string,unknown>;signal?:AbortSignal}):Promise<TechnicalValidation>{
     const startedAt=new Date().toISOString(),validationId='technical-'+randomUUID(),entry=input.tool.entrypoint;

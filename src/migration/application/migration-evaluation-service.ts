@@ -4,7 +4,7 @@ import { originalServiceFingerprint } from '../../original-service-runtime.js';
 import type { MigrationEvalPackCatalog } from './migration-eval-pack-catalog.js';
 import { runConfigurationSchema } from '../../shared/contracts/run-configuration.js';
 import type { MigrationEvaluationRunner } from './migration-evaluation-ports.js';
-import { configurationDigest } from '../domain/migration-runtime-configuration.js';
+import { executionConfigurationDigest as configurationDigest } from '../../execution-configuration/execution-configuration.js';
 import type { MigrationEvaluationModels } from './migration-evaluation-models.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationPreparationPackFactory } from './migration-preparation-pack-factory.js';

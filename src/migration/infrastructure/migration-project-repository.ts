@@ -28,17 +28,24 @@ export class MigrationProjectRepository implements MigrationProjectStore {
   }
 
   async list(): Promise<MigrationProject[]> {
-    return Promise.all((await listJsonFiles(this.directory)).map(async file => {
-      const project = parseMigrationProject(await readJson<unknown>(file));
+    const projects = await Promise.all((await listJsonFiles(this.directory)).map(async file => {
+      const raw = await readJson<unknown>(file);
+      if ((raw as { schemaVersion?: string })?.schemaVersion !== "finance.skill-migration.v2") return null;
+      const project = parseMigrationProject(raw);
       if (path.basename(file, ".json") !== project.id) {
         throw new Error(`迁移记录文件名与记录 ID 不一致: ${path.basename(file)}`);
       }
       return project;
     }));
+    return projects.filter((project): project is MigrationProject => project !== null);
   }
 
   async get(id: string): Promise<MigrationProject> {
-    const project = parseMigrationProject(await readJson<unknown>(this.file(id)));
+    const raw = await readJson<unknown>(this.file(id));
+    if ((raw as { schemaVersion?: string })?.schemaVersion !== "finance.skill-migration.v2") {
+      throw Object.assign(new Error("旧版迁移记录已停用，请用原 Skill 新建迁移"), { statusCode: 410 });
+    }
+    const project = parseMigrationProject(raw);
     if (project.id !== id) throw new Error(`迁移记录 ID 与请求不一致: ${id}`);
     return project;
   }

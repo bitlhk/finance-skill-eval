@@ -18,7 +18,7 @@ it('checks pair bindings before scheduling and retains declared conditions and s
     const catalog=new EvalPackCatalog(path.resolve('.'));await catalog.initialize();
     const create=vi.fn(async()=>({jobId:'synthetic-job'}));
     const jobs={get:()=>({status:'queued'})} as unknown as EvaluationJobStore;
-    const migrations=new MigrationStore(dir,skills,{create} as unknown as EvaluationRunManager,jobs,catalog);
+    const migrations=new MigrationStore(dir,{skills,runs:{create} as unknown as EvaluationRunManager,jobs,catalog});
     const project=await migrations.create({name:'Synthetic',sourceAssetId:a.assetId});
     await migrations.candidate(project.id,{assetId:b.assetId,notes:'Synthetic method change'});
     const variant=(item:typeof a)=>({mode:'skill_version',skillId:item.skillId,version:item.version,artifactSha256:item.artifactSha256});

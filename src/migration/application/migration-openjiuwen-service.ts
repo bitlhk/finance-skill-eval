@@ -4,7 +4,7 @@ import {
   migrationExecutionConfig,
   serviceEnvironment,
 } from '../domain/migration-runtime-rules.js';
-import { configurationDigest } from '../domain/migration-runtime-configuration.js';
+import { executionConfigurationDigest as configurationDigest } from '../../execution-configuration/execution-configuration.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationEvaluationService } from './migration-evaluation-service.js';
@@ -62,7 +62,7 @@ export class MigrationOpenJiuwenService {
       if(serviceDeps.length)service.environmentReference={migrationId:id,revision:config.revision,assetDigest:asset.artifactSha256,configurationDigest:configurationDigest(config,deps)};
     }
     const comparison=(body.configuration as Record<string,unknown>).evaluationMode==='service_comparison';
-    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime Harness 改造需求；自动 Runtime Builder 功能开发中，当前版本暂不能执行对比评测');
+    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime 能力缺口；请先由外部 Runtime Builder 构建并接入支持该能力的 Runtime，再执行对比评测');
     const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},...(deps.some(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
     return this.evaluation.validate(id,normalized);
   }

@@ -14,7 +14,8 @@ export * from "./replay.js";
 export * from "./report.js";
 export * from "./runner.js";
 export * from "./runtime-launcher.js";
-export * from "./migration/application/migration-runtime-builder.js";
+export * from "./execution-configuration/execution-configuration.js";
+export * from "./execution-configuration/file-execution-configuration-repository.js";
 export * from "./mcp-preflight.js";
 
 export const FINANCE_SKILL_EVAL_VERSION = "0.5.1";

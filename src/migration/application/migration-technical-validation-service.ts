@@ -5,13 +5,13 @@ import {
   runtimeInjection,
   serviceEnvironment,
 } from "../domain/migration-runtime-rules.js";
-import { configurationDigest } from '../domain/migration-runtime-configuration.js';
+import { executionConfigurationDigest as configurationDigest } from '../../execution-configuration/execution-configuration.js';
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import type { MigrationProject } from "../domain/migration-project.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
-import type { MigrationTechnicalValidator } from './migration-technical-validator.js';
+import type { MigrationValidationRunner } from './migration-technical-validator.js';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -61,7 +61,7 @@ export class MigrationTechnicalValidationWorkflow {
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly runtimeConfigs:MigrationRuntimeConfigurationRepository,
-    private readonly validator:MigrationTechnicalValidator,
+    private readonly runner:MigrationValidationRunner,
   ) {}
 
   async validate(id: string, input: unknown, signal?: AbortSignal) {
@@ -79,7 +79,7 @@ export class MigrationTechnicalValidationWorkflow {
       const inspection = project.inspection;
       if (!inspection) return conflict("请先完成 Tool 检查");
       if (runtimeBuildRequirements(project.sourceInspection ?? inspection)) {
-        return conflict("检测到 Runtime Harness 改造需求；自动 Runtime Builder 功能开发中，当前版本暂不能验证此迁移");
+        return conflict("检测到 Runtime 能力缺口；请将能力需求 YAML 交给外部 Runtime Builder。本服务不负责构建 Runtime，接入支持该能力的 Runtime 后才能继续验证");
       }
       const tool = inspection.tools.find(item => item.toolId === parsed.toolId);
       if (!tool) return conflict("当前检查结果中不存在这个 Tool");
@@ -105,7 +105,7 @@ export class MigrationTechnicalValidationWorkflow {
       if (injection.missing.length) return conflict(`工具试运行缺少测试配置：${injection.missing.join("、")}`);
       const migrated = Boolean(generated?.start?.length) || Boolean(generated && tool.kind === "MCP");
       const result = tool.kind === "MCP"
-        ? await this.validator.validateMcp({
+        ? await this.runner.validateMcp({
           asset,
           tool,
           archive,
@@ -115,7 +115,7 @@ export class MigrationTechnicalValidationWorkflow {
           signal,
           ...(migrated ? { service: { start: generated?.start, prepare: generated?.prepare } } : { endpoint: parsed.endpoint ?? "" }),
         })
-        : await this.validator.validateScript({ asset, archive, tool, request: testInput.value, context: injection.context, signal });
+        : await this.runner.validateScript({ asset, archive, tool, request: testInput.value, context: injection.context, signal });
       result.inputSource = testInput.source;
       result.inputFields = testInput.fields;
       if (runtimeDependencies.length) {
@@ -124,7 +124,7 @@ export class MigrationTechnicalValidationWorkflow {
           result.error = result.status === "PASSED" ? null : "工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。";
           result.stages = result.stages.map(stage => stage.passed ? stage : { ...stage, message: "此步骤未通过，原始错误未保存以保护运行依赖。" });
         }
-        await this.runtimeConfigs.check(id, {
+        await this.runtimeConfigs.appendCheck(id, {
           toolId: tool.toolId,
           kind: project.candidate ? "GENERATED_TOOL" : "SOURCE_TOOL",
           status: result.status,
