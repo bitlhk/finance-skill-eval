@@ -123,11 +123,9 @@ export type Catalog = {
   uploadedSkills: SkillAsset[];
   preparations: Preparation[];
   environments: Environment[];
-  migrationRuntimes: MigrationRuntime[];
   executionRuntimes: MigrationRuntime[];
-  models: ModelRef[];
   runtimes: Array<{
-    id: "replay" | "direct_model" | "runtime_http" | "runtime_launcher";
+    id: "replay" | "direct_model" | "runtime_launcher";
     label: string;
     status: "ready" | "configuration_required";
     realExecution: boolean;

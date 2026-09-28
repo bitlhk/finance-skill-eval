@@ -4,13 +4,12 @@ import { evalCaseSchema, fingerprint } from "../contracts.js";
 import type { RuntimeAdapter } from "../adapters.js";
 import type { EvalPack } from "../contracts.js";
 import { DirectModelRuntimeAdapter } from "../direct-model-runtime.js";
-import { HttpRuntimeAdapter, type RuntimeEnvironmentDescriptor } from "../http-runtime.js";
+import type { RuntimeEnvironmentDescriptor } from "../http-runtime.js";
 import { DeterministicRubricJudge, ModelCandidateJudge, ModelPairwiseJudge, type PairwiseJudge } from "../judge.js";
 import { ReplayRuntimeAdapter } from "../replay.js";
 import { SideRuntimeAdapter } from '../side-runtime.js';
 import { EvaluationCancelledError, runEvaluation } from "../runner.js";
 import { configuredModelRole } from "./config.js";
-import { defaultOnlineExecutionModel } from "./execution-models.js";
 import { runConfigurationSchema, type EnvironmentRecord, type RunConfiguration } from "./contracts.js";
 import type { EvalPackCatalog } from "./catalog.js";
 import type { EnvironmentStore } from "./environment-store.js";
@@ -18,7 +17,7 @@ import { EvaluationJobStore, type EvaluationJob, type FrozenQuestionSet } from "
 import { generateRunQuestions } from "./run-questions.js";
 import type { PreparationStore } from "./preparation-store.js";
 import type { SkillStore } from "./skill-store.js";
-import { canonicalNeutralArchive, nativeTransportAllowed } from './neutral-archive.js';
+import { canonicalNeutralArchive } from './neutral-archive.js';
 import { CandidateAssessmentRuntimeAdapter } from '../candidate-assessment-runtime.js';
 import {ModelGoalJudge} from '../goal-judge.js';
 import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
@@ -176,8 +175,7 @@ export class EvaluationRunManager {
       selected.push(...holdout.map(item => evalCaseSchema.parse(item)));
     }
     const executionModel = configuration.executionModel
-      ?? (configuration.runtime.type === "runtime_http" ? await defaultOnlineExecutionModel()
-        : configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
+      ?? (configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
     return {
       ...pack,
       cases: selected,
@@ -302,27 +300,7 @@ export class EvaluationRunManager {
       });
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
-    const environment = await this.options.environments.get(configuration.runtime.environmentId);
-    if (!environment || environment.type !== "runtime_http") {
-      throw new Error("所选的 Agent Runtime HTTP 环境不可用");
-    }
-    const descriptor = await this.environmentDescriptor(
-      environment,
-      [...new Set(pack.cases.flatMap(evalCase => evalCase.requiredTools))],
-      [],[],false,configuration.runtimeHarnessTools,
-    );
-    if(configuration.runtimeToolConfig){
-      if(!nativeTransportAllowed(environment.endpoint))throw new Error('执行上下文仅可发送至受信任的 Runtime');
-      descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
-    }
-    return new HttpRuntimeAdapter({
-      adapterId: `http-runtime:${environment.environmentId}`,
-      endpoint: environment.endpoint,
-      headers: this.options.environments.headers(environment),
-      environment: descriptor,
-      resolveSkill,
-      timeoutMs: configuration.timeoutMs,
-    });
+    throw new Error(`Unsupported runtime type: ${configuration.runtime satisfies never}`);
   }
 
   private async environmentDescriptor(

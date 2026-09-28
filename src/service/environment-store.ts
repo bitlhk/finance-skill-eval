@@ -28,6 +28,10 @@ export class EnvironmentStore {
 
   async initialize(): Promise<void> {
     await ensureDirectory(this.directory);
+    for(const file of await listJsonFiles(this.directory)){
+      const value=await readJson<{type?:unknown}>(file);
+      if(value.type==='runtime_http')await unlink(file);
+    }
   }
 
   async list(): Promise<EnvironmentRecord[]> {
@@ -53,12 +57,11 @@ export class EnvironmentStore {
   async create(input: unknown): Promise<EnvironmentRecord> {
     return this.writes.run("registry", async () => {
     const parsed = createEnvironmentSchema.parse(input);
-    if(parsed.type==='runtime_http')await this.validateBindings(parsed.mcpEnvironmentIds);
     if(parsed.type==='execution_environment')await this.validateExecutionEnvironment(parsed.launcherEnvironmentId,parsed.mcpEnvironmentIds);
     const now = new Date().toISOString();
     const record = environmentRecordSchema.parse({
       ...parsed,
-      runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:parsed.type === "runtime_http"?parsed.runtimeType ?? "generic_http":null,
+      runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:null,
       ...('credentialEnv' in parsed?{credentialEnv:parsed.credentialEnv??null}:{}),
       ...(parsed.type==='execution_environment'?{defaultModelId:parsed.defaultModelId??null}:{}),
       environmentId: `env-${randomUUID().slice(0, 12)}`,
@@ -101,11 +104,10 @@ export class EnvironmentStore {
       if (parsed.type !== previous.type) {
         throw Object.assign(new Error("Resource type cannot change; create a new environment instead"), { statusCode: 409 });
       }
-      if(parsed.type==='runtime_http')await this.validateBindings(parsed.mcpEnvironmentIds);
       if(parsed.type==='execution_environment')await this.validateExecutionEnvironment(parsed.launcherEnvironmentId,parsed.mcpEnvironmentIds);
       const record = environmentRecordSchema.parse({
         ...previous, ...parsed,
-        runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:parsed.type === "runtime_http"?parsed.runtimeType ?? "generic_http":null,
+        runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:null,
         ...('credentialEnv' in parsed?{credentialEnv:parsed.credentialEnv??null}:{}),
         ...(parsed.type==='execution_environment'?{defaultModelId:parsed.defaultModelId??null}:{}),
         updatedAt: new Date().toISOString(),
@@ -156,39 +158,7 @@ export class EnvironmentStore {
     if (record.type === "mcp_streamable_http") {
       return preflightMcpServer({ endpoint: record.endpoint, headers: headersFor(record) });
     }
-    const startedAt = Date.now();
-    try {
-      const url = new URL(record.endpoint);
-      url.pathname = url.pathname.replace(/\/execute\/?$/, "/health");
-      const response = await fetch(url, {
-        headers: headersFor(record),
-        signal: AbortSignal.timeout(10_000),
-        redirect: "error",
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (record.runtimeType === "openjiuwen") {
-        const health = await response.json() as { mcpEndpoints?: unknown; status?: string };
-        if (health.status && health.status !== "ready") throw new Error("Runtime is not ready");
-        if (record.mcpEnvironmentIds.length) {
-          if (!Array.isArray(health.mcpEndpoints) || !health.mcpEndpoints.every(item => typeof item === "string")) {
-            throw new Error("Runtime 未声明 MCP 接入能力，无法确认绑定可执行；请升级 Runtime 的 /health 接口。");
-          }
-          for (const id of record.mcpEnvironmentIds) {
-            const mcp = await this.get(id);
-            if (!mcp || mcp.type!=='mcp_streamable_http' || !health.mcpEndpoints.includes(mcp.endpoint)) {
-              throw new Error(`Runtime 尚未接受 MCP「${mcp?.name ?? id}」；服务连通不代表 Runtime 已装配，请检查 Runtime 配置。`);
-            }
-          }
-        }
-      }
-      return { status: "ready", elapsedMs: Date.now() - startedAt, error: null };
-    } catch (error) {
-      return {
-        status: "failed",
-        elapsedMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    throw new Error(`Unsupported environment type: ${record satisfies never}`);
   }
 
   async inspect(record: EnvironmentRecord): Promise<{

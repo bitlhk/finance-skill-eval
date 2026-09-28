@@ -54,9 +54,7 @@ describe("standalone evaluation service", () => {
           evaluationStatus: "environment_required",
         }),
       ]));
-      expect(catalog.json().models).toEqual(expect.arrayContaining([
-        expect.objectContaining({ modelId: "enterprise-model", availability: "ready" }),
-      ]));
+      expect(catalog.json()).not.toHaveProperty('models');
 
       const mcpEnvironment = await app.inject({
         method: "POST",
@@ -69,20 +67,24 @@ describe("standalone evaluation service", () => {
         },
       });
       expect(mcpEnvironment.statusCode).toBe(200);
-      const runtimeEnvironment = await app.inject({
+      const launcherEnvironment = await app.inject({
         method: "POST",
         url: "/api/environments",
         payload: {
           name: "OpenJiuwen Eval Runtime",
-          type: "runtime_http",
+          type: "runtime_launcher",
           runtimeType: "openjiuwen",
-          endpoint: "https://runtime.example/eval/execute",
-          mcpEnvironmentIds: [mcpEnvironment.json().environmentId],
+          baseUrl: "https://runtime.example/",
         },
       });
+      expect(launcherEnvironment.statusCode).toBe(200);
+      const runtimeEnvironment = await app.inject({method:'POST',url:'/api/environments',payload:{
+        name:'OpenJiuwen 完整评测环境',type:'execution_environment',launcherEnvironmentId:launcherEnvironment.json().environmentId,
+        mcpEnvironmentIds:[mcpEnvironment.json().environmentId],defaultModelId:'enterprise-model',
+      }});
       expect(runtimeEnvironment.statusCode).toBe(200);
       expect(runtimeEnvironment.json()).toMatchObject({
-        runtimeType: "openjiuwen",
+        launcherEnvironmentId:launcherEnvironment.json().environmentId,
         mcpEnvironmentIds: [mcpEnvironment.json().environmentId],
       });
 

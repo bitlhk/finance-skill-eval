@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
 import { configurationDigest } from '../domain/migration-runtime-configuration.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
@@ -20,20 +20,6 @@ export class MigrationOptimizationService {
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
   ) {}
 
-  private async migrationEnvironment(environmentId:string) {
-    return await this.environments?.get(environmentId)??null;
-  }
-
-  private async launcherFor(environmentId:string) {
-    const selected=await this.migrationEnvironment(environmentId);
-    if(selected?.type==='runtime_launcher')return selected;
-    if(selected?.type==='execution_environment'){
-      const launcher=await this.migrationEnvironment(selected.launcherEnvironmentId);
-      return launcher?.type==='runtime_launcher'?launcher:null;
-    }
-    return null;
-  }
-
   async optimize(id:string,input:unknown) {
     return this.projects.runExclusive(id,async()=>{
       const parsed=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.projects.get(id);
@@ -46,7 +32,7 @@ export class MigrationOptimizationService {
         if(!technical.ready)return conflict(`请先完成当前 Tool 技术验证：${technical.reasons.join('；')}`);
         const selectedRuntime=experiment.declaredPlan?.configuration.runtime;
         const environmentId=selectedRuntime?.type==='runtime_launcher'?selectedRuntime.environmentId:null;
-        const environment=environmentId?await this.launcherFor(environmentId):null;
+        const environment=environmentId?(await resolveMigrationEnvironment(this.environments,environmentId))?.launcher:null;
         if(!environment||environment.runtimeType!=='openjiuwen')return conflict('请先完成当前候选的本地 OpenJiuwen 评估');
       }
       if(value.sourceInspection?.dependencyAnalysis?.dependencies.some(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT')

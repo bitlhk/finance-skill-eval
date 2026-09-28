@@ -19,7 +19,7 @@
 
 ## 第二批：Issue #5 启动协议
 
-Skill 迁移统一使用 `runtime_launcher`：测试环境只登记 Launcher Base URL 及访问凭据引用，通过 `/v1/runtime-capabilities` 发现模型和能力。迁移页面不再展示固定 `/execute` Runtime，也不再从本地配置文件投影兼容入口。MCP 从静态环境绑定迁移到每次任务的配置快照；左右两侧分别创建实例，逐题无历史执行，最后删除，Runtime 提供 TTL 兜底。已有 `runtime_http` 记录仍可读取，普通评测入口也暂时保留，但不能用于新建 Skill 迁移验证或优化。
+Skill 迁移与普通评测统一使用 `runtime_launcher`：测试环境登记 Launcher Base URL 及访问凭据引用，通过 `/v1/runtime-capabilities` 发现模型和能力；执行环境负责绑定 Launcher、MCP 与默认模型。固定 `/execute` Runtime、独立执行模型清单以及 `runtime_http` 兼容入口均已删除。左右两侧分别创建实例，逐题无历史执行，最后删除，Runtime 提供 TTL 兜底。
 
 当前协议支持同步或异步启动状态、幂等创建、取消/失败回收、同源 URL 检查、完整 zip 资产传输、受限候选 MCP 包启动及 SSE 执行证据。远程 Launcher 必须使用 HTTPS；本机回环地址允许 HTTP。OpenJiuwen 参考实现不接受外部 MCP URL，只启动本次 Skill 包内经过绑定的候选 MCP。
 
@@ -32,7 +32,7 @@ Skill 迁移统一使用 `runtime_launcher`：测试环境只登记 Launcher Bas
 3. 迁移 use case、评测工厂/执行器及其他 HTTP 路由拆分。
 4. 统一其余前端 DTO/client、Python 生命周期及 TS/Python 契约验证。
 
-普通评测仍可能使用的 `runtime_http` 不属于本批删除范围。两个 Issue 保持打开，不以本批 PR 自动关闭。
+普通评测和 Skill 迁移现已共享同一套 Launcher 与执行环境模型。两个 Issue 保持打开，不以本批 PR 自动关闭。
 
 ## 验证
 

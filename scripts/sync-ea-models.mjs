@@ -42,12 +42,8 @@ if (!process.argv.includes('--apply')) {
     provider: m.model_provider, credentialConfigured: Boolean(m.api_key) })) }));
   process.exit(0);
 }
-const runtimeFile = path.resolve('.runtime.local.json'), catalogFile = path.resolve('.models.local.json');
+const runtimeFile = path.resolve('.runtime.local.json');
 const original = await readFile(runtimeFile, 'utf8'), config = JSON.parse(original);
-const previousCatalog = await readFile(catalogFile, 'utf8').then(JSON.parse).catch(error => {
-  if (error.code === 'ENOENT') return null;
-  throw error;
-});
 const models = {}, catalog = [];
 for (const entry of entries) {
   const id = entry.alias || entry.model_name;
@@ -63,14 +59,11 @@ for (const entry of entries) {
   catalog.push({ providerId: 'service-execution', modelId: id, label: entry.alias || entry.model_name,
     providerLabel, parameters: {}, availability: 'unverified', statusNote: '已同步配置，待在线工具验证' });
 }
-const defaultModelId = previousCatalog?.defaultModelId ?? (entries[0].alias || entries[0].model_name);
+const defaultModelId = config.defaultModelId ?? (entries[0].alias || entries[0].model_name);
 if (!models[defaultModelId]) throw new Error(`Retained default model is missing from this import: ${defaultModelId}`);
 await mkdir('data/model-imports', { recursive: true });
 await writeFile(`data/model-imports/runtime-${Date.now()}.json`, original, { mode: 0o600 });
-for (const [file, value] of [[runtimeFile, { ...config, defaultModelId, models }], [catalogFile, { schemaVersion: 'finance.skill-eval.execution-models.v1',
-  importedAt: new Date().toISOString(), source: 'EA loopback models.list', defaultModelId, models: catalog }]]) {
-  await writeFile(`${file}.tmp`, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
-  await chmod(`${file}.tmp`, 0o600);
-  await rename(`${file}.tmp`, file);
-}
+await writeFile(`${runtimeFile}.tmp`, JSON.stringify({ ...config, defaultModelId, models }, null, 2) + '\n', { mode: 0o600 });
+await chmod(`${runtimeFile}.tmp`, 0o600);
+await rename(`${runtimeFile}.tmp`, runtimeFile);
 console.log(JSON.stringify({ imported: catalog.length, models: catalog.map(m => m.modelId), credentials: 'server-side only' }));

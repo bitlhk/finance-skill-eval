@@ -56,17 +56,17 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}
   const inspection=report?.inspection??project?.inspection??null,currentAsset=project?.candidate??project?.source;
   const diagnosisInspection=project?.sourceInspection??inspection;
   const currentValidations=useMemo(()=>report?.technicalValidations.filter(v=>v.current!==false&&v.assetDigest===currentAsset?.artifactSha256)??[],[report,currentAsset]);
-  const selectedRuntime=catalog.migrationRuntimes.find(runtime=>runtime.runtimeId===runtimeId)??null;
+  const selectedRuntime=catalog.executionRuntimes.find(runtime=>runtime.runtimeId===runtimeId)??null;
   const validationRunning=report?.experiments.some(item=>['queued','preparing','running','judging'].includes(item.execution))??false;
 
   useEffect(()=>{void api<Project[]>('/api/migrations').then(setProjects).catch(e=>setError(String(e)));if(refreshKey)setListView(true);},[api,refreshKey]);
   useEffect(()=>{if(!uploadedAsset)return;void run(async()=>{const p=await post<Project>('',{sourceAssetId:uploadedAsset.assetId,name:`${uploadedAsset.displayName} 迁移`});select(p);setListView(false);await inspectProject(p);});},[uploadedAsset]);
   useEffect(()=>{if(project)void loadReport(project);},[project?.id]);
   useEffect(()=>{if(!project||!validationRunning)return;const timer=window.setInterval(()=>void loadReport(project).catch(error=>setError(error instanceof Error?error.message:String(error))),2000);return()=>window.clearInterval(timer);},[project?.id,validationRunning]);
-  useEffect(()=>{const runtime=catalog.migrationRuntimes.find(item=>item.runtimeId===runtimeId)??catalog.migrationRuntimes[0]??null;
+  useEffect(()=>{const runtime=catalog.executionRuntimes.find(item=>item.runtimeId===runtimeId)??catalog.executionRuntimes[0]??null;
     if(runtime&&runtime.runtimeId!==runtimeId){setRuntimeId(runtime.runtimeId);return}if(!runtime){if(runtimeId)setRuntimeId('');if(modelKey)setModelKey('');return}
     const current=runtime.models.find(model=>model.modelId===modelKey),preferred=runtime.models.find(model=>model.modelId===runtime.defaultModelId)??runtime.models[0];
-    if(!current)setModelKey(preferred?.modelId??'');},[catalog.migrationRuntimes,runtimeId,modelKey]);
+    if(!current)setModelKey(preferred?.modelId??'');},[catalog.executionRuntimes,runtimeId,modelKey]);
 
   async function run(fn:()=>Promise<void>){if(busy)return;setBusy(true);setError('');try{await fn();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
   function goToStage(next:number){setFurthestStage(current=>Math.max(current,next));setStage(next);}
@@ -101,7 +101,7 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}
     {stage===2&&project&&<CandidateStep project={project} report={report} assets={catalog.uploadedSkills} replacementId={replacementId} setReplacementId={setReplacementId} adopt={()=>void run(adoptCompletedCandidate)} busy={busy} generating={generating} generate={()=>void startGeneration()} next={toolId=>{setValidationToolId(toolId??'');goToStage(3)}}/>}
     {stage===3&&project&&<RuntimeAdaptationStep capabilities={report?.runtimeRequirements?.requiredCapabilities} busy={busy} download={()=>void run(()=>downloadApi(`/api/migrations/${project.id}/runtime-requirements.yaml`,'runtime-build-requirements.yaml'))} next={()=>goToStage(4)}/>}
     {stage===4&&project&&inspection&&<ValidationStep api={api} refresh={()=>loadReport()} inspection={inspection} project={project} report={report} currentValidations={currentValidations} toolInputs={toolInputs} setToolInputs={setToolInputs} toolEndpoints={toolEndpoints} setToolEndpoints={setToolEndpoints} validateTool={t=>void run(()=>validateTool(t))} busy={busy} next={()=>goToStage(5)}/>}
-    {stage===5&&project&&<MigrationAssessmentStep key={`${project.id}:${project.candidate?.artifactSha256}`} api={api} projectId={project.id} candidateDigest={project.candidate?.artifactSha256} suites={report?.suites??[]} experiments={report?.experiments??[]} busy={busy} refresh={()=>loadReport()} runtimeId={runtimeId} setRuntimeId={setRuntimeId} runtimes={catalog.migrationRuntimes} modelKey={modelKey} setModelKey={setModelKey} packId={packId} setPackId={setPackId} run={async service=>{setBusy(true);try{await validateOpenJiuwen(service)}finally{setBusy(false)}}} generate={async()=>{setBusy(true);try{await generateSuite()}finally{setBusy(false)}}} next={()=>goToStage(6)}/>}
+    {stage===5&&project&&<MigrationAssessmentStep key={`${project.id}:${project.candidate?.artifactSha256}`} api={api} projectId={project.id} candidateDigest={project.candidate?.artifactSha256} suites={report?.suites??[]} experiments={report?.experiments??[]} busy={busy} refresh={()=>loadReport()} runtimeId={runtimeId} setRuntimeId={setRuntimeId} runtimes={catalog.executionRuntimes} modelKey={modelKey} setModelKey={setModelKey} packId={packId} setPackId={setPackId} run={async service=>{setBusy(true);try{await validateOpenJiuwen(service)}finally{setBusy(false)}}} generate={async()=>{setBusy(true);try{await generateSuite()}finally{setBusy(false)}}} next={()=>goToStage(6)}/>}
     {stage===6&&project&&<DownloadStep project={project} report={report} busy={busy} downloadStarted={downloadStarted} download={()=>void run(download)}/>}
   </section>;
 }

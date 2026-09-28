@@ -32,8 +32,10 @@ for (const file of await readdir(skillDirectory, { recursive: true })) {
 const skill = await skills.uploadZip(Buffer.from(zipSync(archive)));
 const environments = new EnvironmentStore(path.resolve("data")); await environments.initialize();
 const saved = await environments.list();
-const mcp = saved.find(x => x.endpoint === mcpEndpoint) ?? await environments.create({ name: "财富业务快照 MCP · 模拟数据 v1", type: "mcp_streamable_http", endpoint: mcpEndpoint });
-const runtime = saved.find(x => x.endpoint === "http://127.0.0.1:56362/execute") ?? await environments.create({ name: "本地 OpenJiuwen · 在线执行 / 模拟业务快照", type: "runtime_http", runtimeType: "openjiuwen", endpoint: "http://127.0.0.1:56362/execute", mcpEnvironmentIds: [mcp.environmentId] });
+const mcp = saved.find(x => x.type === 'mcp_streamable_http' && x.endpoint === mcpEndpoint) ?? await environments.create({ name: "财富业务快照 MCP · 模拟数据 v1", type: "mcp_streamable_http", endpoint: mcpEndpoint });
+const launcher = saved.find(x => x.type === 'runtime_launcher' && x.baseUrl === "http://127.0.0.1:56362/") ?? await environments.create({ name: "本地 OpenJiuwen Runtime", type: "runtime_launcher", runtimeType: "openjiuwen", baseUrl: "http://127.0.0.1:56362/" });
+const runtime = saved.find(x => x.type === 'execution_environment' && x.launcherEnvironmentId === launcher.environmentId && x.mcpEnvironmentIds.includes(mcp.environmentId))
+  ?? await environments.create({ name: "本地完整评测环境", type: "execution_environment", launcherEnvironmentId: launcher.environmentId, mcpEnvironmentIds: [mcp.environmentId], defaultModelId: existingConfig.defaultModelId ?? env.MODEL_NAME });
 const source = "packs/finance/wealth-management";
 const target = "packs/finance/wealth-online";
 await mkdir(`${target}/cases`, { recursive: true });

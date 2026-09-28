@@ -23,7 +23,6 @@ import { MigrationDiagnostics } from '../migration/infrastructure/migration-diag
 import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
 import { runConfigurationSchema } from "./contracts.js";
-import { executionModelCatalog, modelReference, resolvePublicExecutionModels } from "./execution-models.js";
 import { MigrationCodeGenerator } from '../migration/infrastructure/migration-code-generator.js';
 
 function markdownReport(report: EvaluationReport): string {
@@ -167,7 +166,7 @@ export async function createEvaluationService(
     const executionResources=savedEnvironments.filter(environment=>environment.type==='execution_environment');
     const referencedLaunchers=new Set(executionResources.map(environment=>environment.launcherEnvironmentId));
     const selectableRuntimes=[...executionResources,...savedEnvironments.filter(environment=>environment.type==='runtime_launcher'&&!referencedLaunchers.has(environment.environmentId))];
-    const launcherRuntimes=(await Promise.all(selectableRuntimes.map(async environment=>{
+    const executionRuntimes=(await Promise.all(selectableRuntimes.map(async environment=>{
       const resolved=await environments.resolveLauncher(environment);
       const inspection=await environments.inspect(environment);if(inspection.status!=='ready'||!inspection.capabilities)return null;
       const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
@@ -175,16 +174,12 @@ export async function createEvaluationService(
         mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,
         transport:'runtime_launcher' as const,defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
     }))).filter(item=>item!==null);
-    const migrationRuntimes=launcherRuntimes;
-    const executionRuntimes=launcherRuntimes;
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");
-    const executionCatalog = await executionModelCatalog(config.rootDirectory);
-    const executionDefault = executionCatalog?.models.find(m => m.modelId === executionCatalog.defaultModelId);
     const judge = configuredModelRole("JUDGE");
     const optimizer = configuredModelRole("OPTIMIZER");
     const evalPacks = catalog.list();
-    const onlineRuntimeReady = savedEnvironments.some(item => item.type === "runtime_http"||item.type==='runtime_launcher');
+    const onlineRuntimeReady = executionRuntimes.length > 0;
     return {
       schemaVersion: "finance.skill-eval.catalog.v1",
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
@@ -196,9 +191,7 @@ export async function createEvaluationService(
       uploadedSkills,
       preparations: savedPreparations,
       environments: savedEnvironments,
-      migrationRuntimes,
       executionRuntimes,
-      models: executionCatalog?.models ?? [],
       runtimes: [
         {
           id: "replay",
@@ -215,17 +208,16 @@ export async function createEvaluationService(
           description: "适合不依赖工具的 Skill；同一模型分别在无 Skill 与装配 Skill 条件下执行。",
         },
         {
-          id: "runtime_http",
-          label: "外部 Agent Runtime",
-          status: savedEnvironments.some(item => item.type === "runtime_http") && executionCatalog?.models.some(model => model.availability === "ready")
-            ? "ready" : "configuration_required",
+          id: "runtime_launcher",
+          label: "在线执行环境",
+          status: onlineRuntimeReady ? "ready" : "configuration_required",
           realExecution: true,
-          description: "通过标准 HTTP 合同调用 EA、OpenJiuwen Candidate 或其他 Agent Runtime。",
+          description: "由 Runtime Launcher 启动隔离实例，并按执行环境装配模型与 MCP。",
         },
       ],
       modelRoles: {
         analyzer: { configured: analyzer.configured, model: analyzer.model },
-        execution: { configured: Boolean(executionDefault), model: executionDefault ? modelReference(executionDefault) : execution.model },
+        execution: { configured: executionRuntimes.length > 0, model: executionRuntimes[0]?.models.find(model=>model.modelId===executionRuntimes[0]?.defaultModelId) ?? execution.model },
         directExecution: { configured: execution.configured, model: execution.model },
         judge: { configured: judge.configured, model: judge.model },
         optimizer: { configured: optimizer.configured, model: optimizer.model },
@@ -289,14 +281,12 @@ export async function createEvaluationService(
   });
   app.post("/api/runs", async (request, reply) => {
     const input=runConfigurationSchema.parse(request.body);
-    const execution=input.runtime.type==='runtime_http' ? await resolvePublicExecutionModels(input,config.rootDirectory) : null;
-    const normalizedInput=execution?{...input,executionModel:input.runtimeBindings?execution.rightExecutionModel:undefined,...execution}:input;
-    if(!config.publicDemo) return reply.code(202).send(await manager.create(normalizedInput));
+    if(!config.publicDemo) return reply.code(202).send(await manager.create(input));
     if(input.runtimeToolConfig) return reply.code(403).send({message:'运行上下文与鉴权配置仅限私有工作区。'});
     if (input.runtimeBindings) return reply.code(403).send({message:'逐侧 Runtime 迁移仅限私有工作区。'});
     const pack=catalog.list().find(p=>p.packId===input.packId);
-    const runtime=input.runtime.type==='runtime_http' ? await environments.get(input.runtime.environmentId) : null;
-    if(!pack || !pack.packId.endsWith('-online-v1') || !runtime || runtime.type!=='runtime_http' || input.preparationId || input.skillAssetId || input.includeHoldout) {
+    const runtime=input.runtime.type==='runtime_launcher' ? await environments.get(input.runtime.environmentId) : null;
+    if(!pack || !pack.packId.endsWith('-online-v1') || !runtime || !['runtime_launcher','execution_environment'].includes(runtime.type) || input.preparationId || input.skillAssetId || input.includeHoldout) {
       return reply.code(400).send({message:'请选择预制在线评测包与已配置环境。'});
     }
     const assets=await skills.list();
@@ -306,7 +296,7 @@ export async function createEvaluationService(
         return reply.code(400).send({message:'只能比较当前精选技能的已装配版本。'});
       }
     }
-    const normalized={...normalizedInput,judgeMode:'model',timeoutMs:310000,executionModel:undefined,judgeModel:configuredModelRole('JUDGE').model};
+    const normalized={...input,judgeMode:'model',timeoutMs:310000,judgeModel:configuredModelRole('JUDGE').model};
     const job=await demo.create(demo.identity(request.headers['x-demo-user']),()=>jobs.list(100).filter(j=>['queued','preparing','running','judging'].includes(j.status)).length,()=>manager.create(normalized));
     return reply.code(202).send(job);
   });

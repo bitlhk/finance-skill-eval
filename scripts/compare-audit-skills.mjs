@@ -45,7 +45,8 @@ const cases = [
     prompt: shared + '把以下模拟制度转换为下游可用的审核规则JSON草案，不要做客户审核。每项使用审核要点、审核规则、所需凭证、引用法规四个字段，引用法规字段请原样引用本题模拟制度名称与条号，不引入外部法律。\n《演示个人贷款审核细则v1》第一条：申请日年龄18至65岁，以身份证出生日期和申请表日期计算。第二条：收入证明、流水应覆盖相同近6个月；税前税后口径不同先查工资明细，不直接按差额认定异常。第三条：只对已婚申请人核对婚姻证明，未婚不适用。第四条：制度未设置收入差额风险阈值，不得自行添加。\n提供凭证类型：身份证、贷款申请表、收入证明、银行流水、工资明细、婚姻证明。无需新增其他凭证。请输出可解析JSON，明确第三条的适用条件，结果为规则草案并保留制度版本。',
     evaluationGoal: 'JSON可解析且四字段完整；18-65、同6个月、先调口径、已婚条件逐条绑定给定制度；不额外增加默认材料、50%阈值或外部法律；草案而非已发布规则。' },
 ].map(value => ({ ...value, prompt: value.prompt, requiredTools: [], rubric: [] }));
-const catalog = JSON.parse(await readFile('.models.local.json', 'utf8'));
+const runtime = JSON.parse(await readFile('.runtime.local.json', 'utf8'));
+const catalog = {defaultModelId:runtime.defaultModelId,models:Object.entries(runtime.models??{}).map(([modelId,value])=>({providerId:value.providerId??'runtime-launcher',modelId,upstreamModelId:value.upstreamModelId??modelId,parameters:{}}))};
 const chosen = catalog.models.find(model => model.modelId === (process.env.AUDIT_COMPARISON_MODEL ?? 'glm-5.3-flash'));
 if (!chosen) throw new Error('Default comparison model not configured');
 const model = { providerId: chosen.providerId, modelId: chosen.modelId, parameters: {} };

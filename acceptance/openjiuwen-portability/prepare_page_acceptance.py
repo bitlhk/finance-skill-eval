@@ -43,14 +43,22 @@ def main() -> int:
             "endpoint": "http://127.0.0.1:56364/mcp",
             "mcpEnvironmentIds": [],
         })
+    launcher = next((item for item in environments if item["name"] == "Local OpenJiuwen launcher"), None)
+    if launcher is None:
+        launcher = call("/api/environments", {
+            "name": "Local OpenJiuwen launcher",
+            "type": "runtime_launcher",
+            "runtimeType": "openjiuwen",
+            "baseUrl": "http://127.0.0.1:56362/",
+        })
     runtime = next((item for item in environments if item["name"] == "Local OpenJiuwen acceptance"), None)
     if runtime is None:
         runtime = call("/api/environments", {
             "name": "Local OpenJiuwen acceptance",
-            "type": "runtime_http",
-            "runtimeType": "openjiuwen",
-            "endpoint": "http://127.0.0.1:56362/execute",
+            "type": "execution_environment",
+            "launcherEnvironmentId": launcher["environmentId"],
             "mcpEnvironmentIds": [mcp["environmentId"]],
+            "defaultModelId": "enterprise-model",
         })
     print(json.dumps({
         "status": "READY",

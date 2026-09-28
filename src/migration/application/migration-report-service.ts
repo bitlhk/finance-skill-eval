@@ -1,6 +1,6 @@
 import { originalServiceFingerprint } from '../../original-service-runtime.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
-import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
@@ -24,10 +24,6 @@ export class MigrationReportService {
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
     private readonly targets?:MigrationTargetGateway,
   ) {}
-
-  private async migrationEnvironment(environmentId:string) {
-    return await this.environments?.get(environmentId)??null;
-  }
 
   async report(id:string) {
     const value=await this.projects.get(id);
@@ -59,10 +55,9 @@ export class MigrationReportService {
     });
     const openJiuwenValidations=(await Promise.all(experiments.map(async experiment=>{
       const runtime=experiment.declaredPlan?.configuration.runtime;
-      const selected=runtime&&(runtime.type==='runtime_http'||runtime.type==='runtime_launcher')?await this.migrationEnvironment(runtime.environmentId):null;
-      const environment=selected?.type==='execution_environment'?await this.migrationEnvironment(selected.launcherEnvironmentId):selected;
-      if(!environment||!['runtime_http','runtime_launcher'].includes(environment.type)||environment.runtimeType!=='openjiuwen')return null;
-      return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:selected?.environmentId??environment.environmentId,
+      const resolved=runtime?.type==='runtime_launcher'?await resolveMigrationEnvironment(this.environments,runtime.environmentId):null;
+      if(!resolved||resolved.launcher.runtimeType!=='openjiuwen')return null;
+      return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:resolved.selected.environmentId,
         execution:experiment.execution,evidence:experiment.evidence,current:experiment.current,
         executionCheck:['HTTP_LOADED_DIGEST_CHECKED','SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'].includes(experiment.evidence)?'ARTIFACT_VERIFIED':experiment.execution==='completed'?'EXECUTION_COMPLETED':'NOT_COMPLETE',
         acceptance:experiment.acceptance,

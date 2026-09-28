@@ -116,7 +116,7 @@ export function App() {
   const [rightVariantSelection, setRightVariantSelection] = useState("");
   const [leftModelKey, setLeftModelKey] = useState("");
   const [rightModelKey, setRightModelKey] = useState("");
-  const [runtime, setRuntime] = useState<"replay" | "direct_model" | "runtime_http" | "runtime_launcher">("runtime_launcher");
+  const [runtime, setRuntime] = useState<"replay" | "direct_model" | "runtime_launcher">("runtime_launcher");
   const [runtimeEnvironmentId, setRuntimeEnvironmentId] = useState("");
   const [environmentInspection, setEnvironmentInspection] = useState<EnvironmentInspection | null>(null);
   const [environmentChecking, setEnvironmentChecking] = useState(false);
@@ -142,7 +142,7 @@ export function App() {
       ?? nextCatalog.evalPacks[0];
     setSelection(current => current || (defaultPack ? `pack:${defaultPack.packId}` : ""));
     setSelectedSkillId(current => current || defaultPack?.targetSkillId || nextCatalog.featuredSkills[0]?.skillId || "");
-    setRuntimeEnvironmentId(current => current || nextCatalog.executionRuntimes[0]?.runtimeId || nextCatalog.environments.find(item => item.type === "runtime_http")?.environmentId || "");
+    setRuntimeEnvironmentId(current => current || nextCatalog.executionRuntimes[0]?.runtimeId || "");
   };
 
   useEffect(() => {
@@ -194,7 +194,7 @@ export function App() {
   useEffect(() => {
     setSelectedCases(cases.map(item => item.caseId));
     if (selectedPack) {
-      setRuntime(catalog?.executionRuntimes.length ? "runtime_launcher" : "runtime_http");
+      setRuntime("runtime_launcher");
       setJudgeMode(catalog?.modelRoles.judge.configured ? "model" : "deterministic");
       setLeftVariantSelection(variantSelection(selectedPack.variants.left));
       setRightVariantSelection(variantSelection(selectedPack.variants.right));
@@ -205,7 +205,7 @@ export function App() {
       setRuntime(
         !preparationRequiresTools && catalog && directExecutionRole(catalog).configured
           ? "direct_model"
-          : catalog?.executionRuntimes.length ? "runtime_launcher" : "runtime_http",
+          : "runtime_launcher",
       );
       setLeftVariantSelection("without_target_skill");
       setRightVariantSelection(`version:${selectedPreparation.skillVersion}`);
@@ -265,7 +265,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if (!['runtime_http','runtime_launcher'].includes(runtime) || !runtimeEnvironmentId) {
+    if (runtime !== 'runtime_launcher' || !runtimeEnvironmentId) {
       setEnvironmentInspection(null);
       return;
     }
@@ -285,7 +285,7 @@ export function App() {
   };
 
   const selectedRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===runtimeEnvironmentId);
-  const runtimeModels=runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[]):(catalog?.models??[]);
+  const runtimeModels=runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[]):[];
   const runtimeDefaultModel=selectedRuntimeOption?.models.find(item=>item.modelId===selectedRuntimeOption.defaultModelId)??selectedRuntimeOption?.models[0];
   const selectedLeftModel = runtime === "direct_model" && catalog ? directExecutionRole(catalog).model : runtimeModels.find(item => modelKey(item) === leftModelKey)
     ?? (runtime==='runtime_launcher'?runtimeDefaultModel:undefined)
@@ -382,7 +382,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({
           ...(selectedPack ? { packId: selectedPack.packId } : { preparationId: selectedPreparation!.preparationId }),
-          runtime: runtime === "runtime_http" || runtime==='runtime_launcher'
+          runtime: runtime === 'runtime_launcher'
             ? { type: runtime, environmentId: runtimeEnvironmentId }
             : { type: runtime },
           judgeMode,
@@ -439,9 +439,9 @@ export function App() {
     && !environmentChecking
     && (runtime !== "replay" || Boolean(selectedPack?.replayReady))
     && (runtime === "replay" || [selectedLeftModel, selectedRightModel].every(m => m && (!m.availability || m.availability === "ready")))
-    && (!['runtime_http','runtime_launcher'].includes(runtime) || selectedVariantsHaveArtifacts)
-    && (!['runtime_http','runtime_launcher'].includes(runtime) || runtimeEnvironmentId)
-    && (!['runtime_http','runtime_launcher'].includes(runtime) || environmentInspection?.status === "ready")
+    && (runtime !== 'runtime_launcher' || selectedVariantsHaveArtifacts)
+    && (runtime !== 'runtime_launcher' || runtimeEnvironmentId)
+    && (runtime !== 'runtime_launcher' || environmentInspection?.status === "ready")
     && !(runtime === "direct_model" && (!catalog || !directExecutionRole(catalog).configured))
     && !(judgeMode === "model" && !catalog?.modelRoles.judge.configured)
     && !sameConfiguration
@@ -608,8 +608,8 @@ function EvaluationView(props: {
   setCaseSource(value: "fixed" | "ai_generated"): void;
   selectedCases: string[];
   setSelectedCases(value: string[]): void;
-  runtime: "replay" | "direct_model" | "runtime_http" | "runtime_launcher";
-  setRuntime(value: "replay" | "direct_model" | "runtime_http" | "runtime_launcher"): void;
+  runtime: "replay" | "direct_model" | "runtime_launcher";
+  setRuntime(value: "replay" | "direct_model" | "runtime_launcher"): void;
   directModelAllowed: boolean;
   runtimeEnvironmentId: string;
   setRuntimeEnvironmentId(value: string): void;
@@ -654,6 +654,13 @@ function EvaluationView(props: {
     .flatMap(item => item.requiredTools))];
   const targetName = props.featuredSkill?.displayName
     ?? (target && "skillId" in target ? target.skillId : "上传 Skill");
+  const comparisonModels=props.runtime === 'direct_model'
+    ? [directExecutionRole(props.catalog).model]
+    : props.runtime === 'runtime_launcher'
+      ? runtimeOption?.models??[]
+      : target && 'models' in target
+        ? [target.models.execution.left,target.models.execution.right].filter((model,index,all)=>all.findIndex(item=>modelKey(item)===modelKey(model))===index)
+        : [];
   return (
     <div className="workspace">
       <section className="workspace-header">
@@ -672,21 +679,16 @@ function EvaluationView(props: {
       </section>
 
       <section className="shared-environment">
-        <div className="shared-environment-title"><div><Network size={18} /><span><strong>统一测试环境</strong><small>Runtime、MCP 和题目由左右两侧共享，避免引入额外变量。</small></span></div>{['runtime_http','runtime_launcher'].includes(props.runtime) ? <button className="button secondary compact" onClick={props.onInspectEnvironment} disabled={props.environmentChecking || !props.runtimeEnvironmentId}><RefreshCw className={props.environmentChecking ? "spin" : ""} size={15} />重新预检</button> : null}</div>
+        <div className="shared-environment-title"><div><Network size={18} /><span><strong>统一测试环境</strong><small>Runtime、MCP 和题目由左右两侧共享，避免引入额外变量。</small></span></div>{props.runtime === 'runtime_launcher' ? <button className="button secondary compact" onClick={props.onInspectEnvironment} disabled={props.environmentChecking || !props.runtimeEnvironmentId}><RefreshCw className={props.environmentChecking ? "spin" : ""} size={15} />重新预检</button> : null}</div>
         <div className="environment-controls">
           <label className="field"><span>执行方式</span><select disabled={Boolean(active)} value={props.runtime} onChange={event => props.setRuntime(event.target.value as typeof props.runtime)}>
             {!isPreparation && !props.catalog.publicDemo ? <option value="replay" disabled={!(target && 'replayReady' in target && target.replayReady)}>冻结证据回放{target && 'replayReady' in target && !target.replayReady ? " · 当前评测包未提供" : ""}</option> : null}
             {isPreparation ? <option value="direct_model" disabled={!directExecutionRole(props.catalog).configured || !props.directModelAllowed}>文本 Skill 直测</option> : null}
-            {props.catalog.executionRuntimes.length?<option value="runtime_launcher">在线执行环境</option>:null}
-            {!props.catalog.executionRuntimes.length?<option value="runtime_http">旧版 Agent Runtime</option>:null}
+            <option value="runtime_launcher" disabled={!props.catalog.executionRuntimes.length}>在线执行环境</option>
           </select></label>
           {props.runtime === "runtime_launcher" ? <label className="field wide"><span>执行环境</span><select disabled={Boolean(active)} value={props.runtimeEnvironmentId} onChange={event => props.setRuntimeEnvironmentId(event.target.value)}>
             <option value="">请选择</option>
             {props.catalog.executionRuntimes.map(item => <option value={item.runtimeId} key={item.runtimeId}>{item.name} · {runtimeTypeLabel(item.runtimeType)} · {item.toolCount} 个工具</option>)}
-          </select></label> : null}
-          {props.runtime === "runtime_http" ? <label className="field wide"><span>旧版 Agent Runtime</span><select disabled={Boolean(active)} value={props.runtimeEnvironmentId} onChange={event => props.setRuntimeEnvironmentId(event.target.value)}>
-            <option value="">请选择</option>
-            {props.catalog.environments.filter(item => item.type === "runtime_http").map(item => <option value={item.environmentId} key={item.environmentId}>{item.name} · {runtimeTypeLabel(item.runtimeType)}</option>)}
           </select></label> : null}
           <label className="field"><span>评分方式</span><select disabled={Boolean(active)} value={props.judgeMode} onChange={event => props.setJudgeMode(event.target.value as typeof props.judgeMode)}>
             {!dynamic && !props.catalog.publicDemo && target && 'deterministicReady' in target && target.deterministicReady ? <option value="deterministic">规则量表</option> : null}
@@ -700,13 +702,13 @@ function EvaluationView(props: {
       </section>
 
       <div className="comparison-grid">
-        <ComparisonConfigurator side="A" title="对照组" selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={props.runtime === "direct_model" ? [directExecutionRole(props.catalog).model] : props.runtime==='runtime_launcher'?(runtimeOption?.models??[]):props.catalog.models} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
+        <ComparisonConfigurator side="A" title="对照组" selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
         <div className="comparison-arrow"><ArrowRight size={20} /></div>
-        <ComparisonConfigurator side="B" title="目标组" selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={props.runtime === "direct_model" ? [directExecutionRole(props.catalog).model] : props.runtime==='runtime_launcher'?(runtimeOption?.models??[]):props.catalog.models} locked={replayLocked} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
+        <ComparisonConfigurator side="B" title="目标组" selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
       </div>
 
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
-      {['runtime_http','runtime_launcher'].includes(props.runtime) && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
+      {props.runtime === 'runtime_launcher' && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
 
       <section className="cases-section">
         <div className="section-title"><div><h2>评测任务</h2></div>{!isPreparation && props.runtime !== "replay" ? <div className="question-mode" role="group" aria-label="题目来源">
@@ -806,7 +808,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
       <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /></article></div>
       <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>
     </section>)}
-    {!publicDemo && job.configuration.runtime.type === "runtime_http" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
+    {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
     <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span></footer>
   </div>;
 }

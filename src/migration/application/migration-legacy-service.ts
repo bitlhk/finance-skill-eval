@@ -2,7 +2,7 @@ import { zipSync } from 'fflate';
 import { z } from 'zod';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import type { MigrationTargetGateway } from './migration-target-gateway.js';
-import type { MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationProjectService } from './migration-project-service.js';
@@ -20,20 +20,6 @@ export class MigrationLegacyService {
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly targets?:MigrationTargetGateway,
   ) {}
-
-  private async migrationEnvironment(environmentId:string) {
-    return await this.environments?.get(environmentId)??null;
-  }
-
-  private async launcherFor(environmentId:string) {
-    const selected=await this.migrationEnvironment(environmentId);
-    if(selected?.type==='runtime_launcher')return selected;
-    if(selected?.type==='execution_environment'){
-      const launcher=await this.migrationEnvironment(selected.launcherEnvironmentId);
-      return launcher?.type==='runtime_launcher'?launcher:null;
-    }
-    return null;
-  }
 
   async target() {
     try {
@@ -63,7 +49,7 @@ export class MigrationLegacyService {
       const value=await this.projects.get(id);
       if(parsed.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
       if(parsed.environmentId){
-        const environment=await this.launcherFor(parsed.environmentId);
+        const environment=(await resolveMigrationEnvironment(this.environments,parsed.environmentId))?.launcher;
         if(!environment||environment.runtimeType!=='openjiuwen')return conflict('目标必须是使用 OpenJiuwen Runtime Launcher 的执行环境');
       }
       const base=value.candidate??value.source;
