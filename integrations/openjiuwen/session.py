@@ -107,7 +107,7 @@ async def run(body):
             available = required | set((body.get("environment") or {}).get("availableToolNames", []))
             found = set()
             files = skill.get("files", {}) if skill else {}
-            workspace_path, root_path = execution_paths(stack, config, skill)
+            workspace_path, root_path, workspace_digest = execution_paths(stack, config, skill, body["case"].get("workspaceFiles", []))
             scripts = (body.get("environment") or {}).get("commandScripts", [])
             if scripts and os.environ.get("FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS") != "1":
                 raise RuntimeError("Local script execution is disabled")
@@ -135,7 +135,8 @@ async def run(body):
                 selected = set(server["toolNames"]) & available
                 if not selected:
                     continue
-                saved = {"toolNames": server["toolNames"], "dataMode": "candidate-mcp"} if server.get("candidate") else config["mcp"][server["endpoint"]]
+                saved = {"toolNames": server["toolNames"], "dataMode": "candidate-mcp",
+                         "headers": {"X-Workspace-Root": str(workspace_path)}} if server.get("candidate") else config["mcp"][server["endpoint"]]
                 if selected - set(saved.get("toolNames", [])):
                     raise ValueError("Requested tools are outside the configured read-only evaluation scope")
                 discovery_tool = sorted(selected)[0]
@@ -249,6 +250,7 @@ async def run(body):
                                                      "providerLabel": model.get("providerLabel"), "requestParameters": model_settings},
                                     "referenceFilesRead": reference_reads,
                                     "harnessToolNames": sorted(harness_found),
+                                    "workspaceFilesDigest": workspace_digest,
                                     "workspacePath": str(workspace_path), "skillPath": str(root_path),
                                     "candidateMcpBindings": candidate_bindings,
                                     "instanceConfigurationDigest": (body.get('environment') or {}).get('instanceConfigurationDigest'),

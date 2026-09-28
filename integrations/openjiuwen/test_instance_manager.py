@@ -63,11 +63,13 @@ class InstanceManagerTests(unittest.TestCase):
         self.assertNotIn('token-value', str(public))
         self.assertNotIn('_request', public)
         execution = manager.execution(item['instanceId'], {
-            'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query', 'requiredTools': ['lookup']})
+            'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query', 'requiredTools': ['lookup'],
+            'workspaceFiles': [{'path': 'fixtures/input.json', 'content': '{"account":"A1"}'}]})
         self.assertEqual(execution['skill']['files']['mcp/server.py'], 'print("ok")')
         self.assertEqual(execution['environment']['candidateMcpServices'][0]['environment']['API_TOKEN'], 'token-value')
         self.assertEqual(execution['environment']['runtimeToolConfig']['context']['user']['value'], 'alice')
         self.assertEqual(execution['environment']['instanceConfigurationDigest'], public['configurationDigest'])
+        self.assertEqual(execution['case']['workspaceFiles'], [{'path': 'fixtures/input.json', 'content': '{"account":"A1"}'}])
 
     def test_idempotency_rejects_changed_secret_values(self):
         manager = InstanceManager()
@@ -91,6 +93,18 @@ class InstanceManagerTests(unittest.TestCase):
         mismatch['skill']['archiveSha256'] = 'a' * 64
         with self.assertRaisesRegex(ValueError, 'digest'):
             manager.create(mismatch, 'mismatch')
+
+    def test_rejects_unsafe_duplicate_and_oversized_workspace_files(self):
+        manager = InstanceManager()
+        item = manager.create(request(), 'workspace')
+        base = {'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query'}
+        for files in (
+            [{'path': '../escape.json', 'content': 'bad'}],
+            [{'path': 'same.json', 'content': 'one'}, {'path': 'same.json', 'content': 'two'}],
+            [{'path': 'large.json', 'content': 'x' * (256 * 1024 + 1)}],
+        ):
+            with self.assertRaisesRegex(ValueError, 'workspace'):
+                manager.execution(item['instanceId'], {**base, 'workspaceFiles': files})
 
 
 if __name__ == '__main__':

@@ -1,11 +1,25 @@
 """Independent execution workspace and loaded Skill location."""
 from pathlib import Path
+import hashlib
 import tempfile
 
 
-def execution_paths(stack, config, skill):
+def workspace_files_digest(files):
+    if not files:
+        return None
+    digest = hashlib.sha256()
+    for item in sorted(files, key=lambda value: value['path']):
+        digest.update(item['path'].encode('utf-8'))
+        digest.update(b'\0')
+        digest.update(item['content'].encode('utf-8'))
+        digest.update(b'\0')
+    return digest.hexdigest()
+
+
+def execution_paths(stack, config, skill, workspace_files=None):
+    workspace_files = workspace_files or []
     configured_workspace = config.get('workspaceDirectory')
-    if configured_workspace:
+    if configured_workspace and not workspace_files:
         workspace = Path(configured_workspace).resolve()
         workspace.mkdir(parents=True, exist_ok=True)
     else:
@@ -13,6 +27,12 @@ def execution_paths(stack, config, skill):
         if workspace_root:
             Path(workspace_root).mkdir(parents=True, exist_ok=True)
         workspace = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='finance-workspace-', dir=workspace_root))).resolve()
+    for item in workspace_files:
+        target = (workspace / item['path']).resolve()
+        if workspace not in target.parents:
+            raise ValueError('Unsafe test data path')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(item['content'], encoding='utf-8')
     configured_skill = config.get('skillDirectories', {}).get((skill or {}).get('artifactSha256'))
     skill_path = Path(configured_skill).resolve() if configured_skill else Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='finance-skill-'))).resolve()
     for name, content in (skill or {}).get('files', {}).items():
@@ -25,7 +45,7 @@ def execution_paths(stack, config, skill):
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding='utf-8')
-    return workspace, skill_path
+    return workspace, skill_path, workspace_files_digest(workspace_files)
 
 
 def read_execution_file(path, workspace, skill_path):

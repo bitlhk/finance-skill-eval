@@ -1,18 +1,18 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {evalCaseSchema} from '../src/contracts.js';
+import {evalCaseSchema,workspaceFilesDigest} from '../src/contracts.js';
 import {RuntimeLauncherAdapter} from '../src/runtime-launcher.js';
 
 afterEach(()=>vi.unstubAllGlobals());
 
 const digest='a'.repeat(64),configurationDigest='configuration-digest';
-const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',evaluationGoal:'goal',requiredTools:['lookup'],rubric:[{criterionId:'one',label:'one',description:'one',dimension:'professional_fit',weight:1}]});
+const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',evaluationGoal:'goal',requiredTools:['lookup'],workspaceFiles:[{path:'fixtures/input.json',content:'{"account":"A1"}'}],rubric:[{criterionId:'one',label:'one',description:'one',dimension:'professional_fit',weight:1}]});
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
   it('creates one configured instance, consumes its stream and always deletes it',async()=>{
     const calls:Array<{url:string;init:RequestInit|undefined}>=[];
     const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
-    const evidence={runId:'run-1',side:'right',caseId:'case-1',status:'completed',modelId:'execution',skillVersion:'1',output:'done',elapsedMs:1,toolCalls:[{name:'lookup',status:'completed'}],loadedSkills:[{skillId:'demo',version:'1'}],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,metadata:{skillArtifactSha256:digest,instanceConfigurationDigest:configurationDigest}};
+    const evidence={runId:'run-1',side:'right',caseId:'case-1',status:'completed',modelId:'execution',skillVersion:'1',output:'done',elapsedMs:1,toolCalls:[{name:'lookup',status:'completed'}],loadedSkills:[{skillId:'demo',version:'1'}],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,metadata:{skillArtifactSha256:digest,instanceConfigurationDigest:configurationDigest,workspaceFilesDigest:workspaceFilesDigest(evalCase.workspaceFiles!)}};
     vi.stubGlobal('fetch',vi.fn(async(input:URL|string|Request,init?:RequestInit)=>{
       const url=String(input);calls.push({url,init});
       if(init?.method==='POST'&&url.endsWith('/v1/runtime-instances'))return Response.json(state);
@@ -33,6 +33,8 @@ describe('Runtime Launcher adapter',()=>{
     expect(createBody.environment.candidateMcpServices[0].secretBindings).toEqual({API_TOKEN:'mcp.0.API_TOKEN'});
     expect(createBody.environment.runtimeToolConfig.context.user.value).toEqual({$secret:'context.user'});
     expect(createBody.secrets.values).toEqual({'mcp.0.API_TOKEN':'top-secret','context.user':'alice'});
+    const executeBody=JSON.parse(String(calls.find(call=>call.url.endsWith('/execute'))!.init!.body));
+    expect(executeBody.workspaceFiles).toEqual(evalCase.workspaceFiles);
     expect(events).toEqual([expect.objectContaining({type:'text_delta',text:'done'})]);
     expect(calls.at(-1)).toMatchObject({url:'http://127.0.0.1:9000/v1/runtime-instances/instance-1',init:{method:'DELETE'}});
     expect(calls[0]!.init!.signal).toBeInstanceOf(AbortSignal);

@@ -145,6 +145,28 @@ class InstanceManager:
         required = case.get('requiredTools', [])
         if not isinstance(required, list) or any(not isinstance(name, str) or not name for name in required):
             raise ValueError('Invalid required Runtime tools')
+        workspace_files = case.get('workspaceFiles', [])
+        if not isinstance(workspace_files, list) or len(workspace_files) > 32:
+            raise ValueError('Invalid Runtime workspace files')
+        paths, total_bytes = set(), 0
+        for workspace_file in workspace_files:
+            if not isinstance(workspace_file, dict) or set(workspace_file) != {'path', 'content'}:
+                raise ValueError('Invalid Runtime workspace file')
+            path, content = workspace_file.get('path'), workspace_file.get('content')
+            if (not isinstance(path, str) or not path or len(path) > 240 or '\\' in path or '\0' in path
+                    or (len(path) > 1 and path[1] == ':' and path[0].isalpha())
+                    or PurePosixPath(path).is_absolute() or any(part in ('', '.', '..') for part in path.split('/'))
+                    or not isinstance(content, str)):
+                raise ValueError('Invalid Runtime workspace file')
+            if path in paths:
+                raise ValueError('Duplicate Runtime workspace file path')
+            paths.add(path)
+            size = len(content.encode('utf-8'))
+            if size > 256 * 1024:
+                raise ValueError('Runtime workspace file is too large')
+            total_bytes += size
+        if total_bytes > 1024 * 1024:
+            raise ValueError('Runtime workspace files are too large')
         request = copy.deepcopy(item['_request'])
         values = request.pop('secrets', {}).get('values', {})
         environment = request.get('environment') or {}
@@ -162,7 +184,7 @@ class InstanceManager:
         environment['_inlineSecretValues'] = list(values.values())
         request['schemaVersion'] = 'finance.skill-eval.runtime-request.v1'
         request['case'] = {'caseId': case.get('caseId'), 'prompt': case.get('query'), 'taskMode': 'single_turn',
-                           'requiredTools': required}
+                           'requiredTools': required, 'workspaceFiles': copy.deepcopy(workspace_files)}
         request['model'] = {'providerId': 'runtime-launcher', 'modelId': request.pop('modelId'), 'parameters': {}}
         environment['instanceConfigurationDigest'] = item['configurationDigest']
         return request

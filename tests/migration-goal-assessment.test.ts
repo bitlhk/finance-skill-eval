@@ -19,15 +19,20 @@ function judge(checks:unknown[],capture?:Array<unknown>){return new ModelGoalJud
 const input={evalCase:definition,left:{...evidence,side:'left' as const},right:evidence,profile:{} as any};
 it('validates simple suites without placing criteria or credentials in task input',()=>{
  const parsed=simpleMigrationSuiteSchema.parse(simpleMigrationSuiteExample);expect(simpleMigrationCases(parsed)[0]!.prompt).toBe(parsed.cases[0]!.input);
+ const merged=simpleMigrationCases(simpleMigrationSuiteSchema.parse({name:'workspace',workspaceFiles:[{path:'shared.json',content:'shared'},{path:'overridden.json',content:'old'}],cases:[{id:'a',input:'x',criteria:['x'],workspaceFiles:[{path:'overridden.json',content:'new'}]}]}))[0]!;
+ expect(merged.workspaceFiles).toEqual([{path:'overridden.json',content:'new'},{path:'shared.json',content:'shared'}]);
  expect(()=>simpleMigrationSuiteSchema.parse({name:'test',cases:[{id:'a',input:'x',criteria:[]}]})).toThrow();
  expect(()=>simpleMigrationSuiteSchema.parse({name:'test',cases:[{id:'a',input:'x',criteria:['x']},{id:'a',input:'y',criteria:['y']}]})).toThrow();
+ expect(()=>simpleMigrationSuiteSchema.parse({name:'test',workspaceFiles:[{path:'../secret',content:'x'}],cases:[{id:'a',input:'x',criteria:['x']}]})).toThrow();
+ expect(()=>simpleMigrationSuiteSchema.parse({name:'test',workspaceFiles:[{path:'same',content:'x'},{path:'same',content:'y'}],cases:[{id:'a',input:'x',criteria:['x']}]})).toThrow();
  expect(()=>simpleMigrationSuiteSchema.parse({...simpleMigrationSuiteExample,credential:'secret'})).toThrow();
 });
 it('returns model goal checks with grounded evidence and no dimension scores',async()=>{
  const requests:unknown[]=[];
- const result=await judge([{criterionIndex:1,verdict:'PASS',reason:'说明未扣费',evidence:'尚未扣费'},{criterionIndex:0,verdict:'PASS',reason:'等价金额',evidence:'2.50 元'}],requests).compare(input);
+ const result=await judge([{criterionIndex:1,verdict:'PASS',reason:'说明未扣费',evidence:'尚未扣费'},{criterionIndex:0,verdict:'PASS',reason:'等价金额',evidence:'2.50 元'}],requests).compare({...input,evalCase:{...definition,workspaceFiles:[{path:'private.json',content:'JUDGE_MUST_NOT_SEE_THIS'}]}});
  expect(result.dimensions).toEqual([]);expect(result.goalAssessment?.verdict).toBe('PASS');expect(result.goalAssessment?.checks[0]!.criterion).toBe('服务费为2.5元');
  const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual([{criterionIndex:0,description:'服务费为2.5元'},{criterionIndex:1,description:'说明尚未扣费'}]);expect(payload.requiredCriterionIndices).toEqual([0,1]);
+ expect(JSON.stringify(requests[0])).not.toContain('JUDGE_MUST_NOT_SEE_THIS');
  expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],sourceFacts:[]});
  expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe('PASSED');
 });
@@ -107,7 +112,8 @@ it('imports and freezes the documented format through the migration API',async()
   const project=(await app.inject({url:'/api/migrations',method:'POST',headers,payload:{sourceAssetId:asset.assetId,name:'goals'}})).json();
   const imported=await app.inject({url:`/api/migrations/${project.id}/suites/import`,method:'POST',headers,payload:sample});expect(imported.statusCode).toBe(200);expect(imported.json().assessmentMode).toBe('natural_language');
   const invalid=await app.inject({url:`/api/migrations/${project.id}/suites/import`,method:'POST',headers,payload:{name:'bad',cases:[{id:'a',input:'x',criteria:[]}]}});expect(invalid.statusCode).toBe(400);
-  const report=(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();expect(report.suites[0].cases[0].rubric[0].description).toBe(sample.cases[0].criteria[0]);
+  const report=(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();expect(report.suites[0].cases[0].rubric[0].description).toBe(sample.cases[0].criteria[0]);expect(report.suites[0].cases[0].workspaceFiles).toEqual(sample.workspaceFiles);
   const html=renderToStaticMarkup(createElement(MigrationAssessmentStep,{initialMode:'goals',api:async()=>({} as any),projectId:project.id,suites:report.suites,experiments:[],busy:false,refresh:async()=>{},runtimeId:'',setRuntimeId:()=>{},runtimes:[],modelKey:'',setModelKey:()=>{},packId:`suite:${imported.json().preparationId}`,setPackId:()=>{},run:()=>{},next:()=>{}}));expect(html).toContain('下载测试集样例');expect(html).toContain(sample.cases[0].criteria[0]);expect(html).toContain('执行并自动评估');
+  expect(html).toContain('fixtures/accounts.json');
  }finally{await app.close();await rm(dir,{recursive:true,force:true})}
 });
