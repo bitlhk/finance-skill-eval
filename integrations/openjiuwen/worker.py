@@ -74,7 +74,7 @@ async def runtime_capabilities():
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
             'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
-                         'externalMcp': False, 'inlineSecrets': True},
+                         'externalMcp': True, 'inlineSecrets': True},
             'limits': {'maxArchiveBytes': instances.max_archive_bytes, 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 

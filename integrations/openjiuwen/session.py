@@ -135,8 +135,12 @@ async def run(body):
                 selected = set(server["toolNames"]) & available
                 if not selected:
                     continue
-                saved = {"toolNames": server["toolNames"], "dataMode": "candidate-mcp",
-                         "headers": {"X-Workspace-Root": str(workspace_path)}} if server.get("candidate") else config["mcp"][server["endpoint"]]
+                fallback = config.get("mcp", {}).get(server["endpoint"], {})
+                saved = ({"toolNames": server["toolNames"], "dataMode": "candidate-mcp",
+                         "headers": {"X-Workspace-Root": str(workspace_path)}} if server.get("candidate") else
+                         {"toolNames": server["toolNames"],
+                          "dataMode": server.get("dataMode", fallback.get("dataMode", "external-mcp")),
+                          "headers": server.get("headers", fallback.get("headers", {}))})
                 if selected - set(saved.get("toolNames", [])):
                     raise ValueError("Requested tools are outside the configured read-only evaluation scope")
                 discovery_tool = sorted(selected)[0]
@@ -254,7 +258,7 @@ async def run(body):
                                     "workspacePath": str(workspace_path), "skillPath": str(root_path),
                                     "candidateMcpBindings": candidate_bindings,
                                     "instanceConfigurationDigest": (body.get('environment') or {}).get('instanceConfigurationDigest'),
-                                    "toolEvidence": source_digests, "sessionIsolation": "process", "dataMode": ",".join(sorted({config["mcp"][s["endpoint"]].get("dataMode", "external-mcp") for s in (body.get("environment") or {}).get("mcpServers", [])} | ({"skill-script"} if (body.get("environment") or {}).get("commandScripts") else set()) | ({"candidate-mcp"} if candidate_bindings else set())))}}})
+                                    "toolEvidence": source_digests, "sessionIsolation": "process", "dataMode": ",".join(sorted({s.get("dataMode", config.get("mcp", {}).get(s["endpoint"], {}).get("dataMode", "external-mcp")) for s in (body.get("environment") or {}).get("mcpServers", [])} | ({"skill-script"} if (body.get("environment") or {}).get("commandScripts") else set()) | ({"candidate-mcp"} if candidate_bindings else set())))}}})
 
 
 if __name__ == "__main__":

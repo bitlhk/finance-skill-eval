@@ -104,10 +104,13 @@ export type EnvironmentInspection = {
 
 export type MigrationRuntime = {
   runtimeId: string;
+  launcherEnvironmentId: string;
   name: string;
-  runtimeType: "openjiuwen";
+  runtimeType: "openjiuwen"|"ea"|"generic_http";
   endpoint: string;
   defaultModelId: string;
+  mcpEnvironmentIds:string[];
+  toolCount:number;
   models: ModelRef[];
   transport:'runtime_launcher';
 };
@@ -121,9 +124,10 @@ export type Catalog = {
   preparations: Preparation[];
   environments: Environment[];
   migrationRuntimes: MigrationRuntime[];
+  executionRuntimes: MigrationRuntime[];
   models: ModelRef[];
   runtimes: Array<{
-    id: "replay" | "direct_model" | "runtime_http";
+    id: "replay" | "direct_model" | "runtime_http" | "runtime_launcher";
     label: string;
     status: "ready" | "configuration_required";
     realExecution: boolean;

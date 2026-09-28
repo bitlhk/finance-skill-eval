@@ -31,6 +31,16 @@ export class MigrationOpenJiuwenService {
     return await this.environments?.get(environmentId)??null;
   }
 
+  private async launcherFor(environmentId:string) {
+    const selected=await this.migrationEnvironment(environmentId);
+    if(selected?.type==='runtime_launcher')return selected;
+    if(selected?.type==='execution_environment'){
+      const launcher=await this.migrationEnvironment(selected.launcherEnvironmentId);
+      return launcher?.type==='runtime_launcher'?launcher:null;
+    }
+    return null;
+  }
+
   async validate(id:string,input:unknown) {
     const value=await this.projects.get(id),state=await this.technicalValidation.currentState(value);
     if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
@@ -39,8 +49,8 @@ export class MigrationOpenJiuwenService {
     const selectedRuntime=body?.configuration?.runtime;
     if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('OpenJiuwen 验证必须选择 Runtime Launcher');
     const environmentId=selectedRuntime.environmentId;
-    const environment=environmentId?await this.migrationEnvironment(environmentId):null;
-    if(!environment||environment.type!=='runtime_launcher'||environment.runtimeType!=='openjiuwen')return conflict('目标必须是已配置的 OpenJiuwen Runtime Launcher');
+    const environment=environmentId?await this.launcherFor(environmentId):null;
+    if(!environment||environment.runtimeType!=='openjiuwen')return conflict('目标必须是使用 OpenJiuwen Runtime Launcher 的执行环境');
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
       .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;

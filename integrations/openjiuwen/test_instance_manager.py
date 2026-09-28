@@ -77,12 +77,17 @@ class InstanceManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'different configuration'):
             manager.create(request('second'), 'same-key')
 
-    def test_rejects_external_mcp_and_unsafe_archive(self):
+    def test_hydrates_external_mcp_secrets_and_rejects_unsafe_archive(self):
         manager = InstanceManager()
         external = request()
-        external['environment']['mcpServers'] = [{'endpoint': 'https://example.com/mcp'}]
-        with self.assertRaisesRegex(ValueError, 'external MCP'):
-            manager.create(external, 'external')
+        external['environment']['mcpServers'] = [{'endpoint': 'https://example.com/mcp', 'toolNames': ['lookup'],
+                                                  'secretBindings': {'Authorization': 'external.0.authorization'}}]
+        external['secrets']['values']['external.0.authorization'] = 'Bearer private'
+        item = manager.create(external, 'external')
+        self.assertNotIn('Bearer private', str(manager.public(item)))
+        execution = manager.execution(item['instanceId'], {
+            'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query'})
+        self.assertEqual(execution['environment']['mcpServers'][0]['headers']['Authorization'], 'Bearer private')
         unsafe = request()
         unsafe_archive = archive({'../escape.py': 'bad'})
         unsafe['skill']['archiveBase64'] = unsafe_archive

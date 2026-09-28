@@ -23,7 +23,7 @@ describe('Runtime Launcher adapter',()=>{
     const events:unknown[]=[];
     const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'ui-only',modelId:'execution',parameters:{}},variant,
       skill:{skillId:'demo',version:'1',artifactSha256:digest,instructions:'Use lookup.',files:{'mcp/server.py':'pass'},archiveBase64:'YXJjaGl2ZQ==',archiveSha256:'b'.repeat(64)},
-      environment:{environmentId:'launcher',candidateMcpServices:[{assetDigest:digest,toolNames:['lookup'],filePaths:['mcp/server.py'],start:['python','mcp/server.py'],secretEnvironment:{API_TOKEN:'top-secret'}}],
+      environment:{environmentId:'launcher',mcpServers:[{serverId:'external',endpoint:'https://example.com/mcp',transport:'streamable_http',toolNames:['lookup'],secretHeaders:{authorization:'Bearer external-secret'}}],candidateMcpServices:[{assetDigest:digest,toolNames:['lookup'],filePaths:['mcp/server.py'],start:['python','mcp/server.py'],secretEnvironment:{API_TOKEN:'top-secret'}}],
         runtimeToolConfig:{context:{user:{type:'string',value:'alice',sensitive:true}},providers:{},tools:{}}},timeoutMs:300000});
     await runtime.prepare!({runId:'run-1'});
     expect((await runtime.execute({runId:'run-1',side:'right',evalCase,model:{providerId:'ui-only',modelId:'execution',parameters:{}},variant,onEvent:event=>events.push(event)})).output).toBe('done');
@@ -31,8 +31,10 @@ describe('Runtime Launcher adapter',()=>{
     const createBody=JSON.parse(String(calls[0]!.init!.body));
     expect(createBody.environment.candidateMcpServices[0]).not.toHaveProperty('secretEnvironment');
     expect(createBody.environment.candidateMcpServices[0].secretBindings).toEqual({API_TOKEN:'mcp.0.API_TOKEN'});
+    expect(createBody.environment.mcpServers[0]).not.toHaveProperty('secretHeaders');
+    expect(createBody.environment.mcpServers[0].secretBindings).toEqual({authorization:'external-mcp.0.authorization'});
     expect(createBody.environment.runtimeToolConfig.context.user.value).toEqual({$secret:'context.user'});
-    expect(createBody.secrets.values).toEqual({'mcp.0.API_TOKEN':'top-secret','context.user':'alice'});
+    expect(createBody.secrets.values).toEqual({'external-mcp.0.authorization':'Bearer external-secret','mcp.0.API_TOKEN':'top-secret','context.user':'alice'});
     const executeBody=JSON.parse(String(calls.find(call=>call.url.endsWith('/execute'))!.init!.body));
     expect(executeBody.workspaceFiles).toEqual(evalCase.workspaceFiles);
     expect(events).toEqual([expect.objectContaining({type:'text_delta',text:'done'})]);

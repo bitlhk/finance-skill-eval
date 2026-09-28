@@ -59,9 +59,10 @@ export class MigrationReportService {
     });
     const openJiuwenValidations=(await Promise.all(experiments.map(async experiment=>{
       const runtime=experiment.declaredPlan?.configuration.runtime;
-      const environment=runtime&&(runtime.type==='runtime_http'||runtime.type==='runtime_launcher')?await this.migrationEnvironment(runtime.environmentId):null;
+      const selected=runtime&&(runtime.type==='runtime_http'||runtime.type==='runtime_launcher')?await this.migrationEnvironment(runtime.environmentId):null;
+      const environment=selected?.type==='execution_environment'?await this.migrationEnvironment(selected.launcherEnvironmentId):selected;
       if(!environment||!['runtime_http','runtime_launcher'].includes(environment.type)||environment.runtimeType!=='openjiuwen')return null;
-      return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:environment.environmentId,
+      return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:selected?.environmentId??environment.environmentId,
         execution:experiment.execution,evidence:experiment.evidence,current:experiment.current,
         executionCheck:['HTTP_LOADED_DIGEST_CHECKED','SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'].includes(experiment.evidence)?'ARTIFACT_VERIFIED':experiment.execution==='completed'?'EXECUTION_COMPLETED':'NOT_COMPLETE',
         acceptance:experiment.acceptance,

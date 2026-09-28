@@ -44,6 +44,11 @@ function controlledUrl(base:string,value:string):URL{
 }
 function extractSecrets(source:RuntimeEnvironmentDescriptor,provided:RuntimeInstanceSecrets|undefined){
   const environment=structuredClone(source),values:Record<string,string>={...(provided?.values??{})};
+  for(const [index,service] of (environment.mcpServers??[]).entries()){
+    const bindings:Record<string,string>={};
+    for(const [name,value] of Object.entries(service.secretHeaders??{})){const key=`external-mcp.${index}.${name}`;values[key]=value;bindings[name]=key;}
+    delete service.secretHeaders;if(Object.keys(bindings).length)service.secretBindings=bindings;
+  }
   for(const [index,service] of (environment.candidateMcpServices??[]).entries()){
     const bindings:Record<string,string>={};
     for(const [name,value] of Object.entries(service.secretEnvironment??{})){const key=`mcp.${index}.${name}`;values[key]=value;bindings[name]=key;}

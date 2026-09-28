@@ -237,8 +237,9 @@ export class EvaluationRunManager {
     if (configuration.runtimeBindings) {
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
-        const environment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
-        if (!environment || environment.type!=='runtime_launcher') throw new Error('迁移 Runtime Launcher 不可用');
+        const selectedEnvironment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
+        if (!selectedEnvironment) throw new Error('迁移执行环境不可用');
+        const environment=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
         const services=await Promise.all((configuration.runtimeMcpBindings?.[side]??[]).map(async service=>{
           const {environmentReference,...launch}=service;
           if(!environmentReference)return launch;
@@ -251,7 +252,7 @@ export class EvaluationRunManager {
         const executablePaths=[...new Set([...(configuration.runtimeCommandBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]),...services.flatMap(service=>service.filePaths)])];
         const resolveSkill = await this.skillResolver(binding.skillAssetId,true,true,executablePaths,true);
         const skill=await resolveSkill(pack.variants[side]);
-        const descriptor=await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools);
+        const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,true);
         if(configuration.runtimeToolConfig){
           descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
         }
@@ -284,6 +285,23 @@ export class EvaluationRunManager {
       }
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
+    if(configuration.runtime.type==='runtime_launcher'){
+      const selectedEnvironment=await this.options.environments.get(configuration.runtime.environmentId);
+      if(!selectedEnvironment)throw new Error('所选执行环境不可用');
+      const launcher=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
+      const inspection=await this.options.environments.inspect(selectedEnvironment);
+      if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
+      const available=new Set(inspection.capabilities.models.map(model=>model.modelId));
+      for(const side of ['left','right'] as const)if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
+      const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(evalCase=>evalCase.requiredTools))],[],[],false,configuration.runtimeHarnessTools,true);
+      if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
+      const makeSide=async(side:'left'|'right')=>new RuntimeLauncherAdapter({
+        baseUrl:launcher.baseUrl,headers:this.options.environments.headers(launcher),side,
+        model:pack.models.execution[side],variant:pack.variants[side],skill:await resolveSkill(pack.variants[side]),
+        environment:structuredClone(descriptor),timeoutMs:configuration.timeoutMs,
+      });
+      return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
+    }
     const environment = await this.options.environments.get(configuration.runtime.environmentId);
     if (!environment || environment.type !== "runtime_http") {
       throw new Error("所选的 Agent Runtime HTTP 环境不可用");
@@ -314,6 +332,7 @@ export class EvaluationRunManager {
     candidateMcpServices:NonNullable<RuntimeEnvironmentDescriptor['candidateMcpServices']>=[],
     exposeAllCandidateTools=false,
     harnessToolNames:NonNullable<RuntimeEnvironmentDescriptor['harnessToolNames']>=[],
+    inlineExternalSecrets=false,
   ): Promise<RuntimeEnvironmentDescriptor> {
     const candidateNames=new Set(candidateMcpServices.flatMap(service=>service.toolNames));
     const scriptNames=new Set(commandScripts.map(tool=>tool.name));
@@ -338,6 +357,7 @@ export class EvaluationRunManager {
         transport: "streamable_http" as const,
         toolNames,
         credentialEnv: environment.credentialEnv,
+        ...(inlineExternalSecrets?{secretHeaders:this.options.environments.headers(environment)}:{}),
       });
     }
     const selectedScripts=commandScripts.filter(tool=>exposeAllCandidateTools||requiredTools.includes(tool.name));

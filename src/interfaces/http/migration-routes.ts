@@ -81,7 +81,7 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
       throw Object.assign(new Error("请选择 Runtime Launcher。"), { statusCode: 400 });
     }
     const environment = await environments.get(configuration.runtime.environmentId);
-    if (!environment || environment.type !== "runtime_launcher") throw Object.assign(new Error("Runtime Launcher 不存在。"), { statusCode: 400 });
+    if (!environment || !['runtime_launcher','execution_environment'].includes(environment.type)) throw Object.assign(new Error("执行环境不存在。"), { statusCode: 400 });
     const inspection = await environments.inspect(environment), capabilities = inspection.capabilities;
     if (inspection.status !== "ready" || !capabilities) throw Object.assign(new Error(inspection.error ?? "Runtime Launcher 预检失败。"), { statusCode: 400 });
     const requested = configuration.executionModel?.modelId ?? capabilities.defaultModelId;

@@ -20,6 +20,9 @@ export type RuntimeEnvironmentDescriptor = {
     transport: "streamable_http";
     toolNames: string[];
     credentialEnv?: string | null;
+    secretHeaders?:Record<string,string>;
+    secretBindings?:Record<string,string>;
+    headers?:Record<string,string>;
   }>;
   commandScripts?:Array<{name:string;path:string;kind:'PYTHON'|'NODE';filePaths:string[];inputSchema?:unknown;launch?:{program:string;args:string[]}}>;
   /** The worker starts these inside the candidate workspace, never a same-name external service. */

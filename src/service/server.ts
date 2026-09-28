@@ -164,12 +164,19 @@ export async function createEvaluationService(
       environments.list(),
       preparations.list(),
     ]);
-    const launcherRuntimes=(await Promise.all(savedEnvironments.filter(environment=>environment.type==='runtime_launcher').map(async environment=>{
+    const executionResources=savedEnvironments.filter(environment=>environment.type==='execution_environment');
+    const referencedLaunchers=new Set(executionResources.map(environment=>environment.launcherEnvironmentId));
+    const selectableRuntimes=[...executionResources,...savedEnvironments.filter(environment=>environment.type==='runtime_launcher'&&!referencedLaunchers.has(environment.environmentId))];
+    const launcherRuntimes=(await Promise.all(selectableRuntimes.map(async environment=>{
+      const resolved=await environments.resolveLauncher(environment);
       const inspection=await environments.inspect(environment);if(inspection.status!=='ready'||!inspection.capabilities)return null;
-      return {runtimeId:environment.environmentId,name:environment.name,runtimeType:environment.runtimeType,endpoint:environment.baseUrl,
-        transport:'runtime_launcher' as const,defaultModelId:inspection.capabilities.defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
+      const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
+      return {runtimeId:environment.environmentId,launcherEnvironmentId:resolved.launcher.environmentId,name:environment.name,runtimeType:resolved.launcher.runtimeType,endpoint:resolved.launcher.baseUrl,
+        mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,
+        transport:'runtime_launcher' as const,defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
     }))).filter(item=>item!==null);
     const migrationRuntimes=launcherRuntimes;
+    const executionRuntimes=launcherRuntimes;
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");
     const executionCatalog = await executionModelCatalog(config.rootDirectory);
@@ -190,6 +197,7 @@ export async function createEvaluationService(
       preparations: savedPreparations,
       environments: savedEnvironments,
       migrationRuntimes,
+      executionRuntimes,
       models: executionCatalog?.models ?? [],
       runtimes: [
         {

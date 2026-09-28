@@ -91,8 +91,6 @@ class InstanceManager:
             raise ValueError('Only inline Runtime secrets are supported')
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in secrets.get('values', {}).items()):
             raise ValueError('Runtime secrets must be string values')
-        if (request.get('environment') or {}).get('mcpServers'):
-            raise ValueError('This Runtime does not support external MCP servers')
         request = copy.deepcopy(request)
         self._hydrate_archive(request)
         digest = self._digest(request)
@@ -170,6 +168,13 @@ class InstanceManager:
         request = copy.deepcopy(item['_request'])
         values = request.pop('secrets', {}).get('values', {})
         environment = request.get('environment') or {}
+        for service in environment.get('mcpServers', []):
+            if not isinstance(service, dict) or not isinstance(service.get('endpoint'), str) or not service['endpoint'].startswith(('http://', 'https://')):
+                raise ValueError('Invalid external MCP service')
+            headers = service.setdefault('headers', {})
+            for name, ref in service.pop('secretBindings', {}).items():
+                if ref not in values: raise ValueError('Missing external MCP secret binding')
+                headers[name] = values[ref]
         for service in environment.get('candidateMcpServices', []):
             target = service.setdefault('environment', {})
             for name, ref in service.pop('secretBindings', {}).items():

@@ -25,6 +25,16 @@ export class MigrationLegacyService {
     return await this.environments?.get(environmentId)??null;
   }
 
+  private async launcherFor(environmentId:string) {
+    const selected=await this.migrationEnvironment(environmentId);
+    if(selected?.type==='runtime_launcher')return selected;
+    if(selected?.type==='execution_environment'){
+      const launcher=await this.migrationEnvironment(selected.launcherEnvironmentId);
+      return launcher?.type==='runtime_launcher'?launcher:null;
+    }
+    return null;
+  }
+
   async target() {
     try {
       return {available:true,target:await this.targets!.target()};
@@ -53,8 +63,8 @@ export class MigrationLegacyService {
       const value=await this.projects.get(id);
       if(parsed.baseAssetId!==(value.candidate??value.source).assetId)return conflict('候选已变化，请刷新后重新生成');
       if(parsed.environmentId){
-        const environment=await this.migrationEnvironment(parsed.environmentId);
-        if(!environment||environment.type!=='runtime_launcher'||environment.runtimeType!=='openjiuwen')return conflict('目标必须是已配置的 OpenJiuwen Runtime Launcher');
+        const environment=await this.launcherFor(parsed.environmentId);
+        if(!environment||environment.runtimeType!=='openjiuwen')return conflict('目标必须是使用 OpenJiuwen Runtime Launcher 的执行环境');
       }
       const base=value.candidate??value.source;
       const originalArchive=await this.skills.readArchive(base.assetId);

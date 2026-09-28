@@ -44,7 +44,6 @@ export const runConfigurationSchema = z.strictObject({
 }).superRefine((value, context) => {
   if((value.evaluationMode==='service_comparison')!==Boolean(value.originalService))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比模式必须配置原服务，其他模式不能附带原服务配置'});
   const managedRuntime=value.runtime.type==='runtime_http'||value.runtime.type==='runtime_launcher';
-  if(value.runtime.type==='runtime_launcher'&&!value.runtimeBindings)context.addIssue({code:z.ZodIssueCode.custom,message:'Runtime Launcher requires explicit left and right Runtime bindings.'});
   if(value.evaluationMode==='service_comparison'&&(!value.runtimeBindings||!managedRuntime||value.judgeMode!=='model'||value.caseSource!=='fixed'||!value.preparationId||value.includeHoldout))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比需要固定测试集、模型评估和显式候选 Runtime 绑定'});
   if(value.runtimeToolConfig && !managedRuntime)context.addIssue({code:z.ZodIssueCode.custom,message:'Runtime context requires a managed Runtime environment'});
   if (value.runtimeBindings && (value.runtime.type!=='runtime_launcher' || value.caseSource !== 'fixed'
