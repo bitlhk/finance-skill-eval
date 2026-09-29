@@ -314,7 +314,16 @@ export class EvaluationRunManager {
   ): Promise<RuntimeEnvironmentDescriptor> {
     const candidateNames=new Set(candidateMcpServices.flatMap(service=>service.toolNames));
     const scriptNames=new Set(commandScripts.map(tool=>tool.name));
-    const externalRequired=requiredTools.filter(name=>!candidateNames.has(name)&&!scriptNames.has(name)&&!harnessToolNames.includes(name as typeof harnessToolNames[number])&&name!=='skill_tool');
+    const nativeNames = new Set<string>();
+    if (runtimeEnvironment.type === 'runtime_launcher' && requiredTools.some(name =>
+        !candidateNames.has(name) && !scriptNames.has(name) && !harnessToolNames.includes(name as typeof harnessToolNames[number]) && name !== 'skill_tool')) {
+      const preflight = await this.options.environments.preflight(runtimeEnvironment);
+      if (preflight.status !== 'ready') throw new Error(`Runtime Launcher preflight failed: ${preflight.error ?? 'unknown'}`);
+      if ('capabilities' in preflight) {
+        for (const name of preflight.capabilities?.nativeToolNames ?? []) nativeNames.add(name);
+      }
+    }
+    const externalRequired=requiredTools.filter(name=>!nativeNames.has(name)&&!candidateNames.has(name)&&!scriptNames.has(name)&&!harnessToolNames.includes(name as typeof harnessToolNames[number])&&name!=='skill_tool');
     const mcpServers = [];
     for (const environmentId of externalRequired.length&&'mcpEnvironmentIds' in runtimeEnvironment ? runtimeEnvironment.mcpEnvironmentIds : []) {
       const environment = await this.options.environments.get(environmentId);
@@ -339,7 +348,7 @@ export class EvaluationRunManager {
       });
     }
     const selectedScripts=commandScripts.filter(tool=>exposeAllCandidateTools||requiredTools.includes(tool.name));
-    const missingTools = findMissingRequiredTools(requiredTools.filter(name=>!candidateNames.has(name)&&!harnessToolNames.includes(name as typeof harnessToolNames[number])&&name!=='skill_tool'), mcpServers,selectedScripts);
+    const missingTools = findMissingRequiredTools(requiredTools.filter(name=>!nativeNames.has(name)&&!candidateNames.has(name)&&!harnessToolNames.includes(name as typeof harnessToolNames[number])&&name!=='skill_tool'), mcpServers,selectedScripts);
     if (missingTools.length > 0) {
       throw new Error(`Required MCP tools are unavailable: ${missingTools.join(", ")}`);
     }

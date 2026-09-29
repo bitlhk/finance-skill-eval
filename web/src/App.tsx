@@ -43,6 +43,7 @@ import { OptimizationPanel } from "./OptimizationPanel";
 import { MigrationPanel } from './MigrationPanel';
 import type {
   SkillAsset,
+  Evidence,
   Catalog,
   Environment,
   EnvironmentInspection,
@@ -55,6 +56,9 @@ import type {
 } from "./types";
 
 type View = "catalog" | "evaluation" | "skills" | "migration" | "environment" | "methodology" | "history";
+type ExecutionMode = "replay" | "direct_model" | "runtime_launcher" | "dual_runtime";
+type LauncherPair = {left:string;right:string};
+type Generation = {temperature:number;top_p:number;max_tokens:number};
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const PublicDemoContext = createContext(false);
@@ -116,7 +120,11 @@ export function App() {
   const [rightVariantSelection, setRightVariantSelection] = useState("");
   const [leftModelKey, setLeftModelKey] = useState("");
   const [rightModelKey, setRightModelKey] = useState("");
-  const [runtime, setRuntime] = useState<"replay" | "direct_model" | "runtime_launcher">("runtime_launcher");
+  const [runtime, setRuntime] = useState<ExecutionMode>("runtime_launcher");
+  const [launcherPair,setLauncherPair]=useState<LauncherPair>({left:"",right:""});
+  const [launcherReady,setLauncherReady]=useState(false);
+  const [launcherStatus,setLauncherStatus]=useState("");
+  const [generation,setGeneration]=useState<Generation>({temperature:0,top_p:1,max_tokens:2000});
   const [runtimeEnvironmentId, setRuntimeEnvironmentId] = useState("");
   const [environmentInspection, setEnvironmentInspection] = useState<EnvironmentInspection | null>(null);
   const [environmentChecking, setEnvironmentChecking] = useState(false);
@@ -143,6 +151,10 @@ export function App() {
     setSelection(current => current || (defaultPack ? `pack:${defaultPack.packId}` : ""));
     setSelectedSkillId(current => current || defaultPack?.targetSkillId || nextCatalog.featuredSkills[0]?.skillId || "");
     setRuntimeEnvironmentId(current => current || nextCatalog.executionRuntimes[0]?.runtimeId || "");
+    setLauncherPair(current => ({
+      left: current.left || nextCatalog.executionRuntimes[0]?.runtimeId || "",
+      right: current.right || nextCatalog.executionRuntimes[1]?.runtimeId || nextCatalog.executionRuntimes[0]?.runtimeId || "",
+    }));
   };
 
   useEffect(() => {
@@ -191,7 +203,10 @@ export function App() {
     ...packVersionOptions,
     ...(catalog?.uploadedSkills.filter(item => item.skillId === targetSkillId).map(item => ({ version: item.version, artifactSha256: item.artifactSha256, packId: null })) ?? []),
   ].map(item => [item.version, item])).values()];
+  const initializedSelection = useRef("");
   useEffect(() => {
+    if ((!selectedPack && !selectedPreparation) || initializedSelection.current === selection) return;
+    initializedSelection.current = selection;
     setSelectedCases(cases.map(item => item.caseId));
     if (selectedPack) {
       setRuntime("runtime_launcher");
@@ -272,6 +287,31 @@ export function App() {
     void inspectEnvironment(runtimeEnvironmentId);
   }, [runtime, runtimeEnvironmentId, selection]);
 
+  useEffect(()=>{
+    let current=true;
+    setLauncherReady(false);
+    if(runtime!=="dual_runtime"||!launcherPair.left||!launcherPair.right){setLauncherStatus("请选择两个评测环境");return;}
+    setLauncherStatus("正在核对两侧环境");
+    Promise.all([launcherPair.left,launcherPair.right].map(id=>api<EnvironmentInspection>(`/api/environments/${id}/preflight`,{method:"POST"})))
+      .then(results=>{if(!current)return;const ready=results.every(result=>result.status==="ready");setLauncherReady(ready);
+        setLauncherStatus(ready?results.map(result=>`${result.capabilities?.runtime.type??"未知"} ${result.capabilities?.runtime.version??""}`).join(" / "):results.filter(result=>result.status!=="ready").map(result=>result.error||"预检失败").join("；"));})
+      .catch(cause=>{if(current)setLauncherStatus(String(cause));});
+    return ()=>{current=false;};
+  },[runtime,launcherPair.left,launcherPair.right]);
+
+  useEffect(()=>{
+    if(runtime!=="dual_runtime"||!catalog)return;
+    const left=catalog.executionRuntimes.find(item=>item.runtimeId===launcherPair.left);
+    const right=catalog.executionRuntimes.find(item=>item.runtimeId===launcherPair.right);
+    const common=(left?.models??[]).filter(model=>right?.models.some(candidate=>
+      candidate.modelId===model.modelId&&(!model.upstreamModelId||!candidate.upstreamModelId||candidate.upstreamModelId===model.upstreamModelId)));
+    const preferred=common.find(model=>model.modelId===left?.defaultModelId)??common[0];
+    if(!preferred)return;
+    const key=modelKey(preferred);
+    setLeftModelKey(key);
+    setRightModelKey(key);
+  },[runtime,launcherPair.left,launcherPair.right,catalog]);
+
   const openSkillEvaluation = (skill: FeaturedSkill) => {
     const version = skill.versions[0];
     if (!version) return;
@@ -285,14 +325,20 @@ export function App() {
   };
 
   const selectedRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===runtimeEnvironmentId);
-  const runtimeModels=runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[]):[];
-  const runtimeDefaultModel=selectedRuntimeOption?.models.find(item=>item.modelId===selectedRuntimeOption.defaultModelId)??selectedRuntimeOption?.models[0];
+  const leftRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.left);
+  const rightRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.right);
+  const pairedRuntimeModels=(leftRuntimeOption?.models??[]).filter(left=>rightRuntimeOption?.models.some(right=>
+    right.modelId===left.modelId&&(!left.upstreamModelId||!right.upstreamModelId||right.upstreamModelId===left.upstreamModelId)));
+  const runtimeModels=runtime==='dual_runtime'?pairedRuntimeModels:runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[]):[];
+  const runtimeDefaultModel=runtime==='dual_runtime'
+    ? pairedRuntimeModels.find(item=>item.modelId===leftRuntimeOption?.defaultModelId)??pairedRuntimeModels[0]
+    : selectedRuntimeOption?.models.find(item=>item.modelId===selectedRuntimeOption.defaultModelId)??selectedRuntimeOption?.models[0];
   const selectedLeftModel = runtime === "direct_model" && catalog ? directExecutionRole(catalog).model : runtimeModels.find(item => modelKey(item) === leftModelKey)
-    ?? (runtime==='runtime_launcher'?runtimeDefaultModel:undefined)
+    ?? (runtime==='runtime_launcher'||runtime==='dual_runtime'?runtimeDefaultModel:undefined)
     ?? selectedPack?.models.execution.left
     ?? catalog?.modelRoles.execution.model;
   const selectedRightModel = runtime === "direct_model" && catalog ? directExecutionRole(catalog).model : runtimeModels.find(item => modelKey(item) === rightModelKey)
-    ?? (runtime==='runtime_launcher'?runtimeDefaultModel:undefined)
+    ?? (runtime==='runtime_launcher'||runtime==='dual_runtime'?runtimeDefaultModel:undefined)
     ?? selectedPack?.models.execution.right
     ?? catalog?.modelRoles.execution.model;
   const resolveVariant = (value: string): SkillVariant => {
@@ -306,7 +352,8 @@ export function App() {
       ...(option?.artifactSha256 ? { artifactSha256: option.artifactSha256 } : {}),
     };
   };
-  const sameConfiguration = leftVariantSelection === rightVariantSelection && leftModelKey === rightModelKey;
+  const sameConfiguration = leftVariantSelection === rightVariantSelection && leftModelKey === rightModelKey
+    && (runtime!=="dual_runtime"||launcherPair.left===launcherPair.right);
   const mixedVariables = leftVariantSelection !== rightVariantSelection && leftModelKey !== rightModelKey;
   const selectedVariantsHaveArtifacts = [leftVariantSelection, rightVariantSelection].every(value => {
     if (value === "without_target_skill") return true;
@@ -378,18 +425,26 @@ export function App() {
     setBusy(true);
     setError("");
     try {
+      const dualRuntime=runtime==="dual_runtime";
+      const boundAsset=(value:string)=>catalog?.uploadedSkills.find(item=>item.skillId===targetSkillId&&`version:${item.version}`===value);
+      const leftAsset=boundAsset(leftVariantSelection),rightAsset=boundAsset(rightVariantSelection);
+      if(dualRuntime&&(!leftAsset||!rightAsset||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要两侧已导入的 Skill 版本和相同模型");
       const job = await api<EvaluationJob>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
           ...(selectedPack ? { packId: selectedPack.packId } : { preparationId: selectedPreparation!.preparationId }),
-          runtime: runtime === 'runtime_launcher'
-            ? { type: runtime, environmentId: runtimeEnvironmentId }
+          runtime: dualRuntime
+            ? {type:"runtime_launcher",environmentId:launcherPair.left}
+            : runtime === "runtime_launcher"
+              ? { type: runtime, environmentId: runtimeEnvironmentId }
             : { type: runtime },
           judgeMode,
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
-          ...(selectedLeftModel ? { leftExecutionModel: executionReference(selectedLeftModel) } : {}),
-          ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {}),
+          ...(dualRuntime ? {executionModel:{...executionReference(selectedLeftModel!),parameters:generation},
+            runtimeBindings:{left:{environmentId:launcherPair.left,skillAssetId:leftAsset!.assetId},right:{environmentId:launcherPair.right,skillAssetId:rightAsset!.assetId}}}
+            : {...(selectedLeftModel ? { leftExecutionModel: executionReference(selectedLeftModel) } : {}),
+               ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {})}),
           caseSource: dynamicQuestions ? "ai_generated" : "fixed",
           selectedCaseIds: dynamicQuestions ? [] : selectedCases,
           ...(selectedUploadedSkill ? { skillAssetId: selectedUploadedSkill.assetId } : {}),
@@ -442,6 +497,11 @@ export function App() {
     && (runtime !== 'runtime_launcher' || selectedVariantsHaveArtifacts)
     && (runtime !== 'runtime_launcher' || runtimeEnvironmentId)
     && (runtime !== 'runtime_launcher' || environmentInspection?.status === "ready")
+    && (runtime!=="dual_runtime" || launcherReady && !dynamicQuestions && leftModelKey===rightModelKey
+      && [leftVariantSelection,rightVariantSelection].every(value=>catalog?.uploadedSkills.some(item=>item.skillId===targetSkillId&&`version:${item.version}`===value))
+      && Number.isFinite(generation.temperature)&&generation.temperature>=0&&generation.temperature<=2
+      && Number.isFinite(generation.top_p)&&generation.top_p>0&&generation.top_p<=1
+      && Number.isInteger(generation.max_tokens)&&generation.max_tokens>=1&&generation.max_tokens<=32768)
     && !(runtime === "direct_model" && (!catalog || !directExecutionRole(catalog).configured))
     && !(judgeMode === "model" && !catalog?.modelRoles.judge.configured)
     && !sameConfiguration
@@ -498,7 +558,9 @@ export function App() {
             selectedCases={selectedCases}
             setSelectedCases={setSelectedCases}
             runtime={runtime}
-            setRuntime={setRuntime}
+            setRuntime={value=>{setRuntime(value);if(value==="dual_runtime"){setCaseSource("fixed");setLeftVariantSelection(rightVariantSelection);setRightModelKey(leftModelKey);}}}
+            launcherPair={launcherPair} setLauncherPair={setLauncherPair} launcherStatus={launcherStatus}
+            generation={generation} setGeneration={setGeneration}
             directModelAllowed={!preparationRequiresTools}
             runtimeEnvironmentId={runtimeEnvironmentId}
             setRuntimeEnvironmentId={setRuntimeEnvironmentId}
@@ -608,8 +670,13 @@ function EvaluationView(props: {
   setCaseSource(value: "fixed" | "ai_generated"): void;
   selectedCases: string[];
   setSelectedCases(value: string[]): void;
-  runtime: "replay" | "direct_model" | "runtime_launcher";
-  setRuntime(value: "replay" | "direct_model" | "runtime_launcher"): void;
+  runtime: ExecutionMode;
+  setRuntime(value: ExecutionMode): void;
+  launcherPair:LauncherPair;
+  setLauncherPair(value:LauncherPair):void;
+  launcherStatus:string;
+  generation:Generation;
+  setGeneration(value:Generation):void;
   directModelAllowed: boolean;
   runtimeEnvironmentId: string;
   setRuntimeEnvironmentId(value: string): void;
@@ -646,6 +713,10 @@ function EvaluationView(props: {
   const questions = dynamic ? props.job?.questionSet?.cases ?? [] : props.cases;
   const runtimeEnvironment = props.catalog.environments.find(item => item.environmentId === props.runtimeEnvironmentId);
   const runtimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.runtimeEnvironmentId);
+  const leftRuntimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.launcherPair.left);
+  const rightRuntimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.launcherPair.right);
+  const pairedRuntimeModels=(leftRuntimeOption?.models??[]).filter(left=>rightRuntimeOption?.models.some(right=>
+    right.modelId===left.modelId&&(!left.upstreamModelId||!right.upstreamModelId||right.upstreamModelId===left.upstreamModelId)));
   const linkedMcp = runtimeEnvironment&&'mcpEnvironmentIds' in runtimeEnvironment?runtimeEnvironment.mcpEnvironmentIds
     .map(id => props.catalog.environments.find(item => item.environmentId === id))
     .filter((item): item is Environment => Boolean(item)):[];
@@ -656,6 +727,8 @@ function EvaluationView(props: {
     ?? (target && "skillId" in target ? target.skillId : "上传 Skill");
   const comparisonModels=props.runtime === 'direct_model'
     ? [directExecutionRole(props.catalog).model]
+    : props.runtime === 'dual_runtime'
+      ? pairedRuntimeModels
     : props.runtime === 'runtime_launcher'
       ? runtimeOption?.models??[]
       : target && 'models' in target
@@ -679,12 +752,13 @@ function EvaluationView(props: {
       </section>
 
       <section className="shared-environment">
-        <div className="shared-environment-title"><div><Network size={18} /><span><strong>统一测试环境</strong><small>Runtime、MCP 和题目由左右两侧共享，避免引入额外变量。</small></span></div>{props.runtime === 'runtime_launcher' ? <button className="button secondary compact" onClick={props.onInspectEnvironment} disabled={props.environmentChecking || !props.runtimeEnvironmentId}><RefreshCw className={props.environmentChecking ? "spin" : ""} size={15} />重新预检</button> : null}</div>
+        <div className="shared-environment-title"><div><Network size={18} /><span><strong>测试环境</strong><small>{props.runtime==='dual_runtime'?'左右两侧使用独立 Runtime，Skill、模型和题目保持一致。':'Runtime、MCP 和题目由左右两侧共享，避免引入额外变量。'}</small></span></div>{props.runtime === 'runtime_launcher' ? <button className="button secondary compact" onClick={props.onInspectEnvironment} disabled={props.environmentChecking || !props.runtimeEnvironmentId}><RefreshCw className={props.environmentChecking ? "spin" : ""} size={15} />重新预检</button> : null}</div>
         <div className="environment-controls">
           <label className="field"><span>执行方式</span><select disabled={Boolean(active)} value={props.runtime} onChange={event => props.setRuntime(event.target.value as typeof props.runtime)}>
             {!isPreparation && !props.catalog.publicDemo ? <option value="replay" disabled={!(target && 'replayReady' in target && target.replayReady)}>冻结证据回放{target && 'replayReady' in target && !target.replayReady ? " · 当前评测包未提供" : ""}</option> : null}
             {isPreparation ? <option value="direct_model" disabled={!directExecutionRole(props.catalog).configured || !props.directModelAllowed}>文本 Skill 直测</option> : null}
             <option value="runtime_launcher" disabled={!props.catalog.executionRuntimes.length}>在线执行环境</option>
+            {!props.catalog.publicDemo&&props.catalog.executionRuntimes.length?<option value="dual_runtime">双 Runtime 临时实例</option>:null}
           </select></label>
           {props.runtime === "runtime_launcher" ? <label className="field wide"><span>执行环境</span><select disabled={Boolean(active)} value={props.runtimeEnvironmentId} onChange={event => props.setRuntimeEnvironmentId(event.target.value)}>
             <option value="">请选择</option>
@@ -695,7 +769,11 @@ function EvaluationView(props: {
             <option value="model" disabled={!props.catalog.modelRoles.judge.configured}>匿名模型 Judge{props.catalog.modelRoles.judge.configured ? ` · ${props.catalog.modelRoles.judge.model.modelId}` : " · 未配置"}</option>
           </select></label>
         </div>
-        {props.runtime === "replay" ? <div className="environment-readiness replay"><Archive size={16} /><span><strong>冻结证据已就绪</strong>本轮复核固化的真实或受控输出；左右版本与模型保持锁定。</span></div> : props.runtime === "direct_model" ? <div className="environment-readiness ready"><CircleCheck size={16} /><span><strong>文本执行环境</strong>适用于不依赖工具的上传 Skill，本轮不连接 MCP。</span></div> : <div className={`environment-readiness ${props.environmentChecking ? "checking" : props.environmentInspection?.status ?? "waiting"}`}>
+        {props.runtime==="dual_runtime"?<><div className="environment-controls">
+          {(["left","right"] as const).map((side,index)=><label className="field" key={side}><span>{index===0?"对照组 Runtime":"目标组 Runtime"}</span><select disabled={Boolean(active)} value={props.launcherPair[side]} onChange={event=>props.setLauncherPair({...props.launcherPair,[side]:event.target.value})}><option value="">请选择</option>{props.catalog.executionRuntimes.map(item=><option key={item.runtimeId} value={item.runtimeId}>{item.name} · {runtimeTypeLabel(item.runtimeType)}</option>)}</select></label>)}
+          {(["temperature","top_p","max_tokens"] as const).map(name=><label className="field" key={name}><span>{name}</span><input type="number" disabled={Boolean(active)} min={name==="top_p"?0.01:name==="max_tokens"?1:0} max={name==="temperature"?2:name==="top_p"?1:32768} step={name==="max_tokens"?1:0.01} value={Number.isFinite(props.generation[name])?props.generation[name]:""} onChange={event=>props.setGeneration({...props.generation,[name]:event.target.value===""?NaN:Number(event.target.value)})}/></label>)}
+        </div><p role="status">{props.launcherStatus}</p></>:null}
+        {props.runtime==="dual_runtime"?null:props.runtime === "replay" ? <div className="environment-readiness replay"><Archive size={16} /><span><strong>冻结证据已就绪</strong>本轮复核固化的真实或受控输出；左右版本与模型保持锁定。</span></div> : props.runtime === "direct_model" ? <div className="environment-readiness ready"><CircleCheck size={16} /><span><strong>文本执行环境</strong>适用于不依赖工具的上传 Skill，本轮不连接 MCP。</span></div> : <div className={`environment-readiness ${props.environmentChecking ? "checking" : props.environmentInspection?.status ?? "waiting"}`}>
           {props.environmentChecking ? <RefreshCw className="spin" size={16} /> : props.environmentInspection?.status === "ready" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}
           <span><strong>{props.environmentChecking ? "正在自动准备环境" : props.environmentInspection?.status === "ready" ? "在线环境已就绪" : props.environmentInspection?.error ?? "请选择执行环境"}</strong>{runtimeOption ? `${runtimeTypeLabel(runtimeOption.runtimeType)} · ${runtimeOption.mcpEnvironmentIds.length} 个 MCP · ${props.environmentInspection?.status === 'ready' ? `已发现 ${props.environmentInspection.toolCount} 个工具` : '工具待确认'} · 本轮需要 ${requiredTools.length} 项` : runtimeEnvironment ? `${runtimeTypeLabel(runtimeEnvironment.runtimeType)} · ${linkedMcp.length} 个 MCP 已绑定 · ${props.environmentInspection?.status === 'ready' ? `已发现 ${props.environmentInspection.toolCount} 个工具` : '工具待确认'} · 本轮需要 ${requiredTools.length} 项` : "评测开始前将自动检查 Runtime 与关联 MCP。"}</span>
         </div>}
@@ -708,10 +786,10 @@ function EvaluationView(props: {
       </div>
 
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
-      {props.runtime === 'runtime_launcher' && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
+      {(props.runtime === 'runtime_launcher'||props.runtime==='dual_runtime') && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
 
       <section className="cases-section">
-        <div className="section-title"><div><h2>评测任务</h2></div>{!isPreparation && props.runtime !== "replay" ? <div className="question-mode" role="group" aria-label="题目来源">
+        <div className="section-title"><div><h2>评测任务</h2></div>{!isPreparation && props.runtime !== "replay" && props.runtime!=="dual_runtime" ? <div className="question-mode" role="group" aria-label="题目来源">
           <button aria-pressed={dynamic} disabled={Boolean(active)} onClick={() => { props.setCaseSource("ai_generated"); props.setJudgeMode("model"); }}><Sparkles size={15} />AI 动态出题</button>
           <button aria-pressed={!dynamic} disabled={Boolean(active)} onClick={() => props.setCaseSource("fixed")}><Archive size={15} />固定回归题</button>
         </div> : <span>{props.selectedCases.length}/{props.cases.length} 题</span>}</div>
@@ -789,8 +867,22 @@ function LiveEvidence({ job }: { job: EvaluationJob }) {
     const live = job.live?.[`${caseId}:${side}`];
     return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.status === "completed" ? "执行完成" : "执行失败" : live?.status ?? "等待执行"}</small>
       <div className="tool-events">{(evidence?.toolCalls ?? live?.toolCalls ?? []).map((tool,i) => <span key={`${tool.name}-${i}`} className={tool.status}>{tool.status === "running" ? <RefreshCw className="spin" size={12} /> : null}{tool.name} · {tool.status}</span>)}</div>
-      <MarkdownContent streaming={!evidence && !TERMINAL.has(job.status)} content={evidence?.output || evidence?.error || live?.output || "等待模型输出"} /></article>;
+      <MarkdownContent streaming={!evidence && !TERMINAL.has(job.status)} content={evidence?.output || evidence?.error || live?.output || "等待模型输出"} />{evidence?<ExecutionIdentity evidence={evidence}/>:null}</article>;
   })}</div></div>)}</div>;
+}
+
+function ExecutionIdentity({evidence}:{evidence:Evidence}) {
+  const data=evidence.metadata;
+  if(!data?.runtime)return null;
+  return <details className="question-receipt"><summary>{data.runtime.type} {data.runtime.version} · {Math.round(evidence.elapsedMs)} ms · {evidence.status==="completed"?"执行返回":"执行失败"}</summary>
+    <p>Skill 版本：{evidence.skillVersion??"未记录"} · {data.publicationStatus==="NOT_PUBLISHED"?"临时候选，未发布":data.publicationStatus==="PUBLISHED"?"已发布方法":"发布状态未记录"}</p>
+    <p>工具：{evidence.toolCalls.map(item=>`${item.name} (${item.status})`).join("、")||"未记录调用"}</p>
+    {evidence.error?<p role="alert">{evidence.error}</p>:null}
+    <dl>{Object.entries({"实际方法摘要":data.loadedSkillDigest,"安装资产摘要":data.installationDigest,"制品 Lock":data.artifactLockSha256,"运行 Lock":data.runtimeLockSha256,
+      "运行记录请求":data.executionHistoryRequestId,"保留证据引用":data.retainedEvidenceRef,"业务日期":data.businessDate,"时区":data.businessTimeZone}).map(([label,value])=><div key={label}><dt>{label}</dt><dd style={{overflowWrap:"anywhere",marginInlineStart:0}}>{value == null ? "未记录" : typeof value === "object" ? JSON.stringify(value) : value}</dd></div>)}</dl>
+    <p>声明生成参数：{JSON.stringify(data.declaredModelParameters??{})}</p>
+    <p>{data.modelParametersVerified?"参数已核验":"此处是声明或宿主记录，不单独证明模型端实际收到的参数"}</p>
+  </details>;
 }
 
 function ReportResult({ job }: { job: EvaluationJob }) {
@@ -805,7 +897,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
     <ResultCharts report={report} />
     {report.cases.map(item => <section className="result-case" key={item.caseId}>
       <header><div><span>{item.caseId}</span><h3>{item.name}</h3></div><strong className={`winner winner-${item.judge?.winner ?? "none"}`}>{item.judge?.winner === "right" ? "B 更优" : item.judge?.winner === "left" ? "A 更优" : item.judge ? "持平" : "未评阅"}</strong></header>
-      <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /></article></div>
+      <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
       <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>
     </section>)}
     {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}

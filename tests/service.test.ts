@@ -108,6 +108,17 @@ description: 根据已核验风险证据形成审核建议。
       expect(uploaded.statusCode).toBe(200);
       expect(uploaded.json()).toMatchObject({ skillId: "transfer-risk-review", version: "0.1.0" });
 
+      for (const hasRule of [true, false]) {
+        const prepared = await app.inject({method:"POST",url:`/api/skills/${uploaded.json().assetId}/prepare/manual`,
+          payload:{summary:"Readiness test",cases:[{caseId:`case-${hasRule}`,name:"Case",prompt:"Check facts",
+            evaluationGoal:"Check facts",requiredTools:[],rubric:[{criterionId:"facts",label:"Facts",description:"Facts",
+              dimension:"business_completeness",weight:1,...(hasRule?{anyOf:["verified"]}:{})}]}]}});
+        expect(prepared.statusCode).toBe(200);
+        const updated = (await app.inject({url:"/api/catalog"})).json();
+        expect(updated.preparations.find((item:{preparationId:string})=>item.preparationId===prepared.json().preparationId)
+          .deterministicReady).toBe(hasRule);
+      }
+
       const created = await app.inject({
         method: "POST",
         url: "/api/runs",

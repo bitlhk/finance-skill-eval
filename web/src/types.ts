@@ -73,6 +73,7 @@ export type SkillAsset = {
 };
 
 export type Preparation = {
+  deterministicReady?: boolean;
   preparationId: string;
   skillAssetId: string;
   skillId: string;
@@ -136,7 +137,12 @@ export type Catalog = {
 
 export type Evidence = {
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
-  metadata?: { dataMode?: string; skillArtifactSha256?: string | null; runtimeVersion?: string; integrationVersion?: string; referenceFilesRead?: Record<string, string> };
+  metadata?: { dataMode?: string; skillArtifactSha256?: string | null; runtimeVersion?: string; integrationVersion?: string; referenceFilesRead?: Record<string, string>;
+    runtime?:{type:string;version:string};loadedSkillDigest?:string;methodDigest?:string;installationDigest?:string;
+    artifactLockSha256?:string;runtimeLockSha256?:string;executionHistoryRequestId?:string;retainedEvidenceRef?:string|Record<string,string>;
+    declaredModelParameters?:Record<string,unknown>;modelParametersBasis?:string;modelParametersVerified?:boolean;
+    businessDate?:string;businessTimeZone?:string;publicationStatus?:string;isolationRestartMs?:number;
+  };
   side: "left" | "right";
   caseId: string;
   status: "completed" | "failed";

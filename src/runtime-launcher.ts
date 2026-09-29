@@ -16,6 +16,7 @@ export const runtimeLauncherCapabilitiesSchema=z.strictObject({
   schemaVersion:z.literal('finance.skill-eval.runtime-capabilities.v1'),
   runtime:z.strictObject({type:z.string().min(1),version:z.string().min(1)}),
   models:z.array(publicModel).min(1),defaultModelId:z.string().min(1),
+  nativeToolNames:z.array(z.string().min(1)).optional(),
   features:z.strictObject({streaming:z.boolean(),asyncLaunch:z.boolean(),packagedMcp:z.boolean(),externalMcp:z.boolean(),inlineSecrets:z.boolean()}),
   limits:z.strictObject({maxArchiveBytes:z.number().int().positive(),maxFiles:z.number().int().positive(),maxTimeoutMs:z.number().int().positive(),maxConcurrentInstances:z.number().int().positive()}),
 }).superRefine((value,context)=>{if(!value.models.some(model=>model.modelId===value.defaultModelId))context.addIssue({code:'custom',message:'Default model is not advertised'});});
@@ -29,10 +30,17 @@ const instanceStateSchema=z.strictObject({
 type InstanceState=z.infer<typeof instanceStateSchema>;
 
 export type RuntimeInstanceSecrets={mode:'inline';values:Record<string,string>};
+export const launcherGenerationSchema=z.strictObject({
+  schemaVersion:z.literal('finance.eval-generation.v1'),
+  temperature:z.number().finite().min(0).max(2),
+  top_p:z.number().finite().gt(0).max(1),
+  max_tokens:z.number().int().min(1).max(32768),
+});
 export type RuntimeInstanceRequest={
   schemaVersion:'finance.skill-eval.runtime-instance.v1';runId:string;side:EvaluationSide;modelId:string;
   variant:SkillVariant;skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;
   configuration:Record<string,string>;secrets:RuntimeInstanceSecrets;limits:{timeoutMs:number};
+  generation?:z.infer<typeof launcherGenerationSchema>;
 };
 
 function endpoint(base:string,path:string):URL{return new URL(path,new URL(base));}
@@ -89,6 +97,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   readonly adapterId:string;
   private instance:InstanceState|null=null;
   private executeUrl:URL|null=null;
+  private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
     skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number}){
     this.options.baseUrl=httpBaseUrl.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
@@ -96,9 +105,14 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   async prepare(context:RuntimePrepareContext):Promise<void>{
     const signal = context.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(this.options.timeoutMs)]) : AbortSignal.timeout(this.options.timeoutMs);
     const extracted=extractSecrets(this.options.environment,this.options.secrets);
+    const parameters=this.options.model.parameters;
+    const generation=Object.keys(parameters).length
+      ? {...launcherGenerationSchema.omit({schemaVersion:true}).parse(parameters),schemaVersion:'finance.eval-generation.v1' as const} : undefined;
+    this.generation=generation;
     const request:RuntimeInstanceRequest={schemaVersion:'finance.skill-eval.runtime-instance.v1',runId:context.runId,side:this.options.side,
       modelId:this.options.model.modelId,variant:this.options.variant,skill:this.options.skill,environment:extracted.environment,
       configuration:this.options.configuration??{},secrets:extracted.secrets,limits:{timeoutMs:this.options.timeoutMs}};
+    if(generation)request.generation=generation;
     const idempotencyKey=fingerprint({runId:context.runId,side:this.options.side,configuration:fingerprint(request)});
     const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
@@ -126,6 +140,12 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);
     if(evidence.runId!==request.runId||evidence.side!==request.side||evidence.caseId!==request.evalCase.caseId)throw new Error('Runtime instance evidence does not match the requested case');
     if(evidence.modelId!==this.options.model.modelId)throw new Error('Runtime instance used a different model');
+    if(this.generation){
+      const {schemaVersion:_,...parameters}=this.generation;
+      if(fingerprint(evidence.metadata.declaredModelParameters??null)!==fingerprint(parameters)
+          || evidence.metadata.modelGenerationHostVerified!==true)
+        throw new Error('Runtime instance did not verify the requested generation configuration');
+    }
     if(evidence.status==='failed'&&!evidence.runtimeIdentityVerified)throw new Error(evidence.error??'Runtime instance stopped before producing verified execution evidence');
     if(this.options.skill&&evidence.metadata.skillArtifactSha256!==this.options.skill.artifactSha256)throw new Error('Runtime instance loaded a different Skill digest');
     if(this.options.skill&&!evidence.loadedSkills.some(item=>item.skillId===this.options.skill!.skillId&&item.version===this.options.skill!.version))throw new Error('Runtime instance did not load the requested Skill artifact');
