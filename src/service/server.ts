@@ -255,7 +255,10 @@ export async function createEvaluationService(
           onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),
       evalPacks,
       uploadedSkills,
-      preparations: savedPreparations,
+      preparations: savedPreparations.map(preparation => ({...preparation,
+        deterministicReady: preparation.cases.length > 0 && preparation.cases.every(item =>
+          item.rubric.length > 0 && item.rubric.every(rule => rule.allOf.length + rule.anyOf.length + rule.noneOf.length > 0)),
+      })),
       environments: savedEnvironments,
       migrationRuntimes,
       models: executionCatalog?.models ?? [],
