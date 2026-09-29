@@ -75,6 +75,7 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 - 迁移适配只能改变注册、启动和依赖注入边界，不能重写业务协议或业务判断。源码里的接口路径片段、operation 字符串、HTTP method、请求 payload 字段、响应字段、状态值、错误码、金额计算和返回对象合并方式必须逐项原样保留；例如业务函数名 `get_request` 不等于它传给共享 HTTP helper 的 operation 字面量 `request`。不得从 Skill 的最终回答格式反推并改写底层 Tool 返回结构，也不得把 `enough/reserve` 改造成 `approved/reasons`。如果源码事实与文字说明冲突，以实际业务实现为迁移基线，并在 changes/drift 中报告，而不是自行改业务逻辑。
 - **SCRIPT**：写出通过通用 command 执行的完整程序，首版业务输入仍从 stdin 读取 JSON、stdout 返回 JSON。它不是独立注册的业务工具。执行时 cwd 是独立 workspace，Skill 包可能位于其他目录；入口使用 Runtime 给出的绝对路径。包内资源基于 __file__（Node 使用 import.meta.url）定位，业务文件与相对输出路径基于 cwd。不能写死部署绝对路径，不能假设 cwd 是源工程或 Skill 根目录。
 - Tool 的 runtime 依赖与业务参数分开：SCRIPT 通过通用 command 执行，不注册为独立工具，也不支持额外 Runtime 注入；唯一例外是 binding.kind=SCRIPT_CONTEXT 且 name=workspace/cwd 的非敏感依赖，它直接使用执行进程 cwd，无需声明 runtimeBindings。其他需要 Runtime 上下文或凭证的实现必须使用 MCP，并从每次 HTTP 请求的声明 header 读取。不要把凭证或上下文加入模型输入 Schema，不建立或切换执行身份。
+- 把依赖执行 cwd 中业务文件的 Script 改为 MCP 时，服务进程 cwd 已不再是每条任务的 workspace。此时必须从当前 MCP HTTP 请求的 `X-Workspace-Root` Header 取得该案例的工作区绝对路径，再按源实现的相对路径读取；不得继续使用服务 cwd、不得写死生成或测试时路径、不得把 workspace 加进 Tool 输入 Schema。`X-Workspace-Root` 是目标 Runtime 为候选 MCP 自动提供的每请求执行上下文，不新增 migrationContract dependency，也不要为它返回 runtimeBindings。没有该 Header 时应明确报配置错误，不能静默读取其他目录。
 - 必须迁移 Skill 文档并明确交付最终结构。最终 `SKILL.md` 是模型要执行的业务工作流，不是 MCP 部署说明：保留或补足明确的触发范围、业务输入、工具职责、调用顺序、分支与停止条件、禁止编造的数据，以及最终输出字段、类型和错误代码。MCP Header、环境变量和配置模板只能作为简短附加说明，不能替代业务规则，也不要为每个工具重复“通过 MCP 调用同名工具”。只能依据源 Skill 与已读取的业务实现补充，不能确认的内容标为待确认，不得猜测。优先保持单一 `SKILL.md`；只有内容确实独立、低频、适合按需读取时才拆到 `references/`，不要按 Tool 或原目录机械拆分。500 行只是帮助判断可读性的参考，不是硬阈值。平台只校验你交付的结构，不会在完成后替你合并或拆分文档。`workspace/` 是运行期工作目录，不属于 Skill 包，禁止写入候选产物。
 - 本阶段只迁移业务 MCP/SCRIPT。真正的 Runtime Harness 改造需求会在进入 A4 前被平台阻止，并单独输出 Runtime Builder YAML；不得生成、打包或声明任何 Runtime 插件。
 - tools 中 migrationContract.dependencies 给出源码诊断的契约、移出逻辑及注入方式，只包含声明，不包含真实测试值。保留 Tool 所需的鉴权解析与业务逻辑；Runtime 内部用于获取凭证的 user/SDK 不应整体成为 Tool 依赖。
@@ -87,6 +88,7 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 
 - 对 SERVICE_ENV 依赖返回工具级 serviceEnvironment:[{key,name}]，与诊断声明严格一致。在 MCP 服务中读取 os.environ / process.env 的声明变量，按原消费类型解析；禁止写死地址、将配置放入请求 Header 或业务参数、索要真实值或伪造默认地址。必需变量缺失时在实际业务调用前明确报配置错误；tools/list 不调用业务接口、不要求真实配置即可公布契约。由平台启动时传入实际值，不额外交付身份接入代码。
 - 对 MCP 的 HTTP_HEADER 依赖明确返回 runtimeBindings，每项 key/header 必须与 migrationContract.dependencies 中实际消费的 HTTP_HEADER 声明对应。实现必须从当前请求 Header 读取并按声明解析，不能新增默认测试身份或凭证。
+- HTTP_HEADER 注入值已经是该 HTTP Header 的完整线级值。尤其 binding header 为 `Authorization` 时，Runtime 传入的是完整的 `Bearer <token>`（或其他已选认证方案）；实现向下游请求转发时必须原样使用，不能再次拼接 `Bearer `、剥离认证方案或把它当作裸 token。源 Runtime 中“SDK 返回裸 token，再由 helper 拼 Bearer”属于迁移前的身份建立边界；迁移后已由标准 Authorization Header 接管，不能机械保留这一步导致 `Bearer Bearer ...`。其他结构化 X-* Header 才按诊断 schema 解析 JSON。
 - 最终 JSON 的顶层字段 `runtimeToolConfig` 的值必须直接等于 `deliveryContract.runtimeToolConfigTemplate.runtimeToolConfig`，也就是只放 `{context, providers, tools}`；不要把包含 `schemaVersion` 的整个 template 再嵌套进这个字段。它是没有真实值的环境变量绑定模板，不要重定义依赖，不要把 auth SDK 放到 Tool。未确定类型等问题保留在 unresolved，不猜测。
 - Skill 调用业务流程继续遵循源工程；平台会根据最终打包位置追加执行指引及配置模板。不要把你当前的代码生成工作区路径写入交付文件。
 

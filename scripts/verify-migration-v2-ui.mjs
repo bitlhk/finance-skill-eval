@@ -19,6 +19,9 @@ const root=process.cwd();
 const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-ui-'));
 const downloads=await mkdtemp(path.join(os.tmpdir(),'migration-v2-download-'));
 const token='migration-v2-ui-test';
+// This test owns every executable it uploads and runs it in an isolated temporary workspace.
+// Keep the production default locked down; opt in only for this trusted end-to-end process.
+process.env.FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS='1';
 const checks=[];
 // The result is one JSON line at the end, which is the wrong shape for a run that takes an hour:
 // with the real agents standing in for the stubs, silence and a hang look identical.
@@ -111,9 +114,45 @@ const stubs=realAgents?{}:{migrationAnalyzer,migrationImplementer:implementation
   // the analysis reaches it and that the result is reachable from the page.
   migrationSuite:async input=>({summary:`从分析生成：${input.tools.join('、')}`,
     cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn',rubric:[{criterionId:'order-facts',label:'订单事实',dimension:'business_completeness',description:'返回订单金额与审批状态',weight:1,allOf:[],anyOf:[],noneOf:[]}]}]})};
+
+const instances=new Map();
+const fixtureServer=http.createServer((request,response)=>{void (async()=>{
+  const url=new URL(request.url??'/',`http://${request.headers.host}`);
+  const json=value=>{response.statusCode=200;response.setHeader('content-type','application/json');response.end(JSON.stringify(value));};
+  const body=async()=>{const chunks=[];for await(const chunk of request)chunks.push(chunk);return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');};
+  if(request.method==='GET'&&url.pathname==='/v1/runtime-capabilities')return json({schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'e2e-fixture'},models:[{modelId:'fixture-execution',upstreamModelId:'fixture-execution',label:'E2E 执行模型'}],defaultModelId:'fixture-execution',features:{streaming:false,asyncLaunch:false,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxArchiveBytes:8_000_000,maxFiles:500,maxTimeoutMs:310_000,maxConcurrentInstances:4}});
+  if(request.method==='POST'&&url.pathname==='/v1/runtime-instances'){
+    const input=await body(),instanceId=`fixture-${instances.size+1}`,configurationDigest=`fixture-configuration-${instances.size+1}`;
+    instances.set(instanceId,{input,configurationDigest});
+    return json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId,status:'ready',executeEndpoint:`/v1/runtime-instances/${instanceId}/execute`,expiresAt:new Date(Date.now()+300_000).toISOString(),error:null,configurationDigest});
+  }
+  const execute=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)\/execute$/u);
+  if(request.method==='POST'&&execute){
+    const stored=instances.get(execute[1]),input=await body();if(!stored){response.statusCode=404;return response.end();}
+    const skill=stored.input.skill;
+    return json({runId:stored.input.runId,side:stored.input.side,caseId:input.caseId,status:'completed',modelId:stored.input.modelId,skillVersion:skill?.version??null,
+      output:'订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',elapsedMs:5,toolCalls:(input.requiredTools??[]).map(name=>({name,status:'completed'})),
+      loadedSkills:skill?[{skillId:skill.skillId,version:skill.version}]:[],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,
+      metadata:{skillArtifactSha256:skill?.artifactSha256,instanceConfigurationDigest:stored.configurationDigest,workspaceFilesDigest:null,
+        toolEvidence:(input.requiredTools??[]).map(tool=>({tool,resultDigest:'a'.repeat(64)}))}});
+  }
+  const instance=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)$/u);
+  if(request.method==='DELETE'&&instance){instances.delete(instance[1]);response.statusCode=204;return response.end();}
+  if(request.method==='POST'&&url.pathname==='/v1/chat/completions'){
+    await body();return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify({checks:[{criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'}]})}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
+  }
+  response.statusCode=404;response.end();
+})().catch(error=>{response.statusCode=500;response.end(String(error));});});
+await new Promise(resolve=>fixtureServer.listen(0,'127.0.0.1',resolve));
+const fixtureBase=`http://127.0.0.1:${fixtureServer.address().port}`;
+process.env.FINANCE_EVAL_JUDGE_BASE_URL=`${fixtureBase}/v1`;
+process.env.FINANCE_EVAL_JUDGE_API_KEY='e2e-fixture-key';
+process.env.FINANCE_EVAL_JUDGE_MODEL='fixture-judge';
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,
   publicDirectory:path.resolve(process.env.MIGRATION_TEST_WEB_DIR||path.join(root,'web-dist')),
   accessToken:token,publicDemo:false,...stubs});
+const environmentResponse=await app.inject({method:'POST',url:'/api/environments',headers:{authorization:`Bearer ${token}`},payload:{name:'E2E Runtime',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:`${fixtureBase}/`}});
+assert.equal(environmentResponse.statusCode,200,environmentResponse.body);
 pass(realAgents?'agent_mode=REAL':'agent_mode=STUBBED');
 let browser,proxy,page=null,failedAt=null;
 try{
@@ -192,7 +231,10 @@ try{
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
   await scriptCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
   await scriptCard.locator('textarea').fill('{"subtotal":"100.00","tax_rate":"0.06"}');
+  const scriptValidationResponse=page.waitForResponse(response=>response.url().endsWith('/validate/technical')&&response.request().method()==='POST');
   await scriptCard.getByRole('button',{name:'开始试运行',exact:true}).click();
+  const scriptValidation=await (await scriptValidationResponse).json();
+  assert.equal(scriptValidation.status,'PASSED',JSON.stringify(scriptValidation));
   await expect(scriptCard.getByText('验证通过',{exact:true})).toBeVisible({timeout:STEP});
   const mcpCard=page.locator('article').filter({hasText:'get_acceptance_order'});
   // Nothing to type: the platform starts the delivered service itself, and the page says so.
@@ -200,7 +242,10 @@ try{
   await expect(mcpCard.getByLabel('共享 MCP 服务地址')).toHaveCount(0);
   await mcpCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
   await mcpCard.locator('textarea').fill('{"order_id":"ORDER-001"}');
+  const mcpValidationResponse=page.waitForResponse(response=>response.url().endsWith('/validate/technical')&&response.request().method()==='POST');
   await mcpCard.getByRole('button',{name:'开始试运行',exact:true}).click();
+  const mcpValidation=await (await mcpValidationResponse).json();
+  assert.equal(mcpValidation.status,'PASSED',JSON.stringify(mcpValidation));
   await expect(mcpCard.getByText('验证通过',{exact:true})).toBeVisible({timeout:STEP});
   pass('script_and_mcp_technical_validation');
 
@@ -218,12 +263,19 @@ try{
   }
   pass('generated_test_set_visible_and_selectable');
 
+  await page.getByRole('button',{name:'执行并自动评估',exact:true}).click();
+  await expect(page.getByText('最新 1/1 通过',{exact:true})).toBeVisible({timeout:STEP});
+  const assessedCase=page.locator('.assessment-case').filter({hasText:'suite-order-1'});
+  await assessedCase.locator(':scope > summary').click();
+  await assessedCase.getByText('迁移后回答',{exact:true}).click();
+  await expect(assessedCase.getByText('订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',{exact:true})).toBeVisible();
+  pass('candidate_effect_assessment_passed');
+
   await page.getByRole('button',{name:'进入下载',exact:true}).click();
-  await expect(page.getByText('迁移包将标记为未验证',{exact:true})).toBeVisible();
   const pending=page.waitForEvent('download');
   await page.getByRole('button',{name:'下载迁移包',exact:true}).click();
   const download=await pending,target=path.join(downloads,'migration.zip');await download.saveAs(target);
-  assert(download.suggestedFilename().endsWith('-unverified.zip'));
+  assert(!download.suggestedFilename().endsWith('-unverified.zip'));
   const exported=unzipSync(await readFile(target));
   // The Skill keeps its layout; the Script goes where the Skill layout says; the MCP service keeps
   // the paths the agent reported, because the platform did not build it.
@@ -245,7 +297,7 @@ try{
   // The runtime-coupled original is replaced, never shipped alongside its migration.
   assert(!Object.keys(exported).some(name=>name.includes('legacy_runtime_tools')));
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
-  pass('unverified_candidate_downloaded_with_source_workflow');
+  pass('verified_candidate_downloaded_with_source_workflow');
   assert.deepEqual(errors,[]);pass('no_browser_errors');
   await page.setViewportSize({width:390,height:900});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));pass('mobile_no_overflow');
@@ -260,4 +312,5 @@ try{
   if(browser)await browser.close();
   if(proxy){proxy.closeAllConnections();await close(proxy);}
   await app.close();await Promise.all([rm(data,{recursive:true,force:true}),rm(downloads,{recursive:true,force:true})]);
+  fixtureServer.closeAllConnections();await close(fixtureServer);
 }
