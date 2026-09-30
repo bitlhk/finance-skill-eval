@@ -15,7 +15,17 @@
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "protocols": { "type": "object", "additionalProperties": false, "required": ["registration", "instance", "execution"], "properties": { "registration": { "type": "string", "minLength": 1 }, "instance": { "type": "string", "minLength": 1 }, "execution": { "type": "string", "minLength": 1 } } },
+    "protocols": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilities", "instance", "execution", "observation"],
+      "properties": {
+        "capabilities": { "const": "finance.skill-eval.runtime-capabilities.v1" },
+        "instance": { "const": "finance.skill-eval.runtime-instance.v1" },
+        "execution": { "const": "finance.skill-eval.runtime-case.v1" },
+        "observation": { "const": "finance.runtime-observation.v1" }
+      }
+    },
     "jsonSchema": { "type": "object" },
     "capability": {
       "type": "object", "additionalProperties": false,

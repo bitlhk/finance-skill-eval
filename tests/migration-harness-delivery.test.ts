@@ -1,5 +1,4 @@
 import {expect,it} from 'vitest';
-import {createHash} from 'node:crypto';
 import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +10,7 @@ import {runtimeBuildRequirementsYaml} from '../src/migration/infrastructure/migr
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {createEvaluationService} from '../src/service/server.js';
 import {analysisFixture,inspectionFixture} from './analysis-fixture.js';
-import {RUNTIME_CAPABILITIES_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
 
 function requirement(){
   const inspection=inspectionFixture([]);
@@ -26,7 +25,7 @@ function requirement(){
 it('exports deterministic Runtime Builder requirements without blocking candidate generation',()=>{
   const inspection=requirement(),requirements=runtimeBuildRequirements(inspection);
   expect(requirements).toMatchObject({schemaVersion:'finance.runtime-build-requirements.v1',
-    target:{protocols:{registration:RUNTIME_CAPABILITIES_SCHEMA_VERSION}},
+    target:{protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
     requiredCapabilities:[{name:'read_document',required:true,consumerTools:['review_document']}]});
   expect(requirements?.requirementsDigest).toMatch(/^[a-f0-9]{64}$/u);
   expect(runtimeBuildRequirementsYaml(inspection)).toContain('requestId:');
@@ -40,25 +39,27 @@ it('refuses to emit executable requirements when only the legacy free-text contr
   expect(runtimeBuildRequirements(inspection)).toEqual({schemaVersion:'finance.runtime-build-requirements.v1',status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_document',fields:['contract']}]});
 });
 
-it('accepts only a complete matching Builder result and verifies the artifact bytes',()=>{
+it('accepts only a complete matching Builder result and verifies the deployed Launcher',()=>{
   const requirements=runtimeBuildRequirements(requirement(),{runtimeType:'openjiuwen',requestId:'migration-1:revision-1'});
   if(!requirements||'status' in requirements)throw new Error('expected complete requirements');
-  const artifact=Buffer.from('runtime artifact');
+  const capabilities={schemaVersion:RUNTIME_CAPABILITIES_SCHEMA_VERSION,runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'glm-4-plus'}],defaultModelId:'execution',
+    observability:{schemaVersion:'finance.runtime-observation-capabilities.v1',profile:'core' as const,supportedKinds:['execution.started','execution.completed','execution.failed'],nativeEvents:false,replayable:false},
+    features:{streaming:true,asyncLaunch:true,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1,maxFiles:1,maxTimeoutMs:1,maxConcurrentInstances:1}};
+  const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
+  const launcher={schemaVersion:'finance.runtime-launcher-descriptor.v1' as const,deploymentId:'deployment-1',baseUrl:'https://runtime.example.test/deployment-1/',runtime:capabilities.runtime,protocols,
+    authentication:{type:'none' as const},artifactSha256:'e'.repeat(64),capabilitiesDigest:canonicalSha256(capabilities),expiresAt:null};
   const result=withResultDigest({schemaVersion:'finance.runtime-build-result.v1',buildId:'build-1',requestId:requirements.requestId,
     requirementsDigest:requirements.requirementsDigest,status:'SUCCEEDED',builder:{name:'fixture-builder',version:'1.0.0'},
-    artifact:{mediaType:'application/vnd.finance.agent-runtime+zip',uri:'artifact://runtime/build-1',sha256:canonicalSha256Bytes(artifact)},
-    runtime:{runtimeType:'openjiuwen',version:'1.0.0',protocols:requirements.target.protocols,requiredConfiguration:[]},
+    launcher,
     capabilityResults:requirements.requiredCapabilities.map(item=>({requirementId:item.id,status:'IMPLEMENTED' as const,capabilityId:'workspace.read_document',contractDigest:canonicalSha256(item.contract),verificationIds:['contract-read-document']})),
     verifications:[{id:'contract-read-document',type:'CONTRACT_TEST',status:'PASSED',evidenceSha256:'a'.repeat(64)}],errors:[],builtAt:'2026-09-29T12:00:00.000Z'});
-  expect(validateRuntimeBuildResult(requirements,result,artifact)).toEqual([]);
-  expect(validateRuntimeBuildResult(requirements,{...result,status:'PARTIAL'},artifact)).toContain('INVALID_RESULT_DIGEST');
+  expect(validateRuntimeBuildResult(requirements,result,capabilities)).toEqual([]);
+  expect(validateRuntimeBuildResult(requirements,{...result,requirementsDigest:'f'.repeat(64)},capabilities)).toContain('INVALID_RESULT_DIGEST');
   const {resultDigest:_digest,...resultBody}=result;
-  const partial=withResultDigest({...resultBody,status:'PARTIAL'});
-  expect(validateRuntimeBuildResult(requirements,partial,artifact)).toContain('BUILD_STATUS_PARTIAL');
-  expect(validateRuntimeBuildResult(requirements,result,Buffer.from('changed'))).toContain('ARTIFACT_DIGEST_MISMATCH');
+  const partial=withResultDigest({...resultBody,status:'PARTIAL',launcher:null});
+  expect(validateRuntimeBuildResult(requirements,partial,capabilities)).toContain('BUILD_STATUS_PARTIAL');
+  expect(validateRuntimeBuildResult(requirements,result,{...capabilities,runtime:{...capabilities.runtime,version:'changed'}})).toContain('LAUNCHER_RUNTIME_VERSION_MISMATCH');
 });
-
-function canonicalSha256Bytes(value:Uint8Array){return createHash('sha256').update(value).digest('hex');}
 
 it('does not mistake framework registration and response wrappers for a Runtime requirement',()=>{
   const inspection=inspectionFixture([]),capability={name:'AgentScope registration',owner:'RUNTIME_HARNESS' as const,
