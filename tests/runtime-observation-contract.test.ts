@@ -30,6 +30,23 @@ it("requires execution correlation and identifies synthesized events", () => {
   expect(runtimeObservationEventSchema.parse({ ...base, runId: "run-1", caseId: "case-1", side: "right" })).toMatchObject({ source: { synthesized: true } });
 });
 
+it("rejects oversized and sensitive observation payloads at the receiver boundary", () => {
+  const base = {
+    schemaVersion: "finance.runtime-observation.v1" as const,
+    eventId: "event-1", sequence: 1, occurredAt: "2026-09-30T12:00:00.000Z",
+    traceId: "trace-1", instanceId: "instance-1", runId: "run-1", caseId: "case-1", side: "right" as const,
+    kind: "output.delta" as const, source: { adapter: "generic", synthesized: true }, payload: { text: "ok" },
+  };
+  expect(() => runtimeObservationEventSchema.parse({ ...base, eventId: "x".repeat(201) })).toThrow();
+  expect(() => runtimeObservationEventSchema.parse({ ...base, payload: { text: "x".repeat(16_385) } })).toThrow();
+  expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { api_key: "do-not-export" } } })).toThrow(/forbidden sensitive field/u);
+  expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { responseBody: { account: "A1", balance: 100 } } } })).toThrow(/forbidden sensitive field/u);
+  expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { value: "x".repeat(32_769) } } })).toThrow(/32768 serialized bytes/u);
+  let nested:unknown="leaf";
+  for(let index=0;index<9;index+=1)nested={child:nested};
+  expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: nested } })).toThrow(/maximum depth 8/u);
+});
+
 it("enforces observation profile minimums without requiring optional events for acceptance", () => {
   const core = {
     schemaVersion: "finance.runtime-observation-capabilities.v1",

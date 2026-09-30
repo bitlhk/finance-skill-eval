@@ -2,11 +2,15 @@ import { z } from "zod";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const nonnegativeInteger = z.number().int().nonnegative();
-
-const jsonValueSchema: z.ZodType<unknown> = z.lazy(() => z.union([
-  z.null(), z.boolean(), z.number().finite(), z.string(),
-  z.array(jsonValueSchema), z.record(jsonValueSchema),
-]));
+export const RUNTIME_OBSERVATION_LIMITS = {
+  identifierCharacters: 200,
+  messageCharacters: 4_096,
+  outputDeltaCharacters: 16_384,
+  nativeSerializedBytes: 32_768,
+  eventSerializedBytes: 65_536,
+  nativeDepth: 8,
+} as const;
+const identifier = z.string().min(1).max(RUNTIME_OBSERVATION_LIMITS.identifierCharacters);
 
 export const runtimeObservationKindSchema = z.enum([
   "execution.started", "execution.completed", "execution.failed",
@@ -50,8 +54,8 @@ export const runtimeObservationCapabilitiesSchema = z.strictObject({
 export type RuntimeObservationCapabilities = z.infer<typeof runtimeObservationCapabilitiesSchema>;
 
 const errorSchema = z.strictObject({
-  code: z.string().min(1),
-  message: z.string().min(1),
+  code: identifier,
+  message: z.string().min(1).max(RUNTIME_OBSERVATION_LIMITS.messageCharacters),
   retryable: z.boolean(),
 });
 
@@ -62,59 +66,59 @@ const usageSchema = z.strictObject({
 });
 
 const sourceSchema = z.strictObject({
-  adapter: z.string().min(1),
-  framework: z.string().min(1).optional(),
-  frameworkVersion: z.string().min(1).optional(),
-  nativeEventType: z.string().min(1).optional(),
+  adapter: identifier,
+  framework: identifier.optional(),
+  frameworkVersion: identifier.optional(),
+  nativeEventType: identifier.optional(),
   synthesized: z.boolean(),
 });
 
 const envelope = {
   schemaVersion: z.literal("finance.runtime-observation.v1"),
-  eventId: z.string().min(1),
+  eventId: identifier,
   sequence: nonnegativeInteger,
   occurredAt: z.string().datetime(),
-  traceId: z.string().min(1),
-  instanceId: z.string().min(1),
-  runId: z.string().min(1).optional(),
-  caseId: z.string().min(1).optional(),
+  traceId: identifier,
+  instanceId: identifier,
+  runId: identifier.optional(),
+  caseId: identifier.optional(),
   side: z.enum(["left", "right"]).optional(),
   source: sourceSchema,
-  native: z.strictObject({ data: jsonValueSchema }).optional(),
+  native: z.strictObject({ data: z.unknown() }).optional(),
 };
 
 const lifecyclePayloadSchema = z.strictObject({
-  message: z.string().min(1).optional(),
+  message: z.string().min(1).max(RUNTIME_OBSERVATION_LIMITS.messageCharacters).optional(),
   durationMs: z.number().finite().nonnegative().optional(),
   error: errorSchema.optional(),
   evidenceDigest: sha256.optional(),
 });
 
 const skillPayloadSchema = z.strictObject({
-  skillId: z.string().min(1),
-  version: z.string().min(1).optional(),
+  skillId: identifier,
+  version: identifier.optional(),
   artifactSha256: sha256.optional(),
   durationMs: z.number().finite().nonnegative().optional(),
   error: errorSchema.optional(),
 });
 
 const mcpPayloadSchema = z.strictObject({
-  serverId: z.string().min(1),
+  serverId: identifier,
   durationMs: z.number().finite().nonnegative().optional(),
   error: errorSchema.optional(),
 });
 
 const modelPayloadSchema = z.strictObject({
-  modelCallId: z.string().min(1),
-  modelId: z.string().min(1),
+  modelCallId: identifier,
+  modelId: identifier,
   durationMs: z.number().finite().nonnegative().optional(),
   usage: usageSchema.optional(),
   error: errorSchema.optional(),
 });
 
 const toolPayloadSchema = z.strictObject({
-  toolCallId: z.string().min(1),
-  name: z.string().min(1),
+  toolCallId: identifier,
+  name: identifier,
   durationMs: z.number().finite().nonnegative().optional(),
   inputDigest: sha256.optional(),
   outputDigest: sha256.optional(),
@@ -128,7 +132,7 @@ const eventSchemas = [
   z.strictObject({ ...envelope, kind: z.enum(["mcp.start.started", "mcp.start.completed", "mcp.start.failed"]), payload: mcpPayloadSchema }),
   z.strictObject({ ...envelope, kind: z.enum(["model.call.started", "model.call.completed", "model.call.failed"]), payload: modelPayloadSchema }),
   z.strictObject({ ...envelope, kind: z.enum(["tool.call.started", "tool.call.completed", "tool.call.failed"]), payload: toolPayloadSchema }),
-  z.strictObject({ ...envelope, kind: z.literal("output.delta"), payload: z.strictObject({ text: z.string() }) }),
+  z.strictObject({ ...envelope, kind: z.literal("output.delta"), payload: z.strictObject({ text: z.string().max(RUNTIME_OBSERVATION_LIMITS.outputDeltaCharacters) }) }),
   z.strictObject({ ...envelope, kind: z.literal("usage.reported"), payload: usageSchema }),
 ] as const;
 
@@ -140,7 +144,39 @@ export const runtimeObservationEventSchema = z.union(eventSchemas).superRefine((
       && (!value.runId || !value.caseId || !value.side)) {
     context.addIssue({ code: "custom", message: "Execution events require runId, caseId and side" });
   }
+  const serializedBytes = jsonBytes(value);
+  if(serializedBytes===null)context.addIssue({code:"custom",message:"Observation event must be JSON serializable"});
+  else if (serializedBytes > RUNTIME_OBSERVATION_LIMITS.eventSerializedBytes) {
+    context.addIssue({ code: "custom", message: `Observation event exceeds ${RUNTIME_OBSERVATION_LIMITS.eventSerializedBytes} serialized bytes` });
+  }
+  if (value.native) validateNativeData(value.native.data, context);
 });
+
+const sensitiveNativeKey = /(?:^|-)(?:authorization|api-key|apikey|access-token|refresh-token|bearer-token|token|password|secret|cookie|reasoning|chain-of-thought|hidden-thought|prompt|body|payload|content|text|input|output|request|response|messages|request-body|response-body|raw-input|raw-output)(?:$|-)/u;
+function jsonBytes(value:unknown):number|null{try{const serialized=JSON.stringify(value);return serialized===undefined?null:new TextEncoder().encode(serialized).byteLength;}catch{return null;}}
+function validateNativeData(value: unknown, context: z.RefinementCtx): void {
+  const bytes=jsonBytes(value);
+  if(bytes===null){context.addIssue({code:"custom",path:["native","data"],message:"Native data must be JSON"});return;}
+  if (bytes > RUNTIME_OBSERVATION_LIMITS.nativeSerializedBytes) {
+    context.addIssue({ code: "custom", path: ["native", "data"], message: `Native data exceeds ${RUNTIME_OBSERVATION_LIMITS.nativeSerializedBytes} serialized bytes` });
+  }
+  const pending:Array<{item:unknown;depth:number;path:Array<string|number>}>= [{item:value,depth:1,path:[]}];
+  while(pending.length){
+    const {item,depth,path}=pending.pop()!;
+    if (depth > RUNTIME_OBSERVATION_LIMITS.nativeDepth) {
+      context.addIssue({ code: "custom", path: ["native", "data", ...path], message: `Native data exceeds maximum depth ${RUNTIME_OBSERVATION_LIMITS.nativeDepth}` });
+      continue;
+    }
+    if(item===null||typeof item==="string"||typeof item==="boolean")continue;
+    if(typeof item==="number"){if(!Number.isFinite(item))context.addIssue({code:"custom",path:["native","data",...path],message:"Native data must contain finite JSON numbers"});continue;}
+    if (Array.isArray(item)) item.forEach((child, index) => pending.push({item:child,depth:depth+1,path:[...path,index]}));
+    else if (item && typeof item === "object") for (const [key, child] of Object.entries(item)) {
+      const normalizedKey=key.replaceAll("_","-").replace(/[A-Z]/gu,character=>`-${character.toLowerCase()}`).toLowerCase();
+      if (sensitiveNativeKey.test(normalizedKey)) context.addIssue({ code: "custom", path: ["native", "data", ...path, key], message: "Native data contains a forbidden sensitive field" });
+      pending.push({item:child,depth:depth+1,path:[...path,key]});
+    } else context.addIssue({code:"custom",path:["native","data",...path],message:"Native data must be JSON"});
+  }
+}
 
 export type RuntimeObservationEvent = z.infer<typeof runtimeObservationEventSchema>;
 

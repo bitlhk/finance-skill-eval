@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { configuredModelRole, modelTimeoutMs } from "../src/service/config.js";
+import { configuredModelRole, loadServiceConfig, modelTimeoutMs } from "../src/service/config.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -27,6 +27,15 @@ describe("per-completion deadline", () => {
     vi.stubEnv("FINANCE_EVAL_ANALYZER_TIMEOUT_MS", "45000");
     expect(configuredModelRole("ANALYZER").adapter?.adapterId).toBe("service-analyzer-openai-compatible-v1");
     expect(configuredModelRole("ANALYZER").configured).toBe(true);
+  });
+});
+
+describe("Builder Launcher admission",()=>{
+  it("normalizes operator-managed targets and rejects insecure remote prefixes",()=>{
+    vi.stubEnv("FINANCE_EVAL_LAUNCHER_TRUST_JSON",JSON.stringify([{reference:"builder-local",label:"Local Builder",baseUrlPrefix:"http://127.0.0.1:9000/launchers",credentialEnv:null}]));
+    expect(loadServiceConfig().launcherTrust).toEqual([{reference:"builder-local",label:"Local Builder",baseUrlPrefix:"http://127.0.0.1:9000/launchers/",credentialEnv:null}]);
+    vi.stubEnv("FINANCE_EVAL_LAUNCHER_TRUST_JSON",JSON.stringify([{reference:"builder-remote",label:"Remote Builder",baseUrlPrefix:"http://runtime.example.com/",credentialEnv:"RUNTIME_TOKEN"}]));
+    expect(()=>loadServiceConfig()).toThrow(/requires HTTPS/u);
   });
 });
 

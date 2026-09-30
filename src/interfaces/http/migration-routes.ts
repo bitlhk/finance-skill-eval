@@ -29,6 +29,11 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   });
 
   app.get("/api/migrations", () => migrations.list());
+  app.get("/api/migrations-legacy",()=>migrations.listLegacy());
+  app.get<{Params:{id:string}}>("/api/migrations-legacy/:id/export",async(request,reply)=>reply
+    .type("application/json; charset=utf-8")
+    .header("content-disposition",`attachment; filename="${request.params.id}.legacy.json"`)
+    .send(await migrations.readLegacy(request.params.id)));
   app.post("/api/migrations/upload", async request => {
     if (!Buffer.isBuffer(request.body)) throw new Error("Request body must be a migration ZIP");
     return skills.uploadMigrationZip(request.body);
@@ -43,12 +48,13 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-configuration", request => migrations.runtimeConfiguration(request.params.id));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => migrations.runtimeRequirements(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-deliveries", async request => {
-    const body=z.strictObject({result:z.unknown(),credentialEnv:z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u).max(100).nullable().optional(),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
+    const body=z.strictObject({result:z.unknown(),trustReference:z.string().regex(/^[a-z0-9-]+$/u),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
     const requirements=await migrations.runtimeRequirements(request.params.id);
     if(!requirements||!('requestId' in requirements))throw Object.assign(new Error('当前迁移没有可接收的 Runtime Builder 能力需求。'),{statusCode:409});
-    const accepted=await environments.acceptBuilderDelivery({migrationId:request.params.id,requirements,result:body.result,credentialEnv:body.credentialEnv,name:body.name});
-    const {migrationId:_migrationId,...delivery}=accepted.environment.delivery!;
-    await migrations.bindRuntimeDelivery(request.params.id,{...delivery,environmentId:accepted.environment.environmentId});
+    const accepted=await environments.acceptBuilderDelivery({requirements,result:body.result,trustReference:body.trustReference,name:body.name});
+    const delivery=accepted.environment.delivery!;
+    try{await migrations.bindRuntimeDelivery(request.params.id,{...delivery,environmentId:accepted.environment.environmentId});}
+    catch(error){if(accepted.created)await environments.rollbackBuilderDelivery(accepted.environment.environmentId,delivery.resultDigest);throw error;}
     return {status:'ACCEPTED',environment:accepted.environment,capabilities:accepted.capabilities};
   });
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => reply

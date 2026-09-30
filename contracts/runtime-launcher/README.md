@@ -24,7 +24,11 @@ Remote Launchers must use HTTPS. Returned execution endpoints must remain under 
 
 ## Observability boundary
 
-The stable `kind` in `finance.runtime-observation.v1` describes cross-framework semantics, not a framework callback name. `source.nativeEventType` records the original callback name when one exists. `source.synthesized=true` means the Launcher inferred the event from a boundary it controls. Optional `native.data` is diagnostic-only, must be JSON, sanitized and bounded by the transport implementation.
+The stable `kind` in `finance.runtime-observation.v1` describes cross-framework semantics, not a framework callback name. `source.nativeEventType` records the original callback name when one exists. `source.synthesized=true` means the Launcher inferred the event from a boundary it controls. Optional `native.data` is diagnostic-only: it must be JSON and must not contain credentials, authorization material, cookies, raw chain-of-thought, hidden reasoning, raw business request/response bodies, or model prompts.
+
+Observation limits are executable receiver requirements, not documentation hints. Eval rejects an event above 65,536 serialized UTF-8 bytes, `native.data` above 32,768 bytes or eight levels deep, identifiers above 200 characters, messages above 4,096 characters, output deltas above 16,384 characters, and native objects whose property names indicate secrets or hidden reasoning. The JSON Schema carries the portable length rules plus `x-maxSerializedBytes`, `x-maxDepth`, and `x-forbiddenPropertyNames`; receivers must enforce those annotations. A rejected observation terminates that execution stream instead of being persisted or displayed.
+
+Builder verification records are self-reported build evidence. They do not make a deployment usable. Eval records a separate `evalConformance.status=PASSED` only after it has independently exercised capabilities, create, status, execute, terminal evidence validation, and delete against the admitted Launcher target.
 
 Launcher capabilities may advertise an `observability` object:
 

@@ -4,6 +4,7 @@ import type { ModelAdapter } from "../adapters.js";
 import { CodexCliModelAdapter } from "../codex-cli-model.js";
 import type { ModelRef } from "../contracts.js";
 import { OpenAiCompatibleModelAdapter } from "../openai-compatible-model.js";
+import { runtimeLauncherBaseUrlSchema } from "../shared/contracts/runtime-launcher.js";
 
 export type ServiceConfig = {
   rootDirectory: string;
@@ -14,7 +15,19 @@ export type ServiceConfig = {
   accessToken: string | null;
   maxConcurrentRuns: number;
   publicDemo?: boolean;
+  launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
 };
+
+const launcherTrustSchema=z.array(z.strictObject({
+  reference:z.string().regex(/^[a-z0-9-]+$/u),label:z.string().min(1),baseUrlPrefix:runtimeLauncherBaseUrlSchema,
+  credentialEnv:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u).nullable().default(null),
+})).superRefine((items,context)=>{if(new Set(items.map(item=>item.reference)).size!==items.length)context.addIssue({code:'custom',message:'Launcher trust references must be unique'});});
+
+function launcherTrustConfiguration(){
+  const raw=process.env.FINANCE_EVAL_LAUNCHER_TRUST_JSON?.trim();
+  if(!raw)return [];
+  return launcherTrustSchema.parse(JSON.parse(raw));
+}
 
 export type ConfiguredModelRole = {
   configured: boolean;
@@ -32,6 +45,7 @@ export function loadServiceConfig(): ServiceConfig {
     port: Number.parseInt(process.env.FINANCE_EVAL_PORT ?? "56361", 10),
     accessToken: process.env.FINANCE_EVAL_ACCESS_TOKEN?.trim() || null,
     publicDemo: process.env.FINANCE_EVAL_PUBLIC_DEMO === "true",
+    launcherTrust:launcherTrustConfiguration(),
     maxConcurrentRuns: Math.max(
       1,
       Math.min(Number.parseInt(process.env.FINANCE_EVAL_MAX_CONCURRENT_RUNS ?? "1", 10), 4),

@@ -143,6 +143,8 @@ it("leaves a v0.1 record untouched and requires a new migration from the origina
 
   await expect(projects.get(legacy.id)).rejects.toMatchObject({ statusCode: 410 });
   expect(await projects.list()).toEqual([]);
+  expect(await projects.listLegacy()).toEqual([{id:legacy.id,schemaVersion:'finance.skill-migration.v0.1',name:legacy.name,createdAt:legacy.createdAt}]);
+  expect(await projects.readLegacy(legacy.id)).toEqual(legacy);
   expect(JSON.parse(await readFile(file, "utf8"))).toEqual(legacy);
   expect((await readdir(directory)).sort()).toEqual([`${legacy.id}.json`]);
 });

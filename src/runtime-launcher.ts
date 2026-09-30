@@ -3,6 +3,7 @@ import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePr
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
+import { runtimeObservationEventSchema, type RuntimeObservationEvent } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
 
 export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
@@ -74,6 +75,7 @@ async function readExecution(response:Response,request:RuntimeExecutionRequest):
         if(!data)continue;
         const event=JSON.parse(data) as Record<string,unknown>;
         if(event.evidence)value=event.evidence;
+        else if(event.schemaVersion==='finance.runtime-observation.v1')forwardObservation(runtimeObservationEventSchema.parse(event),request);
         else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
       }
       if(chunk.done)break;
@@ -83,13 +85,20 @@ async function readExecution(response:Response,request:RuntimeExecutionRequest):
   return value;
 }
 
+function forwardObservation(event:RuntimeObservationEvent,request:RuntimeExecutionRequest):void{
+  if(!request.onEvent)return;
+  if(event.kind==='output.delta')request.onEvent({type:'text_delta',caseId:request.evalCase.caseId,side:request.side,text:event.payload.text});
+  else if(event.kind.startsWith('tool.call.'))request.onEvent({type:event.kind==='tool.call.started'?'tool_start':'tool_end',caseId:request.evalCase.caseId,side:request.side,toolName:'name' in event.payload?event.payload.name:undefined,status:event.kind});
+  else if(event.kind.startsWith('execution.'))request.onEvent({type:'status',caseId:request.evalCase.caseId,side:request.side,status:event.kind,text:'message' in event.payload?event.payload.message:undefined});
+}
+
 export class RuntimeLauncherAdapter implements RuntimeAdapter{
   readonly adapterId:string;
   private instance:InstanceState|null=null;
   private executeUrl:URL|null=null;
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
-    skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number}){
+    skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean}){
     this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
@@ -108,6 +117,12 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
     if(!response.ok)throw await responseError(response);
     this.instance=runtimeInstanceStateSchema.parse(await response.json());
+    const readStatus=async()=>{
+      const status=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance!.instanceId)}`),{headers:this.options.headers,redirect:'error',signal});
+      if(!status.ok)throw await responseError(status);
+      this.instance=runtimeInstanceStateSchema.parse(await status.json());
+    };
+    if(this.options.requireStatusPoll&&this.instance.status!=='starting')await readStatus();
     while(this.instance.status==='starting'){
       signal.throwIfAborted();
       await new Promise<void>((resolve,reject)=>{
@@ -115,8 +130,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
         const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},250);
         signal.addEventListener('abort',abort,{once:true});
       });
-      const status=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance.instanceId)}`),{headers:this.options.headers,redirect:'error',signal});
-      if(!status.ok)throw await responseError(status);this.instance=runtimeInstanceStateSchema.parse(await status.json());
+      await readStatus();
     }
     if(this.instance.status!=='ready'||!this.instance.executeEndpoint)throw new Error(this.instance.error??'Runtime instance failed to start');
     this.executeUrl=controlledUrl(this.options.baseUrl,this.instance.executeEndpoint);

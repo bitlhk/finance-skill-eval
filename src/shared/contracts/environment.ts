@@ -5,11 +5,12 @@ const baseUrlSchema=endpointSchema.refine(value=>{const url=new URL(value);retur
 const common={name:z.string().trim().min(1).max(80),credentialEnv:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u).max(100).nullable().optional()};
 export const runtimeLauncherDeliverySchema=z.strictObject({
   schemaVersion:z.literal('finance.runtime-launcher-delivery-record.v1'),
-  migrationId:z.string().min(1),buildId:z.string().min(1),requestId:z.string().min(1),
+  buildId:z.string().min(1),requestId:z.string().min(1),
   deploymentId:z.string().min(1),artifactSha256:z.string().regex(/^[a-f0-9]{64}$/u),
   capabilitiesDigest:z.string().regex(/^[a-f0-9]{64}$/u),resultDigest:z.string().regex(/^[a-f0-9]{64}$/u),
   builder:z.strictObject({name:z.string().min(1),version:z.string().min(1)}),
   acceptedAt:z.string().datetime(),expiresAt:z.string().datetime().nullable(),
+  evalConformance:z.strictObject({status:z.literal('PASSED'),testedAt:z.string().datetime(),checks:z.array(z.enum(['capabilities','create','status','execute','evidence','delete'])).length(6)}).optional(),
 });
 const legacyMcp=z.strictObject({...common,type:z.literal('mcp_streamable_http'),runtimeType:z.null().optional(),endpoint:endpointSchema,mcpEnvironmentIds:z.array(z.string().min(1)).max(0).default([])});
 const launcher=z.strictObject({...common,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','ea','generic_http']),baseUrl:baseUrlSchema});

@@ -74,7 +74,7 @@ export async function createEvaluationService(
   });
   const catalog = new EvalPackCatalog(config.rootDirectory);
   const skills = new SkillStore(config.dataDirectory);
-  const environments = new EnvironmentStore(config.dataDirectory);
+  const environments = new EnvironmentStore(config.dataDirectory,config.launcherTrust??[]);
   const preparations = new PreparationStore(config.dataDirectory);
   const jobs = new EvaluationJobStore(config.dataDirectory);
   await Promise.all([
@@ -194,6 +194,7 @@ export async function createEvaluationService(
       })),
       environments: savedEnvironments,
       executionRuntimes,
+      launcherTrustReferences:(config.launcherTrust??[]).map(({reference,label,baseUrlPrefix})=>({reference,label,baseUrlPrefix})),
       runtimes: [
         {
           id: "replay",

@@ -103,6 +103,7 @@ export type MigrationProject = {
     environmentId:string;buildId:string;requestId:string;deploymentId:string;
     artifactSha256:string;capabilitiesDigest:string;resultDigest:string;
     builder:{name:string;version:string};acceptedAt:string;expiresAt:string|null;
+    evalConformance?:{status:"PASSED";testedAt:string;checks:Array<"capabilities"|"create"|"status"|"execute"|"evidence"|"delete">};
   };
   reviews?: Array<{
     candidateDigest: string;

@@ -26,6 +26,9 @@ export class MigrationProjectService {
     return this.projects.get(id);
   }
 
+  listLegacy(){return this.projects.listLegacy();}
+  readLegacy(id:string){return this.projects.readLegacy(id);}
+
   async create(input: unknown): Promise<MigrationProject> {
     const value = await this.projects.runExclusive("create", async () => {
       const parsed = createMigrationProjectSchema.parse(input);

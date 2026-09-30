@@ -11,6 +11,8 @@ export class MigrationStore {
   }
   async list() {return this.services.projectService.list();}
   async get(id:string):Promise<MigrationProject> {return this.services.projectService.get(id);}
+  async listLegacy(){return this.services.projectService.listLegacy();}
+  async readLegacy(id:string){return this.services.projectService.readLegacy(id);}
   async create(input:unknown) {return this.services.projectService.create(input);}
   async diagnose(id:string,retry=false){return this.services.projectService.diagnose(id,retry);}
   async inspect(id:string,sourceOnly=false){return this.services.inspectionService.inspect(id,sourceOnly);}
