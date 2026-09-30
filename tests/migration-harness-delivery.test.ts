@@ -1,9 +1,12 @@
 import {expect,it} from 'vitest';
+import {createHash} from 'node:crypto';
 import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {strToU8,zipSync} from 'fflate';
 import {isAdaptableHarnessCapability,runtimeBuildRequirements} from '../src/migration/domain/migration-harness.js';
+import {canonicalSha256} from '../src/shared/json-canonicalization.js';
+import {validateRuntimeBuildResult,withResultDigest} from '../src/shared/contracts/runtime-builder.js';
 import {runtimeBuildRequirementsYaml} from '../src/migration/infrastructure/migration-harness-serializer.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {createEvaluationService} from '../src/service/server.js';
@@ -13,19 +16,47 @@ function requirement(){
   const inspection=inspectionFixture([]);
   inspection.runtimeCapabilities=[{name:'read_document',owner:'RUNTIME_HARNESS',migrationAction:'REQUIRES_RUNTIME_BUILDER',blocking:true,
     reason:'源 Runtime 提供带权限边界的文档读取能力',usageContract:'path:string -> string；仅允许工作区路径并保留错误语义',targetCapability:null,
+    contract:{inputSchema:{type:'object',properties:{path:{type:'string'}},required:['path'],additionalProperties:false},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'只允许读取当前隔离工作区内的文件'},
+    constraints:{permissions:['workspace.read'],sideEffects:'read',isolation:'per_runtime_instance'},
     testAvailability:'UNCHECKED',consumerTools:['review_document'],evidence:[{path:'tools/review.py',line:8,kind:'SOURCE',detail:'text = context.read_document(path)'}]}];
   return inspection;
 }
 
 it('exports deterministic Runtime Builder requirements without blocking candidate generation',()=>{
   const inspection=requirement(),requirements=runtimeBuildRequirements(inspection);
-  expect(requirements).toMatchObject({schemaVersion:'finance.runtime-build-requirements.v1',status:'RUNTIME_BUILDER_REQUIRED',
+  expect(requirements).toMatchObject({schemaVersion:'finance.runtime-build-requirements.v1',
     requiredCapabilities:[{name:'read_document',required:true,consumerTools:['review_document']}]});
   expect(requirements?.requirementsDigest).toMatch(/^[a-f0-9]{64}$/u);
-  expect(runtimeBuildRequirementsYaml(inspection)).toContain('status: RUNTIME_BUILDER_REQUIRED');
+  expect(runtimeBuildRequirementsYaml(inspection)).toContain('requestId:');
   expect(runtimeBuildRequirementsYaml(inspection)).toContain('name: read_document');
   expect(buildMigrationPlan(inspection,[],inspection.assetId)).toMatchObject({generationAllowed:true,technicalValidationAllowed:false});
 });
+
+it('refuses to emit executable requirements when only the legacy free-text contract exists',()=>{
+  const inspection=requirement();
+  delete inspection.runtimeCapabilities?.[0]?.contract;
+  expect(runtimeBuildRequirements(inspection)).toEqual({schemaVersion:'finance.runtime-build-requirements.v1',status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_document',fields:['contract']}]});
+});
+
+it('accepts only a complete matching Builder result and verifies the artifact bytes',()=>{
+  const requirements=runtimeBuildRequirements(requirement(),{runtimeType:'openjiuwen',requestId:'migration-1:revision-1'});
+  if(!requirements||'status' in requirements)throw new Error('expected complete requirements');
+  const artifact=Buffer.from('runtime artifact');
+  const result=withResultDigest({schemaVersion:'finance.runtime-build-result.v1',buildId:'build-1',requestId:requirements.requestId,
+    requirementsDigest:requirements.requirementsDigest,status:'SUCCEEDED',builder:{name:'fixture-builder',version:'1.0.0'},
+    artifact:{mediaType:'application/vnd.finance.agent-runtime+zip',uri:'artifact://runtime/build-1',sha256:canonicalSha256Bytes(artifact)},
+    runtime:{runtimeType:'openjiuwen',version:'1.0.0',protocols:requirements.target.protocols,requiredConfiguration:[]},
+    capabilityResults:requirements.requiredCapabilities.map(item=>({requirementId:item.id,status:'IMPLEMENTED' as const,capabilityId:'workspace.read_document',contractDigest:canonicalSha256(item.contract),verificationIds:['contract-read-document']})),
+    verifications:[{id:'contract-read-document',type:'CONTRACT_TEST',status:'PASSED',evidenceSha256:'a'.repeat(64)}],errors:[],builtAt:'2026-09-29T12:00:00.000Z'});
+  expect(validateRuntimeBuildResult(requirements,result,artifact)).toEqual([]);
+  expect(validateRuntimeBuildResult(requirements,{...result,status:'PARTIAL'},artifact)).toContain('INVALID_RESULT_DIGEST');
+  const {resultDigest:_digest,...resultBody}=result;
+  const partial=withResultDigest({...resultBody,status:'PARTIAL'});
+  expect(validateRuntimeBuildResult(requirements,partial,artifact)).toContain('BUILD_STATUS_PARTIAL');
+  expect(validateRuntimeBuildResult(requirements,result,Buffer.from('changed'))).toContain('ARTIFACT_DIGEST_MISMATCH');
+});
+
+function canonicalSha256Bytes(value:Uint8Array){return createHash('sha256').update(value).digest('hex');}
 
 it('does not mistake framework registration and response wrappers for a Runtime requirement',()=>{
   const inspection=inspectionFixture([]),capability={name:'AgentScope registration',owner:'RUNTIME_HARNESS' as const,
@@ -39,7 +70,7 @@ it('does not mistake framework registration and response wrappers for a Runtime 
 
 it('keeps evidence and contracts in the YAML without requiring real runtime values',()=>{
   const yaml=runtimeBuildRequirementsYaml(requirement())!;
-  expect(yaml).toContain('usageContract:');
+  expect(yaml).toContain('contract:');
   expect(yaml).toContain('tools/review.py');
   expect(yaml).not.toMatch(/api[_-]?key|bearer\s+[a-z0-9]/iu);
 });
@@ -49,6 +80,8 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
   const baseAnalyzer=analysisFixture([]),analyzer:typeof baseAnalyzer=async input=>{
     const result=await baseAnalyzer(input);
     result.payload.runtimeCapabilities=[{name:'read_document',reason:'源 Runtime 的独立文件能力',usageContract:'path:string -> string',
+      contract:{inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'只读当前隔离工作区'},
+      constraints:{permissions:['workspace.read'],sideEffects:'read',isolation:'per_runtime_instance'},
       consumerTools:[],evidence:[{path:'SKILL.md',snippet:'Runtime provides read_document(path).'}]}];
     return result;
   };
@@ -59,7 +92,7 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
     const asset=uploaded.json(),created=await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'Runtime requirement'}}),id=created.json().id;
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/inspect`,headers})).statusCode).toBe(200);
     const yaml=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml`,headers});
-    expect(yaml.statusCode).toBe(200);expect(yaml.headers['content-type']).toContain('application/yaml');expect(yaml.body).toContain('RUNTIME_BUILDER_REQUIRED');
+    expect(yaml.statusCode).toBe(200);expect(yaml.headers['content-type']).toContain('application/yaml');expect(yaml.body).toContain('requirementsDigest:');
     const plan=await app.inject({method:'GET',url:`/api/migrations/${id}/plan`,headers});
     expect(plan.statusCode).toBe(200);expect(plan.json()).toMatchObject({generationAllowed:true,technicalValidationAllowed:false});
   }finally{await app.close();await rm(directory,{recursive:true,force:true});}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "finance.runtime-build-requirements.v1",
+  "status": "INCOMPLETE_REQUIREMENTS",
+  "missing": [
+    {
+      "name": "read_document",
+      "fields": [
+        "contract",
+        "constraints"
+      ]
+    }
+  ],
+  "message": "补齐机器可校验合同后才能生成构建请求"
+}

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "finance.runtime-build-result.v1",
+  "buildId": "build-example",
+  "requestId": "migration-example:revision-1",
+  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b",
+  "status": "SUCCEEDED",
+  "builder": {
+    "name": "example-builder",
+    "version": "1.0.0"
+  },
+  "artifact": {
+    "mediaType": "application/vnd.finance.agent-runtime+zip",
+    "uri": "artifact://runtime/build-example",
+    "sha256": "02d997ab652649698f1cb863febc31bf23f6cb37ea56877ca8b9de1ad71a25ff"
+  },
+  "runtime": {
+    "runtimeType": "openjiuwen",
+    "version": "1.0.0",
+    "protocols": {
+      "registration": "finance.skill-eval.runtime-capabilities.v2",
+      "instance": "finance.skill-eval.runtime-instance.v1",
+      "execution": "finance.skill-eval.runtime-case.v1"
+    },
+    "requiredConfiguration": [
+      {
+        "name": "DOCUMENT_ROOT",
+        "type": "string",
+        "required": true,
+        "sensitive": false
+      }
+    ]
+  },
+  "capabilityResults": [
+    {
+      "requirementId": "harness-1-read-document",
+      "status": "IMPLEMENTED",
+      "capabilityId": "workspace.read_document",
+      "contractDigest": "338875fa3f9c45dd8cc346589ff42c8d21cad0ebd5c5de48a993d885c6543268",
+      "verificationIds": [
+        "contract-read-document"
+      ]
+    }
+  ],
+  "verifications": [
+    {
+      "id": "contract-read-document",
+      "type": "CONTRACT_TEST",
+      "status": "PASSED",
+      "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "errors": [],
+  "builtAt": "2026-09-29T12:00:00.000Z",
+  "resultDigest": "b9b7b5a4cacf12b67f653212b486334aa248a22c3818c48bb46d9eb972770361"
+}
