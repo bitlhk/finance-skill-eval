@@ -42,8 +42,13 @@ Framework-specific consumers must use `native` data explicitly. Portable consume
 
 - `finance.runtime-launcher-descriptor.v1.schema.json`: Builder-to-platform deployed Launcher handoff.
 - `finance.skill-eval.runtime-capabilities.v1.schema.json`: capabilities discovered from the delivered Launcher.
+- `finance.skill-eval.runtime-instance.v1.schema.json`: complete instance creation request, including Skill, model, environment, secret references and limits.
+- `finance.skill-eval.runtime-instance-state.v1.schema.json`: asynchronous instance lifecycle response.
+- `finance.skill-eval.runtime-case.v1.schema.json`: per-case execution request, including workspace test files.
+- `finance.skill-eval.runtime-evidence.v1.schema.json`: terminal evidence returned by JSON or by the terminal SSE item.
 - `finance.runtime-observation-capabilities.v1.schema.json`: profile and supported-event declaration embedded in Launcher capabilities.
 - `finance.runtime-observation.v1.schema.json`: external JSON Schema for normalized events.
 - `examples/launcher-descriptor.success.json` and `examples/builder-capabilities.json`: one matching delivery pair.
 - `examples/tool-call.completed.json`: one normalized event retaining its framework origin.
+- `examples/instance.create.json`, `instance.ready.json`, `case.execute.json` and `execution.evidence.json`: one complete Launcher lifecycle.
 

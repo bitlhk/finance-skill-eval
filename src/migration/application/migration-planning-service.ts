@@ -63,4 +63,19 @@ export class MigrationPlanningService {
     if(!yaml)return conflict('当前迁移没有 Runtime Harness 改造需求');
     return yaml;
   }
+
+  async bindRuntimeDelivery(id:string,input:unknown) {
+    return this.projects.runExclusive(id,async()=>{
+      const value=await this.projects.get(id);
+      const delivery=z.strictObject({
+        schemaVersion:z.literal('finance.runtime-launcher-delivery-record.v1'),environmentId:z.string().min(1),
+        buildId:z.string().min(1),requestId:z.string().min(1),deploymentId:z.string().min(1),
+        artifactSha256:z.string().regex(/^[a-f0-9]{64}$/u),capabilitiesDigest:z.string().regex(/^[a-f0-9]{64}$/u),resultDigest:z.string().regex(/^[a-f0-9]{64}$/u),
+        builder:z.strictObject({name:z.string().min(1),version:z.string().min(1)}),acceptedAt:z.string().datetime(),expiresAt:z.string().datetime().nullable(),
+      }).parse(input);
+      value.runtimeDelivery=delivery;
+      await this.projects.save(value);
+      return delivery;
+    });
+  }
 }

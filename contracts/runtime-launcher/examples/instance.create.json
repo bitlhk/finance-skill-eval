@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "finance.skill-eval.runtime-instance.v1",
+  "runId": "run-01",
+  "side": "right",
+  "modelId": "execution",
+  "variant": { "mode": "skill_version", "skillId": "finance-review", "version": "1.0.0", "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "skill": { "skillId": "finance-review", "version": "1.0.0", "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "instructions": "Review the supplied financial document." },
+  "environment": { "environmentId": "env-builder-01", "requiredToolNames": ["read_document"] },
+  "configuration": {},
+  "secrets": { "mode": "inline", "values": {} },
+  "limits": { "timeoutMs": 300000 }
+}

@@ -32,6 +32,7 @@ export class MigrationStore {
   async plan(id:string){return this.services.planningService.plan(id);}
   async runtimeRequirements(id:string){return this.services.planningService.runtimeRequirements(id);}
   async runtimeRequirementsYaml(id:string){return this.services.planningService.runtimeRequirementsYaml(id);}
+  async bindRuntimeDelivery(id:string,input:unknown){return this.services.planningService.bindRuntimeDelivery(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.services.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.services.technicalValidation.list(id);}
   async validateOpenJiuwen(id:string,input:unknown){return this.services.openJiuwenService.validate(id,input);}

@@ -1,0 +1,20 @@
+{
+  "runId": "run-01",
+  "side": "right",
+  "caseId": "case-01",
+  "status": "completed",
+  "modelId": "execution",
+  "skillVersion": "1.0.0",
+  "output": "Net assets are 60.",
+  "elapsedMs": 1200,
+  "toolCalls": [{ "name": "read_document", "status": "completed" }],
+  "loadedSkills": [{ "skillId": "finance-review", "version": "1.0.0" }],
+  "usage": { "inputTokens": 120, "outputTokens": 12, "totalTokens": 132 },
+  "runtimeIdentityVerified": true,
+  "streamCompleted": true,
+  "error": null,
+  "metadata": {
+    "skillArtifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "instanceConfigurationDigest": "7a10cf1d49c508220aaf2f048268821941dd46931c81f49b59aa36dfefc0f97a"
+  }
+}

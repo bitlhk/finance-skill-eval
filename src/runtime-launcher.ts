@@ -1,4 +1,4 @@
-import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
+import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
@@ -8,12 +8,16 @@ import { z } from 'zod';
 export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 export type { RuntimeLauncherCapabilities } from './shared/contracts/runtime-launcher.js';
 
-const instanceStateSchema=z.strictObject({
+export const runtimeInstanceStateSchema=z.strictObject({
   schemaVersion:z.literal('finance.skill-eval.runtime-instance-state.v1'),instanceId:z.string().min(1),
   status:z.enum(['starting','ready','failed']),executeEndpoint:z.string().min(1).nullable().default(null),
   expiresAt:z.string().datetime(),error:z.string().nullable().default(null),configurationDigest:z.string().min(1),
 });
-type InstanceState=z.infer<typeof instanceStateSchema>;
+type InstanceState=z.infer<typeof runtimeInstanceStateSchema>;
+export const runtimeCaseRequestSchema=z.strictObject({
+  schemaVersion:z.literal('finance.skill-eval.runtime-case.v1'),caseId:z.string().min(1),query:z.string().min(1),
+  requiredTools:z.array(z.string().min(1)),workspaceFiles:workspaceFilesSchema,
+});
 
 export type RuntimeInstanceSecrets={mode:'inline';values:Record<string,string>};
 export const launcherGenerationSchema=z.strictObject({
@@ -103,7 +107,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
     if(!response.ok)throw await responseError(response);
-    this.instance=instanceStateSchema.parse(await response.json());
+    this.instance=runtimeInstanceStateSchema.parse(await response.json());
     while(this.instance.status==='starting'){
       signal.throwIfAborted();
       await new Promise<void>((resolve,reject)=>{
@@ -112,7 +116,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
         signal.addEventListener('abort',abort,{once:true});
       });
       const status=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance.instanceId)}`),{headers:this.options.headers,redirect:'error',signal});
-      if(!status.ok)throw await responseError(status);this.instance=instanceStateSchema.parse(await status.json());
+      if(!status.ok)throw await responseError(status);this.instance=runtimeInstanceStateSchema.parse(await status.json());
     }
     if(this.instance.status!=='ready'||!this.instance.executeEndpoint)throw new Error(this.instance.error??'Runtime instance failed to start');
     this.executeUrl=controlledUrl(this.options.baseUrl,this.instance.executeEndpoint);
@@ -120,7 +124,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   async execute(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
     if(!this.instance||!this.executeUrl)throw new Error('Runtime instance is not ready');
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
-      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[]})});
+      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[]}))});
     if(!response.ok)throw await responseError(response);
     const payload=await readExecution(response,request);
     const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);

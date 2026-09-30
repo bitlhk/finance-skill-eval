@@ -6,6 +6,8 @@ import {
   runtimeLauncherDescriptorSchema,
   validateRuntimeLauncherDelivery,
 } from "../src/shared/contracts/runtime-launcher.js";
+import { runtimeExecutionEvidenceSchema } from '../src/contracts.js';
+import { runtimeCaseRequestSchema, runtimeInstanceStateSchema } from '../src/runtime-launcher.js';
 
 async function readExample(name: string): Promise<unknown> {
   return JSON.parse(await readFile(new URL(`../contracts/runtime-launcher/examples/${name}`, import.meta.url), "utf8"));
@@ -46,8 +48,16 @@ it("detects delivery drift and requires observability for new Builder deliveries
 });
 
 it("publishes strict JSON Schemas for the Launcher delivery boundary", async () => {
-  for (const name of ["finance.runtime-launcher-descriptor.v1.schema.json", "finance.skill-eval.runtime-capabilities.v1.schema.json"]) {
+  for (const name of ["finance.runtime-launcher-descriptor.v1.schema.json", "finance.skill-eval.runtime-capabilities.v1.schema.json", "finance.skill-eval.runtime-instance.v1.schema.json", "finance.skill-eval.runtime-instance-state.v1.schema.json", "finance.skill-eval.runtime-case.v1.schema.json", "finance.skill-eval.runtime-evidence.v1.schema.json"]) {
     const schema = JSON.parse(await readFile(new URL(`../contracts/runtime-launcher/${name}`, import.meta.url), "utf8"));
     expect(schema).toMatchObject({ $schema: "https://json-schema.org/draft/2020-12/schema", $id: name.replace(".schema.json", "") });
   }
+});
+
+it('ships one complete Runtime Launcher lifecycle example',async()=>{
+  const instance=await readExample('instance.create.json') as {schemaVersion?:string};
+  expect(instance.schemaVersion).toBe('finance.skill-eval.runtime-instance.v1');
+  expect(runtimeInstanceStateSchema.parse(await readExample('instance.ready.json')).status).toBe('ready');
+  expect(runtimeCaseRequestSchema.parse(await readExample('case.execute.json')).workspaceFiles).toHaveLength(1);
+  expect(runtimeExecutionEvidenceSchema.parse(await readExample('execution.evidence.json')).runtimeIdentityVerified).toBe(true);
 });

@@ -10,6 +10,7 @@ import {
 } from "../shared/contracts/environment.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
 import { runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
+import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult } from '../shared/contracts/runtime-builder.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if(record.type==='execution_environment')return {};
@@ -70,6 +71,59 @@ export class EnvironmentStore {
     });
     await writeJsonAtomic(path.join(this.directory, `${record.environmentId}.json`), record);
     return record;
+    });
+  }
+
+  async acceptBuilderDelivery(input:{migrationId:string;requirements:unknown;result:unknown;credentialEnv?:string|null;name?:string}):Promise<{
+    environment:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;capabilities:RuntimeLauncherCapabilities;
+  }>{
+    const requirements=runtimeBuildRequirementsSchema.parse(input.requirements);
+    const result=runtimeBuildResultSchema.parse(input.result);
+    const launcher=result.launcher;
+    if(!launcher)throw Object.assign(new Error('Builder 没有返回可用的 Runtime Launcher。'),{statusCode:400});
+    if(launcher.expiresAt&&Date.parse(launcher.expiresAt)<=Date.now())throw Object.assign(new Error('Builder 返回的 Runtime Launcher 已过期。'),{statusCode:400});
+    const credentialEnv=input.credentialEnv?.trim()||null;
+    let authorization:string|undefined;
+    if(launcher.authentication.type==='bearer'){
+      if(!credentialEnv)throw Object.assign(new Error('该 Launcher 要求 Bearer 凭据，请填写保存凭据的环境变量名。'),{statusCode:400});
+      const credential=process.env[credentialEnv];
+      if(!credential)throw Object.assign(new Error(`凭据环境变量不可用: ${credentialEnv}`),{statusCode:400});
+      authorization=credential.startsWith('Bearer ')?credential:`Bearer ${credential}`;
+    }else if(credentialEnv){
+      throw Object.assign(new Error('该 Launcher 声明无需认证，不应绑定凭据环境变量。'),{statusCode:400});
+    }
+    let capabilities:RuntimeLauncherCapabilities;
+    try{
+      const response=await fetch(new URL('v1/runtime-capabilities',launcher.baseUrl),{
+        headers:authorization?{authorization}:{},redirect:'error',signal:AbortSignal.timeout(10_000),
+      });
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      capabilities=runtimeLauncherCapabilitiesSchema.parse(await response.json());
+    }catch(error){
+      throw Object.assign(new Error(`无法验证 Builder 返回的 Launcher: ${error instanceof Error?error.message:String(error)}`),{statusCode:400});
+    }
+    const issues=validateRuntimeBuildResult(requirements,result,capabilities);
+    if(issues.length)throw Object.assign(new Error(`Builder 交付未通过验收: ${issues.join(', ')}`),{statusCode:400,issues});
+    return this.writes.run('registry',async()=>{
+      const existing=(await this.list()).find((record):record is Extract<EnvironmentRecord,{type:'runtime_launcher'}>=>record.type==='runtime_launcher'&&record.delivery?.deploymentId===launcher.deploymentId);
+      if(existing){
+        if(existing.delivery?.resultDigest!==result.resultDigest||existing.baseUrl!==launcher.baseUrl){
+          throw Object.assign(new Error('相同 deploymentId 已登记，但交付摘要或地址不同。'),{statusCode:409});
+        }
+        return {environment:existing,capabilities};
+      }
+      const now=new Date().toISOString();
+      const runtimeType=['openjiuwen','ea'].includes(launcher.runtime.type)?launcher.runtime.type:'generic_http';
+      const environment=environmentRecordSchema.parse({
+        environmentId:`env-${randomUUID().slice(0,12)}`,name:input.name?.trim()||`${result.builder.name} · ${launcher.runtime.type}`,
+        type:'runtime_launcher',runtimeType,baseUrl:launcher.baseUrl,credentialEnv,createdAt:now,updatedAt:now,
+        delivery:{schemaVersion:'finance.runtime-launcher-delivery-record.v1',migrationId:input.migrationId,
+          buildId:result.buildId,requestId:result.requestId,deploymentId:launcher.deploymentId,
+          artifactSha256:launcher.artifactSha256,capabilitiesDigest:launcher.capabilitiesDigest,resultDigest:result.resultDigest,
+          builder:result.builder,acceptedAt:now,expiresAt:launcher.expiresAt},
+      }) as Extract<EnvironmentRecord,{type:'runtime_launcher'}>;
+      await writeJsonAtomic(path.join(this.directory,`${environment.environmentId}.json`),environment);
+      return {environment,capabilities};
     });
   }
 

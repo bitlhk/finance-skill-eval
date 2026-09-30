@@ -98,6 +98,12 @@ export type MigrationProject = {
     runtimeConfigurationDigest?: string;
   }>;
   assessment: "NOT_VALIDATED";
+  runtimeDelivery?: {
+    schemaVersion:"finance.runtime-launcher-delivery-record.v1";
+    environmentId:string;buildId:string;requestId:string;deploymentId:string;
+    artifactSha256:string;capabilitiesDigest:string;resultDigest:string;
+    builder:{name:string;version:string};acceptedAt:string;expiresAt:string|null;
+  };
   reviews?: Array<{
     candidateDigest: string;
     decision: "ACCEPTED" | "NEEDS_CHANGES";

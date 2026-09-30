@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "finance.skill-eval.runtime-instance-state.v1",
+  "instanceId": "instance-01",
+  "status": "ready",
+  "executeEndpoint": "/deployments/builder-job-01-runtime/v1/runtime-instances/instance-01/execute",
+  "expiresAt": "2026-10-01T12:05:00.000Z",
+  "error": null,
+  "configurationDigest": "7a10cf1d49c508220aaf2f048268821941dd46931c81f49b59aa36dfefc0f97a"
+}
