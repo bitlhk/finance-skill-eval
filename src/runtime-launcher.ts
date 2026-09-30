@@ -35,6 +35,7 @@ export type RuntimeInstanceRequest={
 };
 
 function endpoint(base:string,path:string):URL{return new URL(path,new URL(base));}
+export const RUNTIME_LAUNCHER_STREAM_LIMITS={frameBytes:524_288,evidenceBytes:262_144} as const;
 function controlledUrl(base:string,value:string):URL{
   const resolved=new URL(value,new URL(base));
   if(resolved.origin!==new URL(base).origin)throw new Error('Runtime Launcher returned a cross-origin endpoint');
@@ -60,25 +61,49 @@ function extractSecrets(source:RuntimeEnvironmentDescriptor,provided:RuntimeInst
   return {environment,secrets:{mode:'inline' as const,values}};
 }
 async function responseError(response:Response):Promise<Error>{const raw=await response.text();return new Error(`Runtime Launcher HTTP ${response.status}: ${raw.slice(0,400)}`);}
-async function readExecution(response:Response,request:RuntimeExecutionRequest):Promise<unknown>{
-  if(!response.headers.get('content-type')?.includes('text/event-stream'))return response.json();
-  if(!response.body)throw new Error('Runtime instance stream is empty');
-  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',value:unknown;
+function serializedBytes(value:unknown):number{return new TextEncoder().encode(JSON.stringify(value)).byteLength;}
+async function readBoundedJson(response:Response,limit:number,label:string):Promise<unknown>{
+  if(!response.body)throw new Error(`${label} response body is empty`);
+  const declared=Number(response.headers.get('content-length'));
+  if(Number.isFinite(declared)&&declared>limit)throw new Error(`${label} exceeds ${limit} bytes`);
+  const reader=response.body.getReader(),chunks:Uint8Array[]=[];let total=0;
   try{
-    while(true){
-      const chunk=await reader.read();
-      buffer=(buffer+decoder.decode(chunk.value,{stream:!chunk.done})).replaceAll('\r\n','\n');
-      let end:number;
-      while((end=buffer.indexOf('\n\n'))>=0){
-        const frame=buffer.slice(0,end);buffer=buffer.slice(end+2);
-        const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
-        if(!data)continue;
-        const event=JSON.parse(data) as Record<string,unknown>;
-        if(event.evidence)value=event.evidence;
-        else if(event.schemaVersion==='finance.runtime-observation.v1')forwardObservation(runtimeObservationEventSchema.parse(event),request);
-        else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
-      }
-      if(chunk.done)break;
+    while(true){const chunk=await reader.read();if(chunk.value){total+=chunk.value.byteLength;if(total>limit)throw new Error(`${label} exceeds ${limit} bytes`);chunks.push(chunk.value);}if(chunk.done)break;}
+  }finally{await reader.cancel().catch(()=>undefined);}
+  const bytes=new Uint8Array(total);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+async function* boundedSseFrames(reader:ReadableStreamDefaultReader<Uint8Array>):AsyncGenerator<Uint8Array>{
+  let pending:number[]=[];
+  while(true){
+    const chunk=await reader.read();
+    if(chunk.value)for(const byte of chunk.value){
+      pending.push(byte);
+      const length=pending.length;
+      const delimiter=length>=2&&pending[length-2]===10&&pending[length-1]===10?2
+        :length>=4&&pending[length-4]===13&&pending[length-3]===10&&pending[length-2]===13&&pending[length-1]===10?4:0;
+      if(delimiter){yield Uint8Array.from(pending.slice(0,-delimiter));pending=[];continue;}
+      if(pending.length>RUNTIME_LAUNCHER_STREAM_LIMITS.frameBytes)throw new Error(`Runtime Launcher SSE frame exceeds ${RUNTIME_LAUNCHER_STREAM_LIMITS.frameBytes} bytes`);
+    }
+    if(chunk.done)break;
+  }
+  if(pending.some(byte=>![9,10,13,32].includes(byte)))throw new Error('Runtime Launcher SSE stream ended with an unfinished frame');
+}
+async function readExecution(response:Response,request:RuntimeExecutionRequest):Promise<unknown>{
+  if(!response.headers.get('content-type')?.includes('text/event-stream'))return readBoundedJson(response,RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes,'Runtime Launcher evidence');
+  if(!response.body)throw new Error('Runtime instance stream is empty');
+  const reader=response.body.getReader(),decoder=new TextDecoder();let value:unknown;
+  try{
+    for await(const bytes of boundedSseFrames(reader)){
+      const frame=decoder.decode(bytes).replaceAll('\r\n','\n');
+      const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
+      if(!data)continue;
+      const event=JSON.parse(data) as Record<string,unknown>;
+      if(event.evidence){
+        if(serializedBytes(event.evidence)>RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes)throw new Error(`Runtime Launcher evidence exceeds ${RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes} bytes`);
+        value=event.evidence;
+      }else if(event.schemaVersion==='finance.runtime-observation.v1')forwardObservation(runtimeObservationEventSchema.parse(event),request);
+      else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
     }
   }finally{await reader.cancel().catch(()=>undefined);}
   if(!value)throw new Error('Runtime instance stream ended without execution evidence');

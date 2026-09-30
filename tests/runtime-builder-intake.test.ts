@@ -43,6 +43,10 @@ it('admits only a trusted Builder Launcher, probes its lifecycle, recovers and r
   await store.rollbackBuilderDelivery(first.environment.environmentId,result.resultDigest);
   expect(await store.list()).toEqual([]);
   const recovered=await store.acceptBuilderDelivery({trustReference:'builder-local',requirements,result});
+  await expect(store.update(recovered.environment.environmentId,{name:'Changed',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://127.0.0.1:9/'})).rejects.toMatchObject({statusCode:409});
+  await expect(store.update(recovered.environment.environmentId,{name:'Changed',type:'runtime_launcher',runtimeType:'generic_http',baseUrl:recovered.environment.baseUrl})).rejects.toMatchObject({statusCode:409});
+  await expect(store.update(recovered.environment.environmentId,{name:'Changed',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:recovered.environment.baseUrl,credentialEnv:'OTHER_TOKEN'})).rejects.toMatchObject({statusCode:409});
+  await expect(store.update(recovered.environment.environmentId,{name:'Renamed',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:recovered.environment.baseUrl})).resolves.toMatchObject({name:'Renamed',delivery:{evalConformance:{status:'PASSED'}}});
   const second=await store.acceptBuilderDelivery({trustReference:'builder-local',requirements,result});
   expect(second.environment.environmentId).toBe(recovered.environment.environmentId);
   expect(recovered.environment).toMatchObject({type:'runtime_launcher',runtimeType:'openjiuwen',delivery:{buildId:'build-1',deploymentId:'deployment-1',evalConformance:{status:'PASSED',checks:['capabilities','create','status','execute','evidence','delete']}}});

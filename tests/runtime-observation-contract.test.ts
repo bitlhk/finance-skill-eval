@@ -41,6 +41,9 @@ it("rejects oversized and sensitive observation payloads at the receiver boundar
   expect(() => runtimeObservationEventSchema.parse({ ...base, payload: { text: "x".repeat(16_385) } })).toThrow();
   expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { api_key: "do-not-export" } } })).toThrow(/forbidden sensitive field/u);
   expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { responseBody: { account: "A1", balance: 100 } } } })).toThrow(/forbidden sensitive field/u);
+  for(const key of ['API_KEY','Api-Key','api_key','apiKey','AUTHORIZATION','Reasoning','responseBody']){
+    expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { [key]: 'must-not-pass' } } }),key).toThrow(/forbidden sensitive field/u);
+  }
   expect(() => runtimeObservationEventSchema.parse({ ...base, source: { adapter: "generic", nativeEventType: "event", synthesized: false }, native: { data: { value: "x".repeat(32_769) } } })).toThrow(/32768 serialized bytes/u);
   let nested:unknown="leaf";
   for(let index=0;index<9;index+=1)nested={child:nested};

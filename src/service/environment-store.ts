@@ -186,6 +186,15 @@ export class EnvironmentStore {
       if (parsed.type !== previous.type) {
         throw Object.assign(new Error("Resource type cannot change; create a new environment instead"), { statusCode: 409 });
       }
+      if(previous.type==='runtime_launcher'&&previous.delivery&&parsed.type==='runtime_launcher'){
+        const credentialChanged=Object.prototype.hasOwnProperty.call(parsed,'credentialEnv')&&(parsed.credentialEnv??null)!==previous.credentialEnv;
+        if(parsed.baseUrl!==previous.baseUrl||parsed.runtimeType!==previous.runtimeType||credentialChanged){
+          throw Object.assign(new Error('Builder 管理的 Runtime Launcher 连接配置不可修改；请提交新的 Builder 交付并重新验收。'),{statusCode:409});
+        }
+        const record=environmentRecordSchema.parse({...previous,name:parsed.name,updatedAt:new Date().toISOString()});
+        await writeJsonAtomic(path.join(this.directory,`${id}.json`),record);
+        return record;
+      }
       if(parsed.type==='execution_environment')await this.validateExecutionEnvironment(parsed.launcherEnvironmentId,parsed.mcpEnvironmentIds);
       const record = environmentRecordSchema.parse({
         ...previous, ...parsed,

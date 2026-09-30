@@ -28,6 +28,8 @@ The stable `kind` in `finance.runtime-observation.v1` describes cross-framework 
 
 Observation limits are executable receiver requirements, not documentation hints. Eval rejects an event above 65,536 serialized UTF-8 bytes, `native.data` above 32,768 bytes or eight levels deep, identifiers above 200 characters, messages above 4,096 characters, output deltas above 16,384 characters, and native objects whose property names indicate secrets or hidden reasoning. The JSON Schema carries the portable length rules plus `x-maxSerializedBytes`, `x-maxDepth`, and `x-forbiddenPropertyNames`; receivers must enforce those annotations. A rejected observation terminates that execution stream instead of being persisted or displayed.
 
+The SSE transport is bounded while bytes are being read: an unfinished or complete frame above 524,288 bytes is cancelled before JSON parsing, and a stream ending with a non-empty unfinished frame is rejected. Terminal evidence has its own 262,144-byte serialized limit, plus the field and collection limits published in `finance.skill-eval.runtime-evidence.v1.schema.json`. These limits also apply when evidence is returned as plain JSON.
+
 Builder verification records are self-reported build evidence. They do not make a deployment usable. Eval records a separate `evalConformance.status=PASSED` only after it has independently exercised capabilities, create, status, execute, terminal evidence validation, and delete against the admitted Launcher target.
 
 Launcher capabilities may advertise an `observability` object:

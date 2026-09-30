@@ -153,6 +153,8 @@ export const runtimeObservationEventSchema = z.union(eventSchemas).superRefine((
 });
 
 const sensitiveNativeKey = /(?:^|-)(?:authorization|api-key|apikey|access-token|refresh-token|bearer-token|token|password|secret|cookie|reasoning|chain-of-thought|hidden-thought|prompt|body|payload|content|text|input|output|request|response|messages|request-body|response-body|raw-input|raw-output)(?:$|-)/u;
+function normalizeNativeKey(key:string):string{return key.normalize('NFKC')
+  .replace(/([a-z0-9])([A-Z])/gu,'$1-$2').replace(/[_\s.]+/gu,'-').replace(/-+/gu,'-').replace(/^-|-$/gu,'').toLowerCase();}
 function jsonBytes(value:unknown):number|null{try{const serialized=JSON.stringify(value);return serialized===undefined?null:new TextEncoder().encode(serialized).byteLength;}catch{return null;}}
 function validateNativeData(value: unknown, context: z.RefinementCtx): void {
   const bytes=jsonBytes(value);
@@ -171,7 +173,7 @@ function validateNativeData(value: unknown, context: z.RefinementCtx): void {
     if(typeof item==="number"){if(!Number.isFinite(item))context.addIssue({code:"custom",path:["native","data",...path],message:"Native data must contain finite JSON numbers"});continue;}
     if (Array.isArray(item)) item.forEach((child, index) => pending.push({item:child,depth:depth+1,path:[...path,index]}));
     else if (item && typeof item === "object") for (const [key, child] of Object.entries(item)) {
-      const normalizedKey=key.replaceAll("_","-").replace(/[A-Z]/gu,character=>`-${character.toLowerCase()}`).toLowerCase();
+      const normalizedKey=normalizeNativeKey(key);
       if (sensitiveNativeKey.test(normalizedKey)) context.addIssue({ code: "custom", path: ["native", "data", ...path, key], message: "Native data contains a forbidden sensitive field" });
       pending.push({item:child,depth:depth+1,path:[...path,key]});
     } else context.addIssue({code:"custom",path:["native","data",...path],message:"Native data must be JSON"});

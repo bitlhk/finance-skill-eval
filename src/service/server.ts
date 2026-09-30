@@ -12,6 +12,7 @@ import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { registerMigrationRoutes } from "../interfaces/http/migration-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
+import {RuntimeDeliveryCoordinator} from './runtime-delivery-coordinator.js';
 import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
 import { EvaluationRunManager } from "./run-manager.js";
@@ -99,10 +100,12 @@ export async function createEvaluationService(
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
+  const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
   registerMigrationRoutes(app, {
     migrations,
     skills,
     environments,
+    runtimeDeliveries,
     privateWorkspaceEnabled: !config.publicDemo && Boolean(config.accessToken),
   });
 

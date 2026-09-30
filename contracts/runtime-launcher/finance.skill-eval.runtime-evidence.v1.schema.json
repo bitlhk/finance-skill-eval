@@ -1,15 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "finance.skill-eval.runtime-evidence.v1",
   "description": "Terminal execution evidence. The wire object intentionally has no schemaVersion field in Runtime protocol v1.",
+  "x-maxSerializedBytes": 262144,
   "type": "object", "additionalProperties": false,
   "required": ["runId", "side", "caseId", "status", "modelId", "skillVersion", "output", "elapsedMs", "toolCalls", "loadedSkills", "usage", "runtimeIdentityVerified", "streamCompleted", "error", "metadata"],
   "properties": {
-    "runId": { "type": "string", "minLength": 1 }, "side": { "enum": ["left", "right"] }, "caseId": { "type": "string", "minLength": 1 }, "status": { "enum": ["completed", "failed"] },
-    "modelId": { "type": "string", "minLength": 1 }, "skillVersion": { "type": ["string", "null"] }, "output": { "type": "string" }, "elapsedMs": { "type": "number", "minimum": 0 },
-    "toolCalls": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["name", "status"], "properties": { "name": { "type": "string", "minLength": 1 }, "status": { "enum": ["completed", "failed"] } } } },
-    "loadedSkills": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["skillId", "version"], "properties": { "skillId": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 } } } },
+    "runId": { "type": "string", "minLength": 1, "maxLength": 200 }, "side": { "enum": ["left", "right"] }, "caseId": { "type": "string", "minLength": 1, "maxLength": 200 }, "status": { "enum": ["completed", "failed"] },
+    "modelId": { "type": "string", "minLength": 1, "maxLength": 200 }, "skillVersion": { "type": ["string", "null"], "maxLength": 200 }, "output": { "type": "string", "maxLength": 131072 }, "elapsedMs": { "type": "number", "minimum": 0 },
+    "toolCalls": { "type": "array", "maxItems": 1024, "items": { "type": "object", "additionalProperties": false, "required": ["name", "status"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 }, "status": { "enum": ["completed", "failed"] } } } },
+    "loadedSkills": { "type": "array", "maxItems": 256, "items": { "type": "object", "additionalProperties": false, "required": ["skillId", "version"], "properties": { "skillId": { "type": "string", "minLength": 1, "maxLength": 200 }, "version": { "type": "string", "minLength": 1, "maxLength": 200 } } } },
     "usage": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "properties": { "inputTokens": { "type": "number", "minimum": 0 }, "outputTokens": { "type": "number", "minimum": 0 }, "totalTokens": { "type": "number", "minimum": 0 } } }] },
-    "runtimeIdentityVerified": { "type": "boolean" }, "streamCompleted": { "type": "boolean" }, "error": { "type": ["string", "null"] },
+    "runtimeIdentityVerified": { "type": "boolean" }, "streamCompleted": { "type": "boolean" }, "error": { "type": ["string", "null"], "maxLength": 8192 },
     "traceFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "metadata": { "type": "object" }
   }
 }

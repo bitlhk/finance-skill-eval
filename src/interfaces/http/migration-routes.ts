@@ -5,11 +5,13 @@ import type { MigrationStore } from "../../migration/migration-store.js";
 import { simpleMigrationSuiteExample } from "../../migration/domain/simple-migration-suite.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import { z } from 'zod';
+import type {RuntimeDeliveryCoordinator} from '../../service/runtime-delivery-coordinator.js';
 
 type MigrationRouteDependencies = {
   migrations: MigrationStore;
   skills: SkillStore;
   environments: EnvironmentStore;
+  runtimeDeliveries:RuntimeDeliveryCoordinator;
   privateWorkspaceEnabled: boolean;
 };
 
@@ -20,7 +22,7 @@ function requestSignal(request: { raw: NodeJS.EventEmitter }): AbortSignal {
 }
 
 export function registerMigrationRoutes(app: FastifyInstance, dependencies: MigrationRouteDependencies): void {
-  const { migrations, skills, environments, privateWorkspaceEnabled } = dependencies;
+  const { migrations, skills, environments, runtimeDeliveries, privateWorkspaceEnabled } = dependencies;
 
   app.addHook("preValidation", async (request, reply) => {
     if (!privateWorkspaceEnabled && request.url.startsWith("/api/migrations")) {
@@ -49,13 +51,7 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => migrations.runtimeRequirements(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-deliveries", async request => {
     const body=z.strictObject({result:z.unknown(),trustReference:z.string().regex(/^[a-z0-9-]+$/u),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
-    const requirements=await migrations.runtimeRequirements(request.params.id);
-    if(!requirements||!('requestId' in requirements))throw Object.assign(new Error('当前迁移没有可接收的 Runtime Builder 能力需求。'),{statusCode:409});
-    const accepted=await environments.acceptBuilderDelivery({requirements,result:body.result,trustReference:body.trustReference,name:body.name});
-    const delivery=accepted.environment.delivery!;
-    try{await migrations.bindRuntimeDelivery(request.params.id,{...delivery,environmentId:accepted.environment.environmentId});}
-    catch(error){if(accepted.created)await environments.rollbackBuilderDelivery(accepted.environment.environmentId,delivery.resultDigest);throw error;}
-    return {status:'ACCEPTED',environment:accepted.environment,capabilities:accepted.capabilities};
+    return runtimeDeliveries.acceptAndBind(request.params.id,{result:body.result,trustReference:body.trustReference,name:body.name});
   });
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => reply
     .type("application/yaml; charset=utf-8")

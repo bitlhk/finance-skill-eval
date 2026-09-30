@@ -9,6 +9,7 @@ import type {
 import type { PortableDiff, PortableGeneration } from "./migration-candidate-artifact.js";
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { StageEnvelope } from "./migration-stage-envelope.js";
+import type {RuntimeLauncherBinding} from "../../shared/contracts/environment.js";
 
 export const migrationProjectIdSchema = z.string().regex(/^migration-[a-f0-9-]+$/u);
 
@@ -98,13 +99,7 @@ export type MigrationProject = {
     runtimeConfigurationDigest?: string;
   }>;
   assessment: "NOT_VALIDATED";
-  runtimeDelivery?: {
-    schemaVersion:"finance.runtime-launcher-delivery-record.v1";
-    environmentId:string;buildId:string;requestId:string;deploymentId:string;
-    artifactSha256:string;capabilitiesDigest:string;resultDigest:string;
-    builder:{name:string;version:string};acceptedAt:string;expiresAt:string|null;
-    evalConformance?:{status:"PASSED";testedAt:string;checks:Array<"capabilities"|"create"|"status"|"execute"|"evidence"|"delete">};
-  };
+  runtimeDelivery?: RuntimeLauncherBinding;
   reviews?: Array<{
     candidateDigest: string;
     decision: "ACCEPTED" | "NEEDS_CHANGES";
