@@ -62,6 +62,8 @@ function severity(value: unknown): "ERROR" | "WARNING" | "INFO" {
 export function toProjectInspection(
   payload: { skill?: { status?: string; findings?: unknown[] }; tools?: AgentTool[];
     runtimeCapabilities?:Array<{name:string;reason:string;usageContract:string;targetCapability?:string|null;
+      contract?:{inputSchema?:unknown;outputSchema?:unknown;errorSchema?:unknown;semantics?:string};
+      constraints?:{permissions?:unknown;sideEffects?:unknown;isolation?:unknown};
       consumerTools?:string[];evidence:Array<{path:string;snippet:string}>}> },
   assetId: string,
   assetDigest: string,
@@ -162,6 +164,12 @@ export function toProjectInspection(
     if(!evidence.length||evidence.length!==claim.evidence.length||runtimeCapabilities.some(c=>c.name===claim.name.trim()))continue;
     const capability={name:claim.name.trim(),owner:'RUNTIME_HARNESS' as const,migrationAction:'REQUIRES_RUNTIME_BUILDER' as const,blocking:true as const,
       reason:claim.reason,usageContract:claim.usageContract,targetCapability:typeof claim.targetCapability==='string'?claim.targetCapability:null,
+      ...((claim.contract&&typeof claim.contract.inputSchema==='object'&&claim.contract.inputSchema&&typeof claim.contract.outputSchema==='object'&&claim.contract.outputSchema
+        &&typeof claim.contract.errorSchema==='object'&&claim.contract.errorSchema&&typeof claim.contract.semantics==='string'&&claim.contract.semantics.trim())?{contract:{
+          inputSchema:claim.contract.inputSchema as Record<string,unknown>,outputSchema:claim.contract.outputSchema as Record<string,unknown>,errorSchema:claim.contract.errorSchema as Record<string,unknown>,semantics:claim.contract.semantics}}:{}),
+      ...((claim.constraints&&Array.isArray(claim.constraints.permissions)&&claim.constraints.permissions.every(item=>typeof item==='string')
+        &&['none','read','write'].includes(String(claim.constraints.sideEffects))&&typeof claim.constraints.isolation==='string'&&claim.constraints.isolation.trim())?{constraints:{
+          permissions:claim.constraints.permissions as string[],sideEffects:claim.constraints.sideEffects as 'none'|'read'|'write',isolation:claim.constraints.isolation}}:{}),
       testAvailability:'UNCHECKED' as const,consumerTools:Array.isArray(claim.consumerTools)?claim.consumerTools.filter((name):name is string=>typeof name==='string'):[],evidence};
     if(isAdaptableHarnessCapability(capability))runtimeCapabilities.push(capability);
   }

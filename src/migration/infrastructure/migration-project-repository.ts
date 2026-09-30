@@ -5,6 +5,7 @@ import {
   type MigrationProject,
 } from "../domain/migration-project.js";
 import { KeyedQueue } from "../../shared/keyed-queue.js";
+import { copyFile, access } from "node:fs/promises";
 import { listJsonFiles, readJson, writeJsonAtomic } from "../../service/file-store.js";
 import type { MigrationProjectStore } from "../application/migration-project-store.js";
 
@@ -27,11 +28,23 @@ export class MigrationProjectRepository implements MigrationProjectStore {
     return this.mutations.run(key, operation);
   }
 
+  private async parseOrUpgrade(file: string, raw: unknown): Promise<MigrationProject | null> {
+    const record = raw as { schemaVersion?: string; id?: string } | null;
+    if (record?.schemaVersion === "finance.skill-migration.v2") return parseMigrationProject(raw);
+    if (record?.schemaVersion !== "finance.skill-migration.v0.1") return null;
+
+    const backup = `${file}.v0.1.backup.json`;
+    try { await access(backup); } catch { await copyFile(file, backup); }
+    const upgraded = parseMigrationProject({ ...(raw as Record<string, unknown>), schemaVersion: "finance.skill-migration.v2" });
+    await writeJsonAtomic(file, upgraded);
+    return upgraded;
+  }
+
   async list(): Promise<MigrationProject[]> {
     const projects = await Promise.all((await listJsonFiles(this.directory)).map(async file => {
       const raw = await readJson<unknown>(file);
-      if ((raw as { schemaVersion?: string })?.schemaVersion !== "finance.skill-migration.v2") return null;
-      const project = parseMigrationProject(raw);
+      const project = await this.parseOrUpgrade(file, raw);
+      if (!project) return null;
       if (path.basename(file, ".json") !== project.id) {
         throw new Error(`迁移记录文件名与记录 ID 不一致: ${path.basename(file)}`);
       }
@@ -42,10 +55,8 @@ export class MigrationProjectRepository implements MigrationProjectStore {
 
   async get(id: string): Promise<MigrationProject> {
     const raw = await readJson<unknown>(this.file(id));
-    if ((raw as { schemaVersion?: string })?.schemaVersion !== "finance.skill-migration.v2") {
-      throw Object.assign(new Error("旧版迁移记录已停用，请用原 Skill 新建迁移"), { statusCode: 410 });
-    }
-    const project = parseMigrationProject(raw);
+    const project = await this.parseOrUpgrade(this.file(id), raw);
+    if (!project) throw Object.assign(new Error("不支持的迁移记录版本"), { statusCode: 410 });
     if (project.id !== id) throw new Error(`迁移记录 ID 与请求不一致: ${id}`);
     return project;
   }

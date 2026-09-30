@@ -25,14 +25,17 @@ Skill 迁移与普通评测统一使用 `runtime_launcher`：测试环境登记 
 
 本批为打通自建 Runtime 先支持服务端到 Launcher 的 `secrets.inline`。秘密值不进入环境登记、运行配置、实例状态或证据，Runtime 在执行副本中注入并统一脱敏；后续再扩展密钥引用/一次性凭据模式。协议细节见 `docs/runtime-launcher-protocol.md`。
 
-## 第三批：Issue #6 后续重构（尚未实现）
+## 第三批：Issue #6 模块重构
 
-1. 迁移记录 Zod、Repository、显式升级与特征测试。
-2. 为历史迁移记录提供显式升级；同步替换其余旧流程测试。
-3. 迁移 use case、评测工厂/执行器及其他 HTTP 路由拆分。
-4. 统一其余前端 DTO/client、Python 生命周期及 TS/Python 契约验证。
+已完成迁移 domain/application/infrastructure 分层、独立 HTTP routes、共享契约、按 migration ID 串行、旧执行链删除、完整核心字段 Zod 校验，以及 v0.1 原位升级和审计备份。不同 migration 的并发操作互不阻塞。旧记录升级保留原 ID 与扩展字段，不恢复旧生成链路。
 
-普通评测和 Skill 迁移现已共享同一套 Launcher 与执行环境模型。两个 Issue 保持打开，不以本批 PR 自动关闭。
+普通评测和 Skill 迁移现已共享同一套 Launcher 与执行环境模型。Issue #6 可在整合 PR 合入后关闭。
+
+## Issue #5 当前边界
+
+已交付 Launcher capabilities/create/status/execute/delete、环境创建/编辑/删除/预检、同步与异步启动、逐题实例、TTL、同源执行端点、包内候选 MCP、受管外部 MCP 绑定、环境变量凭据引用及内联执行秘密脱敏。
+
+Issue #5 仍保持打开：公网任意用户 Runtime 的准入、DNS 解析后的私网/重绑定防护、一次性凭据或密钥引用，以及非参考 Launcher 的互操作验收尚未完成。这些边界不能用已有受管双 Runtime 验证替代。
 
 ## 验证
 

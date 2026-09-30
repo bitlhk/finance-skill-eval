@@ -1,5 +1,5 @@
-import {createHash} from 'node:crypto';
 import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
+import {withRequirementsDigest,type RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
 
 const callableHarnessName=/^[\p{L}_][\p{L}\p{N}_.:-]*$/u;
 const frameworkPlumbing=/\b(?:ToolBase|BaseTool|ToolResponse|Toolkit|TextBlock|register_tool|register_tool_function)\b/iu;
@@ -18,34 +18,29 @@ export function adaptableHarnessCapabilities(inspection:ProjectInspection):Runti
   return (inspection.runtimeCapabilities??[]).filter(isAdaptableHarnessCapability);
 }
 
-export type RuntimeBuildRequirements={
-  schemaVersion:'finance.runtime-build-requirements.v1';
-  status:'RUNTIME_BUILDER_REQUIRED';
-  source:{assetId:string;artifactSha256:string};
-  targetProtocol:{registration:string;instance:string;execution:string};
-  requiredCapabilities:Array<{
-    id:string;name:string;required:true;reason:string;usageContract:string;
-    targetCapability:string|null;consumerTools:string[];
-    evidence:Array<{path:string;line:number;detail:string}>;
-  }>;
-  requirementsDigest:string;
+export type RuntimeBuildRequirementState=RuntimeBuildRequirementsV1|{
+  schemaVersion:'finance.runtime-build-requirements.v1';status:'INCOMPLETE_REQUIREMENTS';
+  missing:Array<{name:string;fields:string[]}>;
 };
 
-export function runtimeBuildRequirements(inspection:ProjectInspection):RuntimeBuildRequirements|null{
+export function runtimeBuildRequirements(inspection:ProjectInspection, target:{runtimeType:string;requestId?:string}={runtimeType:'openjiuwen'}):RuntimeBuildRequirementState|null{
   const capabilities=adaptableHarnessCapabilities(inspection);
   if(!capabilities.length)return null;
-  const body={
+  const missing=capabilities.flatMap(capability=>{
+    const fields=[...(!capability.contract?['contract']:[]),...(!capability.constraints?['constraints']:[])];
+    return fields.length?[{name:capability.name,fields}]:[];
+  });
+  if(missing.length)return {schemaVersion:'finance.runtime-build-requirements.v1',status:'INCOMPLETE_REQUIREMENTS',missing};
+  return withRequirementsDigest({
     schemaVersion:'finance.runtime-build-requirements.v1' as const,
-    status:'RUNTIME_BUILDER_REQUIRED' as const,
+    requestId:target.requestId??`${inspection.assetId}:${inspection.assetDigest.slice(0,12)}:${target.runtimeType}`,
     source:{assetId:inspection.assetId,artifactSha256:inspection.assetDigest},
-    targetProtocol:{registration:'finance.skill-eval.runtime-capabilities.v2',instance:'finance.skill-eval.runtime-instance.v1',execution:'finance.skill-eval.runtime-case.v1'},
+    target:{runtimeType:target.runtimeType,protocols:{registration:'finance.skill-eval.runtime-capabilities.v2',instance:'finance.skill-eval.runtime-instance.v1',execution:'finance.skill-eval.runtime-case.v1'}},
     requiredCapabilities:capabilities.map((capability,index)=>({
       id:`harness-${index+1}-${capability.name.toLowerCase().replace(/[^a-z0-9]+/gu,'-').replace(/^-|-$/gu,'')||'capability'}`,
-      name:capability.name,required:true as const,reason:capability.reason,usageContract:capability.usageContract,
-      targetCapability:capability.targetCapability,consumerTools:[...capability.consumerTools].sort(),
+      name:capability.name,required:true as const,reason:capability.reason,contract:capability.contract!,constraints:capability.constraints!,
+      preferredTargetCapability:capability.targetCapability,consumerTools:[...capability.consumerTools].sort(),
       evidence:capability.evidence.map(({path,line,detail})=>({path,line,detail})),
     })),
-  };
-  const requirementsDigest=createHash('sha256').update(JSON.stringify(body)).digest('hex');
-  return {...body,requirementsDigest};
+  });
 }

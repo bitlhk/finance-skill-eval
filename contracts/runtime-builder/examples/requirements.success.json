@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "finance.runtime-build-requirements.v1",
+  "requestId": "migration-example:revision-1",
+  "source": {
+    "assetId": "asset-example",
+    "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "target": {
+    "runtimeType": "openjiuwen",
+    "protocols": {
+      "registration": "finance.skill-eval.runtime-capabilities.v2",
+      "instance": "finance.skill-eval.runtime-instance.v1",
+      "execution": "finance.skill-eval.runtime-case.v1"
+    }
+  },
+  "requiredCapabilities": [
+    {
+      "id": "harness-1-read-document",
+      "name": "read_document",
+      "required": true,
+      "reason": "Skill 依赖 Runtime 读取工作区内文档",
+      "contract": {
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object"
+        },
+        "errorSchema": {
+          "type": "object"
+        },
+        "semantics": "只允许读取当前隔离工作区内的文件"
+      },
+      "constraints": {
+        "permissions": [
+          "workspace.read"
+        ],
+        "sideEffects": "read",
+        "isolation": "per_runtime_instance"
+      },
+      "preferredTargetCapability": null,
+      "consumerTools": [
+        "review_document"
+      ],
+      "evidence": [
+        {
+          "path": "tools/review.py",
+          "line": 8,
+          "detail": "text = context.read_document(path)"
+        }
+      ]
+    }
+  ],
+  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b"
+}

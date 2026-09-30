@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -119,4 +119,38 @@ it("releases a project queue after a failed mutation", async () => {
   })).rejects.toThrow("expected failure");
 
   await expect(projects.runExclusive("migration-1234", async () => "continued")).resolves.toBe("continued");
+});
+
+it("does not block mutations for different project keys", async () => {
+  const { projects } = await repository();
+  let releaseFirst: (() => void) | undefined;
+  const gate = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const first = projects.runExclusive("migration-1234", async () => gate);
+  let secondFinished = false;
+  await projects.runExclusive("migration-5678", async () => { secondFinished = true; });
+  expect(secondFinished).toBe(true);
+  releaseFirst?.();
+  await first;
+});
+
+it("upgrades a v0.1 project in place, preserves its data and writes an audit backup", async () => {
+  const { root, projects } = await repository();
+  const directory = path.join(root, "migrations");
+  await mkdir(directory, { recursive: true });
+  const legacy = { ...project(), schemaVersion: "finance.skill-migration.v0.1", legacySourceProjectId: "source-project", targetRuns: ["run-1"] };
+  const file = path.join(directory, `${legacy.id}.json`);
+  await writeFile(file, JSON.stringify(legacy));
+
+  const upgraded = await projects.get(legacy.id);
+
+  expect(upgraded).toMatchObject({ schemaVersion: "finance.skill-migration.v2", id: legacy.id, legacySourceProjectId: "source-project", targetRuns: ["run-1"] });
+  expect(JSON.parse(await readFile(`${file}.v0.1.backup.json`, "utf8"))).toEqual(legacy);
+  expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ schemaVersion: "finance.skill-migration.v2", id: legacy.id });
+});
+
+it("rejects malformed v2 core fields instead of trusting the version discriminator", async () => {
+  const { root, projects } = await repository();
+  await mkdir(path.join(root, "migrations"), { recursive: true });
+  await writeFile(path.join(root, "migrations", "migration-1234.json"), JSON.stringify({ schemaVersion: "finance.skill-migration.v2", id: "migration-1234" }));
+  await expect(projects.get("migration-1234")).rejects.toMatchObject({ name: "ZodError" });
 });

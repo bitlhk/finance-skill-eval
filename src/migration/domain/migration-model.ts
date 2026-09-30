@@ -29,6 +29,8 @@ export type ToolDecision={toolId:string;form:ToolForm;language?:string;reason:st
 /** A source-Runtime capability that must be fulfilled by an external Runtime Builder. */
 export type RuntimeHarnessCapability={name:string;owner:'RUNTIME_HARNESS';migrationAction:'REQUIRES_RUNTIME_BUILDER';blocking:true;
   reason:string;usageContract:string;targetCapability:string|null;testAvailability:'UNCHECKED';
+  contract?:{inputSchema:Record<string,unknown>;outputSchema:Record<string,unknown>;errorSchema:Record<string,unknown>;semantics:string};
+  constraints?:{permissions:string[];sideEffects:'none'|'read'|'write';isolation:string};
   consumerTools:string[];evidence:InspectionEvidence[]};
 export type MigrationPlanItem={toolId:string;toolName:string;form:ToolForm;language:string;generator:string;blockingReasons:string[];warnings:string[]};
 export type MigrationPlan={baseAssetId:string;items:MigrationPlanItem[];skillMigrationItems:string[];skillBlockingReasons:string[];generationAllowed:boolean;technicalValidationAllowed:boolean};
