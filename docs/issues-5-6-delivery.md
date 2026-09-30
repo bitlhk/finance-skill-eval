@@ -27,7 +27,7 @@ Skill 迁移与普通评测统一使用 `runtime_launcher`：测试环境登记 
 
 ## 第三批：Issue #6 模块重构
 
-已完成迁移 domain/application/infrastructure 分层、独立 HTTP routes、共享契约、按 migration ID 串行、旧执行链删除、完整核心字段 Zod 校验，以及 v0.1 原位升级和审计备份。不同 migration 的并发操作互不阻塞。旧记录升级保留原 ID 与扩展字段，不恢复旧生成链路。
+已完成迁移 domain/application/infrastructure 分层、独立 HTTP routes、共享契约、按 migration ID 串行、旧执行链删除和完整核心字段 Zod 校验。不同 migration 的并发操作互不阻塞。v0.1 记录不自动升级；旧流程的诊断、生成和验证证据不满足新版语义，用户应从原始 Skill 新建迁移，避免把历史状态误判为新版有效结果。
 
 普通评测和 Skill 迁移现已共享同一套 Launcher 与执行环境模型。Issue #6 可在整合 PR 合入后关闭。
 

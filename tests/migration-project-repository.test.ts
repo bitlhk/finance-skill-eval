@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -133,7 +133,7 @@ it("does not block mutations for different project keys", async () => {
   await first;
 });
 
-it("upgrades a v0.1 project in place, preserves its data and writes an audit backup", async () => {
+it("leaves a v0.1 record untouched and requires a new migration from the original Skill", async () => {
   const { root, projects } = await repository();
   const directory = path.join(root, "migrations");
   await mkdir(directory, { recursive: true });
@@ -141,11 +141,10 @@ it("upgrades a v0.1 project in place, preserves its data and writes an audit bac
   const file = path.join(directory, `${legacy.id}.json`);
   await writeFile(file, JSON.stringify(legacy));
 
-  const upgraded = await projects.get(legacy.id);
-
-  expect(upgraded).toMatchObject({ schemaVersion: "finance.skill-migration.v2", id: legacy.id, legacySourceProjectId: "source-project", targetRuns: ["run-1"] });
-  expect(JSON.parse(await readFile(`${file}.v0.1.backup.json`, "utf8"))).toEqual(legacy);
-  expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ schemaVersion: "finance.skill-migration.v2", id: legacy.id });
+  await expect(projects.get(legacy.id)).rejects.toMatchObject({ statusCode: 410 });
+  expect(await projects.list()).toEqual([]);
+  expect(JSON.parse(await readFile(file, "utf8"))).toEqual(legacy);
+  expect((await readdir(directory)).sort()).toEqual([`${legacy.id}.json`]);
 });
 
 it("rejects malformed v2 core fields instead of trusting the version discriminator", async () => {
