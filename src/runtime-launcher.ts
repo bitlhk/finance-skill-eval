@@ -2,6 +2,7 @@ import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, type
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
+import { RUNTIME_CAPABILITIES_SCHEMA_VERSION } from './shared/contracts/runtime-protocol-versions.js';
 import { z } from 'zod';
 
 const httpBaseUrl=z.string().url().transform(value=>{
@@ -13,7 +14,7 @@ const httpBaseUrl=z.string().url().transform(value=>{
 });
 const publicModel=z.strictObject({modelId:z.string().min(1),upstreamModelId:z.string().min(1),label:z.string().min(1).optional()});
 export const runtimeLauncherCapabilitiesSchema=z.strictObject({
-  schemaVersion:z.literal('finance.skill-eval.runtime-capabilities.v1'),
+  schemaVersion:z.literal(RUNTIME_CAPABILITIES_SCHEMA_VERSION),
   runtime:z.strictObject({type:z.string().min(1),version:z.string().min(1)}),
   models:z.array(publicModel).min(1),defaultModelId:z.string().min(1),
   nativeToolNames:z.array(z.string().min(1)).optional(),

@@ -2,7 +2,7 @@
   "schemaVersion": "finance.runtime-build-result.v1",
   "buildId": "build-example",
   "requestId": "migration-example:revision-1",
-  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b",
+  "requirementsDigest": "8444f6f7542124d7a0d8910fb8859e95b8830a582abc53faee161bbe362a7613",
   "status": "PARTIAL",
   "builder": {
     "name": "example-builder",
@@ -13,7 +13,7 @@
     "runtimeType": "openjiuwen",
     "version": "1.0.0",
     "protocols": {
-      "registration": "finance.skill-eval.runtime-capabilities.v2",
+      "registration": "finance.skill-eval.runtime-capabilities.v1",
       "instance": "finance.skill-eval.runtime-instance.v1",
       "execution": "finance.skill-eval.runtime-case.v1"
     },
@@ -43,5 +43,5 @@
     }
   ],
   "builtAt": "2026-09-29T12:00:00.000Z",
-  "resultDigest": "4b7b891b686bab5e6fe75eccd1ab8db38877a0093bf372f4a30453d4725bf086"
+  "resultDigest": "a34fa019819148eb6e16739fd25fbcf69bacc0cee9b3d6e1aa97462100626557"
 }

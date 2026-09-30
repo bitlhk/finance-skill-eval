@@ -1,5 +1,6 @@
 import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
 import {withRequirementsDigest,type RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION} from '../../shared/contracts/runtime-protocol-versions.js';
 
 const callableHarnessName=/^[\p{L}_][\p{L}\p{N}_.:-]*$/u;
 const frameworkPlumbing=/\b(?:ToolBase|BaseTool|ToolResponse|Toolkit|TextBlock|register_tool|register_tool_function)\b/iu;
@@ -35,7 +36,7 @@ export function runtimeBuildRequirements(inspection:ProjectInspection, target:{r
     schemaVersion:'finance.runtime-build-requirements.v1' as const,
     requestId:target.requestId??`${inspection.assetId}:${inspection.assetDigest.slice(0,12)}:${target.runtimeType}`,
     source:{assetId:inspection.assetId,artifactSha256:inspection.assetDigest},
-    target:{runtimeType:target.runtimeType,protocols:{registration:'finance.skill-eval.runtime-capabilities.v2',instance:'finance.skill-eval.runtime-instance.v1',execution:'finance.skill-eval.runtime-case.v1'}},
+    target:{runtimeType:target.runtimeType,protocols:{registration:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:'finance.skill-eval.runtime-instance.v1',execution:'finance.skill-eval.runtime-case.v1'}},
     requiredCapabilities:capabilities.map((capability,index)=>({
       id:`harness-${index+1}-${capability.name.toLowerCase().replace(/[^a-z0-9]+/gu,'-').replace(/^-|-$/gu,'')||'capability'}`,
       name:capability.name,required:true as const,reason:capability.reason,contract:capability.contract!,constraints:capability.constraints!,

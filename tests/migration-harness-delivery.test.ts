@@ -11,6 +11,7 @@ import {runtimeBuildRequirementsYaml} from '../src/migration/infrastructure/migr
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {createEvaluationService} from '../src/service/server.js';
 import {analysisFixture,inspectionFixture} from './analysis-fixture.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
 
 function requirement(){
   const inspection=inspectionFixture([]);
@@ -25,6 +26,7 @@ function requirement(){
 it('exports deterministic Runtime Builder requirements without blocking candidate generation',()=>{
   const inspection=requirement(),requirements=runtimeBuildRequirements(inspection);
   expect(requirements).toMatchObject({schemaVersion:'finance.runtime-build-requirements.v1',
+    target:{protocols:{registration:RUNTIME_CAPABILITIES_SCHEMA_VERSION}},
     requiredCapabilities:[{name:'read_document',required:true,consumerTools:['review_document']}]});
   expect(requirements?.requirementsDigest).toMatch(/^[a-f0-9]{64}$/u);
   expect(runtimeBuildRequirementsYaml(inspection)).toContain('requestId:');

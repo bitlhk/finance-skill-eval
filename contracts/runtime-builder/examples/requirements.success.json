@@ -8,7 +8,7 @@
   "target": {
     "runtimeType": "openjiuwen",
     "protocols": {
-      "registration": "finance.skill-eval.runtime-capabilities.v2",
+      "registration": "finance.skill-eval.runtime-capabilities.v1",
       "instance": "finance.skill-eval.runtime-instance.v1",
       "execution": "finance.skill-eval.runtime-case.v1"
     }
@@ -60,5 +60,5 @@
       ]
     }
   ],
-  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b"
+  "requirementsDigest": "8444f6f7542124d7a0d8910fb8859e95b8830a582abc53faee161bbe362a7613"
 }
