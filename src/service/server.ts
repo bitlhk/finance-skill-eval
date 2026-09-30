@@ -68,6 +68,9 @@ export async function createEvaluationService(
   const {migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
+  if(config.workspaceSubject && (!config.accessToken || config.publicDemo || !/^studio_[a-zA-Z0-9_-]+$/.test(config.workspaceSubject)
+      || !config.workspaceOrigin || new URL(config.workspaceOrigin).origin!==config.workspaceOrigin
+      || !config.workspaceOrigin.startsWith('https://')))throw new Error('Single-owner workspace requires a trusted ingress credential, subject and HTTPS origin');
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   app.addHook('onSend',async(request,reply,payload)=>{
     if(request.url.startsWith('/api/')) reply.header('cache-control','no-store');
@@ -128,6 +131,11 @@ export async function createEvaluationService(
     if (!config.accessToken || !request.url.startsWith("/api/") || request.url === "/api/health") return;
     if (bearerToken(request.headers.authorization) !== config.accessToken) {
       return reply.code(401).send({ error: "UNAUTHORIZED", message: "访问令牌无效" });
+    }
+    if(config.workspaceSubject){
+      if(request.headers['x-demo-user']!==config.workspaceSubject)return reply.code(403).send({error:'WORKSPACE_OWNER_REQUIRED',message:'此工作区仅向指定管理员开放。'});
+      if(!['GET','HEAD','OPTIONS'].includes(request.method) && request.headers.origin!==config.workspaceOrigin)
+        return reply.code(403).send({error:'WORKSPACE_ORIGIN_REQUIRED',message:'请从工作区页面发起操作。'});
     }
   });
   app.addHook("preValidation", async (request, reply) => {

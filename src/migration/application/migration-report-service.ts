@@ -1,13 +1,13 @@
 import { originalServiceFingerprint } from '../../original-service-runtime.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
-import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import { resolveManagedMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationOptimizationPort } from './migration-optimization-port.js';
 import type { MigrationPreparationRepository } from './migration-preparation-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 import type { MigrationDiagnosisPort } from './migration-diagnosis-port.js';
 import { assessMigrationAcceptance } from '../domain/migration-acceptance.js';
-import { runtimeBuildRequirements } from '../domain/migration-harness.js';
+import { unresolvedMigrationRuntimeRequirements } from './migration-runtime-requirements.js';
 import { buildMigrationPlan } from '../domain/migration-model.js';
 import { executionConfigurationDigest as configurationDigest } from '../../execution-configuration/execution-configuration.js';
 import { migrationWorkflow } from '../domain/migration-workflow.js';
@@ -26,9 +26,7 @@ export class MigrationReportService {
 
   async report(id:string) {
     const value=await this.projects.get(id);
-    const runtimeInspection=value.sourceInspection??value.inspection;
-    const detectedRuntimeRequirements=runtimeInspection?runtimeBuildRequirements(runtimeInspection):null;
-    const runtimeRequirements=detectedRuntimeRequirements&&'requestId' in detectedRuntimeRequirements&&value.runtimeDelivery?.requestId===detectedRuntimeRequirements.requestId?null:detectedRuntimeRequirements;
+    const runtimeRequirements=await unresolvedMigrationRuntimeRequirements(value,this.environments);
     const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
     const currentAsset=value.candidate??value.source;
     const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
@@ -53,8 +51,8 @@ export class MigrationReportService {
     });
     const openJiuwenValidations=(await Promise.all(experiments.map(async experiment=>{
       const runtime=experiment.declaredPlan?.configuration.runtime;
-      const resolved=runtime?.type==='runtime_launcher'?await resolveMigrationEnvironment(this.environments,runtime.environmentId):null;
-      if(!resolved||resolved.launcher.runtimeType!=='openjiuwen')return null;
+      const resolved=runtime?.type==='runtime_launcher'?await resolveManagedMigrationEnvironment(this.environments,runtime.environmentId):null;
+      if(!resolved)return null;
       return {jobId:experiment.jobId,candidateDigest:experiment.candidateDigest,environmentId:resolved.selected.environmentId,
         execution:experiment.execution,evidence:experiment.evidence,current:experiment.current,
         executionCheck:['HTTP_LOADED_DIGEST_CHECKED','SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'].includes(experiment.evidence)?'ARTIFACT_VERIFIED':experiment.execution==='completed'?'EXECUTION_COMPLETED':'NOT_COMPLETE',

@@ -50,7 +50,7 @@ export const persistedMigrationProjectSchema = z.object({
   }).passthrough()).optional(),
   runs: z.array(z.object({
     jobId: z.string().min(1),
-    pair: z.enum(["AB", "BC", "AC", "SC"]),
+    pair: z.enum(["AB", "BC", "AC", "SC", "CC"]),
     candidateDigest: z.string().min(1),
     comparisonFingerprint: z.string().min(1),
     packFingerprint: z.string().min(1),
@@ -59,7 +59,7 @@ export const persistedMigrationProjectSchema = z.object({
 }).passthrough();
 
 export type MigrationRunDeclaration = {
-  pair: "AB" | "BC" | "AC" | "SC";
+  pair: "AB" | "BC" | "AC" | "SC" | "CC";
   configuration: RunConfiguration;
   dataSnapshot: string;
   permissionBasis: string;
@@ -90,7 +90,7 @@ export type MigrationProject = {
   }>;
   runs: Array<{
     jobId: string;
-    pair: "AB" | "BC" | "AC" | "SC";
+    pair: "AB" | "BC" | "AC" | "SC" | "CC";
     candidateDigest: string;
     comparisonFingerprint: string;
     packFingerprint: string;

@@ -102,6 +102,7 @@ function variantSelection(variant: SkillVariant): string {
 
 function runtimeTypeLabel(value: Environment["runtimeType"]): string {
   if (value === "openjiuwen") return "OpenJiuwen";
+  if (value === "agentscope") return "AgentScope Java";
   if (value === "ea") return "EA Runtime";
   return "通用 HTTP Runtime";
 }

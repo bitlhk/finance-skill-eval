@@ -107,7 +107,7 @@ export type MigrationRuntime = {
   runtimeId: string;
   launcherEnvironmentId: string;
   name: string;
-  runtimeType: "openjiuwen"|"ea"|"generic_http";
+  runtimeType: "openjiuwen"|"agentscope"|"ea"|"generic_http";
   endpoint: string;
   defaultModelId: string;
   mcpEnvironmentIds:string[];
@@ -189,7 +189,8 @@ export type EvaluationJob = {
       judge: null | {
         goalAssessment?:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>};
         serviceComparison?:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;originalEvidence:string;candidateEvidence:string}>};
-        winner: "left" | "right" | "tie";
+        runtimeComparison?:{left:{status:'assessed';assessment:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>}}|{status:'unavailable';error:string};right:{status:'assessed';assessment:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>}}|{status:'unavailable';error:string}};
+        winner?: "left" | "right" | "tie";
         confidence: string;
         summary: string;
         dimensions: Array<{

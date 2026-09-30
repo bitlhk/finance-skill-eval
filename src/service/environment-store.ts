@@ -29,26 +29,24 @@ export class EnvironmentStore {
 
   async initialize(): Promise<void> {
     await ensureDirectory(this.directory);
-    for(const file of await listJsonFiles(this.directory)){
-      const value=await readJson<{type?:unknown}>(file);
-      if(value.type==='runtime_http')await unlink(file);
-    }
   }
 
   async list(): Promise<EnvironmentRecord[]> {
     const records = await Promise.all(
       (await listJsonFiles(this.directory)).map(file => readJson<EnvironmentRecord>(file)),
     );
-    return records.map(record => environmentRecordSchema.parse(record))
+    // Unsupported legacy registrations remain on disk for historical references.
+    return records.filter(record => (record as {type:string}).type !== 'runtime_http')
+      .map(record => environmentRecordSchema.parse(record))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async get(environmentId: string): Promise<EnvironmentRecord | null> {
     if (!/^[a-z0-9-]+$/u.test(environmentId)) return null;
     try {
-      return environmentRecordSchema.parse(
-        await readJson(path.join(this.directory, `${environmentId}.json`)),
-      );
+      const record = await readJson<{type?:string}>(path.join(this.directory, `${environmentId}.json`));
+      if(record.type==='runtime_http')return null;
+      return environmentRecordSchema.parse(record);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
@@ -130,15 +128,22 @@ export class EnvironmentStore {
         if(existing.delivery?.resultDigest!==result.resultDigest||existing.baseUrl!==launcher.baseUrl){
           throw Object.assign(new Error('相同 deploymentId 已登记，但交付摘要或地址不同。'),{statusCode:409});
         }
+        // Re-admission has rechecked the contract and lifecycle, including cleanup.
+        // Upgrade legacy records only through that same trusted acceptance path.
+        if(existing.delivery.requirementsDigest!==requirements.requirementsDigest){
+          existing.delivery.requirementsDigest=requirements.requirementsDigest;
+          existing.updatedAt=new Date().toISOString();
+          await writeJsonAtomic(path.join(this.directory,`${existing.environmentId}.json`),existing);
+        }
         return {environment:existing,capabilities,created:false};
       }
       const now=new Date().toISOString();
-      const runtimeType=['openjiuwen','ea'].includes(launcher.runtime.type)?launcher.runtime.type:'generic_http';
+      const runtimeType=['openjiuwen','agentscope','ea'].includes(launcher.runtime.type)?launcher.runtime.type:'generic_http';
       const environment=environmentRecordSchema.parse({
         environmentId:`env-${randomUUID().slice(0,12)}`,name:input.name?.trim()||`${result.builder.name} · ${launcher.runtime.type}`,
         type:'runtime_launcher',runtimeType,baseUrl:launcher.baseUrl,credentialEnv,createdAt:now,updatedAt:now,
         delivery:{schemaVersion:'finance.runtime-launcher-delivery-record.v1',
-          buildId:result.buildId,requestId:result.requestId,deploymentId:launcher.deploymentId,
+          buildId:result.buildId,requestId:result.requestId,requirementsDigest:requirements.requirementsDigest,deploymentId:launcher.deploymentId,
           artifactSha256:launcher.artifactSha256,capabilitiesDigest:launcher.capabilitiesDigest,resultDigest:result.resultDigest,
           builder:result.builder,acceptedAt:now,expiresAt:launcher.expiresAt,
           evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']}},

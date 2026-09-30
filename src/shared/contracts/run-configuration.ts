@@ -27,7 +27,7 @@ export const runConfigurationSchema = z.strictObject({
     z.strictObject({type:z.literal('runtime_launcher'),environmentId:z.string().min(1)}),
   ]),
   judgeMode: z.enum(["deterministic", "model"]).default("deterministic"),
-  evaluationMode: z.enum(["pairwise", "candidate_assessment", "service_comparison"]).default("pairwise"),
+  evaluationMode: z.enum(["pairwise", "candidate_assessment", "service_comparison", "candidate_runtime_comparison"]).default("pairwise"),
   skillAssetId: z.string().min(1).optional(),
   caseSource: z.enum(["fixed", "ai_generated"]).default("fixed"),
   generatedCaseCount: z.number().int().min(1).max(3).default(3),
@@ -43,12 +43,24 @@ export const runConfigurationSchema = z.strictObject({
 }).superRefine((value, context) => {
   if((value.evaluationMode==='service_comparison')!==Boolean(value.originalService))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比模式必须配置原服务，其他模式不能附带原服务配置'});
   const managedRuntime=value.runtime.type==='runtime_launcher';
+  const runtimeComparison=value.evaluationMode==='candidate_runtime_comparison';
+  if(runtimeComparison && (!value.runtimeBindings || !managedRuntime || value.judgeMode!=='model' || value.includeHoldout
+    || !value.executionModel || !value.leftExecutionModel || !value.rightExecutionModel || !value.leftVariant || !value.rightVariant
+    || fingerprint(value.executionModel)!==fingerprint(value.leftExecutionModel)
+    || fingerprint(value.leftExecutionModel.parameters)!==fingerprint(value.rightExecutionModel.parameters)
+    || fingerprint(value.leftVariant)!==fingerprint(value.rightVariant)
+    || value.leftVariant?.mode!=='skill_version' || !value.leftVariant.artifactSha256
+    || value.runtimeBindings.left.skillAssetId!==value.runtimeBindings.right.skillAssetId
+    || value.runtimeBindings.left.environmentId===value.runtimeBindings.right.environmentId
+    || (value.runtime.type==='runtime_launcher' && value.runtime.environmentId!==value.runtimeBindings.left.environmentId))) {
+    context.addIssue({code:z.ZodIssueCode.custom,message:'CC requires the same frozen candidate and parameters, explicit side models, distinct environments, a left primary model/launcher and model goal assessment.'});
+  }
   if(value.evaluationMode==='service_comparison'&&(!value.runtimeBindings||!managedRuntime||value.judgeMode!=='model'||value.caseSource!=='fixed'||!value.preparationId||value.includeHoldout))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比需要固定测试集、模型评估和显式候选 Runtime 绑定'});
   if(value.runtimeToolConfig && !managedRuntime)context.addIssue({code:z.ZodIssueCode.custom,message:'Runtime context requires a managed Runtime environment'});
   if (value.runtimeBindings && (value.runtime.type!=='runtime_launcher' || value.caseSource !== 'fixed'
       || !value.leftVariant || !value.rightVariant || value.leftVariant.mode !== 'skill_version' || value.rightVariant.mode !== 'skill_version'
-      || !value.executionModel || (value.leftExecutionModel && fingerprint(value.leftExecutionModel) !== fingerprint(value.executionModel))
-      || (value.rightExecutionModel && fingerprint(value.rightExecutionModel) !== fingerprint(value.executionModel)))) {
+      || !value.executionModel || (!runtimeComparison && ((value.leftExecutionModel && fingerprint(value.leftExecutionModel) !== fingerprint(value.executionModel))
+      || (value.rightExecutionModel && fingerprint(value.rightExecutionModel) !== fingerprint(value.executionModel)))))) {
     context.addIssue({code:z.ZodIssueCode.custom,message:'Paired migration requires a Runtime Launcher, explicit Skill versions, fixed cases and the same execution model.'});
   }
   if (value.caseSource === "ai_generated" && (value.runtime.type === "replay" || value.preparationId || value.includeHoldout || value.selectedCaseIds.length || value.judgeMode !== "model")) {

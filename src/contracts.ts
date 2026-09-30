@@ -183,14 +183,26 @@ export const judgeDimensionResultSchema = z.strictObject({
 
 export const goalAssessmentSchema=z.strictObject({verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),checks:z.array(z.strictObject({criterion:z.string().min(1),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),evidence:z.string()})).min(1)});
 export const judgeResultSchema = z.strictObject({
+  runtimeComparison:z.strictObject({
+    left:z.discriminatedUnion('status',[
+      z.strictObject({status:z.literal('assessed'),assessment:goalAssessmentSchema}),
+      z.strictObject({status:z.literal('unavailable'),error:z.string().min(1)}),
+    ]),
+    right:z.discriminatedUnion('status',[
+      z.strictObject({status:z.literal('assessed'),assessment:goalAssessmentSchema}),
+      z.strictObject({status:z.literal('unavailable'),error:z.string().min(1)}),
+    ]),
+  }).optional(),
   serviceComparison:z.strictObject({verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),checks:z.array(z.strictObject({criterion:z.string().min(1),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),originalEvidence:z.string(),candidateEvidence:z.string()})).min(1)}).optional(),
   goalAssessment:goalAssessmentSchema.optional(),
-  winner: z.enum(["left", "right", "tie"]),
+  winner: z.enum(["left", "right", "tie"]).optional(),
   confidence: z.enum(["low", "medium", "high"]),
   summary: z.string().min(1),
   dimensions: z.array(judgeDimensionResultSchema).max(4),
   reviewerLabel: z.string().min(1),
-}).refine(result=>result.goalAssessment||result.serviceComparison?result.dimensions.length===0:result.dimensions.length===4,{message:'目标评估和服务对比不使用维度分数；常规评估必须包含四个维度'}).refine(result=>!(result.goalAssessment&&result.serviceComparison),{message:'目标评估与服务对比不能同时出现'});
+}).refine(result=>result.goalAssessment||result.serviceComparison||result.runtimeComparison?result.dimensions.length===0:result.dimensions.length===4,{message:'目标评估和服务对比不使用维度分数；常规评估必须包含四个维度'})
+  .refine(result=>[result.goalAssessment,result.serviceComparison,result.runtimeComparison].filter(Boolean).length<=1,{message:'评估结果模式不能同时出现'})
+  .refine(result=>result.runtimeComparison?result.winner===undefined:result.winner!==undefined,{message:'只有同候选跨 Runtime 评估不使用胜方'});
 
 export const evaluationScenarioSeedSchema = z.strictObject({
   seedId: z.string().min(1),

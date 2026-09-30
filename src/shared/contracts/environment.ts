@@ -10,6 +10,7 @@ export const runtimeLauncherEvalConformanceSchema=z.strictObject({
 export const runtimeLauncherDeliverySchema=z.strictObject({
   schemaVersion:z.literal('finance.runtime-launcher-delivery-record.v1'),
   buildId:z.string().min(1),requestId:z.string().min(1),
+  requirementsDigest:z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   deploymentId:z.string().min(1),artifactSha256:z.string().regex(/^[a-f0-9]{64}$/u),
   capabilitiesDigest:z.string().regex(/^[a-f0-9]{64}$/u),resultDigest:z.string().regex(/^[a-f0-9]{64}$/u),
   builder:z.strictObject({name:z.string().min(1),version:z.string().min(1)}),
@@ -18,7 +19,7 @@ export const runtimeLauncherDeliverySchema=z.strictObject({
 });
 export const runtimeLauncherBindingSchema=runtimeLauncherDeliverySchema.extend({environmentId:z.string().min(1)});
 const legacyMcp=z.strictObject({...common,type:z.literal('mcp_streamable_http'),runtimeType:z.null().optional(),endpoint:endpointSchema,mcpEnvironmentIds:z.array(z.string().min(1)).max(0).default([])});
-const launcher=z.strictObject({...common,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','ea','generic_http']),baseUrl:baseUrlSchema});
+const launcher=z.strictObject({...common,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','agentscope','ea','generic_http']),baseUrl:baseUrlSchema});
 const executionEnvironment=z.strictObject({name:z.string().trim().min(1).max(80),type:z.literal('execution_environment'),launcherEnvironmentId:z.string().min(1),mcpEnvironmentIds:z.array(z.string().min(1)).max(12).default([]),defaultModelId:z.string().min(1).nullable().optional()});
 export const createEnvironmentSchema=z.union([legacyMcp,launcher,executionEnvironment]).superRefine((value,context)=>{
   if('mcpEnvironmentIds' in value&&new Set(value.mcpEnvironmentIds).size!==value.mcpEnvironmentIds.length)context.addIssue({code:'custom',message:'Duplicate MCP bindings'});
@@ -27,7 +28,7 @@ export const createEnvironmentSchema=z.union([legacyMcp,launcher,executionEnviro
 const recordCommon={environmentId:z.string().min(1),name:z.string().min(1),credentialEnv:z.string().min(1).nullable().default(null),createdAt:z.string().datetime(),updatedAt:z.string().datetime()};
 export const environmentRecordSchema=z.union([
   z.strictObject({...recordCommon,type:z.literal('mcp_streamable_http'),runtimeType:z.null().default(null),endpoint:z.string().url(),mcpEnvironmentIds:z.array(z.string().min(1)).default([])}),
-  z.strictObject({...recordCommon,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','ea','generic_http']),baseUrl:z.string().url(),delivery:runtimeLauncherDeliverySchema.optional()}),
+  z.strictObject({...recordCommon,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','agentscope','ea','generic_http']),baseUrl:z.string().url(),delivery:runtimeLauncherDeliverySchema.optional()}),
   z.strictObject({environmentId:z.string().min(1),name:z.string().min(1),type:z.literal('execution_environment'),runtimeType:z.null().default(null),launcherEnvironmentId:z.string().min(1),mcpEnvironmentIds:z.array(z.string().min(1)).default([]),defaultModelId:z.string().min(1).nullable().default(null),createdAt:z.string().datetime(),updatedAt:z.string().datetime()}),
 ]);
 export type EnvironmentRecord=z.infer<typeof environmentRecordSchema>;

@@ -256,7 +256,7 @@ export async function runEvaluation(input: {
       let judge = null;
       let judgeError = null;
       try {
-        if (result.left.status !== "completed" || result.right.status !== "completed") {
+        if (!input.judge.assessesSidesIndependently && (result.left.status !== "completed" || result.right.status !== "completed")) {
           throw new Error("执行未完成，不计入专业质量评分；请修复运行环境后重测。");
         }
         judge = await input.judge.compare({

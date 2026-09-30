@@ -14,6 +14,7 @@ import { parseFirstJsonObject } from "./json-response.js";
 
 export interface PairwiseJudge {
   readonly judgeId: string;
+  readonly assessesSidesIndependently?: boolean;
   compare(input: {
     signal?: AbortSignal;
     evalCase: EvalCase;

@@ -15,6 +15,8 @@ export type ServiceConfig = {
   accessToken: string | null;
   maxConcurrentRuns: number;
   publicDemo?: boolean;
+  workspaceSubject?: string;
+  workspaceOrigin?: string;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
 };
 
@@ -45,6 +47,8 @@ export function loadServiceConfig(): ServiceConfig {
     port: Number.parseInt(process.env.FINANCE_EVAL_PORT ?? "56361", 10),
     accessToken: process.env.FINANCE_EVAL_ACCESS_TOKEN?.trim() || null,
     publicDemo: process.env.FINANCE_EVAL_PUBLIC_DEMO === "true",
+    workspaceSubject: process.env.FINANCE_EVAL_WORKSPACE_SUBJECT?.trim() || undefined,
+    workspaceOrigin: process.env.FINANCE_EVAL_WORKSPACE_ORIGIN?.trim() || undefined,
     launcherTrust:launcherTrustConfiguration(),
     maxConcurrentRuns: Math.max(
       1,

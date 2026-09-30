@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { ModelRef } from "../../contracts.js";
+import { resolveMigrationRuntimeSelection } from './migration-runtime-selection.js';
 import type { EnvironmentStore } from "../../service/environment-store.js";
 import type { MigrationStore } from "../../migration/migration-store.js";
 import { simpleMigrationSuiteExample } from "../../migration/domain/simple-migration-suite.js";
@@ -78,28 +78,18 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{ Params: { id: string } }>("/api/migrations/:id/generate", request => migrations.generate(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/candidates", request => migrations.candidate(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/drafts", request => migrations.draft(request.params.id, request.body));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/validate", request => migrations.validate(request.params.id, request.body));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/validate", async request => {
+    const body=request.body as {pair?:unknown;configuration?:{evaluationMode?:unknown}}|null;
+    if(body?.pair==='CC'||body?.configuration?.evaluationMode==='candidate_runtime_comparison')
+      return migrations.validateOpenJiuwen(request.params.id,await resolveMigrationRuntimeSelection(request.body,environments));
+    return migrations.validate(request.params.id,request.body);
+  });
   app.post<{ Params: { id: string } }>("/api/migrations/:id/validate/technical", request =>
     migrations.validateTechnical(request.params.id, request.body, requestSignal(request)));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/validations/technical", request => migrations.technicalValidations(request.params.id));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/validate/openjiuwen", async request => {
-    const body = request.body as { configuration?: { runtime?: { type?: string; environmentId?: string }; executionModel?: ModelRef } };
-    const configuration = body?.configuration;
-    if (!configuration) return migrations.validateOpenJiuwen(request.params.id, request.body);
-    if (configuration.runtime?.type !== "runtime_launcher" || !configuration.runtime.environmentId) {
-      throw Object.assign(new Error("请选择 Runtime Launcher。"), { statusCode: 400 });
-    }
-    const environment = await environments.get(configuration.runtime.environmentId);
-    if (!environment || !['runtime_launcher','execution_environment'].includes(environment.type)) throw Object.assign(new Error("执行环境不存在。"), { statusCode: 400 });
-    const inspection = await environments.inspect(environment), capabilities = inspection.capabilities;
-    if (inspection.status !== "ready" || !capabilities) throw Object.assign(new Error(inspection.error ?? "Runtime Launcher 预检失败。"), { statusCode: 400 });
-    const requested = configuration.executionModel?.modelId ?? capabilities.defaultModelId;
-    const model = capabilities.models.find(item => item.modelId === requested);
-    if (!model) throw Object.assign(new Error("所选执行模型不属于这个 Runtime Launcher。"), { statusCode: 400 });
-    const executionModel = { providerId: `runtime-launcher:${environment.environmentId}`, modelId: model.modelId, label: model.label ?? model.upstreamModelId, parameters: {} };
-    return migrations.validateOpenJiuwen(request.params.id, { ...(request.body as Record<string, unknown>), configuration: {
-      ...configuration, executionModel, leftExecutionModel: executionModel, rightExecutionModel: executionModel,
-    } });
+  for(const route of ['runtime','openjiuwen'])app.post<{ Params: { id: string } }>(`/api/migrations/:id/validate/${route}`,async request => {
+    if(!(request.body as {configuration?:unknown}|null)?.configuration)return migrations.validateOpenJiuwen(request.params.id,request.body);
+    return migrations.validateOpenJiuwen(request.params.id,await resolveMigrationRuntimeSelection(request.body,environments));
   });
   app.get<{ Params: { id: string } }>("/api/migrations/:id/validations/openjiuwen", request => migrations.openJiuwenValidations(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/review", request => migrations.review(request.params.id, request.body));

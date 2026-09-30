@@ -20,6 +20,7 @@ import type { SkillStore } from "./skill-store.js";
 import { canonicalNeutralArchive } from './neutral-archive.js';
 import { CandidateAssessmentRuntimeAdapter } from '../candidate-assessment-runtime.js';
 import {ModelGoalJudge} from '../goal-judge.js';
+import {ModelRuntimeComparisonJudge} from '../runtime-comparison-judge.js';
 import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
 import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 import {RuntimeLauncherAdapter} from '../runtime-launcher.js';
@@ -370,6 +371,7 @@ export class EvaluationRunManager {
     }
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("本服务未配置阅卷模型");
+    if(configuration.evaluationMode==='candidate_runtime_comparison')return new ModelRuntimeComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
     if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
     if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
     return configuration.evaluationMode==='candidate_assessment'
