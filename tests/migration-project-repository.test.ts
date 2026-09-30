@@ -89,3 +89,34 @@ it("serializes mutations for the same project key", async () => {
   await Promise.all([first, second]);
   expect(order).toEqual(["first:start", "first:end", "second"]);
 });
+
+it("preserves every same-project update under concurrent requests", async () => {
+  const { projects } = await repository();
+  const value = project();
+  await projects.save(value);
+
+  await Promise.all(Array.from({ length: 25 }, (_, index) => projects.runExclusive(value.id, async () => {
+    const current = await projects.get(value.id);
+    current.runs.push({
+      jobId: `job-${index}`,
+      pair: "AB",
+      candidateDigest: `candidate-${index}`,
+      comparisonFingerprint: `comparison-${index}`,
+      packFingerprint: `pack-${index}`,
+    });
+    await projects.save(current);
+  })));
+
+  const stored = await projects.get(value.id);
+  expect(stored.runs).toHaveLength(25);
+  expect(new Set(stored.runs.map(run => run.jobId)).size).toBe(25);
+});
+
+it("releases a project queue after a failed mutation", async () => {
+  const { projects } = await repository();
+  await expect(projects.runExclusive("migration-1234", async () => {
+    throw new Error("expected failure");
+  })).rejects.toThrow("expected failure");
+
+  await expect(projects.runExclusive("migration-1234", async () => "continued")).resolves.toBe("continued");
+});

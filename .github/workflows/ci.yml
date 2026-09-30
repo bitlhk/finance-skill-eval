@@ -39,6 +39,8 @@ jobs:
         run: |
           uv sync --project integrations/openjiuwen --frozen
           pnpm test:skeleton:mcp
+      - name: Verify all four enterprise migration fixtures offline
+        run: pnpm test:migration:enterprise:offline
       - name: Compile native target (no live credentials or model calls)
         run: mvn -B -f examples/migration-native-host/pom.xml package
       - run: pnpm exec playwright install --with-deps chromium
