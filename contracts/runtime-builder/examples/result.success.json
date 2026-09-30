@@ -2,33 +2,33 @@
   "schemaVersion": "finance.runtime-build-result.v1",
   "buildId": "build-example",
   "requestId": "migration-example:revision-1",
-  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b",
+  "requirementsDigest": "5acb6e8ff603833e2f683cd38a977aa8298e0bdc4da96ba55130a451d85c4d03",
   "status": "SUCCEEDED",
   "builder": {
     "name": "example-builder",
     "version": "1.0.0"
   },
-  "artifact": {
-    "mediaType": "application/vnd.finance.agent-runtime+zip",
-    "uri": "artifact://runtime/build-example",
-    "sha256": "02d997ab652649698f1cb863febc31bf23f6cb37ea56877ca8b9de1ad71a25ff"
-  },
-  "runtime": {
-    "runtimeType": "openjiuwen",
-    "version": "1.0.0",
-    "protocols": {
-      "registration": "finance.skill-eval.runtime-capabilities.v2",
-      "instance": "finance.skill-eval.runtime-instance.v1",
-      "execution": "finance.skill-eval.runtime-case.v1"
+  "launcher": {
+    "schemaVersion": "finance.runtime-launcher-descriptor.v1",
+    "deploymentId": "builder-job-example-runtime",
+    "baseUrl": "https://runtime.example.test/deployments/builder-job-example-runtime/",
+    "runtime": {
+      "type": "openjiuwen",
+      "version": "1.2.0"
     },
-    "requiredConfiguration": [
-      {
-        "name": "DOCUMENT_ROOT",
-        "type": "string",
-        "required": true,
-        "sensitive": false
-      }
-    ]
+    "protocols": {
+      "capabilities": "finance.skill-eval.runtime-capabilities.v1",
+      "instance": "finance.skill-eval.runtime-instance.v1",
+      "execution": "finance.skill-eval.runtime-case.v1",
+      "observation": "finance.runtime-observation.v1"
+    },
+    "authentication": {
+      "type": "bearer",
+      "audience": "finance-skill-eval"
+    },
+    "artifactSha256": "8cf0d0a4a1d6de50c0768606ae7d4179a64ac42190d7a2c12517d88b101ad79d",
+    "capabilitiesDigest": "5840db0fe8a8c79a316dc7a5e534729fa56388a0bd8cb549e06b5d519fbb581d",
+    "expiresAt": "2026-10-01T12:00:00.000Z"
   },
   "capabilityResults": [
     {
@@ -51,5 +51,5 @@
   ],
   "errors": [],
   "builtAt": "2026-09-29T12:00:00.000Z",
-  "resultDigest": "b9b7b5a4cacf12b67f653212b486334aa248a22c3818c48bb46d9eb972770361"
+  "resultDigest": "9ccad2d1591bc9a2f22185f498a44a3503212843760bda23bfc5bbea881adb18"
 }

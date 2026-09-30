@@ -11,6 +11,8 @@ export class MigrationStore {
   }
   async list() {return this.services.projectService.list();}
   async get(id:string):Promise<MigrationProject> {return this.services.projectService.get(id);}
+  async listLegacy(){return this.services.projectService.listLegacy();}
+  async readLegacy(id:string){return this.services.projectService.readLegacy(id);}
   async create(input:unknown) {return this.services.projectService.create(input);}
   async diagnose(id:string,retry=false){return this.services.projectService.diagnose(id,retry);}
   async inspect(id:string,sourceOnly=false){return this.services.inspectionService.inspect(id,sourceOnly);}
@@ -32,6 +34,7 @@ export class MigrationStore {
   async plan(id:string){return this.services.planningService.plan(id);}
   async runtimeRequirements(id:string){return this.services.planningService.runtimeRequirements(id);}
   async runtimeRequirementsYaml(id:string){return this.services.planningService.runtimeRequirementsYaml(id);}
+  async bindRuntimeDelivery(id:string,input:unknown){return this.services.planningService.bindRuntimeDelivery(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.services.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.services.technicalValidation.list(id);}
   async validateOpenJiuwen(id:string,input:unknown){return this.services.openJiuwenService.validate(id,input);}

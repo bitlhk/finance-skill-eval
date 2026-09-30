@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -90,6 +90,37 @@ it("serializes mutations for the same project key", async () => {
   expect(order).toEqual(["first:start", "first:end", "second"]);
 });
 
+it("preserves every same-project update under concurrent requests", async () => {
+  const { projects } = await repository();
+  const value = project();
+  await projects.save(value);
+
+  await Promise.all(Array.from({ length: 25 }, (_, index) => projects.runExclusive(value.id, async () => {
+    const current = await projects.get(value.id);
+    current.runs.push({
+      jobId: `job-${index}`,
+      pair: "AB",
+      candidateDigest: `candidate-${index}`,
+      comparisonFingerprint: `comparison-${index}`,
+      packFingerprint: `pack-${index}`,
+    });
+    await projects.save(current);
+  })));
+
+  const stored = await projects.get(value.id);
+  expect(stored.runs).toHaveLength(25);
+  expect(new Set(stored.runs.map(run => run.jobId)).size).toBe(25);
+});
+
+it("releases a project queue after a failed mutation", async () => {
+  const { projects } = await repository();
+  await expect(projects.runExclusive("migration-1234", async () => {
+    throw new Error("expected failure");
+  })).rejects.toThrow("expected failure");
+
+  await expect(projects.runExclusive("migration-1234", async () => "continued")).resolves.toBe("continued");
+});
+
 it("does not block mutations for different project keys", async () => {
   const { projects } = await repository();
   let releaseFirst: (() => void) | undefined;
@@ -102,7 +133,7 @@ it("does not block mutations for different project keys", async () => {
   await first;
 });
 
-it("upgrades a v0.1 project in place, preserves its data and writes an audit backup", async () => {
+it("leaves a v0.1 record untouched and requires a new migration from the original Skill", async () => {
   const { root, projects } = await repository();
   const directory = path.join(root, "migrations");
   await mkdir(directory, { recursive: true });
@@ -110,11 +141,12 @@ it("upgrades a v0.1 project in place, preserves its data and writes an audit bac
   const file = path.join(directory, `${legacy.id}.json`);
   await writeFile(file, JSON.stringify(legacy));
 
-  const upgraded = await projects.get(legacy.id);
-
-  expect(upgraded).toMatchObject({ schemaVersion: "finance.skill-migration.v2", id: legacy.id, legacySourceProjectId: "source-project", targetRuns: ["run-1"] });
-  expect(JSON.parse(await readFile(`${file}.v0.1.backup.json`, "utf8"))).toEqual(legacy);
-  expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({ schemaVersion: "finance.skill-migration.v2", id: legacy.id });
+  await expect(projects.get(legacy.id)).rejects.toMatchObject({ statusCode: 410 });
+  expect(await projects.list()).toEqual([]);
+  expect(await projects.listLegacy()).toEqual([{id:legacy.id,schemaVersion:'finance.skill-migration.v0.1',name:legacy.name,createdAt:legacy.createdAt}]);
+  expect(await projects.readLegacy(legacy.id)).toEqual(legacy);
+  expect(JSON.parse(await readFile(file, "utf8"))).toEqual(legacy);
+  expect((await readdir(directory)).sort()).toEqual([`${legacy.id}.json`]);
 });
 
 it("rejects malformed v2 core fields instead of trusting the version discriminator", async () => {

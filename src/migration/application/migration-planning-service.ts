@@ -4,6 +4,7 @@ import { buildMigrationPlan,recommendLanguage,type ToolDecision } from '../domai
 import type { MigrationHarnessSerializer } from './migration-harness-serializer.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
+import {runtimeLauncherBindingSchema} from '../../shared/contracts/environment.js';
 
 /** Records migration choices and derives the plan and Runtime requirements from inspection evidence. */
 export class MigrationPlanningService {
@@ -62,5 +63,15 @@ export class MigrationPlanningService {
     const yaml=this.harnessSerializer.serialize(inspection);
     if(!yaml)return conflict('当前迁移没有 Runtime Harness 改造需求');
     return yaml;
+  }
+
+  async bindRuntimeDelivery(id:string,input:unknown) {
+    return this.projects.runExclusive(id,async()=>{
+      const value=await this.projects.get(id);
+      const delivery=runtimeLauncherBindingSchema.parse(input);
+      value.runtimeDelivery=delivery;
+      await this.projects.save(value);
+      return delivery;
+    });
   }
 }

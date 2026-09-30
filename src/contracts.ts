@@ -135,30 +135,37 @@ export const evaluationUsageSchema = z.strictObject({
 });
 
 export const toolCallEvidenceSchema = z.strictObject({
-  name: z.string().min(1),
+  name: z.string().min(1).max(200),
   status: z.enum(["completed", "failed"]),
 });
 
+export const RUNTIME_EXECUTION_EVIDENCE_LIMITS={serializedBytes:262_144,outputCharacters:131_072,errorCharacters:8_192,toolCalls:1_024,loadedSkills:256} as const;
 export const runtimeExecutionEvidenceSchema = z.strictObject({
-  runId: z.string().min(1),
+  runId: z.string().min(1).max(200),
   side: z.enum(["left", "right"]),
-  caseId: z.string().min(1),
+  caseId: z.string().min(1).max(200),
   status: z.enum(["completed", "failed"]),
-  modelId: z.string().min(1),
-  skillVersion: z.string().nullable(),
-  output: z.string(),
+  modelId: z.string().min(1).max(200),
+  skillVersion: z.string().max(200).nullable(),
+  output: z.string().max(RUNTIME_EXECUTION_EVIDENCE_LIMITS.outputCharacters),
   elapsedMs: z.number().nonnegative(),
-  toolCalls: z.array(toolCallEvidenceSchema).default([]),
+  toolCalls: z.array(toolCallEvidenceSchema).max(RUNTIME_EXECUTION_EVIDENCE_LIMITS.toolCalls).default([]),
   loadedSkills: z.array(z.strictObject({
-    skillId: z.string().min(1),
-    version: z.string().min(1),
-  })).default([]),
+    skillId: z.string().min(1).max(200),
+    version: z.string().min(1).max(200),
+  })).max(RUNTIME_EXECUTION_EVIDENCE_LIMITS.loadedSkills).default([]),
   usage: evaluationUsageSchema.nullable().default(null),
   runtimeIdentityVerified: z.boolean(),
   streamCompleted: z.boolean(),
-  error: z.string().nullable(),
+  error: z.string().max(RUNTIME_EXECUTION_EVIDENCE_LIMITS.errorCharacters).nullable(),
   traceFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   metadata: z.record(z.unknown()).default({}),
+}).superRefine((value,context)=>{
+  let serialized:string;
+  try{serialized=JSON.stringify(value);}catch{context.addIssue({code:'custom',message:'Runtime execution evidence must be JSON serializable'});return;}
+  if(new TextEncoder().encode(serialized).byteLength>RUNTIME_EXECUTION_EVIDENCE_LIMITS.serializedBytes){
+    context.addIssue({code:'custom',message:`Runtime execution evidence exceeds ${RUNTIME_EXECUTION_EVIDENCE_LIMITS.serializedBytes} serialized bytes`});
+  }
 });
 
 export const judgeDimensionResultSchema = z.strictObject({

@@ -9,7 +9,8 @@ import {
   type EnvironmentRecord,
 } from "../shared/contracts/environment.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
-import { runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
+import { RuntimeLauncherAdapter, runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
+import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult } from '../shared/contracts/runtime-builder.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if(record.type==='execution_environment')return {};
@@ -22,7 +23,7 @@ export class EnvironmentStore {
   private readonly directory: string;
   private readonly writes = new KeyedQueue();
 
-  constructor(dataDirectory: string) {
+  constructor(dataDirectory: string,private readonly launcherTrust:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>=[]) {
     this.directory = path.join(dataDirectory, "environments");
   }
 
@@ -73,6 +74,87 @@ export class EnvironmentStore {
     });
   }
 
+  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string}):Promise<{
+    environment:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;capabilities:RuntimeLauncherCapabilities;created:boolean;
+  }>{
+    const requirements=runtimeBuildRequirementsSchema.parse(input.requirements);
+    const result=runtimeBuildResultSchema.parse(input.result);
+    const launcher=result.launcher;
+    if(!launcher)throw Object.assign(new Error('Builder 没有返回可用的 Runtime Launcher。'),{statusCode:400});
+    if(launcher.expiresAt&&Date.parse(launcher.expiresAt)<=Date.now())throw Object.assign(new Error('Builder 返回的 Runtime Launcher 已过期。'),{statusCode:400});
+    const trust=this.launcherTrust.find(item=>item.reference===input.trustReference);
+    if(!trust)throw Object.assign(new Error('Launcher 信任引用不存在或未由服务端配置。'),{statusCode:400});
+    const trustedPrefix=new URL(trust.baseUrlPrefix);const deliveredUrl=new URL(launcher.baseUrl);
+    const prefixPath=trustedPrefix.pathname.endsWith('/')?trustedPrefix.pathname:`${trustedPrefix.pathname}/`;
+    if(deliveredUrl.origin!==trustedPrefix.origin||!deliveredUrl.pathname.startsWith(prefixPath)){
+      throw Object.assign(new Error('Builder 返回的 Launcher 地址不属于信任引用允许的目标。'),{statusCode:400});
+    }
+    const credentialEnv=trust.credentialEnv;
+    let authorization:string|undefined;
+    if(launcher.authentication.type==='bearer'){
+      if(!credentialEnv)throw Object.assign(new Error('该 Launcher 要求 Bearer 凭据，但信任引用没有配置专用凭据。'),{statusCode:400});
+      const credential=process.env[credentialEnv];
+      if(!credential)throw Object.assign(new Error(`凭据环境变量不可用: ${credentialEnv}`),{statusCode:400});
+      authorization=credential.startsWith('Bearer ')?credential:`Bearer ${credential}`;
+    }else if(credentialEnv){
+      throw Object.assign(new Error('该 Launcher 声明无需认证，但信任引用绑定了凭据。'),{statusCode:400});
+    }
+    let capabilities:RuntimeLauncherCapabilities;
+    let conformanceError:Error|null=null;
+    try{
+      const response=await fetch(new URL('v1/runtime-capabilities',launcher.baseUrl),{
+        headers:authorization?{authorization}:{},redirect:'error',signal:AbortSignal.timeout(10_000),
+      });
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      capabilities=runtimeLauncherCapabilitiesSchema.parse(await response.json());
+    }catch(error){
+      throw Object.assign(new Error(`无法验证 Builder 返回的 Launcher: ${error instanceof Error?error.message:String(error)}`),{statusCode:400});
+    }
+    const issues=validateRuntimeBuildResult(requirements,result,capabilities);
+    if(issues.length)throw Object.assign(new Error(`Builder 交付未通过验收: ${issues.join(', ')}`),{statusCode:400,issues});
+    const headers:Record<string,string>=authorization?{authorization}:{};
+    const model=capabilities.models.find(item=>item.modelId===capabilities.defaultModelId)!;
+    const adapter=new RuntimeLauncherAdapter({baseUrl:launcher.baseUrl,headers,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},
+      variant:{mode:'without_target_skill',skillId:'finance-eval-conformance'},skill:null,environment:{environmentId:`conformance-${launcher.deploymentId}`},configuration:{conformance:'finance.runtime-launcher.v1'},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,60_000),requireStatusPoll:true});
+    const probeId=`conformance-${randomUUID()}`;
+    try{
+      await adapter.prepare({runId:probeId});
+      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant:{mode:'without_target_skill',skillId:'finance-eval-conformance'},evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:'Read the mounted probe file and return CONFORMANCE_OK.',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools:[],workspaceFiles:[{path:'conformance/probe.txt',content:'CONFORMANCE_OK'}],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:'Launcher completed the isolated lifecycle.',dimension:'business_completeness',weight:1,required:true,allOf:['CONFORMANCE_OK'],anyOf:[],noneOf:[]}]}});
+      if(evidence.status!=='completed'||!evidence.runtimeIdentityVerified||!evidence.streamCompleted||!evidence.output.includes('CONFORMANCE_OK'))throw new Error(evidence.error??'Launcher conformance execution did not complete with the mounted probe data');
+    }catch(error){conformanceError=error instanceof Error?error:new Error(String(error));}
+    try{await adapter.cleanup();}catch(error){conformanceError=new Error(`${conformanceError?`${conformanceError.message}; `:''}实例清理失败: ${error instanceof Error?error.message:String(error)}`);}
+    if(conformanceError)throw Object.assign(new Error(`Launcher 生命周期验收失败: ${conformanceError.message}`),{statusCode:400});
+    return this.writes.run('registry',async()=>{
+      const existing=(await this.list()).find((record):record is Extract<EnvironmentRecord,{type:'runtime_launcher'}>=>record.type==='runtime_launcher'&&record.delivery?.deploymentId===launcher.deploymentId);
+      if(existing){
+        if(existing.delivery?.resultDigest!==result.resultDigest||existing.baseUrl!==launcher.baseUrl){
+          throw Object.assign(new Error('相同 deploymentId 已登记，但交付摘要或地址不同。'),{statusCode:409});
+        }
+        return {environment:existing,capabilities,created:false};
+      }
+      const now=new Date().toISOString();
+      const runtimeType=['openjiuwen','ea'].includes(launcher.runtime.type)?launcher.runtime.type:'generic_http';
+      const environment=environmentRecordSchema.parse({
+        environmentId:`env-${randomUUID().slice(0,12)}`,name:input.name?.trim()||`${result.builder.name} · ${launcher.runtime.type}`,
+        type:'runtime_launcher',runtimeType,baseUrl:launcher.baseUrl,credentialEnv,createdAt:now,updatedAt:now,
+        delivery:{schemaVersion:'finance.runtime-launcher-delivery-record.v1',
+          buildId:result.buildId,requestId:result.requestId,deploymentId:launcher.deploymentId,
+          artifactSha256:launcher.artifactSha256,capabilitiesDigest:launcher.capabilitiesDigest,resultDigest:result.resultDigest,
+          builder:result.builder,acceptedAt:now,expiresAt:launcher.expiresAt,
+          evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']}},
+      }) as Extract<EnvironmentRecord,{type:'runtime_launcher'}>;
+      await writeJsonAtomic(path.join(this.directory,`${environment.environmentId}.json`),environment);
+      return {environment,capabilities,created:true};
+    });
+  }
+
+  async rollbackBuilderDelivery(environmentId:string,resultDigest:string):Promise<void>{
+    await this.writes.run('registry',async()=>{
+      const record=await this.get(environmentId);
+      if(record?.type==='runtime_launcher'&&record.delivery?.resultDigest===resultDigest)await unlink(path.join(this.directory,`${environmentId}.json`));
+    });
+  }
+
   private async validateBindings(ids: string[]): Promise<void> {
     for (const id of ids) {
       const record = await this.get(id);
@@ -103,6 +185,15 @@ export class EnvironmentStore {
       const parsed = createEnvironmentSchema.parse(input);
       if (parsed.type !== previous.type) {
         throw Object.assign(new Error("Resource type cannot change; create a new environment instead"), { statusCode: 409 });
+      }
+      if(previous.type==='runtime_launcher'&&previous.delivery&&parsed.type==='runtime_launcher'){
+        const credentialChanged=Object.prototype.hasOwnProperty.call(parsed,'credentialEnv')&&(parsed.credentialEnv??null)!==previous.credentialEnv;
+        if(parsed.baseUrl!==previous.baseUrl||parsed.runtimeType!==previous.runtimeType||credentialChanged){
+          throw Object.assign(new Error('Builder 管理的 Runtime Launcher 连接配置不可修改；请提交新的 Builder 交付并重新验收。'),{statusCode:409});
+        }
+        const record=environmentRecordSchema.parse({...previous,name:parsed.name,updatedAt:new Date().toISOString()});
+        await writeJsonAtomic(path.join(this.directory,`${id}.json`),record);
+        return record;
       }
       if(parsed.type==='execution_environment')await this.validateExecutionEnvironment(parsed.launcherEnvironmentId,parsed.mcpEnvironmentIds);
       const record = environmentRecordSchema.parse({

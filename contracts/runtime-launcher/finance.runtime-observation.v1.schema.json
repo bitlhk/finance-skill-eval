@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finance.runtime-observation.v1",
+  "x-maxSerializedBytes": 65536,
+  "oneOf": [
+    { "$ref": "#/$defs/execution" },
+    { "$ref": "#/$defs/instance" },
+    { "$ref": "#/$defs/skill" },
+    { "$ref": "#/$defs/mcp" },
+    { "$ref": "#/$defs/model" },
+    { "$ref": "#/$defs/tool" },
+    { "$ref": "#/$defs/output" },
+    { "$ref": "#/$defs/usageEvent" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "error": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": { "code": { "$ref": "#/$defs/identifier" }, "message": { "type": "string", "minLength": 1, "maxLength": 4096 }, "retryable": { "type": "boolean" } }
+    },
+    "usage": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "inputTokens": { "type": "integer", "minimum": 0 }, "outputTokens": { "type": "integer", "minimum": 0 }, "totalTokens": { "type": "integer", "minimum": 0 } }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["adapter", "synthesized"],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/identifier" }, "framework": { "$ref": "#/$defs/identifier" },
+        "frameworkVersion": { "$ref": "#/$defs/identifier" }, "nativeEventType": { "$ref": "#/$defs/identifier" }, "synthesized": { "type": "boolean" }
+      }
+    },
+    "native": {
+      "type": "object", "additionalProperties": false, "required": ["data"],
+      "properties": { "data": { "x-maxSerializedBytes": 32768, "x-maxDepth": 8, "x-forbiddenPropertyNames": ["authorization", "api-key", "access-token", "refresh-token", "bearer-token", "token", "password", "secret", "cookie", "reasoning", "chain-of-thought", "hidden-thought", "prompt", "body", "payload", "content", "text", "input", "output", "request", "response", "messages", "request-body", "response-body", "raw-input", "raw-output"] } }
+    },
+    "envelope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "sequence", "occurredAt", "traceId", "instanceId", "kind", "source", "payload"],
+      "properties": {
+        "schemaVersion": { "const": "finance.runtime-observation.v1" }, "eventId": { "$ref": "#/$defs/identifier" },
+        "sequence": { "type": "integer", "minimum": 0 }, "occurredAt": { "type": "string", "format": "date-time" },
+        "traceId": { "$ref": "#/$defs/identifier" }, "instanceId": { "$ref": "#/$defs/identifier" },
+        "runId": { "$ref": "#/$defs/identifier" }, "caseId": { "$ref": "#/$defs/identifier" }, "side": { "enum": ["left", "right"] },
+        "kind": { "type": "string" }, "source": { "$ref": "#/$defs/source" }, "payload": { "type": "object" }, "native": { "$ref": "#/$defs/native" }
+      },
+      "allOf": [
+        { "if": { "required": ["native"] }, "then": { "properties": { "source": { "required": ["nativeEventType"] } } } }
+      ]
+    },
+    "executionContext": {
+      "type": "object", "required": ["runId", "caseId", "side"]
+    },
+    "lifecyclePayload": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "message": { "type": "string", "minLength": 1, "maxLength": 4096 }, "durationMs": { "type": "number", "minimum": 0 }, "error": { "$ref": "#/$defs/error" }, "evidenceDigest": { "$ref": "#/$defs/sha256" } }
+    },
+    "execution": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" },
+        { "properties": { "kind": { "enum": ["execution.started", "execution.completed", "execution.failed"] }, "payload": { "$ref": "#/$defs/lifecyclePayload" } } }
+      ]
+    },
+    "instance": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "properties": { "kind": { "enum": ["runtime.instance.started", "runtime.instance.ready", "runtime.instance.failed"] }, "payload": { "$ref": "#/$defs/lifecyclePayload" } } } ]
+    },
+    "skillPayload": {
+      "type": "object", "additionalProperties": false, "required": ["skillId"],
+      "properties": { "skillId": { "$ref": "#/$defs/identifier" }, "version": { "$ref": "#/$defs/identifier" }, "artifactSha256": { "$ref": "#/$defs/sha256" }, "durationMs": { "type": "number", "minimum": 0 }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "skill": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "properties": { "kind": { "enum": ["skill.load.started", "skill.load.completed", "skill.load.failed"] }, "payload": { "$ref": "#/$defs/skillPayload" } } } ]
+    },
+    "mcpPayload": {
+      "type": "object", "additionalProperties": false, "required": ["serverId"],
+      "properties": { "serverId": { "$ref": "#/$defs/identifier" }, "durationMs": { "type": "number", "minimum": 0 }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "mcp": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "properties": { "kind": { "enum": ["mcp.start.started", "mcp.start.completed", "mcp.start.failed"] }, "payload": { "$ref": "#/$defs/mcpPayload" } } } ]
+    },
+    "modelPayload": {
+      "type": "object", "additionalProperties": false, "required": ["modelCallId", "modelId"],
+      "properties": { "modelCallId": { "$ref": "#/$defs/identifier" }, "modelId": { "$ref": "#/$defs/identifier" }, "durationMs": { "type": "number", "minimum": 0 }, "usage": { "$ref": "#/$defs/usage" }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "model": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "enum": ["model.call.started", "model.call.completed", "model.call.failed"] }, "payload": { "$ref": "#/$defs/modelPayload" } } } ]
+    },
+    "toolPayload": {
+      "type": "object", "additionalProperties": false, "required": ["toolCallId", "name"],
+      "properties": { "toolCallId": { "$ref": "#/$defs/identifier" }, "name": { "$ref": "#/$defs/identifier" }, "durationMs": { "type": "number", "minimum": 0 }, "inputDigest": { "$ref": "#/$defs/sha256" }, "outputDigest": { "$ref": "#/$defs/sha256" }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "tool": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "enum": ["tool.call.started", "tool.call.completed", "tool.call.failed"] }, "payload": { "$ref": "#/$defs/toolPayload" } } } ]
+    },
+    "output": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "const": "output.delta" }, "payload": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "maxLength": 16384 } } } } } ]
+    },
+    "usageEvent": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "const": "usage.reported" }, "payload": { "$ref": "#/$defs/usage" } } } ]
+    }
+  }
+}
+

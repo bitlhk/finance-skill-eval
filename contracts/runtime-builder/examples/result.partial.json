@@ -2,30 +2,13 @@
   "schemaVersion": "finance.runtime-build-result.v1",
   "buildId": "build-example",
   "requestId": "migration-example:revision-1",
-  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b",
+  "requirementsDigest": "5acb6e8ff603833e2f683cd38a977aa8298e0bdc4da96ba55130a451d85c4d03",
   "status": "PARTIAL",
   "builder": {
     "name": "example-builder",
     "version": "1.0.0"
   },
-  "artifact": null,
-  "runtime": {
-    "runtimeType": "openjiuwen",
-    "version": "1.0.0",
-    "protocols": {
-      "registration": "finance.skill-eval.runtime-capabilities.v2",
-      "instance": "finance.skill-eval.runtime-instance.v1",
-      "execution": "finance.skill-eval.runtime-case.v1"
-    },
-    "requiredConfiguration": [
-      {
-        "name": "DOCUMENT_ROOT",
-        "type": "string",
-        "required": true,
-        "sensitive": false
-      }
-    ]
-  },
+  "launcher": null,
   "capabilityResults": [
     {
       "requirementId": "harness-1-read-document",
@@ -43,5 +26,5 @@
     }
   ],
   "builtAt": "2026-09-29T12:00:00.000Z",
-  "resultDigest": "4b7b891b686bab5e6fe75eccd1ab8db38877a0093bf372f4a30453d4725bf086"
+  "resultDigest": "a79cef437210069fed07d214fa1febdd6365b5bde3b6eade6c545585b88ea80e"
 }

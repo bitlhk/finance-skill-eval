@@ -1,0 +1,60 @@
+# Runtime Launcher v1 contract
+
+This directory is the portable contract for Runtime Launchers returned by an external Runtime Builder. A Launcher implementation is framework-neutral at this boundary: it translates framework-native lifecycle callbacks into stable Finance Runtime events and may attach a sanitized native extension.
+
+## Builder delivery descriptor
+
+After deployment, the Builder returns a `finance.runtime-launcher-descriptor.v1` document. It identifies one deployed Launcher by `deploymentId` and `artifactSha256`, provides its `baseUrl`, declares the supported protocol versions and states whether the caller must supply a bearer credential. The descriptor never contains a token, API key, model credential or MCP secret.
+
+The descriptor deliberately does not copy models, default model, MCP support, resource limits or observation detail. Those values are discovered from `GET /v1/runtime-capabilities`, then verified against `capabilitiesDigest` using RFC 8785 canonical JSON and SHA-256. The descriptor's Runtime type and version must also match the capabilities response. A Builder delivery is accepted only when these checks pass and `observability` is declared.
+
+`artifactSha256` is the immutable provenance identity of the built Launcher. It does not require this service to download or execute a package. `expiresAt=null` means the deployment has no Builder-declared expiry; it does not disable per-instance TTL cleanup.
+
+Authentication material is provisioned outside this JSON. `authentication.type=bearer` only declares the scheme and optional audience so the receiving environment can resolve a credential through its own secret store.
+
+## Fixed HTTP surface
+
+- `GET /v1/runtime-capabilities` returns `finance.skill-eval.runtime-capabilities.v1`.
+- `POST /v1/runtime-instances` creates an isolated instance and requires an `idempotency-key` header.
+- `GET /v1/runtime-instances/{instanceId}` returns its current state.
+- `POST /v1/runtime-instances/{instanceId}/execute` executes one stateless case and returns final evidence as JSON or an SSE stream whose terminal item contains that evidence.
+- `DELETE /v1/runtime-instances/{instanceId}` releases the instance. The Launcher must also enforce its advertised expiry.
+
+Remote Launchers must use HTTPS. Returned execution endpoints must remain under the registered Launcher's origin and base path. Responses, events and evidence must never expose credentials or secret configuration values.
+
+## Observability boundary
+
+The stable `kind` in `finance.runtime-observation.v1` describes cross-framework semantics, not a framework callback name. `source.nativeEventType` records the original callback name when one exists. `source.synthesized=true` means the Launcher inferred the event from a boundary it controls. Optional `native.data` is diagnostic-only: it must be JSON and must not contain credentials, authorization material, cookies, raw chain-of-thought, hidden reasoning, raw business request/response bodies, or model prompts.
+
+Observation limits are executable receiver requirements, not documentation hints. Eval rejects an event above 65,536 serialized UTF-8 bytes, `native.data` above 32,768 bytes or eight levels deep, identifiers above 200 characters, messages above 4,096 characters, output deltas above 16,384 characters, and native objects whose property names indicate secrets or hidden reasoning. The JSON Schema carries the portable length rules plus `x-maxSerializedBytes`, `x-maxDepth`, and `x-forbiddenPropertyNames`; receivers must enforce those annotations. A rejected observation terminates that execution stream instead of being persisted or displayed.
+
+The SSE transport is bounded while bytes are being read: an unfinished or complete frame above 524,288 bytes is cancelled before JSON parsing, and a stream ending with a non-empty unfinished frame is rejected. Terminal evidence has its own 262,144-byte serialized limit, plus the field and collection limits published in `finance.skill-eval.runtime-evidence.v1.schema.json`. These limits also apply when evidence is returned as plain JSON.
+
+Builder verification records are self-reported build evidence. They do not make a deployment usable. Eval records a separate `evalConformance.status=PASSED` only after it has independently exercised capabilities, create, status, execute, terminal evidence validation, and delete against the admitted Launcher target.
+
+Launcher capabilities may advertise an `observability` object:
+
+- `core` requires execution start, completion and failure events.
+- `tool` additionally requires model-call and tool-call start, completion and failure events.
+- `detailed` has the same normalized minimum as `tool` and also carries sanitized native event extensions.
+
+Profiles are minimum guarantees. `supportedKinds` is the exact set a Launcher may emit and must include the minimum for its profile. Absence of `observability` identifies a legacy Launcher and must not be interpreted as Tool-level visibility. Builder-delivered Launchers must declare it.
+
+Acceptance may depend only on final execution evidence and the `core` guarantee. Missing optional events cannot fail migration acceptance. Optimization and diagnostics may use richer events only after recording the declared profile. Neither normalized nor native events may contain hidden chain-of-thought, credentials, authorization headers or unredacted sensitive business values.
+
+Framework-specific consumers must use `native` data explicitly. Portable consumers must ignore it and use only normalized fields.
+
+## Files
+
+- `finance.runtime-launcher-descriptor.v1.schema.json`: Builder-to-platform deployed Launcher handoff.
+- `finance.skill-eval.runtime-capabilities.v1.schema.json`: capabilities discovered from the delivered Launcher.
+- `finance.skill-eval.runtime-instance.v1.schema.json`: complete instance creation request, including Skill, model, environment, secret references and limits.
+- `finance.skill-eval.runtime-instance-state.v1.schema.json`: asynchronous instance lifecycle response.
+- `finance.skill-eval.runtime-case.v1.schema.json`: per-case execution request, including workspace test files.
+- `finance.skill-eval.runtime-evidence.v1.schema.json`: terminal evidence returned by JSON or by the terminal SSE item.
+- `finance.runtime-observation-capabilities.v1.schema.json`: profile and supported-event declaration embedded in Launcher capabilities.
+- `finance.runtime-observation.v1.schema.json`: external JSON Schema for normalized events.
+- `examples/launcher-descriptor.success.json` and `examples/builder-capabilities.json`: one matching delivery pair.
+- `examples/tool-call.completed.json`: one normalized event retaining its framework origin.
+- `examples/instance.create.json`, `instance.ready.json`, `case.execute.json` and `execution.evidence.json`: one complete Launcher lifecycle.
+

@@ -203,6 +203,14 @@ docker compose up --build
 - `.env.local`：平台服务进程的本机环境变量，可配置 Analyzer、Judge、Optimizer、迁移开关、监听地址等。Node 不会为 `pnpm serve` 自动读取该文件；可以先导入当前终端环境，或使用 `node --env-file=.env.local dist/service/server.js`。Windows Runtime 启动脚本也会读取它，已经存在的系统环境变量优先。
 - 页面中的“环境管理”：登记可连接的 Runtime Launcher 和外部 MCP，并可组合成执行环境；它不负责编辑远端 Runtime 内部的模型或 MCP 配置。
 
+外部 Runtime Builder 的交付入口使用服务端准入配置。浏览器只能选择 `reference`，不能提交目标地址或凭据环境变量；平台只会访问准入项允许的 URL 前缀，并在登记前完成 capabilities、创建、执行、证据校验和删除实例的生命周期验收：
+
+```text
+FINANCE_EVAL_LAUNCHER_TRUST_JSON=[{"reference":"builder-prod","label":"生产 Builder 交付","baseUrlPrefix":"https://runtime.example.com/launchers/","credentialEnv":"BUILDER_LAUNCHER_TOKEN"}]
+```
+
+`credentialEnv` 可以为 `null`；配置名称会保存在环境记录中，凭据值只从平台进程环境读取，不进入浏览器或 Builder Result。
+
 对于 Runtime Launcher，执行模型列表来自 Runtime 的 capabilities，平台只保存用户选择的 `modelId`。`.env.local` 中的 `FINANCE_EVAL_EXECUTION_*` 仍可用于不经过 Runtime Launcher 的直接模型执行，但不会替代 Runtime 公布的模型列表。
 
 平台自身使用的模型角色可以通过服务端环境变量配置，密钥不进入浏览器和 Eval Pack：

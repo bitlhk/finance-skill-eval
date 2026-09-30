@@ -51,3 +51,32 @@ it('gives up on an error that retrying cannot fix, and leaves no temp file behin
   await expect(writeJsonAtomic(path.join(dir, 'run.json'), { status: 'PASSED' })).rejects.toMatchObject({ code: 'EXDEV' });
   expect(await readdir(dir)).toEqual([]);
 });
+
+it('keeps every observed document parseable while readers poll concurrent writes', async () => {
+  const dir = await scratch();
+  const target = path.join(dir, 'migration.json');
+  await writeJsonAtomic(target, { revision: 0, payload: 'initial' });
+  const parseErrors: unknown[] = [];
+  let writing = true;
+  const reader = (async () => {
+    while (writing) {
+      try {
+        const value = JSON.parse(await readFile(target, 'utf8')) as { revision: number };
+        expect(Number.isInteger(value.revision)).toBe(true);
+      } catch (error) {
+        parseErrors.push(error);
+      }
+    }
+  })();
+  try {
+    for (let revision = 1; revision <= 50; revision += 1) {
+      await writeJsonAtomic(target, { revision, payload: 'x'.repeat(4096) });
+    }
+  } finally {
+    writing = false;
+  }
+  await reader;
+  expect(parseErrors).toEqual([]);
+  expect(JSON.parse(await readFile(target, 'utf8'))).toMatchObject({ revision: 50 });
+  expect(await readdir(dir)).toEqual(['migration.json']);
+});

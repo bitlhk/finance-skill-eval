@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "finance.runtime-launcher-descriptor.v1",
+  "deploymentId": "builder-job-01-runtime",
+  "baseUrl": "https://runtime.example.test/deployments/builder-job-01-runtime/",
+  "runtime": { "type": "openjiuwen", "version": "1.2.0" },
+  "protocols": {
+    "capabilities": "finance.skill-eval.runtime-capabilities.v1",
+    "instance": "finance.skill-eval.runtime-instance.v1",
+    "execution": "finance.skill-eval.runtime-case.v1",
+    "observation": "finance.runtime-observation.v1"
+  },
+  "authentication": { "type": "bearer", "audience": "finance-skill-eval" },
+  "artifactSha256": "8cf0d0a4a1d6de50c0768606ae7d4179a64ac42190d7a2c12517d88b101ad79d",
+  "capabilitiesDigest": "5840db0fe8a8c79a316dc7a5e534729fa56388a0bd8cb549e06b5d519fbb581d",
+  "expiresAt": "2026-10-01T12:00:00.000Z"
+}

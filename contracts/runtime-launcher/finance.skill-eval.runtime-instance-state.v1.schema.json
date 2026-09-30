@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "finance.skill-eval.runtime-instance-state.v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "instanceId", "status", "executeEndpoint", "expiresAt", "error", "configurationDigest"],
+  "properties": {
+    "schemaVersion": { "const": "finance.skill-eval.runtime-instance-state.v1" }, "instanceId": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["starting", "ready", "failed"] }, "executeEndpoint": { "type": ["string", "null"] },
+    "expiresAt": { "type": "string", "format": "date-time" }, "error": { "type": ["string", "null"] },
+    "configurationDigest": { "type": "string", "minLength": 1 }
+  }
+}

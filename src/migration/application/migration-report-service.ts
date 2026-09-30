@@ -27,7 +27,8 @@ export class MigrationReportService {
   async report(id:string) {
     const value=await this.projects.get(id);
     const runtimeInspection=value.sourceInspection??value.inspection;
-    const runtimeRequirements=runtimeInspection?runtimeBuildRequirements(runtimeInspection):null;
+    const detectedRuntimeRequirements=runtimeInspection?runtimeBuildRequirements(runtimeInspection):null;
+    const runtimeRequirements=detectedRuntimeRequirements&&'requestId' in detectedRuntimeRequirements&&value.runtimeDelivery?.requestId===detectedRuntimeRequirements.requestId?null:detectedRuntimeRequirements;
     const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
     const currentAsset=value.candidate??value.source;
     const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);

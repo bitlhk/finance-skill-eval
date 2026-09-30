@@ -4,11 +4,14 @@ import type { EnvironmentStore } from "../../service/environment-store.js";
 import type { MigrationStore } from "../../migration/migration-store.js";
 import { simpleMigrationSuiteExample } from "../../migration/domain/simple-migration-suite.js";
 import type { SkillStore } from "../../service/skill-store.js";
+import { z } from 'zod';
+import type {RuntimeDeliveryCoordinator} from '../../service/runtime-delivery-coordinator.js';
 
 type MigrationRouteDependencies = {
   migrations: MigrationStore;
   skills: SkillStore;
   environments: EnvironmentStore;
+  runtimeDeliveries:RuntimeDeliveryCoordinator;
   privateWorkspaceEnabled: boolean;
 };
 
@@ -19,7 +22,7 @@ function requestSignal(request: { raw: NodeJS.EventEmitter }): AbortSignal {
 }
 
 export function registerMigrationRoutes(app: FastifyInstance, dependencies: MigrationRouteDependencies): void {
-  const { migrations, skills, environments, privateWorkspaceEnabled } = dependencies;
+  const { migrations, skills, environments, runtimeDeliveries, privateWorkspaceEnabled } = dependencies;
 
   app.addHook("preValidation", async (request, reply) => {
     if (!privateWorkspaceEnabled && request.url.startsWith("/api/migrations")) {
@@ -28,6 +31,11 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   });
 
   app.get("/api/migrations", () => migrations.list());
+  app.get("/api/migrations-legacy",()=>migrations.listLegacy());
+  app.get<{Params:{id:string}}>("/api/migrations-legacy/:id/export",async(request,reply)=>reply
+    .type("application/json; charset=utf-8")
+    .header("content-disposition",`attachment; filename="${request.params.id}.legacy.json"`)
+    .send(await migrations.readLegacy(request.params.id)));
   app.post("/api/migrations/upload", async request => {
     if (!Buffer.isBuffer(request.body)) throw new Error("Request body must be a migration ZIP");
     return skills.uploadMigrationZip(request.body);
@@ -41,6 +49,10 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{ Params: { id: string } }>("/api/migrations/:id/inspect/source", request => migrations.inspect(request.params.id, true));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-configuration", request => migrations.runtimeConfiguration(request.params.id));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => migrations.runtimeRequirements(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-deliveries", async request => {
+    const body=z.strictObject({result:z.unknown(),trustReference:z.string().regex(/^[a-z0-9-]+$/u),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
+    return runtimeDeliveries.acceptAndBind(request.params.id,{result:body.result,trustReference:body.trustReference,name:body.name});
+  });
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => reply
     .type("application/yaml; charset=utf-8")
     .header("content-disposition", 'attachment; filename="runtime-build-requirements.yaml"')

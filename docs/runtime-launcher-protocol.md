@@ -2,6 +2,12 @@
 
 测试环境登记的是 Runtime 启动服务，而不是预先启动的 Agent `/execute`。评测服务在运行前发现能力，为左右侧分别创建隔离实例，执行测试集后删除实例。
 
+## Builder 交付边界
+
+外部 Builder 完成部署后返回 `finance.runtime-launcher-descriptor.v1`。该描述只携带部署身份、Launcher 入口、协议版本、认证方式、产物摘要和 capabilities 摘要，不复制模型、默认模型、MCP 支持或资源限制。平台必须调用 `GET /v1/runtime-capabilities` 获取这些动态能力，并校验 Runtime 类型、版本及 RFC 8785 capabilities 摘要后才能接入。
+
+Descriptor 不得携带 token、API Key、模型密钥或 MCP 密钥。`authentication.type=bearer` 仅表达凭据要求，实际凭据由接入环境自己的 secret store 提供。`artifactSha256` 用于追踪 Builder 产物来源，不代表本服务必须下载或直接启动构建包。规范和配套示例位于 `contracts/runtime-launcher/`。
+
 ## 固定接口
 
 - `GET /v1/runtime-capabilities`：返回 Runtime 类型、版本、可选模型、默认模型、特性和资源上限。
@@ -23,6 +29,14 @@ Skill 同时携带两个摘要：`artifactSha256` 是平台规范文件树的资
 ```
 
 业务配置只在后端解析，浏览器提交的评测配置仅包含迁移 revision/digest 引用。实例状态、日志事件和最终 evidence 不得返回秘密；Runtime 应在执行前注入，在错误、工具结果和流事件中脱敏。配置摘要包含秘密键名但不包含秘密值，幂等比较仍包含秘密值摘要，避免凭据变化时复用旧实例。
+
+## 可观测契约
+
+跨框架事件遵循 `contracts/runtime-launcher/finance.runtime-observation.v1.schema.json`。Launcher 将框架原生回调映射为稳定的语义 `kind`，并在 `source.nativeEventType` 中保留原始名称；无法取得原生回调时可以生成边界事件，但必须标记 `source.synthesized=true`。经过脱敏的框架原生数据只能放入可选 `native.data`，可移植消费者不得依赖该字段。
+
+Launcher 通过 capabilities 的可选 `observability` 字段声明 `core`、`tool` 或 `detailed` 等级以及实际支持的标准事件。字段缺失表示旧版 Launcher，不能推断为 Tool 级可观测。Builder 新交付的 Launcher 必须声明该字段。
+
+验收只依赖最终 execution evidence 和 `core` 保证；缺失可选事件不得导致验收失败。诊断和优化使用更高等级事件时必须同时记录 Launcher 声明的等级。任何等级都不得输出隐藏思维链、凭证、Authorization Header 或未脱敏的敏感业务值。
 
 ## OpenJiuwen 参考实现边界
 

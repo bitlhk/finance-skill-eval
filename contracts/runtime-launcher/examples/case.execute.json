@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "finance.skill-eval.runtime-case.v1",
+  "caseId": "case-01",
+  "query": "Review the supplied balance sheet.",
+  "requiredTools": ["read_document"],
+  "workspaceFiles": [{ "path": "inputs/balance-sheet.txt", "content": "Assets: 100\nLiabilities: 40" }]
+}

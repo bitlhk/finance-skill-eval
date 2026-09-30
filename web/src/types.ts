@@ -125,6 +125,7 @@ export type Catalog = {
   preparations: Preparation[];
   environments: Environment[];
   executionRuntimes: MigrationRuntime[];
+  launcherTrustReferences?:Array<{reference:string;label:string;baseUrlPrefix:string}>;
   runtimes: Array<{
     id: "replay" | "direct_model" | "runtime_launcher";
     label: string;

@@ -9,6 +9,7 @@ import type {
 import type { PortableDiff, PortableGeneration } from "./migration-candidate-artifact.js";
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { StageEnvelope } from "./migration-stage-envelope.js";
+import type {RuntimeLauncherBinding} from "../../shared/contracts/environment.js";
 
 export const migrationProjectIdSchema = z.string().regex(/^migration-[a-f0-9-]+$/u);
 
@@ -98,6 +99,7 @@ export type MigrationProject = {
     runtimeConfigurationDigest?: string;
   }>;
   assessment: "NOT_VALIDATED";
+  runtimeDelivery?: RuntimeLauncherBinding;
   reviews?: Array<{
     candidateDigest: string;
     decision: "ACCEPTED" | "NEEDS_CHANGES";
