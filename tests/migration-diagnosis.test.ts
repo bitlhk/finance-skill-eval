@@ -86,7 +86,7 @@ it.each(['SDK','CONFIG'] as const)('closes source diagnosis after %s file supple
   expect(JSON.stringify(seen)).not.toContain('secret-test-value');expect(Object.keys((seen.at(-1) as any).files)).toContain(`.diagnosis-supplements/${sdk.id}/client.mjs`);
   expect((await app.inject({method:'PUT',url:url+'/runtime-configuration/'+token.id,headers,payload:{revision:0,value:'stale'}})).statusCode).toBe(409);
   const stored=JSON.parse(await readFile(path.join(directory,'migrations',project.id+'.json'),'utf8'));expect(stored.source.artifactSha256).toBe(asset.artifactSha256);expect(stored.sourceInspection.dependencyAnalysis.status).toBe('COMPLETE');expect(JSON.stringify(stored)).not.toContain('secret-test-value');
- }finally{await app.close();await rm(directory,{recursive:true,force:true})}
+ }finally{await app.close();await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:50})}
 });
 
 it('rejects generation of Script with required runtime injection',async()=>{
@@ -100,7 +100,7 @@ it('rejects generation of Script with required runtime injection',async()=>{
   const inspection=(await app.inject({method:'POST',url:url+'/inspect',headers})).json();
   await app.inject({method:'PUT',url:url+'/tools/'+inspection.tools[0].toolId+'/decision',headers,payload:{baseAssetId:asset.assetId,form:'SCRIPT',language:'node'}});
   const result=await app.inject({method:'POST',url:url+'/generate',headers,payload:{baseAssetId:asset.assetId}});expect(result.statusCode).toBe(409);expect(generated).toBe(false);
- }finally{await app.close();await rm(directory,{recursive:true,force:true})}
+ }finally{await app.close();await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:50})}
 });
 
 it('injects MCP credentials independently for each real Tool call without placing them in arguments',async()=>{
