@@ -21,6 +21,9 @@ export const runtimeBuildRequirementsSchema = z.strictObject({
   })),
   requirementsDigest: sha256,
   extensions: z.record(z.unknown()).optional(),
+}).superRefine((value,context)=>{
+  const ids=new Set<string>();
+  value.requiredCapabilities.forEach((item,index)=>{if(ids.has(item.id))context.addIssue({code:'custom',path:['requiredCapabilities',index,'id'],message:'Capability requirement IDs must be unique'});ids.add(item.id);});
 });
 
 const buildErrorSchema = z.strictObject({
@@ -32,7 +35,7 @@ export const runtimeBuildResultSchema = z.strictObject({
   schemaVersion: z.literal("finance.runtime-build-result.v1"), buildId: z.string().min(1), requestId: z.string().min(1), requirementsDigest: sha256,
   status: z.enum(["SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"]),
   builder: z.strictObject({ name: z.string().min(1), version: z.string().min(1) }),
-  artifact: z.strictObject({ mediaType: z.string().min(1), uri: z.string().min(1), sha256, sbomSha256: sha256.optional() }).nullable(),
+  artifact: z.strictObject({ mediaType: z.string().min(1), uri: z.string().min(1).refine(value=>{try{const url=new URL(value);return !url.username&&!url.password;}catch{return false;}},'Artifact URI must be absolute and must not contain credentials'), sha256, sbomSha256: sha256.optional() }).nullable(),
   runtime: z.strictObject({ runtimeType: z.string().min(1), version: z.string().min(1), protocols: protocolsSchema,
     requiredConfiguration: z.array(z.strictObject({ name: z.string().min(1), type: z.enum(["string", "number", "boolean"]), required: z.boolean(), sensitive: z.boolean() })) }),
   capabilityResults: z.array(z.strictObject({ requirementId: z.string().min(1), status: z.enum(["IMPLEMENTED", "UNSUPPORTED", "FAILED"]), capabilityId: z.string().min(1).optional(), contractDigest: sha256.optional(), verificationIds: z.array(z.string().min(1)) })),
@@ -65,6 +68,7 @@ export function validateRuntimeBuildResult(requirementsInput: unknown, resultInp
   if (result.requestId !== requirements.requestId) issues.push("REQUEST_ID_MISMATCH");
   if (result.requirementsDigest !== requirements.requirementsDigest) issues.push("REQUIREMENTS_DIGEST_MISMATCH");
   if (result.status !== "SUCCEEDED") issues.push(`BUILD_STATUS_${result.status}`);
+  if (result.errors.length) issues.push("BUILD_ERRORS_PRESENT");
   if (result.runtime.runtimeType !== requirements.target.runtimeType) issues.push("RUNTIME_TYPE_MISMATCH");
   for (const [name, expected] of Object.entries(requirements.target.protocols)) if (result.runtime.protocols[name as keyof typeof result.runtime.protocols] !== expected) issues.push(`PROTOCOL_MISMATCH_${name.toUpperCase()}`);
   const requirementIds = new Set(requirements.requiredCapabilities.map(item => item.id));
