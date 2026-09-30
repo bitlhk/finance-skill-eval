@@ -2,6 +2,12 @@
 
 测试环境登记的是 Runtime 启动服务，而不是预先启动的 Agent `/execute`。评测服务在运行前发现能力，为左右侧分别创建隔离实例，执行测试集后删除实例。
 
+## Builder 交付边界
+
+外部 Builder 完成部署后返回 `finance.runtime-launcher-descriptor.v1`。该描述只携带部署身份、Launcher 入口、协议版本、认证方式、产物摘要和 capabilities 摘要，不复制模型、默认模型、MCP 支持或资源限制。平台必须调用 `GET /v1/runtime-capabilities` 获取这些动态能力，并校验 Runtime 类型、版本及 RFC 8785 capabilities 摘要后才能接入。
+
+Descriptor 不得携带 token、API Key、模型密钥或 MCP 密钥。`authentication.type=bearer` 仅表达凭据要求，实际凭据由接入环境自己的 secret store 提供。`artifactSha256` 用于追踪 Builder 产物来源，不代表本服务必须下载或直接启动构建包。规范和配套示例位于 `contracts/runtime-launcher/`。
+
 ## 固定接口
 
 - `GET /v1/runtime-capabilities`：返回 Runtime 类型、版本、可选模型、默认模型、特性和资源上限。

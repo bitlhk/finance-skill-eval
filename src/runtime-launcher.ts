@@ -2,28 +2,11 @@ import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, type
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
-import { RUNTIME_CAPABILITIES_SCHEMA_VERSION } from './shared/contracts/runtime-protocol-versions.js';
-import { runtimeObservationCapabilitiesSchema } from './shared/contracts/runtime-observation.js';
+import { runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 import { z } from 'zod';
 
-const httpBaseUrl=z.string().url().transform(value=>{
-  const url=new URL(value);
-  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.hash||url.search)throw new Error('Runtime Launcher base URL is invalid');
-  if(url.protocol==='http:'&&!['127.0.0.1','localhost','::1'].includes(url.hostname))throw new Error('Remote Runtime Launcher requires HTTPS');
-  if(!url.pathname.endsWith('/'))url.pathname+='/';
-  return url.toString();
-});
-const publicModel=z.strictObject({modelId:z.string().min(1),upstreamModelId:z.string().min(1),label:z.string().min(1).optional()});
-export const runtimeLauncherCapabilitiesSchema=z.strictObject({
-  schemaVersion:z.literal(RUNTIME_CAPABILITIES_SCHEMA_VERSION),
-  runtime:z.strictObject({type:z.string().min(1),version:z.string().min(1)}),
-  models:z.array(publicModel).min(1),defaultModelId:z.string().min(1),
-  nativeToolNames:z.array(z.string().min(1)).optional(),
-  observability:runtimeObservationCapabilitiesSchema.optional(),
-  features:z.strictObject({streaming:z.boolean(),asyncLaunch:z.boolean(),packagedMcp:z.boolean(),externalMcp:z.boolean(),inlineSecrets:z.boolean()}),
-  limits:z.strictObject({maxArchiveBytes:z.number().int().positive(),maxFiles:z.number().int().positive(),maxTimeoutMs:z.number().int().positive(),maxConcurrentInstances:z.number().int().positive()}),
-}).superRefine((value,context)=>{if(!value.models.some(model=>model.modelId===value.defaultModelId))context.addIssue({code:'custom',message:'Default model is not advertised'});});
-export type RuntimeLauncherCapabilities=z.infer<typeof runtimeLauncherCapabilitiesSchema>;
+export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
+export type { RuntimeLauncherCapabilities } from './shared/contracts/runtime-launcher.js';
 
 const instanceStateSchema=z.strictObject({
   schemaVersion:z.literal('finance.skill-eval.runtime-instance-state.v1'),instanceId:z.string().min(1),
@@ -103,7 +86,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
     skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number}){
-    this.options.baseUrl=httpBaseUrl.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
+    this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
     const signal = context.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(this.options.timeoutMs)]) : AbortSignal.timeout(this.options.timeoutMs);

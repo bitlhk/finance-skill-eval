@@ -2,6 +2,16 @@
 
 This directory is the portable contract for Runtime Launchers returned by an external Runtime Builder. A Launcher implementation is framework-neutral at this boundary: it translates framework-native lifecycle callbacks into stable Finance Runtime events and may attach a sanitized native extension.
 
+## Builder delivery descriptor
+
+After deployment, the Builder returns a `finance.runtime-launcher-descriptor.v1` document. It identifies one deployed Launcher by `deploymentId` and `artifactSha256`, provides its `baseUrl`, declares the supported protocol versions and states whether the caller must supply a bearer credential. The descriptor never contains a token, API key, model credential or MCP secret.
+
+The descriptor deliberately does not copy models, default model, MCP support, resource limits or observation detail. Those values are discovered from `GET /v1/runtime-capabilities`, then verified against `capabilitiesDigest` using RFC 8785 canonical JSON and SHA-256. The descriptor's Runtime type and version must also match the capabilities response. A Builder delivery is accepted only when these checks pass and `observability` is declared.
+
+`artifactSha256` is the immutable provenance identity of the built Launcher. It does not require this service to download or execute a package. `expiresAt=null` means the deployment has no Builder-declared expiry; it does not disable per-instance TTL cleanup.
+
+Authentication material is provisioned outside this JSON. `authentication.type=bearer` only declares the scheme and optional audience so the receiving environment can resolve a credential through its own secret store.
+
 ## Fixed HTTP surface
 
 - `GET /v1/runtime-capabilities` returns `finance.skill-eval.runtime-capabilities.v1`.
@@ -30,7 +40,10 @@ Framework-specific consumers must use `native` data explicitly. Portable consume
 
 ## Files
 
+- `finance.runtime-launcher-descriptor.v1.schema.json`: Builder-to-platform deployed Launcher handoff.
+- `finance.skill-eval.runtime-capabilities.v1.schema.json`: capabilities discovered from the delivered Launcher.
 - `finance.runtime-observation-capabilities.v1.schema.json`: profile and supported-event declaration embedded in Launcher capabilities.
 - `finance.runtime-observation.v1.schema.json`: external JSON Schema for normalized events.
+- `examples/launcher-descriptor.success.json` and `examples/builder-capabilities.json`: one matching delivery pair.
 - `examples/tool-call.completed.json`: one normalized event retaining its framework origin.
 
