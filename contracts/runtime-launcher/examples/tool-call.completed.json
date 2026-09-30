@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "finance.runtime-observation.v1",
+  "eventId": "event-18",
+  "sequence": 18,
+  "occurredAt": "2026-09-30T12:01:02.000Z",
+  "traceId": "trace-example",
+  "instanceId": "instance-example",
+  "runId": "run-example",
+  "caseId": "BALANCE-OK",
+  "side": "right",
+  "kind": "tool.call.completed",
+  "source": {
+    "adapter": "openjiuwen-launcher",
+    "framework": "openjiuwen",
+    "frameworkVersion": "1.0.0",
+    "nativeEventType": "after_tool_call",
+    "synthesized": false
+  },
+  "payload": {
+    "toolCallId": "call-3",
+    "name": "get_balance",
+    "durationMs": 218,
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "outputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "native": {
+    "data": {
+      "round": 2
+    }
+  }
+}
+

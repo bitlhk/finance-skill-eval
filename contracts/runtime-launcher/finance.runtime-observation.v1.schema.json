@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finance.runtime-observation.v1",
+  "oneOf": [
+    { "$ref": "#/$defs/execution" },
+    { "$ref": "#/$defs/instance" },
+    { "$ref": "#/$defs/skill" },
+    { "$ref": "#/$defs/mcp" },
+    { "$ref": "#/$defs/model" },
+    { "$ref": "#/$defs/tool" },
+    { "$ref": "#/$defs/output" },
+    { "$ref": "#/$defs/usageEvent" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "error": {
+      "type": "object", "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": { "code": { "type": "string", "minLength": 1 }, "message": { "type": "string", "minLength": 1 }, "retryable": { "type": "boolean" } }
+    },
+    "usage": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "inputTokens": { "type": "integer", "minimum": 0 }, "outputTokens": { "type": "integer", "minimum": 0 }, "totalTokens": { "type": "integer", "minimum": 0 } }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["adapter", "synthesized"],
+      "properties": {
+        "adapter": { "type": "string", "minLength": 1 }, "framework": { "type": "string", "minLength": 1 },
+        "frameworkVersion": { "type": "string", "minLength": 1 }, "nativeEventType": { "type": "string", "minLength": 1 }, "synthesized": { "type": "boolean" }
+      }
+    },
+    "native": {
+      "type": "object", "additionalProperties": false, "required": ["data"],
+      "properties": { "data": {} }
+    },
+    "envelope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "sequence", "occurredAt", "traceId", "instanceId", "kind", "source", "payload"],
+      "properties": {
+        "schemaVersion": { "const": "finance.runtime-observation.v1" }, "eventId": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 0 }, "occurredAt": { "type": "string", "format": "date-time" },
+        "traceId": { "type": "string", "minLength": 1 }, "instanceId": { "type": "string", "minLength": 1 },
+        "runId": { "type": "string", "minLength": 1 }, "caseId": { "type": "string", "minLength": 1 }, "side": { "enum": ["left", "right"] },
+        "kind": { "type": "string" }, "source": { "$ref": "#/$defs/source" }, "payload": { "type": "object" }, "native": { "$ref": "#/$defs/native" }
+      },
+      "allOf": [
+        { "if": { "required": ["native"] }, "then": { "properties": { "source": { "required": ["nativeEventType"] } } } }
+      ]
+    },
+    "executionContext": {
+      "type": "object", "required": ["runId", "caseId", "side"]
+    },
+    "lifecyclePayload": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "message": { "type": "string", "minLength": 1 }, "durationMs": { "type": "number", "minimum": 0 }, "error": { "$ref": "#/$defs/error" }, "evidenceDigest": { "$ref": "#/$defs/sha256" } }
+    },
+    "execution": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" },
+        { "properties": { "kind": { "enum": ["execution.started", "execution.completed", "execution.failed"] }, "payload": { "$ref": "#/$defs/lifecyclePayload" } } }
+      ]
+    },
+    "instance": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "properties": { "kind": { "enum": ["runtime.instance.started", "runtime.instance.ready", "runtime.instance.failed"] }, "payload": { "$ref": "#/$defs/lifecyclePayload" } } } ]
+    },
+    "skillPayload": {
+      "type": "object", "additionalProperties": false, "required": ["skillId"],
+      "properties": { "skillId": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "artifactSha256": { "$ref": "#/$defs/sha256" }, "durationMs": { "type": "number", "minimum": 0 }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "skill": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "properties": { "kind": { "enum": ["skill.load.started", "skill.load.completed", "skill.load.failed"] }, "payload": { "$ref": "#/$defs/skillPayload" } } } ]
+    },
+    "mcpPayload": {
+      "type": "object", "additionalProperties": false, "required": ["serverId"],
+      "properties": { "serverId": { "type": "string", "minLength": 1 }, "durationMs": { "type": "number", "minimum": 0 }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "mcp": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "properties": { "kind": { "enum": ["mcp.start.started", "mcp.start.completed", "mcp.start.failed"] }, "payload": { "$ref": "#/$defs/mcpPayload" } } } ]
+    },
+    "modelPayload": {
+      "type": "object", "additionalProperties": false, "required": ["modelCallId", "modelId"],
+      "properties": { "modelCallId": { "type": "string", "minLength": 1 }, "modelId": { "type": "string", "minLength": 1 }, "durationMs": { "type": "number", "minimum": 0 }, "usage": { "$ref": "#/$defs/usage" }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "model": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "enum": ["model.call.started", "model.call.completed", "model.call.failed"] }, "payload": { "$ref": "#/$defs/modelPayload" } } } ]
+    },
+    "toolPayload": {
+      "type": "object", "additionalProperties": false, "required": ["toolCallId", "name"],
+      "properties": { "toolCallId": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 }, "durationMs": { "type": "number", "minimum": 0 }, "inputDigest": { "$ref": "#/$defs/sha256" }, "outputDigest": { "$ref": "#/$defs/sha256" }, "error": { "$ref": "#/$defs/error" } }
+    },
+    "tool": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "enum": ["tool.call.started", "tool.call.completed", "tool.call.failed"] }, "payload": { "$ref": "#/$defs/toolPayload" } } } ]
+    },
+    "output": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "const": "output.delta" }, "payload": { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string" } } } } } ]
+    },
+    "usageEvent": {
+      "allOf": [ { "$ref": "#/$defs/envelope" }, { "$ref": "#/$defs/executionContext" }, { "properties": { "kind": { "const": "usage.reported" }, "payload": { "$ref": "#/$defs/usage" } } } ]
+    }
+  }
+}
+

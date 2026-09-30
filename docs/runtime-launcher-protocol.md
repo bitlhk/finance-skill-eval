@@ -24,6 +24,14 @@ Skill 同时携带两个摘要：`artifactSha256` 是平台规范文件树的资
 
 业务配置只在后端解析，浏览器提交的评测配置仅包含迁移 revision/digest 引用。实例状态、日志事件和最终 evidence 不得返回秘密；Runtime 应在执行前注入，在错误、工具结果和流事件中脱敏。配置摘要包含秘密键名但不包含秘密值，幂等比较仍包含秘密值摘要，避免凭据变化时复用旧实例。
 
+## 可观测契约
+
+跨框架事件遵循 `contracts/runtime-launcher/finance.runtime-observation.v1.schema.json`。Launcher 将框架原生回调映射为稳定的语义 `kind`，并在 `source.nativeEventType` 中保留原始名称；无法取得原生回调时可以生成边界事件，但必须标记 `source.synthesized=true`。经过脱敏的框架原生数据只能放入可选 `native.data`，可移植消费者不得依赖该字段。
+
+Launcher 通过 capabilities 的可选 `observability` 字段声明 `core`、`tool` 或 `detailed` 等级以及实际支持的标准事件。字段缺失表示旧版 Launcher，不能推断为 Tool 级可观测。Builder 新交付的 Launcher 必须声明该字段。
+
+验收只依赖最终 execution evidence 和 `core` 保证；缺失可选事件不得导致验收失败。诊断和优化使用更高等级事件时必须同时记录 Launcher 声明的等级。任何等级都不得输出隐藏思维链、凭证、Authorization Header 或未脱敏的敏感业务值。
+
 ## OpenJiuwen 参考实现边界
 
 参考 worker 支持 Skill zip 包和包内候选 MCP，校验压缩包大小、文件数及路径。v1 明确声明 `externalMcp: false`，因此拒绝由请求传入任意外部 MCP URL；模型 API Key 和 Base URL 继续只存在于 Runtime 自己的 `.runtime.local.json` 中。

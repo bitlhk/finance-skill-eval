@@ -3,6 +3,7 @@ import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePr
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { RUNTIME_CAPABILITIES_SCHEMA_VERSION } from './shared/contracts/runtime-protocol-versions.js';
+import { runtimeObservationCapabilitiesSchema } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
 
 const httpBaseUrl=z.string().url().transform(value=>{
@@ -18,6 +19,7 @@ export const runtimeLauncherCapabilitiesSchema=z.strictObject({
   runtime:z.strictObject({type:z.string().min(1),version:z.string().min(1)}),
   models:z.array(publicModel).min(1),defaultModelId:z.string().min(1),
   nativeToolNames:z.array(z.string().min(1)).optional(),
+  observability:runtimeObservationCapabilitiesSchema.optional(),
   features:z.strictObject({streaming:z.boolean(),asyncLaunch:z.boolean(),packagedMcp:z.boolean(),externalMcp:z.boolean(),inlineSecrets:z.boolean()}),
   limits:z.strictObject({maxArchiveBytes:z.number().int().positive(),maxFiles:z.number().int().positive(),maxTimeoutMs:z.number().int().positive(),maxConcurrentInstances:z.number().int().positive()}),
 }).superRefine((value,context)=>{if(!value.models.some(model=>model.modelId===value.defaultModelId))context.addIssue({code:'custom',message:'Default model is not advertised'});});

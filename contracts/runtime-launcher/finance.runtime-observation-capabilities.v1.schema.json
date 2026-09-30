@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finance.runtime-observation-capabilities.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "profile", "supportedKinds", "nativeEvents", "replayable"],
+  "properties": {
+    "schemaVersion": { "const": "finance.runtime-observation-capabilities.v1" },
+    "profile": { "enum": ["core", "tool", "detailed"] },
+    "supportedKinds": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "execution.started", "execution.completed", "execution.failed",
+          "runtime.instance.started", "runtime.instance.ready", "runtime.instance.failed",
+          "skill.load.started", "skill.load.completed", "skill.load.failed",
+          "mcp.start.started", "mcp.start.completed", "mcp.start.failed",
+          "model.call.started", "model.call.completed", "model.call.failed",
+          "tool.call.started", "tool.call.completed", "tool.call.failed",
+          "output.delta", "usage.reported"
+        ]
+      }
+    },
+    "nativeEvents": { "type": "boolean" },
+    "replayable": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "profile": { "const": "core" } } },
+      "then": { "properties": { "supportedKinds": { "allOf": [
+        { "contains": { "const": "execution.started" } },
+        { "contains": { "const": "execution.completed" } },
+        { "contains": { "const": "execution.failed" } }
+      ] } } }
+    },
+    {
+      "if": { "properties": { "profile": { "enum": ["tool", "detailed"] } } },
+      "then": { "properties": { "supportedKinds": { "allOf": [
+        { "contains": { "const": "execution.started" } }, { "contains": { "const": "execution.completed" } }, { "contains": { "const": "execution.failed" } },
+        { "contains": { "const": "model.call.started" } }, { "contains": { "const": "model.call.completed" } }, { "contains": { "const": "model.call.failed" } },
+        { "contains": { "const": "tool.call.started" } }, { "contains": { "const": "tool.call.completed" } }, { "contains": { "const": "tool.call.failed" } }
+      ] } } }
+    },
+    {
+      "if": { "properties": { "profile": { "const": "detailed" } } },
+      "then": { "properties": { "nativeEvents": { "const": true } } }
+    }
+  ]
+}
+
