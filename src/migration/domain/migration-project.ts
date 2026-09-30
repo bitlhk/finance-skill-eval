@@ -12,9 +12,49 @@ import type { StageEnvelope } from "./migration-stage-envelope.js";
 
 export const migrationProjectIdSchema = z.string().regex(/^migration-[a-f0-9-]+$/u);
 
-const persistedMigrationProjectSchema = z.object({
+const skillAssetReferenceSchema = z.object({
+  schemaVersion: z.literal("finance.skill-eval.skill-asset.v1"),
+  assetId: z.string().min(1),
+  skillId: z.string().min(1),
+  version: z.string().min(1),
+  displayName: z.string().min(1),
+  description: z.string(),
+  sourceType: z.string().min(1),
+  artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  skillFile: z.string().min(1),
+  fileCount: z.number().int().nonnegative(),
+  createdAt: z.string().min(1),
+}).passthrough();
+
+export const persistedMigrationProjectSchema = z.object({
   schemaVersion: z.literal("finance.skill-migration.v2"),
   id: migrationProjectIdSchema,
+  name: z.string().min(1),
+  createdAt: z.string().min(1),
+  source: skillAssetReferenceSchema,
+  candidate: skillAssetReferenceSchema.nullable(),
+  candidateNotes: z.string(),
+  candidateHistory: z.array(z.object({
+    asset: skillAssetReferenceSchema,
+    notes: z.string(),
+    recordedAt: z.string().min(1),
+    kind: z.enum(["migration", "optimization"]).optional(),
+  }).passthrough()).optional(),
+  suiteIds: z.array(z.string().min(1)).optional(),
+  optimizations: z.array(z.object({
+    optimizationId: z.string().min(1),
+    sourceJobId: z.string().min(1),
+    baseAssetId: z.string().min(1),
+    candidateDigest: z.string().min(1),
+  }).passthrough()).optional(),
+  runs: z.array(z.object({
+    jobId: z.string().min(1),
+    pair: z.enum(["AB", "BC", "AC", "SC"]),
+    candidateDigest: z.string().min(1),
+    comparisonFingerprint: z.string().min(1),
+    packFingerprint: z.string().min(1),
+  }).passthrough()),
+  assessment: z.literal("NOT_VALIDATED"),
 }).passthrough();
 
 export type MigrationRunDeclaration = {
