@@ -1,7 +1,7 @@
 import {it,expect} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
 import {zipSync,strToU8} from 'fflate';
-import {resolveDependencyPath,analyzeDependencies} from '../src/service/migration-dependencies.js';
+import {resolveDependencyPath,analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {inspectionFixture,toolFixture,SKILL_MD,analyzedTool} from './analysis-fixture.js';
 import {createEvaluationService} from '../src/service/server.js';
 const files={'scripts/check.py':'rules = load_rules()\n','assets/rules.json':'{"mealLimit":"150.00"}\n'};

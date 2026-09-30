@@ -4,7 +4,7 @@ import path from 'node:path';
 import {createServer} from 'node:http';
 import {zipSync,strToU8} from 'fflate';
 import {createEvaluationService} from '../dist/service/server.js';
-import {analyzeWithAgent,implementWithAgent} from '../dist/service/migration-agent.js';
+import {analyzeWithAgent,implementWithAgent} from '../dist/migration/infrastructure/migration-agent.js';
 import {SkillStore} from '../dist/service/skill-store.js';
 import {LocalWorker} from '../dist/service/local-worker.js';
 import {pythonCommand} from '../dist/service/technical-validation.js';

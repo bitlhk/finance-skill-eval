@@ -79,7 +79,7 @@ Back at repository root, with the real model environment loaded:
 
 ```sh
 node scripts/verify-native-migration-host.mjs /private/output/reference.json
-node scripts/verify-pf-native-web.mjs /private/input/pf.zip /private/output/pf-run
+The original v0.1 verification script was removed with the deprecated target workflow. Use the current UI workflow and Runtime Launcher validation instead.
 ```
 
 The first is our independent synthetic reference. The second uses the supplied

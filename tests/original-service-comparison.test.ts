@@ -4,7 +4,7 @@ import {OriginalServiceRuntimeAdapter,originalServiceSchema} from '../src/origin
 import {ModelServiceComparisonJudge} from '../src/service-comparison-judge.js';
 import {runtimeExecutionEvidenceSchema} from '../src/contracts.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
-import {simpleMigrationCases,simpleMigrationSuiteSchema} from '../src/service/simple-migration-suite.js';
+import {simpleMigrationCases,simpleMigrationSuiteSchema} from '../src/migration/domain/simple-migration-suite.js';
 import {MigrationAssessmentStep} from '../web/src/MigrationAssessmentStep.js';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createElement} from 'react';

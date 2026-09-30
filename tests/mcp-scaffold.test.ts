@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { strToU8 } from 'fflate';
-import { generatePortableCandidate } from '../src/service/portable-candidate.js';
-import type { GeneratedToolImplementation } from '../src/service/migration-code-generator.js';
+import { generatePortableCandidate } from '../src/migration/infrastructure/migration-candidate-packager.js';
+import type { GeneratedToolImplementation } from '../src/migration/domain/generated-tool-implementation.js';
 import { inspectionFixture, toolFixture } from './analysis-fixture.js';
 
 /**

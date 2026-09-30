@@ -1,26 +1,18 @@
-import { mkdtemp,readFile,readdir,rm,writeFile } from 'node:fs/promises';
+import { mkdtemp,readdir,rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach,expect,it,vi } from 'vitest';
 import { strToU8,unzipSync,zipSync } from 'fflate';
-import { validateSkill } from '../src/service/skill-validator.js';
+import { validateSkill } from '../src/migration/domain/migration-skill-validator.js';
 import { SKILL_MD, analysisFixture, analyzedTool, implementationFixture, inspectionFixture, toolFixture } from './analysis-fixture.js';
-import { buildMigrationPlan } from '../src/service/migration-model.js';
+import { buildMigrationPlan } from '../src/migration/domain/migration-model.js';
 import { LocalWorker } from '../src/service/local-worker.js';
 import { findMissingRequiredTools } from '../src/service/run-manager.js';
 import { createEvaluationService } from '../src/service/server.js';
-import { generatePortableCandidate } from '../src/service/portable-candidate.js';
-import { MigrationCodeGenerator } from '../src/service/migration-code-generator.js';
+import { generatePortableCandidate } from '../src/migration/infrastructure/migration-candidate-packager.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
-const INCOMPLETE_PY='import json\ndef lookup(value):\n    return {"value": value}\n';
-const COMPLETE_PY='import json,sys\ndef lookup(value):\n    return {"value": value}\nif __name__ == "__main__": json.dump(lookup(json.load(sys.stdin)), sys.stdout)\n';
-// The path this test exercises reuses a Script that is already executable, so no model may be
-// consulted. Failing loudly here is what makes that a claim rather than an assumption.
-const unreachableMigrationModel=()=>({configured:true,model:{providerId:'test',modelId:'unreachable',parameters:{}},adapter:{adapterId:'unreachable',async complete(){
-  throw new Error('这条迁移路径不该调用代码生成模型');
-}}});
 
 it('checks the enterprise Skill baseline without treating tool language as compliance',()=>{
   const files={'account-balance/SKILL.md':'---\nname: account-balance\ndescription: 查询余额，用户询问账户资金时使用。\n---\n调用 `get_balance`。失败时不要编造。\n'};
@@ -98,24 +90,6 @@ it('packages model-migrated Runtime code with its real business implementation i
   expect(generated.generations[0]).toMatchObject({readyForValidation:true,todo:[]});
 });
 
-it('uses a migration model for Runtime-bound code and validates the returned complete entrypoint',async()=>{
-  vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
-  const skill='---\nname: model-migration\ndescription: 测试模型迁移。\n---\n调用 `lookup`。',runtime='from vendor.runtime import Result\ndef lookup(value): return Result(value)';
-  const archive={'skill/SKILL.md':strToU8(skill),'tool/runtime.py':strToU8(runtime)};
-  const inspection=inspectionFixture([toolFixture({toolId:'lookup-id',name:'lookup',sourcePaths:['tool/runtime.py'],language:'Python',portability:'RUNTIME_BOUND'})]);
-  let prompt='',calls=0;const generator=new MigrationCodeGenerator(()=>({configured:true,model:{providerId:'test',modelId:'migration-model',parameters:{}},adapter:{adapterId:'fake',async complete(request){prompt=request.messages.at(-1)!.content;calls++;
-    const source=calls===1?INCOMPLETE_PY:COMPLETE_PY;
-    return {modelId:'migration-model',content:JSON.stringify({implementations:[{toolId:'lookup-id',toolName:'lookup',language:'python',entrypoint:'lookup.py',files:[{path:'lookup.py',content:source}],dependencies:[],smokeInput:{},explanation:'移除 vendor runtime 并生成纯 Python 业务实现'}]})};}}}));
-  const result=await generator.generate({archive,inspection,decisions:[{toolId:'lookup-id',form:'SCRIPT',reason:'local',baseAssetId:'asset',decidedAt:'now'}]});
-  expect(calls).toBe(2);expect(prompt).toContain('缺少同名业务函数或 JSON 主入口');expect(result['lookup-id']?.source).toContain('json.dump');expect(result['lookup-id']?.language).toBe('python');expect(result['lookup-id']?.generatedBy).toBe('test/migration-model');
-});
-
-it('refuses semantic migration when no migration model is configured',async()=>{
-  const generator=new MigrationCodeGenerator(()=>({configured:false,model:{providerId:'none',modelId:'none',parameters:{}},adapter:null}));
-  const inspection=inspectionFixture([toolFixture({toolId:'t',name:'tool',sourcePaths:['tool/x.py'],language:'Python',portability:'RUNTIME_BOUND'})]);
-  await expect(generator.generate({archive:{'tool/x.py':strToU8('def x(): pass')},inspection,decisions:[{toolId:'t',form:'SCRIPT',reason:'local',baseAssetId:'asset',decidedAt:'now'}]})).rejects.toThrow('尚未配置 MIGRATION');
-});
-
 it('runs a trusted one-shot job with JSON IO and always cleans its directory',async()=>{
   vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const root=await mkdtemp(path.join(os.tmpdir(),'local-worker-test-'));dirs.push(root);
@@ -190,25 +164,20 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
   }finally{await app.close();}
 });
 
-it('exports v2 evidence states and upgrades legacy projects without changing history',async()=>{
+it('exports a clean v2 delivery archive without migration evidence files',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-state-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationAnalyzer:analysisFixture([])});
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationAnalyzer:analysisFixture([]),migrationImplementer:implementationFixture([])});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
   try{
     const zip=Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: text-only\ndescription: 处理不需要工具的文本任务。\n---\n信息不足时明确说明。')}));
     const uploaded=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
     const project=(await post('/api/migrations',{sourceAssetId:uploaded.assetId,name:'text migration'})).json();
     await post(`/api/migrations/${project.id}/inspect`);
-    const candidate=(await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId})).json().candidate;
+    await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});
     const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});
     const files=unzipSync(exported.rawPayload);
     expect(files['SKILL.md']).toBeDefined();expect(files['migration-manifest.json']).toBeUndefined();expect(files['migration-report.json']).toBeUndefined();
-
-    const legacyPath=path.join(data,'migrations',`${project.id}.json`),legacy=JSON.parse(await readFile(legacyPath,'utf8'));
-    legacy.schemaVersion='finance.skill-migration.v0.1';legacy.candidate={...candidate};await writeFile(legacyPath,JSON.stringify(legacy));
-    const upgraded=(await post(`/api/migrations/${project.id}/upgrade`)).json();
-    expect(upgraded.id).not.toBe(project.id);expect(upgraded.schemaVersion).toBe('finance.skill-migration.v2');expect(upgraded.source.assetId).toBe(candidate.assetId);expect(upgraded.legacySourceProjectId).toBe(project.id);
-    expect(JSON.parse(await readFile(legacyPath,'utf8')).schemaVersion).toBe('finance.skill-migration.v0.1');
   }finally{await app.close();}
 });
 
@@ -306,7 +275,9 @@ it('prepares a Python Script Tool from its pyproject before technical validation
 
 it('blocks partially analyzed source until it is explicitly acknowledged and re-scans the candidate',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-partial-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationModel:unreachableMigrationModel,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+    migrationImplementer:implementationFixture([{tool:'script_tool',entrypoint:'scripts/script_tool.py',language:'python',
+      files:{'scripts/script_tool.py':'import json,sys\ndef script_tool(value): return {"value": value}\nif __name__ == "__main__": json.dump(script_tool(**json.load(sys.stdin)),sys.stdout)'}}]),
     // The scanner's coverage rides along with the analysis; it is what says "this file was not read".
     migrationAnalyzer:async()=>({status:'PRODUCED',payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
       analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py','tool/vendor/opaque.js'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',

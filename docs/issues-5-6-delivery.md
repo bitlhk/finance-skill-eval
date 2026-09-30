@@ -19,20 +19,23 @@
 
 ## 第二批：Issue #5 启动协议
 
-Skill 迁移统一使用 `runtime_launcher`：测试环境只登记 Launcher Base URL 及访问凭据引用，通过 `/v1/runtime-capabilities` 发现模型和能力。迁移页面不再展示固定 `/execute` Runtime，也不再从本地配置文件投影兼容入口。MCP 从静态环境绑定迁移到每次任务的配置快照；左右两侧分别创建实例，逐题无历史执行，最后删除，Runtime 提供 TTL 兜底。已有 `runtime_http` 记录仍可读取，普通评测入口也暂时保留，但不能用于新建 Skill 迁移验证或优化。
+Skill 迁移与普通评测统一使用 `runtime_launcher`：测试环境登记 Launcher Base URL 及访问凭据引用，通过 `/v1/runtime-capabilities` 发现模型和能力；执行环境负责绑定 Launcher、MCP 与默认模型。固定 `/execute` Runtime、独立执行模型清单以及 `runtime_http` 兼容入口均已删除。左右两侧分别创建实例，逐题无历史执行，最后删除，Runtime 提供 TTL 兜底。
 
 当前协议支持同步或异步启动状态、幂等创建、取消/失败回收、同源 URL 检查、完整 zip 资产传输、受限候选 MCP 包启动及 SSE 执行证据。远程 Launcher 必须使用 HTTPS；本机回环地址允许 HTTP。OpenJiuwen 参考实现不接受外部 MCP URL，只启动本次 Skill 包内经过绑定的候选 MCP。
 
 本批为打通自建 Runtime 先支持服务端到 Launcher 的 `secrets.inline`。秘密值不进入环境登记、运行配置、实例状态或证据，Runtime 在执行副本中注入并统一脱敏；后续再扩展密钥引用/一次性凭据模式。协议细节见 `docs/runtime-launcher-protocol.md`。
 
-## 第三批：Issue #6 后续重构（尚未实现）
+## 第三批：Issue #6 模块重构
 
-1. 迁移记录 Zod、Repository、显式升级与特征测试。
-2. 为历史迁移记录提供显式升级；同步替换其余旧流程测试。
-3. 迁移 use case、评测工厂/执行器及其他 HTTP 路由拆分。
-4. 统一其余前端 DTO/client、Python 生命周期及 TS/Python 契约验证。
+已完成迁移 domain/application/infrastructure 分层、独立 HTTP routes、共享契约、按 migration ID 串行、旧执行链删除、完整核心字段 Zod 校验，以及 v0.1 原位升级和审计备份。不同 migration 的并发操作互不阻塞。旧记录升级保留原 ID 与扩展字段，不恢复旧生成链路。
 
-普通评测仍可能使用的 `runtime_http` 不属于本批删除范围。两个 Issue 保持打开，不以本批 PR 自动关闭。
+普通评测和 Skill 迁移现已共享同一套 Launcher 与执行环境模型。Issue #6 可在整合 PR 合入后关闭。
+
+## Issue #5 当前边界
+
+已交付 Launcher capabilities/create/status/execute/delete、环境创建/编辑/删除/预检、同步与异步启动、逐题实例、TTL、同源执行端点、包内候选 MCP、受管外部 MCP 绑定、环境变量凭据引用及内联执行秘密脱敏。
+
+Issue #5 仍保持打开：公网任意用户 Runtime 的准入、DNS 解析后的私网/重绑定防护、一次性凭据或密钥引用，以及非参考 Launcher 的互操作验收尚未完成。这些边界不能用已有受管双 Runtime 验证替代。
 
 ## 验证
 

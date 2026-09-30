@@ -10,6 +10,12 @@
       "requiredTools": [
         "check_expense"
       ],
+      "workspaceFiles": [
+        {
+          "path": "EXP-001.json",
+          "content": "[{\"id\":\"E1\",\"category\":\"meal\",\"amount\":\"120.00\"},{\"id\":\"E2\",\"category\":\"taxi\",\"amount\":\"80.00\"}]"
+        }
+      ],
       "rubric": [
         {
           "criterionId": "business-result",
@@ -33,6 +39,12 @@
       "requiredTools": [
         "check_expense"
       ],
+      "workspaceFiles": [
+        {
+          "path": "EXP-002.json",
+          "content": "[{\"id\":\"E3\",\"category\":\"meal\",\"amount\":\"180.00\"},{\"id\":\"E4\",\"category\":\"gift\",\"amount\":\"50.00\"}]"
+        }
+      ],
       "rubric": [
         {
           "criterionId": "business-result",
@@ -55,6 +67,12 @@
       "evaluationGoal": "与固定业务目标及原版服务结果比较；不要求自然语言文本逐字相同。",
       "requiredTools": [
         "check_expense"
+      ],
+      "workspaceFiles": [
+        {
+          "path": ".case-data",
+          "content": "EXP-404 intentionally has no claim file"
+        }
       ],
       "rubric": [
         {

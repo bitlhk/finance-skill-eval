@@ -1,14 +1,15 @@
 import {afterEach,it,expect,vi} from 'vitest';
-import {strToU8} from 'fflate';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/service/migration-delivery-contract.js';
+import {strToU8,unzipSync} from 'fflate';
+import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
-import {analyzeDependencies} from '../src/service/migration-dependencies.js';
-import {generatePortableCandidate} from '../src/service/portable-candidate.js';
+import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
+import {generatePortableCandidate} from '../src/migration/infrastructure/migration-candidate-packager.js';
 import {LocalWorker} from '../src/service/local-worker.js';
-import {toGeneratedImplementations,toSkillDocumentDelivery} from '../src/service/migration-agent.js';
+import {toGeneratedImplementations,toSkillDocumentDelivery} from '../src/migration/infrastructure/migration-agent.js';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {GenerationStatus,generatedCallState} from '../web/src/GenerationStatus.js';
+import {MigrationExportService} from '../src/migration/application/migration-export-service.js';
 
 afterEach(()=>vi.unstubAllEnvs());
 
@@ -68,6 +69,36 @@ it('excludes runtime workspace data from the delivered Skill package',()=>{
  const archive=Object.fromEntries(Object.entries({'SKILL.md':SKILL_MD,'workspace/EXP-001.json':'{"id":"EXP-001"}','references/workspace/EXP-002.json':'{"id":"EXP-002"}','scripts/expense.py':'print("{}")'}).map(([name,value])=>[name,strToU8(value)]));
  const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'scripts/expense.py',source:'print("{}")',additionalFiles:[],dependencies:[]}} as any});
  expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
+});
+
+it('does not let the generated document manifest restore workspace fixtures',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/expense.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const skillDelivery={skillFile:'SKILL.md',files:{
+  'SKILL.md':SKILL_MD,
+  'references/workflow.md':'# Workflow',
+  'references/workspace/EXP-001.json':'{"id":"EXP-001"}',
+  'workspace/EXP-002.json':'{"id":"EXP-002"}',
+ }};
+ const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD)},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions:[],version:'2.0.0',skillDelivery});
+ expect(result.files['references/workflow.md']).toBeDefined();
+ expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
+});
+
+it('filters workspace fixtures when exporting an already-persisted v2 candidate',async()=>{
+ const service=new MigrationExportService(
+  {get:async()=>({schemaVersion:'finance.skill-migration.v2',candidate:{assetId:'candidate'}})} as any,
+  {readArchive:async()=>({
+   'skill/SKILL.md':strToU8(SKILL_MD),
+   'skill/references/workflow.md':strToU8('# Workflow'),
+   'skill/references/workspace/EXP-001.json':strToU8('{"id":"EXP-001"}'),
+   'workspace/EXP-002.json':strToU8('{"id":"EXP-002"}'),
+  })} as any,
+  {} as any,
+ );
+ const files=unzipSync(await service.exportCandidate('migration'));
+ expect(files['skill/SKILL.md']).toBeDefined();
+ expect(files['skill/references/workflow.md']).toBeDefined();
+ expect(Object.keys(files).some(name=>name.includes('/workspace/')||name.startsWith('workspace/'))).toBe(false);
 });
 
 it('does not rewrite short references after generation',()=>{

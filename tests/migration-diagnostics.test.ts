@@ -4,8 +4,8 @@ import path from 'node:path';
 import { afterEach, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
-import { MigrationDiagnostics } from '../src/service/migration-diagnostics.js';
-import { inspectProject } from '../src/service/tool-inspector.js';
+import { MigrationDiagnostics } from '../src/migration/infrastructure/migration-diagnostics.js';
+import { inspectProject } from '../src/migration/domain/migration-project-inspector.js';
 import { createEvaluationService } from '../src/service/server.js';
 import type { ConfiguredModelRole } from '../src/service/config.js';
 
@@ -200,7 +200,7 @@ it('takes the Skill verdict from the rules, not from the model that judges it tw
     expect(checked.skill.findings.map((f:{code:string})=>f.code)).toContain('DESCRIPTION_REQUIRED');
   }finally{await app.close();}
 });
-it('project creation is idempotent, generates actual adapters and invalidates stale edits',async()=>{
+it('project creation is idempotent and rejects the removed legacy generation contract',async()=>{
   const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});
   const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'test'});
   const headers={authorization:'Bearer test'};
@@ -209,15 +209,9 @@ it('project creation is idempotent, generates actual adapters and invalidates st
     const input={sourceAssetId:asset.assetId,name:'Synthetic'};
     const first=(await post('/api/migrations',input)).json(),second=(await post('/api/migrations',input)).json();expect(first.id).toBe(second.id);
     const diagnostic=await app.inject({url:`/api/migrations/${first.id}/diagnosis`,headers});expect(diagnostic.json().findings.length).toBeGreaterThan(0);
-    const bad=await post(`/api/migrations/${first.id}/generate`,{runtime:'openjiuwen',environmentId:'env-missing',intent:'portable_method_and_adapters',baseAssetId:asset.assetId});expect(bad.statusCode).toBe(409);
-    const result=await post(`/api/migrations/${first.id}/generate`,{runtime:'openjiuwen',intent:'portable_method_and_adapters',baseAssetId:asset.assetId});expect(result.statusCode).toBe(200);
-    const candidate=result.json();expect(candidate.source).toEqual(asset);
-    expect(candidate.generation.diff.map((d:{path:string})=>d.path)).toContain('migration-generated/OpenJiuwenMigrationTool.java');
-    const edit=await post(`/api/migrations/${first.id}/drafts`,{source:method+'Keep sources.',notes:'Add output requirement',autoVersion:true,baseAssetId:candidate.candidate.assetId});expect(edit.statusCode).toBe(200);
-    expect((await post(`/api/migrations/${first.id}/drafts`,{source:method,notes:'Stale',autoVersion:true,baseAssetId:candidate.candidate.assetId})).statusCode).toBe(409);
-    const report=(await app.inject({url:`/api/migrations/${first.id}/report`,headers})).json();expect(report.verification.candidateChanged).toBe(true);
-    expect(report.verification.targetExecution).toBe('NOT_RUN');
-    expect((await post(`/api/migrations/${first.id}/optimize`,{jobId:'fake'})).statusCode).toBe(409);
+    const legacy=await post(`/api/migrations/${first.id}/generate`,{runtime:'openjiuwen',intent:'portable_method_and_adapters',baseAssetId:asset.assetId});
+    expect(legacy.statusCode).toBe(400);
+    expect(legacy.json().message).toContain('Unrecognized key');
     expect((await post(`/api/migrations/${first.id}/releases`,{})).statusCode).toBe(409);
   }finally{await app.close();}
 });

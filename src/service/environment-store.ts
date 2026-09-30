@@ -12,6 +12,7 @@ import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./fil
 import { runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
+  if(record.type==='execution_environment')return {};
   if (!record.credentialEnv) return {};
   const credential = process.env[record.credentialEnv];
   if (!credential) throw new Error(`Credential environment variable is unavailable: ${record.credentialEnv}`);
@@ -27,6 +28,10 @@ export class EnvironmentStore {
 
   async initialize(): Promise<void> {
     await ensureDirectory(this.directory);
+    for(const file of await listJsonFiles(this.directory)){
+      const value=await readJson<{type?:unknown}>(file);
+      if(value.type==='runtime_http')await unlink(file);
+    }
   }
 
   async list(): Promise<EnvironmentRecord[]> {
@@ -52,12 +57,13 @@ export class EnvironmentStore {
   async create(input: unknown): Promise<EnvironmentRecord> {
     return this.writes.run("registry", async () => {
     const parsed = createEnvironmentSchema.parse(input);
-    if(parsed.type==='runtime_http')await this.validateBindings(parsed.mcpEnvironmentIds);
+    if(parsed.type==='execution_environment')await this.validateExecutionEnvironment(parsed.launcherEnvironmentId,parsed.mcpEnvironmentIds);
     const now = new Date().toISOString();
     const record = environmentRecordSchema.parse({
       ...parsed,
-      runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:parsed.type === "runtime_http"?parsed.runtimeType ?? "generic_http":null,
-      credentialEnv: parsed.credentialEnv ?? null,
+      runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:null,
+      ...('credentialEnv' in parsed?{credentialEnv:parsed.credentialEnv??null}:{}),
+      ...(parsed.type==='execution_environment'?{defaultModelId:parsed.defaultModelId??null}:{}),
       environmentId: `env-${randomUUID().slice(0, 12)}`,
       createdAt: now,
       updatedAt: now,
@@ -76,6 +82,20 @@ export class EnvironmentStore {
     }
   }
 
+  private async validateExecutionEnvironment(launcherId:string,mcpIds:string[]):Promise<void>{
+    const launcher=await this.get(launcherId);
+    if(!launcher||launcher.type!=='runtime_launcher')throw Object.assign(new Error('Runtime Launcher is unavailable'),{statusCode:400});
+    await this.validateBindings(mcpIds);
+  }
+
+  async resolveLauncher(record:EnvironmentRecord):Promise<{launcher:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;mcpEnvironmentIds:string[];defaultModelId:string|null}>{
+    if(record.type==='runtime_launcher')return {launcher:record,mcpEnvironmentIds:[],defaultModelId:null};
+    if(record.type!=='execution_environment')throw Object.assign(new Error('Execution environment is unavailable'),{statusCode:400});
+    const launcher=await this.get(record.launcherEnvironmentId);
+    if(!launcher||launcher.type!=='runtime_launcher')throw Object.assign(new Error('Runtime Launcher is unavailable'),{statusCode:400});
+    return {launcher,mcpEnvironmentIds:record.mcpEnvironmentIds,defaultModelId:record.defaultModelId};
+  }
+
   async update(id: string, input: unknown): Promise<EnvironmentRecord> {
     return this.writes.run("registry", async () => {
       const previous = await this.get(id);
@@ -84,11 +104,12 @@ export class EnvironmentStore {
       if (parsed.type !== previous.type) {
         throw Object.assign(new Error("Resource type cannot change; create a new environment instead"), { statusCode: 409 });
       }
-      if(parsed.type==='runtime_http')await this.validateBindings(parsed.mcpEnvironmentIds);
+      if(parsed.type==='execution_environment')await this.validateExecutionEnvironment(parsed.launcherEnvironmentId,parsed.mcpEnvironmentIds);
       const record = environmentRecordSchema.parse({
         ...previous, ...parsed,
-        runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:parsed.type === "runtime_http"?parsed.runtimeType ?? "generic_http":null,
-        credentialEnv: parsed.credentialEnv ?? null,
+        runtimeType: parsed.type === 'runtime_launcher'?parsed.runtimeType:null,
+        ...('credentialEnv' in parsed?{credentialEnv:parsed.credentialEnv??null}:{}),
+        ...(parsed.type==='execution_environment'?{defaultModelId:parsed.defaultModelId??null}:{}),
         updatedAt: new Date().toISOString(),
       });
       await writeJsonAtomic(path.join(this.directory, `${id}.json`), record);
@@ -99,7 +120,8 @@ export class EnvironmentStore {
   async remove(id: string): Promise<void> {
     await this.writes.run("registry", async () => {
       if (!await this.get(id)) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
-      const dependent = (await this.list()).find(record => 'mcpEnvironmentIds' in record&&record.mcpEnvironmentIds.includes(id));
+      const dependent = (await this.list()).find(record => ('mcpEnvironmentIds' in record&&record.mcpEnvironmentIds.includes(id))||
+        (record.type==='execution_environment'&&record.launcherEnvironmentId===id));
       if (dependent) throw Object.assign(new Error(`Environment is still bound by ${dependent.name}`), { statusCode: 409 });
       await unlink(path.join(this.directory, `${id}.json`));
     });
@@ -115,6 +137,14 @@ export class EnvironmentStore {
     error: string | null;
     capabilities?:RuntimeLauncherCapabilities;
   }> {
+    if(record.type==='execution_environment'){
+      const {launcher,defaultModelId,mcpEnvironmentIds}=await this.resolveLauncher(record);
+      const result=await this.preflight(launcher);
+      if(result.status!=='ready'||!('capabilities' in result)||!result.capabilities)return result;
+      if(defaultModelId&&!result.capabilities.models.some(model=>model.modelId===defaultModelId))return {...result,status:'failed' as const,error:'执行环境默认模型不属于所选 Runtime Launcher'};
+      if(mcpEnvironmentIds.length&&!result.capabilities.features.externalMcp)return {...result,status:'failed' as const,error:'所选 Runtime Launcher 不支持动态外部 MCP'};
+      return result;
+    }
     if(record.type==='runtime_launcher'){
       const startedAt=Date.now();
       try{
@@ -128,39 +158,7 @@ export class EnvironmentStore {
     if (record.type === "mcp_streamable_http") {
       return preflightMcpServer({ endpoint: record.endpoint, headers: headersFor(record) });
     }
-    const startedAt = Date.now();
-    try {
-      const url = new URL(record.endpoint);
-      url.pathname = url.pathname.replace(/\/execute\/?$/, "/health");
-      const response = await fetch(url, {
-        headers: headersFor(record),
-        signal: AbortSignal.timeout(10_000),
-        redirect: "error",
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (record.runtimeType === "openjiuwen") {
-        const health = await response.json() as { mcpEndpoints?: unknown; status?: string };
-        if (health.status && health.status !== "ready") throw new Error("Runtime is not ready");
-        if (record.mcpEnvironmentIds.length) {
-          if (!Array.isArray(health.mcpEndpoints) || !health.mcpEndpoints.every(item => typeof item === "string")) {
-            throw new Error("Runtime 未声明 MCP 接入能力，无法确认绑定可执行；请升级 Runtime 的 /health 接口。");
-          }
-          for (const id of record.mcpEnvironmentIds) {
-            const mcp = await this.get(id);
-            if (!mcp || mcp.type!=='mcp_streamable_http' || !health.mcpEndpoints.includes(mcp.endpoint)) {
-              throw new Error(`Runtime 尚未接受 MCP「${mcp?.name ?? id}」；服务连通不代表 Runtime 已装配，请检查 Runtime 配置。`);
-            }
-          }
-        }
-      }
-      return { status: "ready", elapsedMs: Date.now() - startedAt, error: null };
-    } catch (error) {
-      return {
-        status: "failed",
-        elapsedMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    throw new Error(`Unsupported environment type: ${record satisfies never}`);
   }
 
   async inspect(record: EnvironmentRecord): Promise<{
@@ -195,7 +193,8 @@ export class EnvironmentStore {
 
     const mcpServers = [];
     const allTools: Array<{ name: string }> = [];
-    for (const environmentId of record.mcpEnvironmentIds) {
+    const mcpEnvironmentIds='mcpEnvironmentIds' in record?record.mcpEnvironmentIds:[];
+    for (const environmentId of mcpEnvironmentIds) {
       const environment = await this.get(environmentId);
       if (!environment || environment.type !== "mcp_streamable_http") {
         mcpServers.push({
@@ -226,6 +225,7 @@ export class EnvironmentStore {
       toolCount: allTools.length,
       tools: allTools,
       mcpServers,
+      ...('capabilities' in primary&&primary.capabilities?{capabilities:primary.capabilities}:{}),
     };
   }
 }

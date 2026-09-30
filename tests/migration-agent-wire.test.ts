@@ -2,7 +2,7 @@ import { mkdir,mkdtemp,rm,writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach,expect,it } from 'vitest';
-import { analyzeWithAgent,implementWithAgent,runMigrationAgent } from '../src/service/migration-agent.js';
+import { analyzeWithAgent,implementWithAgent,runMigrationAgent } from '../src/migration/infrastructure/migration-agent.js';
 
 const dirs:string[]=[];
 const saved=process.env.FINANCE_EVAL_MIGRATION_PYTHON;

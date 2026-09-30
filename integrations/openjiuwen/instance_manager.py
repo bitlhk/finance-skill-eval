@@ -91,8 +91,6 @@ class InstanceManager:
             raise ValueError('Only inline Runtime secrets are supported')
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in secrets.get('values', {}).items()):
             raise ValueError('Runtime secrets must be string values')
-        if (request.get('environment') or {}).get('mcpServers'):
-            raise ValueError('This Runtime does not support external MCP servers')
         request = copy.deepcopy(request)
         self._hydrate_archive(request)
         digest = self._digest(request)
@@ -145,9 +143,38 @@ class InstanceManager:
         required = case.get('requiredTools', [])
         if not isinstance(required, list) or any(not isinstance(name, str) or not name for name in required):
             raise ValueError('Invalid required Runtime tools')
+        workspace_files = case.get('workspaceFiles', [])
+        if not isinstance(workspace_files, list) or len(workspace_files) > 32:
+            raise ValueError('Invalid Runtime workspace files')
+        paths, total_bytes = set(), 0
+        for workspace_file in workspace_files:
+            if not isinstance(workspace_file, dict) or set(workspace_file) != {'path', 'content'}:
+                raise ValueError('Invalid Runtime workspace file')
+            path, content = workspace_file.get('path'), workspace_file.get('content')
+            if (not isinstance(path, str) or not path or len(path) > 240 or '\\' in path or '\0' in path
+                    or (len(path) > 1 and path[1] == ':' and path[0].isalpha())
+                    or PurePosixPath(path).is_absolute() or any(part in ('', '.', '..') for part in path.split('/'))
+                    or not isinstance(content, str)):
+                raise ValueError('Invalid Runtime workspace file')
+            if path in paths:
+                raise ValueError('Duplicate Runtime workspace file path')
+            paths.add(path)
+            size = len(content.encode('utf-8'))
+            if size > 256 * 1024:
+                raise ValueError('Runtime workspace file is too large')
+            total_bytes += size
+        if total_bytes > 1024 * 1024:
+            raise ValueError('Runtime workspace files are too large')
         request = copy.deepcopy(item['_request'])
         values = request.pop('secrets', {}).get('values', {})
         environment = request.get('environment') or {}
+        for service in environment.get('mcpServers', []):
+            if not isinstance(service, dict) or not isinstance(service.get('endpoint'), str) or not service['endpoint'].startswith(('http://', 'https://')):
+                raise ValueError('Invalid external MCP service')
+            headers = service.setdefault('headers', {})
+            for name, ref in service.pop('secretBindings', {}).items():
+                if ref not in values: raise ValueError('Missing external MCP secret binding')
+                headers[name] = values[ref]
         for service in environment.get('candidateMcpServices', []):
             target = service.setdefault('environment', {})
             for name, ref in service.pop('secretBindings', {}).items():
@@ -162,7 +189,7 @@ class InstanceManager:
         environment['_inlineSecretValues'] = list(values.values())
         request['schemaVersion'] = 'finance.skill-eval.runtime-request.v1'
         request['case'] = {'caseId': case.get('caseId'), 'prompt': case.get('query'), 'taskMode': 'single_turn',
-                           'requiredTools': required}
+                           'requiredTools': required, 'workspaceFiles': copy.deepcopy(workspace_files)}
         request['model'] = {'providerId': 'runtime-launcher', 'modelId': request.pop('modelId'), 'parameters': {}}
         environment['instanceConfigurationDigest'] = item['configurationDigest']
         return request

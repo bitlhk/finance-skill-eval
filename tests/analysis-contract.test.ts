@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { contractSample, toProjectInspection } from '../src/service/migration-agent.js';
-import { stableToolId } from '../src/service/migration-model.js';
+import { contractSample, toProjectInspection } from '../src/migration/infrastructure/migration-agent.js';
+import { stableToolId } from '../src/migration/domain/migration-model.js';
 
 const FILES = {
   'skill/SKILL.md': '---\nname: balance\ndescription: 查询余额。\n---\n调用 `lookup`，传入 account_id。\n成功时返回币种与账面余额。\n',

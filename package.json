@@ -22,6 +22,7 @@
   },
   "files": [
     "dist",
+    "contracts",
     "packs",
     "README.md"
   ],
@@ -33,6 +34,8 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:ui:migration-v2": "pnpm build && node scripts/verify-migration-v2-ui.mjs",
+    "test:ui:migration-enterprise": "pnpm build && node scripts/verify-enterprise-examples-page.mjs",
+    "test:ui:migration-acceptance": "pnpm build && node scripts/verify-migration-acceptance-ui.mjs",
     "test:ui:migration-v2:private": "pnpm build && vite build --base=/migration/ --outDir=../web-dist-private && MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs",
     "test:skeleton:mcp": "pnpm build:core && node scripts/verify-mcp-templates.mjs",
     "serve": "node dist/service/server.js",

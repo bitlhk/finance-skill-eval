@@ -20,6 +20,9 @@ export type RuntimeEnvironmentDescriptor = {
     transport: "streamable_http";
     toolNames: string[];
     credentialEnv?: string | null;
+    secretHeaders?:Record<string,string>;
+    secretBindings?:Record<string,string>;
+    headers?:Record<string,string>;
   }>;
   commandScripts?:Array<{name:string;path:string;kind:'PYTHON'|'NODE';filePaths:string[];inputSchema?:unknown;launch?:{program:string;args:string[]}}>;
   /** The worker starts these inside the candidate workspace, never a same-name external service. */
@@ -83,7 +86,8 @@ export class HttpRuntimeAdapter implements RuntimeAdapter {
         runId: request.runId,
         side: request.side,
         case: { caseId: request.evalCase.caseId, prompt: request.evalCase.prompt,
-          taskMode: request.evalCase.taskMode, requiredTools: request.evalCase.requiredTools },
+          taskMode: request.evalCase.taskMode, requiredTools: request.evalCase.requiredTools,
+          workspaceFiles: request.evalCase.workspaceFiles ?? [] },
         model: request.model,
         variant: request.variant,
         skill,

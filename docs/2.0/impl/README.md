@@ -86,7 +86,7 @@
 | 一次调用的时间上限 | `FINANCE_EVAL_{ROLE}_TIMEOUT_MS`（同 `modelTimeoutMs`） | ANALYZER 600 s / MIGRATION 300 s |
 
 **按角色而不是按 stage 命名**：`FINANCE_EVAL_ANALYZER_*` / `FINANCE_EVAL_MIGRATION_*` 早就在选模型、
-选端点、选时限了，预算是同一句话里的东西。映射只有一处（`migration-agent.ts` 的 `STAGE_ROLE`）。
+选端点、选时限了，预算是同一句话里的东西。映射只有一处（`migration-agent-runner.ts` 的 `STAGE_ROLE`）。
 
 **注意别把两个 timeout 混在一起**：`MigrationAgentOptions.timeoutMs` 是**整个子进程**的上限（15 分钟），
 发到 agent 的是 `modelTimeoutMs`（**单次调用**）。这两个数差一个数量级，混了就会把正常的长跑判死。

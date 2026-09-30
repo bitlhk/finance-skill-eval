@@ -3,7 +3,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {zipSync,strToU8} from 'fflate';
-import {MigrationStore} from '../src/service/migration-store.js';
+import {MigrationStore} from '../src/migration/migration-store.js';
 import {SkillStore} from '../src/service/skill-store.js';
 import {PreparationStore} from '../src/service/preparation-store.js';
 import {analysisFixture} from './analysis-fixture.js';
@@ -16,9 +16,9 @@ it('freezes original-service/candidate bindings, distinguishes baseline capture 
   const upload=(version:string)=>skills.uploadZip(Buffer.from(zipSync({'SKILL.md':strToU8(`---\nname: balance-test\nversion: ${version}\ndescription: 账户余额问答，用于企业查询。\n---\n回答账户余额，失败时不要编造。\n`)})));
   const source=await upload('1.0.0'),candidate=await upload('2.0.0');let configuration:any,report:any;
   const environment={environmentId:'runtime',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://127.0.0.1:1/'};
-  const store=new MigrationStore(data,skills,{create:async(config:unknown)=>{configuration=config;return {jobId:'job'}}} as any,
-   {get:()=>({status:'completed',configuration,report})} as any,{get:()=>null} as any,preparations,undefined,undefined,{get:async()=>environment} as any,
-   undefined,analysisFixture([]),undefined,async()=>({summary:'AI 冻结测试集',cases:[{caseId:'generated',name:'generated',prompt:'查询余额',evaluationGoal:'余额为1000',requiredTools:['imaginary'],rubric:[{criterionId:'g',label:'余额',description:'余额为1000',dimension:'business_completeness',weight:1,required:true,allOf:['余额必须为1000'],anyOf:['余额'],noneOf:['未知']}],tags:[]}]}));
+  const store=new MigrationStore(data,{skills,runs:{create:async(config:unknown)=>{configuration=config;return {jobId:'job'}}} as any,
+   jobs:{get:()=>({status:'completed',configuration,report})} as any,catalog:{get:()=>null} as any,preparations,environments:{get:async()=>environment} as any,
+   analyzer:analysisFixture([]),suiteGenerator:async()=>({summary:'AI 冻结测试集',cases:[{caseId:'generated',name:'generated',prompt:'查询余额',evaluationGoal:'余额为1000',requiredTools:['imaginary'],rubric:[{criterionId:'g',label:'余额',description:'余额为1000',dimension:'business_completeness',weight:1,required:true,allOf:['余额必须为1000'],anyOf:['余额'],noneOf:['未知']}],tags:[]} ]})});
   const project=await store.create({sourceAssetId:source.assetId,name:'原服务对比'});await store.inspect(project.id);await store.candidate(project.id,{assetId:candidate.assetId,notes:'候选'});await store.inspect(project.id);
   const suite=await store.importSimpleSuite(project.id,{name:'余额测试',cases:[{id:'balance',input:'查询余额',criteria:['余额为1000']} ]});
   const variant=(asset:typeof source)=>({mode:'skill_version',skillId:asset.skillId,version:asset.version,artifactSha256:asset.artifactSha256});

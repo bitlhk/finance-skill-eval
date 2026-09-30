@@ -1,49 +1,9 @@
 import path from "node:path";
-import type { EvaluationProgress } from "../runner.js";
-import type { EvaluationReport } from "../report.js";
 import type { FrozenQuestionSet } from "../contracts.js";
 export type { FrozenQuestionSet } from "../contracts.js";
-import type { RunConfiguration } from "./contracts.js";
+import type { EvaluationJob } from '../shared/contracts/evaluation-job.js';
+export type { EvaluationJob,EvaluationJobStatus } from '../shared/contracts/evaluation-job.js';
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
-
-export type EvaluationJobStatus =
-  | "queued"
-  | "preparing"
-  | "running"
-  | "judging"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
-
-export type EvaluationJob = {
-  schemaVersion: "finance.skill-eval.job.v1";
-  jobId: string;
-  status: EvaluationJobStatus;
-  stageLabel: string;
-  configuration: RunConfiguration;
-  questionSet?: FrozenQuestionSet;
-  pack: {
-    packId: string;
-    version: string;
-    targetSkillId: string;
-    targetSkillVersion: string;
-    caseCount: number;
-  } | null;
-  progress: Pick<EvaluationProgress, "completedRuns" | "totalRuns" | "caseId" | "side">;
-  evidence: EvaluationProgress["evidence"][];
-  live?: Record<string, { caseId: string; side: "left" | "right"; output: string; status: string; toolCalls: Array<{ name: string; status: string }> }>;
-  report: EvaluationReport | null;
-  error: {
-    code: string;
-    message: string;
-    retryable: boolean;
-  } | null;
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  updatedAt: string;
-};
 
 export class EvaluationJobStore {
   private readonly directory: string;

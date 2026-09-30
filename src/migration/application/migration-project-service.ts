@@ -1,0 +1,63 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import type { MigrationDiagnosisPort } from "./migration-diagnosis-port.js";
+import type { MigrationSkillRepository } from "./migration-skill-repository.js";
+import type { MigrationProject } from "../domain/migration-project.js";
+import type { MigrationProjectStore } from "./migration-project-store.js";
+import { migrationConflict as conflict } from "./migration-errors.js";
+
+const createMigrationProjectSchema = z.strictObject({
+  sourceAssetId: z.string().min(1),
+  name: z.string().min(1).max(120),
+});
+
+export class MigrationProjectService {
+  constructor(
+    private readonly projects: MigrationProjectStore,
+    private readonly skills: MigrationSkillRepository,
+    private readonly diagnostics?: MigrationDiagnosisPort,
+  ) {}
+
+  list(): Promise<MigrationProject[]> {
+    return this.projects.list();
+  }
+
+  get(id: string): Promise<MigrationProject> {
+    return this.projects.get(id);
+  }
+
+  async create(input: unknown): Promise<MigrationProject> {
+    const value = await this.projects.runExclusive("create", async () => {
+      const parsed = createMigrationProjectSchema.parse(input);
+      const source = await this.skills.get(parsed.sourceAssetId);
+      if (!source) return conflict("源 Skill 不可用");
+
+      const existing = (await this.projects.list()).find(project =>
+        project.source.artifactSha256 === source.artifactSha256 && project.name === parsed.name);
+      if (existing) return existing;
+
+      const project: MigrationProject = {
+        schemaVersion: "finance.skill-migration.v2",
+        id: `migration-${randomUUID()}`,
+        name: parsed.name,
+        createdAt: new Date().toISOString(),
+        source,
+        candidate: null,
+        candidateNotes: "",
+        runs: [],
+        assessment: "NOT_VALIDATED",
+      };
+      await this.projects.save(project);
+      return project;
+    });
+
+    void this.diagnostics?.diagnose(value.source).catch(() => undefined);
+    return value;
+  }
+
+  async diagnose(id: string, retry = false) {
+    const project = await this.get(id);
+    if (!this.diagnostics) return conflict("静态诊断服务不可用");
+    return this.diagnostics.diagnose(project.source, retry);
+  }
+}

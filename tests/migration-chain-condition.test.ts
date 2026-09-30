@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {analyzeDependencies} from '../src/service/migration-dependencies.js';
+import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';
 const files={'scripts/query.py':'def query():\n    return lookup_value()\n'};
 const inspection=inspectionFixture([toolFixture({name:'query',sourcePaths:['scripts/query.py']})]);

@@ -1,4 +1,4 @@
-import { fingerprint, runtimeExecutionEvidenceSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
+import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
@@ -52,6 +52,11 @@ function controlledUrl(base:string,value:string):URL{
 }
 function extractSecrets(source:RuntimeEnvironmentDescriptor,provided:RuntimeInstanceSecrets|undefined){
   const environment=structuredClone(source),values:Record<string,string>={...(provided?.values??{})};
+  for(const [index,service] of (environment.mcpServers??[]).entries()){
+    const bindings:Record<string,string>={};
+    for(const [name,value] of Object.entries(service.secretHeaders??{})){const key=`external-mcp.${index}.${name}`;values[key]=value;bindings[name]=key;}
+    delete service.secretHeaders;if(Object.keys(bindings).length)service.secretBindings=bindings;
+  }
   for(const [index,service] of (environment.candidateMcpServices??[]).entries()){
     const bindings:Record<string,string>={};
     for(const [name,value] of Object.entries(service.secretEnvironment??{})){const key=`mcp.${index}.${name}`;values[key]=value;bindings[name]=key;}
@@ -129,7 +134,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   async execute(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
     if(!this.instance||!this.executeUrl)throw new Error('Runtime instance is not ready');
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
-      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools})});
+      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[]})});
     if(!response.ok)throw await responseError(response);
     const payload=await readExecution(response,request);
     const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);
@@ -146,6 +151,8 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     if(this.options.skill&&!evidence.loadedSkills.some(item=>item.skillId===this.options.skill!.skillId&&item.version===this.options.skill!.version))throw new Error('Runtime instance did not load the requested Skill artifact');
     if(this.options.variant.mode==='without_target_skill'&&evidence.loadedSkills.some(item=>item.skillId===this.options.variant.skillId))throw new Error('Baseline Runtime instance unexpectedly loaded the target Skill');
     if(evidence.metadata.instanceConfigurationDigest!==this.instance.configurationDigest)throw new Error('Runtime instance evidence has a different configuration digest');
+    const expectedWorkspaceDigest=request.evalCase.workspaceFiles?.length?workspaceFilesDigest(request.evalCase.workspaceFiles):null;
+    if((evidence.metadata.workspaceFilesDigest??null)!==expectedWorkspaceDigest)throw new Error('Runtime instance did not mount the requested test data');
     return {...evidence,traceFingerprint:evidence.traceFingerprint??fingerprint(evidence),metadata:{...evidence.metadata,executionMode:'runtime-launcher',runtimeEndpoint:new URL(this.options.baseUrl).origin,instanceId:this.instance.instanceId}};
   }
   async cleanup():Promise<void>{

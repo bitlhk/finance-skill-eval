@@ -39,7 +39,7 @@ CONFIG = Path(os.environ.get("FINANCE_RUNTIME_CONFIG", ".runtime.local.json")).r
 
 
 def config():
-    return json.loads(CONFIG.read_text())
+    return json.loads(CONFIG.read_text(encoding="utf-8"))
 
 
 @app.get("/health")
@@ -74,7 +74,7 @@ async def runtime_capabilities():
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
             'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
-                         'externalMcp': False, 'inlineSecrets': True},
+                         'externalMcp': True, 'inlineSecrets': True},
             'limits': {'maxArchiveBytes': instances.max_archive_bytes, 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 

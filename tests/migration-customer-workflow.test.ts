@@ -4,33 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {zipSync,strToU8,unzipSync} from 'fflate';
 import {SkillStore} from '../src/service/skill-store.js';
-import {MigrationDiagnostics} from '../src/service/migration-diagnostics.js';
-import {generateCandidateFiles,regenerationArchive} from '../src/service/migration-candidate.js';
 import {importMigrationFiles} from '../web/src/migration-import.js';
 import {createEvaluationService} from '../src/service/server.js';
-
-it('diagnoses a different business method and generates inert generic ports without borrowing PF profiles',async()=>{
-  const dir=await mkdtemp(path.join(os.tmpdir(),'customer-migration-'));
-  try{
-    const store=new SkillStore(dir);await store.initialize();
-    const content={'shipment/SKILL.md':'---\nname: shipment-review\nversion: 1.0\n---\n- `lookup_shipment`\nUse `references/delivery.md` and report unresolved deliveries.',
-      'shipment/references/delivery.md':'Compare delivery dates. Never invent a signature.',
-      'shipment/Adapter.java':'// import com.openjiuwen.Fake;\nimport com.openjiuwen.core.foundation.tool.Tool;\nclass Adapter {}',
-      'shipment/port.py':'import unknown_delivery_sdk\ndef lookup_shipment(tracking_id):\n    return unknown_delivery_sdk.find(tracking_id)\n'};
-    const asset=await store.uploadZip(Buffer.from(zipSync(Object.fromEntries(Object.entries(content).map(([k,v])=>[k,strToU8(v)])))));
-    const diagnostics=new MigrationDiagnostics(process.cwd(),dir,store,()=>({configured:false,adapter:null,model:{providerId:'none',modelId:'none',parameters:{}}}));
-    const diagnosis=await diagnostics.diagnose(asset);
-    expect(diagnosis.frameworks).toEqual(['OpenJiuwen']);expect(diagnosis.status).toBe('PARTIAL');
-    expect(diagnosis.plan?.some(p=>p.category==='ENGINEERING'&&p.findingIds.length)).toBe(true);
-    const archive=await store.readArchive(asset.assetId);
-    const result=generateCandidateFiles(archive,asset,diagnosis,'2.0',{runtime:'openjiuwen',intent:'preserve_business_method'});
-    const contract=JSON.parse(Buffer.from(result.files['migration-generated/neutral-contract.json']!).toString());
-    expect(contract.capabilities.map((c:any)=>c.name)).toEqual(['lookup_shipment']);
-    expect(contract.capabilities[0].inputSchema).toBeNull();expect(contract.executionProfile).toBeUndefined();
-    expect(Buffer.from(result.files['shipment/references/delivery.md']!)).toEqual(Buffer.from(archive['shipment/references/delivery.md']!));
-    expect(()=>regenerationArchive({...result.files,'migration-generated/custom.py':strToU8('do_not_overwrite')},asset)).toThrow('自定义');
-  }finally{await rm(dir,{recursive:true,force:true});}
-});
 
 it('batch intake isolates failures, preserves content and bounds count without executing anything',async()=>{
   const collected:Record<string,Uint8Array>[]=[];
@@ -79,7 +54,8 @@ it('does not export an uploaded credential file alongside a candidate',async()=>
   try{
     const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: method\nversion: 1.0.0\n---\nSummarize facts.'),'.env':strToU8('EXAMPLE=not-a-real-credential')}))})).json();
     const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'secret-path-test'}})).json();
-    expect((await app.inject({method:'POST',url:`/api/migrations/${project.id}/generate`,headers,payload:{runtime:'openjiuwen',intent:'preserve_business_method',baseAssetId:asset.assetId}})).statusCode).toBe(200);
+    const candidate=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: method\nversion: 2.0.0\n---\nSummarize facts.'),'.env':strToU8('EXAMPLE=not-a-real-credential')}))})).json();
+    expect((await app.inject({method:'POST',url:`/api/migrations/${project.id}/candidates`,headers,payload:{assetId:candidate.assetId,notes:'credential export guard'}})).statusCode).toBe(200);
     const response=await app.inject({url:`/api/migrations/${project.id}/export`,headers});
     expect(response.statusCode).toBe(409);expect(response.body).not.toContain('not-a-real-credential');
   }finally{await app.close();await rm(dir,{recursive:true,force:true});}

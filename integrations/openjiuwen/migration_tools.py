@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import tempfile
 import sys
 from fnmatch import fnmatch
@@ -399,8 +400,11 @@ async def _script_contract(workspace: Path, entry: dict[str, Any], source: Path,
             argument = str(candidate)
         absolute_argv.append(argument)
     with tempfile.TemporaryDirectory(prefix='migration-contract-workspace-') as execution_workspace:
-        # The Runtime creates an isolated cwd by default.  Files inside the Skill package are
-        # never copied into it: workspace state and test data are not versioned deliverables.
+        # Explicit fixture data is copied into the same isolated cwd shape used by Runtime.
+        # Other Skill files stay in the package directory and are never mistaken for run data.
+        fixture_directory = workspace / 'workspace'
+        if any(_is_implicit_script_context(item) for item in entry.get('dependencies', [])) and fixture_directory.is_dir():
+            shutil.copytree(fixture_directory, execution_workspace, dirs_exist_ok=True)
         try:
             result = await execute_command(execution_workspace, absolute_argv, json.dumps(sample), timeout=_LAUNCH_TIMEOUT)
         except TimeoutError:

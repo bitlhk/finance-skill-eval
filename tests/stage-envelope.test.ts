@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { STAGE_ENVELOPE_VERSION, stageEnvelope, staleAgainst } from '../src/service/stage-envelope.js';
+import { STAGE_ENVELOPE_VERSION, stageEnvelope, staleAgainst } from '../src/migration/domain/migration-stage-envelope.js';
 
 const base = { assetDigest: 'd'.repeat(64), stageId: 'A2' as const, producer: 'AGENT' as const, status: 'PRODUCED' as const, payload: { tools: [] } };
 

@@ -4,15 +4,18 @@ import {createServer} from 'node:http';
 import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {analyzeDependencies} from '../src/service/migration-dependencies.js';
-import {serviceEnvironment,runtimeInjection,migrationExecutionConfig,MigrationRuntimeConfig,configurationDigest} from '../src/service/migration-runtime-config.js';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/service/migration-delivery-contract.js';
+import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
+import {serviceEnvironment,runtimeInjection,migrationExecutionConfig} from '../src/migration/domain/migration-runtime-rules.js';
+import {FileExecutionConfigurationRepository} from '../src/execution-configuration/file-execution-configuration-repository.js';
+import {executionConfigurationDigest as configurationDigest} from '../src/execution-configuration/execution-configuration.js';
+import type {ConnectionCheck} from '../src/migration/application/migration-runtime-configuration-repository.js';
+import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture} from './analysis-fixture.js';
-import {TechnicalValidationService} from '../src/service/technical-validation.js';
-import {MigrationStore} from '../src/service/migration-store.js';
+import {LocalMigrationValidationRunner} from '../src/migration/infrastructure/migration-technical-validator.js';
+import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
-import {buildMigrationPlan} from '../src/service/migration-model.js';
+import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 
 function fixture(name='BUSINESS_SERVICE_URL'){
  const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);
@@ -54,15 +57,16 @@ it('resolves a revision-bound reference for selected tools and rejects changed c
  const {inspection,dep,deps}=fixture(),id='migration-1234',assetDigest='a'.repeat(64);
  try{
   await mkdir(path.join(root,'migrations'));
-  const configs=new MigrationRuntimeConfig(root),config=await configs.save(id,dep,'https://business.example',0);
+  const configs=new FileExecutionConfigurationRepository<ConnectionCheck>(root,'migration-runtime-config',scope=>/^migration-[a-f0-9-]+$/u.test(scope)),config=await configs.saveValue(id,dep.id,'https://business.example',0);
   const ref={migrationId:id,revision:config.revision,assetDigest,configurationDigest:configurationDigest(config,deps)};
-  await writeFile(path.join(root,'migrations',id+'.json'),JSON.stringify({id,schemaVersion:'finance.skill-migration.v2',source:{artifactSha256:'b'.repeat(64)},candidate:{artifactSha256:assetDigest},inspection,sourceInspection:inspection,runs:[{jobId:'job',candidateDigest:assetDigest,runtimeConfigurationDigest:ref.configurationDigest,declaredPlan:{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'}}}}]}));
+  const asset=(assetId:string,artifactSha256:string)=>({schemaVersion:'finance.skill-eval.skill-asset.v1',assetId,skillId:'fixture',version:'1.0.0',displayName:'Fixture',description:'Fixture',sourceType:'uploaded',artifactSha256,skillFile:'SKILL.md',fileCount:1,createdAt:'2026-09-30T00:00:00.000Z'});
+  await writeFile(path.join(root,'migrations',id+'.json'),JSON.stringify({id,schemaVersion:'finance.skill-migration.v2',name:'Fixture migration',createdAt:'2026-09-30T00:00:00.000Z',source:asset('source','b'.repeat(64)),candidate:asset('candidate',assetDigest),candidateNotes:'fixture',assessment:'NOT_VALIDATED',inspection,sourceInspection:inspection,runs:[{jobId:'job',pair:'AB',candidateDigest:assetDigest,comparisonFingerprint:'comparison',packFingerprint:'pack',runtimeConfigurationDigest:ref.configurationDigest,declaredPlan:{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'}}}}]}));
   const runtime={environmentId:'runtime',type:'runtime_launcher',runtimeType:'openjiuwen'};
-  const store=new MigrationStore(root,{} as never,{} as never,{get:()=>({status:'failed'})} as never,{} as never,undefined,undefined,undefined,{get:async()=>runtime} as never);
+  const store=new MigrationStore(root,{skills:{} as never,runs:{} as never,jobs:{get:()=>({status:'failed'})} as never,catalog:{} as never,environments:{get:async()=>runtime} as never});
   expect(await store.resolveServiceEnvironment(ref,['lookup'])).toEqual({configuration:{BUSINESS_SERVICE_URL:'https://business.example'},secrets:{}});
   await expect(store.resolveServiceEnvironment(ref,['unknown'])).rejects.toThrow('未知工具');
   expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(true);
-  await configs.save(id,dep,'https://changed.example',1);
+  await configs.saveValue(id,dep.id,'https://changed.example',1);
   expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(false);
   await expect(store.resolveServiceEnvironment(ref,['lookup'])).rejects.toThrow('已变化');
  }finally{await rm(root,{recursive:true,force:true})}
@@ -89,7 +93,7 @@ it('starts MCP with process-scoped service configuration and invokes the real bu
  await new Promise<void>(resolve=>business.listen(0,'127.0.0.1',resolve));
  const port=(business.address() as {port:number}).port;
  const code=`import http from 'node:http';http.createServer(async(req,res)=>{let text='';for await(const c of req)text+=c;const m=JSON.parse(text||'{}');if(!m.id){res.writeHead(202).end();return}let result={};if(m.method==='initialize')result={protocolVersion:'2025-06-18',serverInfo:{name:'fixture',version:'1'}};if(m.method==='tools/list')result={tools:[{name:'lookup',inputSchema:{type:'object',properties:{account_id:{type:'string'}}}}]};if(m.method==='tools/call'){if(Object.keys(m.params.arguments).join()!=='account_id')throw Error('unexpected arguments');const response=await fetch(process.env.BUSINESS_SERVICE_URL+'/balance');result={content:[{type:'text',text:JSON.stringify(await response.json())}]}}res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:m.id,result}))}).listen(Number(process.env.PORT),'127.0.0.1');`;
- const service=new TechnicalValidationService(),{tool}=fixture(),before=process.env.BUSINESS_SERVICE_URL;
+ const service=new LocalMigrationValidationRunner(),{tool}=fixture(),before=process.env.BUSINESS_SERVICE_URL;
  try{
   for(const prefix of ['first','second']){
    const value=`http://127.0.0.1:${port}/${prefix}`;

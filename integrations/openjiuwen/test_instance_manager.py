@@ -63,11 +63,13 @@ class InstanceManagerTests(unittest.TestCase):
         self.assertNotIn('token-value', str(public))
         self.assertNotIn('_request', public)
         execution = manager.execution(item['instanceId'], {
-            'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query', 'requiredTools': ['lookup']})
+            'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query', 'requiredTools': ['lookup'],
+            'workspaceFiles': [{'path': 'fixtures/input.json', 'content': '{"account":"A1"}'}]})
         self.assertEqual(execution['skill']['files']['mcp/server.py'], 'print("ok")')
         self.assertEqual(execution['environment']['candidateMcpServices'][0]['environment']['API_TOKEN'], 'token-value')
         self.assertEqual(execution['environment']['runtimeToolConfig']['context']['user']['value'], 'alice')
         self.assertEqual(execution['environment']['instanceConfigurationDigest'], public['configurationDigest'])
+        self.assertEqual(execution['case']['workspaceFiles'], [{'path': 'fixtures/input.json', 'content': '{"account":"A1"}'}])
 
     def test_idempotency_rejects_changed_secret_values(self):
         manager = InstanceManager()
@@ -75,12 +77,17 @@ class InstanceManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'different configuration'):
             manager.create(request('second'), 'same-key')
 
-    def test_rejects_external_mcp_and_unsafe_archive(self):
+    def test_hydrates_external_mcp_secrets_and_rejects_unsafe_archive(self):
         manager = InstanceManager()
         external = request()
-        external['environment']['mcpServers'] = [{'endpoint': 'https://example.com/mcp'}]
-        with self.assertRaisesRegex(ValueError, 'external MCP'):
-            manager.create(external, 'external')
+        external['environment']['mcpServers'] = [{'endpoint': 'https://example.com/mcp', 'toolNames': ['lookup'],
+                                                  'secretBindings': {'Authorization': 'external.0.authorization'}}]
+        external['secrets']['values']['external.0.authorization'] = 'Bearer private'
+        item = manager.create(external, 'external')
+        self.assertNotIn('Bearer private', str(manager.public(item)))
+        execution = manager.execution(item['instanceId'], {
+            'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query'})
+        self.assertEqual(execution['environment']['mcpServers'][0]['headers']['Authorization'], 'Bearer private')
         unsafe = request()
         unsafe_archive = archive({'../escape.py': 'bad'})
         unsafe['skill']['archiveBase64'] = unsafe_archive
@@ -91,6 +98,18 @@ class InstanceManagerTests(unittest.TestCase):
         mismatch['skill']['archiveSha256'] = 'a' * 64
         with self.assertRaisesRegex(ValueError, 'digest'):
             manager.create(mismatch, 'mismatch')
+
+    def test_rejects_unsafe_duplicate_and_oversized_workspace_files(self):
+        manager = InstanceManager()
+        item = manager.create(request(), 'workspace')
+        base = {'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query'}
+        for files in (
+            [{'path': '../escape.json', 'content': 'bad'}],
+            [{'path': 'same.json', 'content': 'one'}, {'path': 'same.json', 'content': 'two'}],
+            [{'path': 'large.json', 'content': 'x' * (256 * 1024 + 1)}],
+        ):
+            with self.assertRaisesRegex(ValueError, 'workspace'):
+                manager.execution(item['instanceId'], {**base, 'workspaceFiles': files})
 
 
 if __name__ == '__main__':

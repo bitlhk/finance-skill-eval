@@ -4,21 +4,9 @@ import path from "node:path";
 import { unzipSync } from "fflate";
 import { parse as parseYaml } from "yaml";
 import { fingerprint } from "../contracts.js";
+import type { SkillAssetRecord } from "../shared/contracts/skill-asset.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
-
-export type SkillAssetRecord = {
-  schemaVersion: "finance.skill-eval.skill-asset.v1";
-  assetId: string;
-  skillId: string;
-  version: string;
-  displayName: string;
-  description: string;
-  sourceType: "uploaded";
-  artifactSha256: string;
-  skillFile: string;
-  fileCount: number;
-  createdAt: string;
-};
+export type { SkillAssetRecord } from "../shared/contracts/skill-asset.js";
 
 function safeArchivePath(name: string): string {
   const normalized = name.replaceAll("\\", "/").replace(/^\.\//u, "");

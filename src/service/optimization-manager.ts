@@ -12,22 +12,14 @@ import type { EvalPackCatalog } from "./catalog.js";
 import { fingerprint } from '../contracts.js';
 import type { RunConfiguration } from './contracts.js';
 import type { PreparationStore } from './preparation-store.js';
+import type { Optimization } from '../shared/contracts/optimization.js';
+export type { Optimization } from '../shared/contracts/optimization.js';
 
 const proposalSchema = z.strictObject({
   summary: z.string().min(1).max(4000),
   findings: z.array(z.string().max(1500)).min(1).max(8),
   changes: z.array(z.strictObject({ path: z.string(), content: z.string().min(1).max(80000), reason: z.string().max(2000) })).min(1).max(6),
 });
-export type Optimization = {
-  optimizationId: string; sourceJobId: string; sourceAssetId: string; createdAt: string; updatedAt: string;
-  status: "diagnosing" | "validating" | "reevaluating" | "review" | "adopted" | "retained" | "failed" | "cancelled";
-  modelId: string; summary: string; findings: string[];
-  changes: Array<{ path: string; before: string; after: string; reason: string }>;
-  candidate: SkillAssetRecord | null; rerunJobId: string | null; error: string | null;
-  previousRerunJobIds?: string[];
-  stages: Array<{ stage: string; at: string }>;
-};
-
 export function optimizationRerunBindings(configuration:RunConfiguration, original:SkillAssetRecord, candidate:SkillAssetRecord) {
   if (!configuration.runtimeBindings) return {};
   const environmentId=configuration.runtimeBindings.right.environmentId;

@@ -1,7 +1,7 @@
 import {expect,it} from 'vitest';
-import {toProjectInspection} from '../src/service/migration-agent.js';
-import {buildMigrationPlan,stableToolId} from '../src/service/migration-model.js';
-import {analyzeDependencies} from '../src/service/migration-dependencies.js';
+import {toProjectInspection} from '../src/migration/infrastructure/migration-agent.js';
+import {buildMigrationPlan,stableToolId} from '../src/migration/domain/migration-model.js';
+import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 
 const source='Runtime harness provides read_file(path) for workspace files.\nBusiness lookup uses read_file to read a local report.\n';
 const files={'SKILL.md':source};

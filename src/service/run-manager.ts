@@ -4,13 +4,12 @@ import { evalCaseSchema, fingerprint } from "../contracts.js";
 import type { RuntimeAdapter } from "../adapters.js";
 import type { EvalPack } from "../contracts.js";
 import { DirectModelRuntimeAdapter } from "../direct-model-runtime.js";
-import { HttpRuntimeAdapter, type RuntimeEnvironmentDescriptor } from "../http-runtime.js";
+import type { RuntimeEnvironmentDescriptor } from "../http-runtime.js";
 import { DeterministicRubricJudge, ModelCandidateJudge, ModelPairwiseJudge, type PairwiseJudge } from "../judge.js";
 import { ReplayRuntimeAdapter } from "../replay.js";
 import { SideRuntimeAdapter } from '../side-runtime.js';
 import { EvaluationCancelledError, runEvaluation } from "../runner.js";
 import { configuredModelRole } from "./config.js";
-import { defaultOnlineExecutionModel } from "./execution-models.js";
 import { runConfigurationSchema, type EnvironmentRecord, type RunConfiguration } from "./contracts.js";
 import type { EvalPackCatalog } from "./catalog.js";
 import type { EnvironmentStore } from "./environment-store.js";
@@ -18,7 +17,7 @@ import { EvaluationJobStore, type EvaluationJob, type FrozenQuestionSet } from "
 import { generateRunQuestions } from "./run-questions.js";
 import type { PreparationStore } from "./preparation-store.js";
 import type { SkillStore } from "./skill-store.js";
-import { canonicalNeutralArchive, nativeTransportAllowed } from './neutral-archive.js';
+import { canonicalNeutralArchive } from './neutral-archive.js';
 import { CandidateAssessmentRuntimeAdapter } from '../candidate-assessment-runtime.js';
 import {ModelGoalJudge} from '../goal-judge.js';
 import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
@@ -176,8 +175,7 @@ export class EvaluationRunManager {
       selected.push(...holdout.map(item => evalCaseSchema.parse(item)));
     }
     const executionModel = configuration.executionModel
-      ?? (configuration.runtime.type === "runtime_http" ? await defaultOnlineExecutionModel()
-        : configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
+      ?? (configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
     return {
       ...pack,
       cases: selected,
@@ -237,8 +235,9 @@ export class EvaluationRunManager {
     if (configuration.runtimeBindings) {
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
-        const environment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
-        if (!environment || environment.type!=='runtime_launcher') throw new Error('迁移 Runtime Launcher 不可用');
+        const selectedEnvironment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
+        if (!selectedEnvironment) throw new Error('迁移执行环境不可用');
+        const environment=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
         const services=await Promise.all((configuration.runtimeMcpBindings?.[side]??[]).map(async service=>{
           const {environmentReference,...launch}=service;
           if(!environmentReference)return launch;
@@ -251,7 +250,7 @@ export class EvaluationRunManager {
         const executablePaths=[...new Set([...(configuration.runtimeCommandBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]),...services.flatMap(service=>service.filePaths)])];
         const resolveSkill = await this.skillResolver(binding.skillAssetId,true,true,executablePaths,true);
         const skill=await resolveSkill(pack.variants[side]);
-        const descriptor=await this.environmentDescriptor(environment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools);
+        const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,true);
         if(configuration.runtimeToolConfig){
           descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
         }
@@ -284,27 +283,24 @@ export class EvaluationRunManager {
       }
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
-    const environment = await this.options.environments.get(configuration.runtime.environmentId);
-    if (!environment || environment.type !== "runtime_http") {
-      throw new Error("所选的 Agent Runtime HTTP 环境不可用");
+    if(configuration.runtime.type==='runtime_launcher'){
+      const selectedEnvironment=await this.options.environments.get(configuration.runtime.environmentId);
+      if(!selectedEnvironment)throw new Error('所选执行环境不可用');
+      const launcher=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
+      const inspection=await this.options.environments.inspect(selectedEnvironment);
+      if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
+      const available=new Set(inspection.capabilities.models.map(model=>model.modelId));
+      for(const side of ['left','right'] as const)if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
+      const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(evalCase=>evalCase.requiredTools))],[],[],false,configuration.runtimeHarnessTools,true);
+      if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
+      const makeSide=async(side:'left'|'right')=>new RuntimeLauncherAdapter({
+        baseUrl:launcher.baseUrl,headers:this.options.environments.headers(launcher),side,
+        model:pack.models.execution[side],variant:pack.variants[side],skill:await resolveSkill(pack.variants[side]),
+        environment:structuredClone(descriptor),timeoutMs:configuration.timeoutMs,
+      });
+      return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
-    const descriptor = await this.environmentDescriptor(
-      environment,
-      [...new Set(pack.cases.flatMap(evalCase => evalCase.requiredTools))],
-      [],[],false,configuration.runtimeHarnessTools,
-    );
-    if(configuration.runtimeToolConfig){
-      if(!nativeTransportAllowed(environment.endpoint))throw new Error('执行上下文仅可发送至受信任的 Runtime');
-      descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
-    }
-    return new HttpRuntimeAdapter({
-      adapterId: `http-runtime:${environment.environmentId}`,
-      endpoint: environment.endpoint,
-      headers: this.options.environments.headers(environment),
-      environment: descriptor,
-      resolveSkill,
-      timeoutMs: configuration.timeoutMs,
-    });
+    throw new Error(`Unsupported runtime type: ${configuration.runtime satisfies never}`);
   }
 
   private async environmentDescriptor(
@@ -314,6 +310,7 @@ export class EvaluationRunManager {
     candidateMcpServices:NonNullable<RuntimeEnvironmentDescriptor['candidateMcpServices']>=[],
     exposeAllCandidateTools=false,
     harnessToolNames:NonNullable<RuntimeEnvironmentDescriptor['harnessToolNames']>=[],
+    inlineExternalSecrets=false,
   ): Promise<RuntimeEnvironmentDescriptor> {
     const candidateNames=new Set(candidateMcpServices.flatMap(service=>service.toolNames));
     const scriptNames=new Set(commandScripts.map(tool=>tool.name));
@@ -347,6 +344,7 @@ export class EvaluationRunManager {
         transport: "streamable_http" as const,
         toolNames,
         credentialEnv: environment.credentialEnv,
+        ...(inlineExternalSecrets?{secretHeaders:this.options.environments.headers(environment)}:{}),
       });
     }
     const selectedScripts=commandScripts.filter(tool=>exposeAllCandidateTools||requiredTools.includes(tool.name));
@@ -405,7 +403,9 @@ export class EvaluationRunManager {
             job.questionSet = await generateRunQuestions({
               pack, skill, adapter: analyzer.adapter, model: analyzer.model,
               count: job.configuration.generatedCaseCount, generationId: job.jobId,
-              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120_000)]),
+              // The Analyzer adapter owns its role-specific timeout. Keeping a second, shorter
+              // deadline here made slow-but-healthy models fail before that configured budget.
+              signal: controller.signal,
             });
           } catch (error) {
             controller.signal.throwIfAborted();

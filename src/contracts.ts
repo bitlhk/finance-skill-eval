@@ -47,6 +47,25 @@ export const rubricCriterionSchema = z.strictObject({
   improvementHint: z.string().min(1).optional(),
 });
 
+export const workspaceFileSchema = z.strictObject({
+  path: z.string().trim().min(1).max(240).refine(value => {
+    if (value.includes("\\") || value.includes("\0") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) return false;
+    return value.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
+  }, "工作区文件路径必须是安全的 POSIX 相对路径"),
+  content: z.string().max(256 * 1024),
+});
+
+export const workspaceFilesSchema = z.array(workspaceFileSchema).max(32).superRefine((files, context) => {
+  const paths = new Set<string>();
+  let bytes = 0;
+  files.forEach((file, index) => {
+    if (paths.has(file.path)) context.addIssue({ code: z.ZodIssueCode.custom, path: [index, "path"], message: "工作区文件路径不能重复" });
+    paths.add(file.path);
+    bytes += new TextEncoder().encode(file.content).byteLength;
+  });
+  if (bytes > 1024 * 1024) context.addIssue({ code: z.ZodIssueCode.custom, message: "单条测试用例的工作区文件总大小不能超过 1 MB" });
+});
+
 export const evalCaseSchema = z.strictObject({
   caseId: z.string().min(1),
   name: z.string().min(1),
@@ -54,6 +73,8 @@ export const evalCaseSchema = z.strictObject({
   prompt: z.string().min(1),
   evaluationGoal: z.string().min(1),
   requiredTools: z.array(z.string().min(1)).default([]),
+  /** Business fixtures mounted into an isolated workspace for this case only. */
+  workspaceFiles: workspaceFilesSchema.optional(),
   /** Availability and invocation are different: stop-early cases may forbid later tools. */
   toolExpectations:z.strictObject({mustSucceed:z.array(z.string().min(1)),mustNotCall:z.array(z.string().min(1)).default([])}).optional(),
   rubric: z.array(rubricCriterionSchema).min(1),
@@ -198,6 +219,7 @@ export type ModelRef = z.infer<typeof modelRefSchema>;
 export type SkillVariant = z.infer<typeof skillVariantSchema>;
 export type RubricCriterion = z.infer<typeof rubricCriterionSchema>;
 export type EvalCase = z.infer<typeof evalCaseSchema>;
+export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
 export type JudgeProfile = z.infer<typeof judgeProfileSchema>;
 export type EvalPackFile = z.infer<typeof evalPackFileSchema>;
 export type RuntimeExecutionEvidence = z.infer<typeof runtimeExecutionEvidenceSchema>;
@@ -234,6 +256,14 @@ export function stableJson(value: unknown): string {
 
 export function fingerprint(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+export function workspaceFilesDigest(files: readonly WorkspaceFile[]): string {
+  const hash = createHash("sha256");
+  for (const file of [...files].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)) {
+    hash.update(file.path, "utf8").update("\0").update(file.content, "utf8").update("\0");
+  }
+  return hash.digest("hex");
 }
 
 export type FrozenQuestionSet = {

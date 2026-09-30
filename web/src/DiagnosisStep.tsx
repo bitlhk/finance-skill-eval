@@ -1,7 +1,7 @@
 import {useEffect,useState} from 'react';
 import {AlertTriangle,CheckCircle2,FileText,Network,Settings2,Wrench} from 'lucide-react';
-import type {Dependency,DependencyAnalysis} from '../../src/service/migration-dependencies';
-import type {RuntimeHarnessCapability} from '../../src/service/migration-model';
+import type {Dependency,DependencyAnalysis} from '../../src/migration/domain/migration-dependency';
+import type {RuntimeHarnessCapability} from '../../src/migration/domain/migration-model';
 type RuntimeConfiguration={revision:number;dependencies:Array<{dependencyId:string;provided:boolean;valid:boolean}>;checks:Array<{id:string;toolId:string;kind:string;current:boolean;status:string;message:string;checkedAt:string}>};
 
 type Api=<T>(url:string,init?:RequestInit)=>Promise<T>;

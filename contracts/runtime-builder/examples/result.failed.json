@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "finance.runtime-build-result.v1",
+  "buildId": "build-example",
+  "requestId": "migration-example:revision-1",
+  "requirementsDigest": "0c1f44e5e7f70d9f24aea3cd00086ce527606e3cfe5871f81f6cb155935f1c5b",
+  "status": "FAILED",
+  "builder": {
+    "name": "example-builder",
+    "version": "1.0.0"
+  },
+  "artifact": null,
+  "runtime": {
+    "runtimeType": "openjiuwen",
+    "version": "1.0.0",
+    "protocols": {
+      "registration": "finance.skill-eval.runtime-capabilities.v2",
+      "instance": "finance.skill-eval.runtime-instance.v1",
+      "execution": "finance.skill-eval.runtime-case.v1"
+    },
+    "requiredConfiguration": [
+      {
+        "name": "DOCUMENT_ROOT",
+        "type": "string",
+        "required": true,
+        "sensitive": false
+      }
+    ]
+  },
+  "capabilityResults": [
+    {
+      "requirementId": "harness-1-read-document",
+      "status": "FAILED",
+      "verificationIds": [
+        "contract-read-document"
+      ]
+    }
+  ],
+  "verifications": [
+    {
+      "id": "contract-read-document",
+      "type": "CONTRACT_TEST",
+      "status": "FAILED",
+      "evidenceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "errors": [
+    {
+      "code": "VERIFICATION_FAILED",
+      "requirementId": "harness-1-read-document",
+      "message": "合同测试未通过",
+      "retryable": true
+    }
+  ],
+  "builtAt": "2026-09-29T12:00:00.000Z",
+  "resultDigest": "671a31032de1fefe6e40ad99d6eccd01e44dfba60bd9324dbe11a74def18271c"
+}

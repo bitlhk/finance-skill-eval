@@ -30,11 +30,13 @@
 | 文件 | 现状 |
 | --- | --- |
 | `integrations/openjiuwen/migrate_agent.py` | A4 agent：自装配工具集（读/写/搜 + 编译 + 契约测试），无通用 shell；交付代码、`start`/`prepare`、`changes`/`drift`、README |
-| `src/service/migration-agent.ts` | A2/A4 的进程边界：编码文件、跑 agent、把交付物映射成平台形状 |
-| `src/service/portable-candidate.ts` | **只放置**：按 agent 报告的真实路径落文件、保护路径不出包、冲突不静默覆盖、算 diff。**没有模板** |
-| `src/service/migration-code-generator.ts` | 回退路径，只剩 Script/Python 一条；遇到 MCP 直接 409 说清楚，不产出假的"服务" |
-| `src/service/migration-store.ts` | 分析/实现两个 agent seam；没有分析就 409，不会退回规则猜 |
-| `src/service/technical-validation.ts` | 本机技术验证（MCP preflight / Script LocalWorker）；命令按 **Skill 包自己的环境**拼 |
+| `src/migration/infrastructure/migration-agent-runner.ts` | A2/A4 的 Python 进程、超时、取消和 wire 协议边界 |
+| `src/migration/infrastructure/migration-agent-gateway.ts` | 将通用 runner 适配为 A2 分析与 A4 实现端口 |
+| `src/migration/infrastructure/migration-agent-result-mapper.ts` | 校验并把 Agent 交付物映射成平台领域形状 |
+| `src/migration/infrastructure/migration-candidate-packager.ts` | **只放置**：按 agent 报告的真实路径落文件、保护路径不出包、冲突不静默覆盖、算 diff。**没有模板** |
+| `src/migration/infrastructure/migration-code-generator.ts` | 回退路径，只剩 Script/Python 一条；遇到 MCP 直接 409 说清楚，不产出假的"服务" |
+| `src/migration/application/migration-generation-service.ts` | 候选生成用例编排；没有分析就 409，不会退回规则猜 |
+| `src/migration/application/migration-technical-validation-service.ts` | 本机技术验证用例（MCP preflight / Script LocalWorker） |
 
 ## 已经落下来的
 
@@ -116,7 +118,7 @@ A2 那边查出四个摩擦面（详见 [A2-inspection.md](A2-inspection.md#回�
 
 A2 明明读过这个文件，`coverageGaps` 也是空的。真因是**门槛的判据和扫描器的词汇表对不上**：
 扫描器对读过的文本文件给 `TEXT_INSPECTED`、对解析成功的 Python 给 `AST_PARSED`，
-而 `migration-agent.ts` 里的判据写的是 `/^(PARSED|OK)$/`——**扫描器从来不产出这两个值**。
+而旧结果映射里的判据写的是 `/^(PARSED|OK)$/`——**扫描器从来不产出这两个值**。
 于是每个文件都是"没读全"、每次分析都是 `PARTIAL`、每次生成都要人确认一个并不存在的缺口。
 
 **这份判据还有第二份副本**，在 `tool-inspector.ts`，写法是对的（`['AST_PARSED','TEXT_INSPECTED']`）。

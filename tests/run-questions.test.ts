@@ -57,7 +57,7 @@ describe("per-run AI questions", () => {
 
   it("rejects dynamic replay, holdout and preselected questions at the API contract", () => {
     for (const extra of [{ runtime: { type: "replay" } }, { includeHoldout: true }, { selectedCaseIds: ["fixed"] }, { judgeMode: "deterministic" }]) {
-      expect(runConfigurationSchema.safeParse({ packId: "test", runtime: { type: "runtime_http", environmentId: "env" }, judgeMode: "model", caseSource: "ai_generated", ...extra }).success).toBe(false);
+      expect(runConfigurationSchema.safeParse({ packId: "test", runtime: { type: "runtime_launcher", environmentId: "env" }, judgeMode: "model", caseSource: "ai_generated", ...extra }).success).toBe(false);
     }
   });
 
@@ -70,11 +70,15 @@ describe("per-run AI questions", () => {
     const manager = new EvaluationRunManager({ jobs, maxConcurrentRuns: 1,
       catalog: { get: () => structuredClone(pack) } as never, preparations: {} as never,
       skills: { list: async () => [asset], readSource: async () => skill.instructions, readFiles: async () => skill.files } as never,
-      environments: { get: async () => ({ environmentId: "env", type: "runtime_http", endpoint: "http://localhost/execute", mcpEnvironmentIds: [] }), headers: () => ({}) } as never,
+      environments: {
+        get: async () => ({ environmentId: "env", name:'Launcher', type: "runtime_launcher", runtimeType:'openjiuwen', baseUrl: "http://127.0.0.1:9000/", credentialEnv:null, createdAt:new Date().toISOString(),updatedAt:new Date().toISOString() }),
+        headers: () => ({}),
+        inspect:async()=>({status:'ready',elapsedMs:1,error:null,toolCount:0,tools:[],mcpServers:[],capabilities:{models:[{modelId:model.modelId}],defaultModelId:model.modelId}}),
+      } as never,
     });
     mocks.complete.mockResolvedValue({ modelId: "analyzer", content: JSON.stringify(example("dynamic-one")) });
     mocks.run.mockRejectedValueOnce(new Error("runtime unavailable")).mockImplementation(async ({ pack: resolved }) => ({ reportFingerprint: "old", cases: resolved.cases }));
-    const config = { packId: pack.packId, runtime: { type: "runtime_http", environmentId: "env" }, caseSource: "ai_generated", judgeMode: "model", executionModel: model };
+    const config = { packId: pack.packId, runtime: { type: "runtime_launcher", environmentId: "env" }, caseSource: "ai_generated", judgeMode: "model", executionModel: model };
     const first = await manager.create(config);
     await vi.waitFor(() => expect(jobs.get(first.jobId)?.status).toBe("failed"));
     const frozen = jobs.get(first.jobId)!.questionSet!;
