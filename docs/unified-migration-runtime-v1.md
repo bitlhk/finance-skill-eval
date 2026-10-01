@@ -80,11 +80,24 @@ requirements-to-result facade.
 Technical validation of generated tools has its own requirements gate and is not
 bypassed by the comparison feature.
 
-Issue 38 is not closed by accepting empty workspaceFiles. The Java hosts do not
-yet provide per-case nonempty workspace mounting; unsupported cases must fail
-explicitly. The complete requirements-to-result build facade remains a separate
-release gate. Existing approved banking tools do not require arbitrary MCP or
-script execution support.
+The two Java hosts now mount nonempty case files in isolated, bounded workspaces
+and expose the admitted read_case_file tool. Builder's requirements-to-result
+facade performs a real build and installation before returning a delivery.
+Eval then runs its own lifecycle admission using the actual candidate Skill.
+These implementations do not close Issue 38 without the remaining release gates.
+Existing approved banking tools do not require arbitrary MCP or script execution.
+
+The native binding path reuses operator-admitted tool contracts instead of
+generating MCP wrappers for existing tools. The source diagnosis, every declared
+tool, target catalog, input/output contract and constraints must agree. A missing
+implementation is not accepted by name alone. The candidate freezes the source
+digest and target contracts in references/finance-native-bindings.txt; this is a
+JSON-text reference, not executable code and not a formal publication.
+
+The prebuilt native-readonly-balance 1.0.2 sample has an explicit optional account
+selector contract and one fixed synthetic balance/file case. It does not make the
+other featured Wind, insurance or lending dependencies automatically available.
+Unsupported tools continue to block native evaluation with a missing-tool list.
 
 ## Single-admin deployment gate
 
@@ -97,7 +110,7 @@ workspaces. The gateway must overwrite identity headers from verified SSO state.
 Never populate this configuration using a client-supplied identity or automatically
 share the old migration workspace with all logged-in users.
 
-## Verification follow-up
+## Initial verification follow-up (historical)
 
 The isolated native probe passed with both history and model snapshots explicitly
 enabled, as required by the installed observation asset. It covered four cases
@@ -108,3 +121,33 @@ This does not establish live-model quality, nonempty case workspaces or public S
 acceptance. The migration browser fixture now returns the requested generation
 configuration and checks the current candidate-answer label; it remains a fixture,
 not native-Runtime or model-wire evidence.
+
+## 2026-10-01 candidate verification
+
+At Eval 0d9f5522, the complete suite passed 413 tests. Builder 5a094856 includes
+the latest finance branch and passed 266 final targeted tests; its prior full
+run passed 1896 tests with five explicit skips. Harness remains db8e79cf.
+All three revisions are candidates, not a claim that upstream merged them.
+
+The fixed prebuilt sample passed both native Java runtimes with a real model,
+synthetic facts, file content, installed versions and cleanup checked. Uploaded
+supported read-only Skill and actual Builder delivery/lifecycle admission also
+have separate successful evidence. Those runs are not combined into a fictitious
+single successful migration run.
+
+Real migration diagnosis, explicit binding, candidate import and dual execution
+were exercised. Runs r7-r9 exposed model-generated invalid optional arguments
+(including an empty accountId or an extra input wrapper), and did not pass the
+all-cases-completed acceptance. The rejected calls and cleanup remain evidence;
+no authorization, contract, qualification or scoring gate was disabled. A terminal
+Launcher failure now retains its normalized failure code instead of always being
+reported as missing SSE evidence. This is not a claim of stable answer quality.
+
+An independent release at 20261001-unified-0d9f5522 combines copies of the previous
+private Eval and migration data without overwriting collisions. Old immutable
+methods remain intact; the new Launcher uses a separately verified current-
+directory method anchor. Trusted-ingress permission checks passed 18 checks and
+the root UI passed desktop/390px checks. This simulates the trusted upstream hop,
+not an actual SSO login. Real administrator login and public cutover remain open.
+Candidate evidence lives in outputs/eval-unified-migration-runtime-v1 on the
+operator host. See STATUS.md there for the latest outcome and preserved failures.
