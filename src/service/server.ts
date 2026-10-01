@@ -171,19 +171,22 @@ export async function createEvaluationService(
   app.get("/api/catalog", async () => {
     const [uploadedSkills, savedEnvironments, savedPreparations] = await Promise.all([
       skills.list(),
-      environments.list(),
+      environments.list({includeArchived:true}),
       preparations.list(),
     ]);
-    const executionResources=savedEnvironments.filter(environment=>environment.type==='execution_environment');
+    const activeEnvironments=savedEnvironments.filter(environment=>!environment.archived);
+    const executionResources=activeEnvironments.filter(environment=>environment.type==='execution_environment');
     const referencedLaunchers=new Set(executionResources.map(environment=>environment.launcherEnvironmentId));
-    const selectableRuntimes=[...executionResources,...savedEnvironments.filter(environment=>environment.type==='runtime_launcher'&&!referencedLaunchers.has(environment.environmentId))];
+    const selectableRuntimes=[...executionResources,...activeEnvironments.filter(environment=>environment.type==='runtime_launcher'&&!referencedLaunchers.has(environment.environmentId))];
     const executionRuntimes=(await Promise.all(selectableRuntimes.map(async environment=>{
+      try {
       const resolved=await environments.resolveLauncher(environment);
       const inspection=await environments.inspect(environment);if(inspection.status!=='ready'||!inspection.capabilities)return null;
       const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
       return {runtimeId:environment.environmentId,launcherEnvironmentId:resolved.launcher.environmentId,name:environment.name,runtimeType:resolved.launcher.runtimeType,endpoint:resolved.launcher.baseUrl,
         mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,
         transport:'runtime_launcher' as const,defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
+      } catch { return null; }
     }))).filter(item=>item!==null);
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");

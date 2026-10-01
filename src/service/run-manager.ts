@@ -79,6 +79,12 @@ export class EvaluationRunManager {
 
   async create(input: unknown, frozenQuestions?: FrozenQuestionSet): Promise<EvaluationJob> {
     const configuration = runConfigurationSchema.parse(input);
+    const bindings=configuration.runtimeBindings;
+    const environmentIds=bindings
+      ? [...new Set((configuration.evaluationMode==='candidate_assessment'||configuration.evaluationMode==='service_comparison'
+          ? [bindings.right]:Object.values(bindings)).map(binding=>binding.environmentId))]
+      : configuration.runtime.type==='runtime_launcher'?[configuration.runtime.environmentId]:[];
+    for(const environmentId of environmentIds)await this.options.environments.requireAvailable(environmentId);
     const now = new Date().toISOString();
     const job: EvaluationJob = {
       schemaVersion: "finance.skill-eval.job.v1",
@@ -238,7 +244,7 @@ export class EvaluationRunManager {
         const binding = configuration.runtimeBindings![side];
         const selectedEnvironment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
         if (!selectedEnvironment) throw new Error('迁移执行环境不可用');
-        const environment=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
+        const environment=(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
         const services=await Promise.all((configuration.runtimeMcpBindings?.[side]??[]).map(async service=>{
           const {environmentReference,...launch}=service;
           if(!environmentReference)return launch;
@@ -285,9 +291,9 @@ export class EvaluationRunManager {
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
     if(configuration.runtime.type==='runtime_launcher'){
-      const selectedEnvironment=await this.options.environments.get(configuration.runtime.environmentId);
+      const selectedEnvironment=await this.options.environments.requireAvailable(configuration.runtime.environmentId);
       if(!selectedEnvironment)throw new Error('所选执行环境不可用');
-      const launcher=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
+      const launcher=(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
       const inspection=await this.options.environments.inspect(selectedEnvironment);
       if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
       const available=new Set(inspection.capabilities.models.map(model=>model.modelId));

@@ -44,11 +44,12 @@ it('uses grounded quotes from both sides, rejects fabricated or missing PASS evi
 });
 it('routes baseline calls to the original service and candidate calls only to the right Runtime',async()=>{
  const endpoint=await service((req,res)=>res.end('{"answer":"1000"}'));const sides:string[]=[];
- const manager=new EvaluationRunManager({environments:{headers:()=>({})},resolveMigrationRuntime:async()=>({environmentId:'right',type:'runtime_launcher',baseUrl:'http://127.0.0.1:1/',runtimeType:'openjiuwen'}),skills:{list:async()=>[{assetId:'candidate',skillId:'skill',version:'2',artifactSha256:'b'.repeat(64)}],readArchive:async()=>({'SKILL.md':Buffer.from('skill')}),readFiles:async()=>({}),readSource:async()=>'skill'}} as any);
+ const environment={environmentId:'right',type:'runtime_launcher',baseUrl:'http://127.0.0.1:1/',runtimeType:'openjiuwen',archived:false};
+ const manager=new EvaluationRunManager({environments:{headers:()=>({}),resolveLauncher:async(record:unknown)=>{expect(record).toEqual(environment);sides.push(environment.environmentId);return {launcher:environment,mcpEnvironmentIds:[],defaultModelId:null};}},resolveMigrationRuntime:async(id:string)=>{expect(id).toBe('right');return environment;},skills:{list:async()=>[{assetId:'candidate',skillId:'skill',version:'2',artifactSha256:'b'.repeat(64)}],readArchive:async()=>({'SKILL.md':Buffer.from('skill')}),readFiles:async()=>({}),readSource:async()=>'skill'}} as any);
  const configuration={evaluationMode:'service_comparison',runtimeBindings:{left:{environmentId:'unused',skillAssetId:'source'},right:{environmentId:'right',skillAssetId:'candidate'}},originalService:originalServiceSchema.parse({endpoint,requestTemplate:{task:'{{input}}'},responsePointer:'/answer'}),timeoutMs:10000};
  const pack={variants:{left:request.variant,right:{...request.variant,version:'2',artifactSha256:'b'.repeat(64)}},models:{execution:{left:model,right:model}},cases:[definition],metadata:{assessmentMode:'natural_language'}};
  const runtime=await (manager as any).runtimeFor(configuration,pack);
- const result=await runtime.execute(request);expect(result.output).toBe('1000');expect(runtime.adapterId).toContain('original-service');
+ const result=await runtime.execute(request);expect(result.output).toBe('1000');expect(runtime.adapterId).toContain('original-service');expect(sides).toEqual(['right']);
 });
 it('identifies the invalid quote on retry without accepting concatenated or rewritten evidence',async()=>{
  const requests:any[]=[];
