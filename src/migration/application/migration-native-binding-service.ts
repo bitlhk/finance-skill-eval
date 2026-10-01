@@ -69,7 +69,7 @@ export class MigrationNativeBindingService{
       files[entry]=strToU8(`---\n${YAML.stringify(metadata)}---\n${match?source.slice(match[0].length):source}`);
       const bindings:NativeSkillBindings={schemaVersion:'finance.native-skill-bindings.v1',sourceDigest:base.artifactSha256,
         targets:targets.map(t=>({environmentId:t.environmentId,runtime:t.catalog.runtime,catalogDigest:t.catalog.catalogDigest,artifactSha256:t.catalog.artifactSha256})),tools};
-      files['references/finance-native-bindings.json']=strToU8(JSON.stringify(bindings,null,2)+'\n');
+      files['references/finance-native-bindings.txt']=strToU8(JSON.stringify(bindings,null,2)+'\n');
       const checked=validateSkill(Object.fromEntries(Object.entries(files).map(([name,bytes])=>[name,Buffer.from(bytes).toString('utf8')])),'SKILL.md');
       if(checked.status!=='COMPLIANT')return conflict('候选仍有 Skill 规范错误，请修改源文件后重新绑定');
       const candidate=await this.skills.uploadZip(Buffer.from(zipSync(files)));

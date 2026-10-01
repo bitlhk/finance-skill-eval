@@ -53,7 +53,7 @@ it('binds explicit admitted contracts, freezes both targets and preserves source
     const archive=await f.app.inject({url:`/api/migrations/${p.id}/export`,headers:f.headers});
     expect(archive.statusCode).toBe(200);
     const files=unzipSync(archive.rawPayload);
-    const bindings=JSON.parse(Buffer.from(files['references/finance-native-bindings.json']!).toString());
+    const bindings=JSON.parse(Buffer.from(files['references/finance-native-bindings.txt']!).toString());
     expect(bindings.tools[0].contractDigest).toBe(canonicalSha256(catalog().contracts[0]!.contract));
     const report=(await f.app.inject({url:`/api/migrations/${p.id}/report`,headers:f.headers})).json();
     expect(report.workflow.stage).toBe('EVALUATE');expect(report.verification.targetExecution).toBe('NOT_RUN');

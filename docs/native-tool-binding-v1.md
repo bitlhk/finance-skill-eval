@@ -27,7 +27,7 @@ Launcher 的 `GET /v1/native-tool-catalog` 返回运营者准入的工具合同�
 - 只接收方法与声明文本，不执行上传代码。
 - 目录版本变化、候选变化、漏绑工具时重新核对，不继承旧验证结论。
 
-候选中的 `references/finance-native-bindings.json` 关联源摘要、两端目录及制品摘要、工具合同摘要。
+候选中的 `references/finance-native-bindings.txt` 关联源摘要、两端目录及制品摘要、工具合同摘要。
 生成候选不要求正式发布，但也不代表执行或专业质量已通过。实际运行由 Builder 再检查绑定、安装资格和授权。
 目录项的权限是要求，不是向用户授予权限。
 
