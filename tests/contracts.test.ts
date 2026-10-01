@@ -1,5 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {workspaceFilesSchema,workspaceFilesDigest} from '../src/contracts.js';
 import {
   evalPackFileSchema,
   fingerprint,
@@ -70,4 +71,10 @@ describe("Eval Pack contracts", () => {
   it("produces stable fingerprints independent of object key order", () => {
     expect(fingerprint({ a: 1, b: 2 })).toBe(fingerprint({ b: 2, a: 1 }));
   });
+});
+it('rejects NUL content that could alias another case file manifest digest',()=>{
+  const ambiguous=[{path:'a',content:'b\0c\0d'}];
+  expect(workspaceFilesSchema.safeParse(ambiguous).success).toBe(false);
+  expect(()=>workspaceFilesDigest(ambiguous)).toThrow();
+  expect(workspaceFilesSchema.safeParse([{path:'a',content:'b'},{path:'c',content:'d'}]).success).toBe(true);
 });

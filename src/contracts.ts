@@ -52,7 +52,7 @@ export const workspaceFileSchema = z.strictObject({
     if (value.includes("\\") || value.includes("\0") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) return false;
     return value.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
   }, "工作区文件路径必须是安全的 POSIX 相对路径"),
-  content: z.string().max(256 * 1024),
+  content: z.string().max(256 * 1024).refine(value => !value.includes("\0"), "案例文件只支持不含 NUL 的文本"),
 });
 
 export const workspaceFilesSchema = z.array(workspaceFileSchema).max(32).superRefine((files, context) => {
@@ -278,6 +278,7 @@ export function fingerprint(value: unknown): string {
 }
 
 export function workspaceFilesDigest(files: readonly WorkspaceFile[]): string {
+  workspaceFilesSchema.parse(files);
   const hash = createHash("sha256");
   for (const file of [...files].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)) {
     hash.update(file.path, "utf8").update("\0").update(file.content, "utf8").update("\0");
