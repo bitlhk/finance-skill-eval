@@ -143,6 +143,7 @@ export type Evidence = {
     artifactLockSha256?:string;runtimeLockSha256?:string;executionHistoryRequestId?:string;retainedEvidenceRef?:string|Record<string,string>;
     declaredModelParameters?:Record<string,unknown>;modelParametersBasis?:string;modelParametersVerified?:boolean;
     businessDate?:string;businessTimeZone?:string;publicationStatus?:string;isolationRestartMs?:number;
+    executionDisposition?:'NOT_EXECUTED';blockedByCaseId?:string;
   };
   side: "left" | "right";
   caseId: string;

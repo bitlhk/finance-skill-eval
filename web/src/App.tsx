@@ -879,7 +879,7 @@ function LiveEvidence({ job }: { job: EvaluationJob }) {
   return <div className="live-cases">{byCase.map(caseId => <div className="live-case" key={caseId}><h3>{caseId}</h3><div className="answer-grid">{(["left", "right"] as const).map(side => {
     const evidence = job.evidence.find(item => item.caseId === caseId && item.side === side);
     const live = job.live?.[`${caseId}:${side}`];
-    return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.metadata.executionDisposition === 'NOT_EXECUTED' ? '未执行' : evidence.status === "completed" ? "执行完成" : "执行失败" : live?.status ?? "等待执行"}</small>
+    return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.metadata?.executionDisposition === 'NOT_EXECUTED' ? '未执行' : evidence.status === "completed" ? "执行完成" : "执行失败" : live?.status ?? "等待执行"}</small>
       <div className="tool-events">{(evidence?.toolCalls ?? live?.toolCalls ?? []).map((tool,i) => <span key={`${tool.name}-${i}`} className={tool.status}>{tool.status === "running" ? <RefreshCw className="spin" size={12} /> : null}{tool.name} · {tool.status}</span>)}</div>
       <MarkdownContent streaming={!evidence && !TERMINAL.has(job.status)} content={evidence?.output || evidence?.error || live?.output || "等待模型输出"} />{evidence?<ExecutionIdentity evidence={evidence}/>:null}</article>;
   })}</div></div>)}</div>;
