@@ -94,7 +94,7 @@ implementation is not accepted by name alone. The candidate freezes the source
 digest and target contracts in references/finance-native-bindings.txt; this is a
 JSON-text reference, not executable code and not a formal publication.
 
-The prebuilt native-readonly-balance 1.0.2 sample has an explicit optional account
+The prebuilt native-readonly-balance 1.0.3 sample has an explicit optional account
 selector contract and one fixed synthetic balance/file case. It does not make the
 other featured Wind, insurance or lending dependencies automatically available.
 Unsupported tools continue to block native evaluation with a missing-tool list.
@@ -122,7 +122,52 @@ acceptance. The migration browser fixture now returns the requested generation
 configuration and checks the current candidate-answer label; it remains a fixture,
 not native-Runtime or model-wire evidence.
 
-## 2026-10-01 candidate verification
+## 2026-10-01 final closeout verification
+
+Runtime code: Eval 10d0ff84, Builder 2a17c78d, Harness db8e79cf. The Eval local
+suite passed 416 tests and type checking; Builder passed 1908 tests with five
+explicit skips. Fresh packaged-host qualification and controlled native delivery
+were rerun. These are candidate revisions, not deployed or merged versions.
+
+The latest evidence is kept under the operator's
+`outputs/eval-unified-migration-runtime-v1` directory:
+
+| Path | Scope and outcome |
+| --- | --- |
+| `case-live-browser-r2` | Uploaded supported read-only Skill: real model, four native executions, facts/files/Lock/history/cleanup passed. |
+| `prebuilt-live-r5` | Immutable sample 1.0.3: both native runtimes passed the fixed synthetic case through the browser. |
+| `migration-native-live-r12` | Same 1.0.3 source uploaded, analyzed, explicitly bound to both targets, migrated to an immutable temporary candidate, four real-model case executions and cleanup passed. No formal publication required. |
+| `candidate-delivery-live-r2` | Pinned staged release: both real builds SUCCEEDED and Eval lifecycle admission PASSED; owned instances reclaimed. |
+| `unified-candidate-ingress-20261001-unified-10d0ff84.json` | 18 trusted-ingress checks passed. This is NOT an actual SSO login. |
+
+The sample digest is
+`db573f2d2339caffeee32023440eacd853a075d28afd4b78f284eaad0a73943f`.
+The original upload and migrated candidate retain distinct digests; both Runtime
+targets install the same candidate within each comparison. Wire evidence records
+the real model, generation parameters and tool definitions. Test fixtures use
+synthetic banking data, not real customer accounts or funds. Professional answer
+quality and independent human use remain unassessed.
+
+Failures are retained: prebuilt r4 supplied an invalid model-generated `input`
+wrapper; migration r11 inferred an injection contract from Host authorization
+prose. The versioned sample clarifies direct tool arguments, and the analyzer now
+distinguishes referenced managed tools from migrating their implementation.
+Explicit runtime dependencies still block native binding. This does not guarantee
+all future model outputs or dependency analyses are correct.
+
+After an unverified execution failure, later cases on that Runtime are recorded as
+NOT_EXECUTED and are not quality-scored; no implicit replay or new instance is
+created. Host failures retain only allowlisted error classes. Background migration
+diagnostics are awaited on service close so test/data cleanup cannot race a final
+write.
+
+Release `20261001-unified-10d0ff84` is staged only. Real administrator SSO login,
+second-account browser denial, final data synchronization and public cutover are
+still required. Existing production services, data and Locks remain unchanged.
+Do not close Issue 38 or represent these isolated browser checks as public
+end-to-end acceptance.
+
+## Earlier 2026-10-01 candidate verification (historical)
 
 At Eval 0d9f5522, the complete suite passed 413 tests. Builder 5a094856 includes
 the latest finance branch and passed 266 final targeted tests; its prior full
