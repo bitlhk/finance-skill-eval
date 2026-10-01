@@ -76,7 +76,10 @@ try{
   }else{
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
   const upload=page.waitForResponse(response=>response.url().endsWith('/api/skills/upload')&&response.request().method()==='POST');
-  await page.locator('input[type=file]').setInputFiles({name:'controlled-method.zip',mimeType:'application/zip',buffer:Buffer.from(info.skill.archiveBase64,'base64')});
+  const archive=process.env.LAUNCHER_UPLOAD_SAMPLE==='true'
+    ?Buffer.from(zipSync({'SKILL.md':await readFile('examples/native-readonly-balance/SKILL.md')}))
+    :Buffer.from(info.skill.archiveBase64,'base64');
+  await page.locator('input[type=file]').setInputFiles({name:'controlled-method.zip',mimeType:'application/zip',buffer:archive});
   const uploaded=await upload;assert(uploaded.ok());asset=await uploaded.json();
   checks.push('Skill uploaded through browser, original ZIP bytes');
   }
