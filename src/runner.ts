@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EvaluationSide, RuntimeAdapter, RuntimeEvent } from "./adapters.js";
+import { RuntimeCaseNotExecutedError } from "./adapters.js";
 import type { EvalPack, RuntimeExecutionEvidence } from "./contracts.js";
 import type { PairwiseJudge } from "./judge.js";
 import { buildReport, type EvaluationReport } from "./report.js";
@@ -103,7 +104,9 @@ async function executeRuntime(input: {
       runtimeIdentityVerified: false,
       streamCompleted: false,
       error: error instanceof Error ? error.message : String(error),
-      metadata: {},
+      metadata: error instanceof RuntimeCaseNotExecutedError
+        ? {executionDisposition: 'NOT_EXECUTED', blockedByCaseId: error.failedCaseId}
+        : {},
     };
   }
 }

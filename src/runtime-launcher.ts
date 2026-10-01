@@ -1,5 +1,6 @@
 import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
+import { RuntimeCaseNotExecutedError } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
@@ -130,6 +131,8 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   private instance:InstanceState|null=null;
   private executeUrl:URL|null=null;
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
+  private failedCaseId:string|null=null;
+  private caseQueue:Promise<void>=Promise.resolve();
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
     skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean}){
     this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
@@ -169,6 +172,23 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     this.executeUrl=controlledUrl(this.options.baseUrl,this.instance.executeEndpoint);
   }
   async execute(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
+    const previous=this.caseQueue;
+    let release!:()=>void;
+    this.caseQueue=new Promise<void>(resolve=>{release=resolve;});
+    await previous;
+    try{
+      request.signal?.throwIfAborted();
+      if(this.failedCaseId)throw new RuntimeCaseNotExecutedError(this.failedCaseId);
+      try{return await this.executeCase(request);}
+      catch(error){
+        // An unverified outcome may have retired the instance. Never submit another
+        // case or automatically replay a possibly completed operation on this side.
+        this.failedCaseId=request.evalCase.caseId;
+        throw error;
+      }
+    }finally{release();}
+  }
+  private async executeCase(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
     if(!this.instance||!this.executeUrl)throw new Error('Runtime instance is not ready');
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
       headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[]}))});
