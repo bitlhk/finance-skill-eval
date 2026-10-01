@@ -101,6 +101,7 @@ export async function createEvaluationService(
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
+  app.addHook('onClose',async()=>{await diagnostics.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);

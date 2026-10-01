@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, it, expect } from 'vitest';
+import { afterEach, it, expect, vi } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
 import { MigrationDiagnostics } from '../src/migration/infrastructure/migration-diagnostics.js';
@@ -22,6 +22,23 @@ async function setup(extra:Record<string,string>={},role?:()=>ConfiguredModelRol
 it('does not report runtime coupling for a method-only package',async()=>{
   const {asset,diagnostics}=await setup();const d=await diagnostics.diagnose(asset);
   expect(d.dependencyStatus).toBe('NO_BINDING_IN_CHECKED_SCOPE');expect(d.findings).toEqual([]);expect(d.ai.status).toBe('NOT_CONFIGURED');
+});
+it('drains background diagnostics before close and rejects new work during shutdown',async()=>{
+  const {asset,diagnostics,skills,dir}=await setup();
+  let release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const readArchive=skills.readArchive.bind(skills);
+  const read=vi.spyOn(skills,'readArchive').mockImplementation(async id=>{await gate;return readArchive(id);});
+  const job=diagnostics.diagnose(asset);
+  await expect.poll(()=>read.mock.calls.length).toBe(1);
+  let closed=false;
+  const closing=diagnostics.close().then(()=>{closed=true;});
+  try{
+    await expect(diagnostics.diagnose(asset)).rejects.toThrow('DIAGNOSTICS_CLOSING');
+    expect(closed).toBe(false);
+  }finally{release();await job;await closing;}
+  expect(closed).toBe(true);
+  expect(JSON.parse(await readFile(path.join(dir,'migration-diagnostics',asset.artifactSha256+'.json'),'utf8')).ai.status).toBe('NOT_CONFIGURED');
 });
 it('ignores SDK names in comments and docstrings, resolves aliases in actual calls',async()=>{
   const {asset,diagnostics}=await setup({'helper.py':'# from agentscope.tool import ToolResponse\n"""ToolResponse()"""\nfrom agentscope.tool import ToolResponse as Reply\ndef f():\n    return Reply(content=[])\n'});

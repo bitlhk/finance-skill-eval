@@ -43,13 +43,21 @@ async function parsePython(root:string,files:Record<string,string>):Promise<Pick
 }
 
 export class MigrationDiagnostics implements MigrationDiagnosisPort {
+  private closing=false;
   private pending=new Map<string,Promise<Diagnosis>>();
   private explanations=new Map<string,Promise<void>>();
   private explanationTail:Promise<void>=Promise.resolve();
   constructor(private root:string,private data:string,private skills:MigrationSkillRepository,
     private model:()=>ConfiguredModelRole=()=>configuredModelRole('ANALYZER')){}
   private file(asset:SkillAssetRecord){return path.join(this.data,'migration-diagnostics',asset.artifactSha256+'.json');}
+  async close():Promise<void>{
+    this.closing=true;
+    // Project creation starts diagnostics in the background; shutdown must await its final writes.
+    await Promise.allSettled([...this.pending.values()]);
+    await Promise.allSettled([...this.explanations.values()]);
+  }
   async diagnose(asset:SkillAssetRecord,retry=false):Promise<Diagnosis>{
+    if(this.closing)throw new Error('DIAGNOSTICS_CLOSING');
     const inflight=this.pending.get(asset.artifactSha256);if(inflight)return inflight;
     const job=this.scan(asset,retry);this.pending.set(asset.artifactSha256,job);
     try{return await job;}finally{this.pending.delete(asset.artifactSha256);}
