@@ -5,6 +5,8 @@ import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {chromium,expect} from '@playwright/test';
 import {createEvaluationService} from '../dist/service/server.js';
+import {zipSync} from 'fflate';
+import {installNativeSample} from './install-native-sample.mjs';
 
 const info=JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_INFO,'utf8'));
 const output=path.resolve(process.env.LAUNCHER_UI_OUTPUT);
@@ -17,6 +19,8 @@ const modelFile=path.join(output,'models.json');
 await writeFile(modelFile,JSON.stringify({schemaVersion:'finance.skill-eval.execution-models.v1',defaultModelId:modelId,
   models:[{providerId:'managed-launcher',modelId,label:'Managed comparison model',availability:'ready',parameters:{temperature:0.25,top_p:0.8,max_tokens:1234}}]}));
 process.env.FINANCE_EVAL_EXECUTION_CATALOG=modelFile;
+const prebuilt=process.env.LAUNCHER_PREBUILT_FLOW==='true';
+const builtin=prebuilt?await installNativeSample(path.join(output,'data')):null;
 const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'data'),
   publicDirectory:path.resolve('web-dist'),accessToken:token,publicDemo:false});
 let browser,page;
@@ -40,21 +44,35 @@ try{
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button',{name:'进入工作区',exact:true}).click();
   let asset;
-  if(process.env.LAUNCHER_MIGRATION_FLOW==='true'){
+  if(prebuilt){
+    asset=builtin;
+    await page.locator('.skill-list-item').filter({has:page.getByRole('heading',{name:'账户余额核验',exact:true})}).getByRole('button',{name:'进入评测',exact:true}).click();
+    checks.push('Prebuilt immutable Skill was selected from the public catalog with its fixed evaluation pack');
+  }else if(process.env.LAUNCHER_MIGRATION_FLOW==='true'){
     await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
     await page.getByRole('button',{name:'新建迁移',exact:true}).click();
-    await page.locator('input[type=file][multiple]').setInputFiles({name:'native-method.zip',mimeType:'application/zip',buffer:Buffer.from(info.skill.archiveBase64,'base64')});
-    await expect(page.getByRole('button',{name:'确认方案，进入生成',exact:true})).toBeEnabled({timeout:600000});
+    const source=await readFile('examples/native-readonly-balance/SKILL.md');
+    const inspected=page.waitForResponse(response=>response.url().endsWith('/inspect')&&response.request().method()==='POST',{timeout:650000});
+    await page.locator('input[type=file][multiple]').setInputFiles({name:'native-method.zip',mimeType:'application/zip',buffer:Buffer.from(zipSync({'SKILL.md':source}))});
+    const diagnostic=await inspected;assert(diagnostic.ok(),JSON.stringify(await diagnostic.json()));
+    await expect(page.getByRole('heading',{name:'复用已准入工具',exact:true})).toBeVisible({timeout:600000});
     const projects=await api('/api/migrations');assert.equal(projects.length,1);
     await writeFile(path.join(output,'migration-before-generation.json'),JSON.stringify(await api(`/api/migrations/${projects[0].id}/report`),null,2));
-    await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();
-    const generating=page.waitForResponse(response=>response.url().endsWith('/generate')&&response.request().method()==='POST',{timeout:600000});
-    await page.getByRole('button',{name:'开始生成',exact:true}).click();
+    const binding=page.locator('section').filter({has:page.getByRole('heading',{name:'复用已准入工具',exact:true})}).last();
+    await binding.getByLabel('OpenJiuwen Java',{exact:true}).check();
+    await binding.getByLabel('AgentScope Java',{exact:true}).check();
+    await binding.getByRole('button',{name:'检查已准入合同',exact:true}).click();
+    await binding.getByLabel('已核对工具合同和用途；绑定不代表候选已执行通过').check();
+    await page.screenshot({path:path.join(output,'migration-native-binding.png'),fullPage:true});
+    const generating=page.waitForResponse(response=>response.url().endsWith('/native-candidate')&&response.request().method()==='POST',{timeout:600000});
+    await binding.getByRole('button',{name:'绑定并生成候选',exact:true}).click();
     const response=await generating;const generated=await response.json();
     await writeFile(path.join(output,'migration-generated.json'),JSON.stringify(generated,null,2));
     assert(response.ok(),JSON.stringify(generated));assert(generated.candidate);
     asset=generated.candidate;
-    checks.push('Browser uploaded, analyzed and generated a migration candidate; no formal publication');
+    assert.equal(generated.nativeBindings.bindings.targets.length,2);
+    assert.equal(generated.nativeBindings.candidateDigest,asset.artifactSha256);
+    checks.push('Browser uploaded, analyzed and explicitly bound admitted contracts for both runtimes; immutable candidate, no formal publication');
   }else{
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
   const upload=page.waitForResponse(response=>response.url().endsWith('/api/skills/upload')&&response.request().method()==='POST');
@@ -66,10 +84,12 @@ try{
     requiredTools:['account_balance_query',...(caseFiles?['read_case_file']:[])],
     ...(caseFiles?{workspaceFiles:[{path:'case.txt',content:`BROWSER_CASE_FILE_${index+1}`}]}:{}),
     rubric:[{criterionId:'balance-facts',label:'Balance facts',description:'Synthetic balance returned',dimension:'business_completeness',weight:1,anyOf:['(?<![\\d,])12,?345\\.67(?!\\d)']}]}));
-  await api(`/api/skills/${asset.assetId}/prepare/manual`,{summary:'Fixed repeated read-only cases; synthetic data, not human quality acceptance',cases});
-  await page.reload();
-  await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
-  await page.getByRole('button',{name:'进入评测',exact:true}).click();
+  if(!prebuilt){
+    await api(`/api/skills/${asset.assetId}/prepare/manual`,{summary:'Fixed repeated read-only cases; synthetic data, not human quality acceptance',cases});
+    await page.reload();
+    await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
+    await page.locator(`#asset-${asset.assetId}`).getByRole('button',{name:'进入评测',exact:true}).click();
+  }
   await page.getByRole('combobox',{name:/^执行方式/}).selectOption('dual_runtime');
   await page.getByRole('combobox',{name:/^对照组 Runtime/}).selectOption(environments[0].environmentId);
   await page.getByRole('combobox',{name:/^目标组 Runtime/}).selectOption(environments[1].environmentId);
@@ -90,7 +110,7 @@ try{
   do{job=await api(`/api/runs/${created.jobId}`);if(['completed','failed','cancelled','interrupted'].includes(job.status))break;await new Promise(resolve=>setTimeout(resolve,1000));}while(Date.now()<deadline);
   await writeFile(path.join(output,'job.json'),JSON.stringify(job,null,2),{mode:0o600});
   assert.equal(job.status,'completed',JSON.stringify(job.error));
-  assert.equal(job.evidence.length,4);
+  assert.equal(job.evidence.length,prebuilt?2:4);
   for(const row of job.evidence){
     assert.equal(row.status,'completed');assert.equal(row.runtimeIdentityVerified,true);
     assert(row.toolCalls.some(call=>call.name==='account_balance_query'&&call.status==='completed'));
@@ -104,8 +124,8 @@ try{
     assert.deepEqual(row.metadata.declaredModelParameters,{temperature:0.25,top_p:0.8,max_tokens:1234});
   }
   assert.equal(new Set(job.evidence.map(row=>row.metadata.loadedSkillDigest)).size,1);
-  assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,4);
-  checks.push('Both native runtimes returned real tool/Lock/history evidence and four distinct sessions');
+  assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,job.evidence.length);
+  checks.push('Both native runtimes returned tool/Lock/history evidence and a fresh session for every case');
   if(process.env.LAUNCHER_ASSERT_FACTS==='true'){
     for(const item of job.report.cases){
       assert.equal(item.judgeError,null);

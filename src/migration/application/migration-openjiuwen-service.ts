@@ -29,8 +29,9 @@ export class MigrationOpenJiuwenService {
 
   async validate(id:string,input:unknown) {
     const value=await this.projects.get(id),state=await this.technicalValidation.currentState(value);
-    if(value.inspection?.skill.status!=='COMPLIANT')return conflict('Runtime 验证被阻止：当前 Skill 尚未通过企业规范检查');
-    if(!state.ready)return conflict(`Runtime 验证被阻止：${state.reasons.join('；')}`);
+    const native=value.nativeBindings?.candidateDigest===value.candidate?.artifactSha256?value.nativeBindings:undefined;
+    if(!native&&value.inspection?.skill.status!=='COMPLIANT')return conflict('Runtime 验证被阻止：当前 Skill 尚未通过企业规范检查');
+    if(!native&&!state.ready)return conflict(`Runtime 验证被阻止：${state.reasons.join('；')}`);
     const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string};runtimeBindings?:{left?:{environmentId?:string};right?:{environmentId?:string}}}};
     const selectedRuntime=body?.configuration?.runtime;
     if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('Runtime 验证必须选择 Runtime Launcher');
@@ -40,7 +41,15 @@ export class MigrationOpenJiuwenService {
     for(const id of ids){
       const resolved=await resolveManagedMigrationEnvironment(this.environments,id);
       if(!resolved)return conflict('目标必须是使用 OpenJiuwen 或 AgentScope Runtime Launcher 的执行环境');
-      if(await unresolvedMigrationRuntimeRequirements(value,this.environments,resolved))return conflict('检测到 Runtime 能力缺口；请先由外部 Runtime Builder 构建并接入支持该能力的 Runtime，再执行对比评测');
+      if(native){
+        const frozen=native.bindings.targets.find(t=>t.environmentId===id);
+        if(!frozen||!this.environments?.nativeToolCatalog)return conflict('此候选未绑定所选原生 Runtime');
+        const current=await this.environments.nativeToolCatalog(id);
+        if(current.catalog.catalogDigest!==frozen.catalogDigest)return conflict('已准入工具目录已变化，请重新绑定候选');
+      }
+      // Native binding has checked every declared Runtime tool against the operator-admitted catalog.
+      // Other candidates still require the separate Builder delivery acceptance path.
+      if(!native&&await unresolvedMigrationRuntimeRequirements(value,this.environments,resolved))return conflict('检测到 Runtime 能力缺口；请先由外部 Runtime Builder 构建并接入支持该能力的 Runtime，再执行对比评测');
     }
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)

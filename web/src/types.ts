@@ -100,7 +100,7 @@ export type EnvironmentInspection = {
     toolNames: string[];
     error: string | null;
   }>;
-  capabilities?:{runtime:{type:string;version:string};models:Array<{modelId:string;upstreamModelId:string;label?:string}>;defaultModelId:string;features:Record<string,boolean>;limits:Record<string,number>};
+  capabilities?:import('../../src/shared/contracts/runtime-launcher').RuntimeLauncherCapabilities;
 };
 
 export type MigrationRuntime = {

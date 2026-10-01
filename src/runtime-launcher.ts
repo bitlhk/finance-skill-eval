@@ -62,7 +62,7 @@ function extractSecrets(source:RuntimeEnvironmentDescriptor,provided:RuntimeInst
 }
 async function responseError(response:Response):Promise<Error>{const raw=await response.text();return new Error(`Runtime Launcher HTTP ${response.status}: ${raw.slice(0,400)}`);}
 function serializedBytes(value:unknown):number{return new TextEncoder().encode(JSON.stringify(value)).byteLength;}
-async function readBoundedJson(response:Response,limit:number,label:string):Promise<unknown>{
+export async function readBoundedJson(response:Response,limit:number,label:string):Promise<unknown>{
   if(!response.body)throw new Error(`${label} response body is empty`);
   const declared=Number(response.headers.get('content-length'));
   if(Number.isFinite(declared)&&declared>limit)throw new Error(`${label} exceeds ${limit} bytes`);

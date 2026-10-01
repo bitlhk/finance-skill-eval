@@ -41,6 +41,7 @@ export class MigrationStore {
   async openJiuwenValidations(id:string){return this.services.openJiuwenService.validations(id);}
   async generate(id:string,input:unknown){return this.services.generationService.generate(id,input);}
   async candidate(id:string,input:unknown) {return this.services.candidateService.import(id,input);}
+  async nativeCandidate(id:string,input:unknown,targets:import('../shared/contracts/native-tool-catalog.js').NativeBindingTarget[]){return this.services.nativeBindingService.bind(id,input,targets);}
   async draft(id:string,input:unknown) {return this.services.candidateService.saveDraft(id,input);}
   async analyze(id:string) {return this.services.candidateService.analyze(id);}
   async review(id:string,input:unknown){return this.services.candidateService.review(id,input);}
@@ -52,5 +53,6 @@ export class MigrationStore {
   async validate(id:string,input:unknown) {return this.services.evaluationService.validate(id,input);}
   async report(id:string) {return this.services.reportService.report(id);}
   async exportCandidate(id:string) {return this.services.exportService.exportCandidate(id);}
+  async conformanceCandidate(id:string) {return this.services.exportService.conformanceCandidate(id);}
   release():never {return conflict('发布已阻止：原环境基线、目标 Host 接入、依赖验证与独立业务验收都还没有验证');}
 }

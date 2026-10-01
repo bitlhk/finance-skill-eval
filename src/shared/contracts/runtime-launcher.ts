@@ -35,6 +35,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   models: z.array(publicModelSchema).min(1),
   defaultModelId: z.string().min(1),
   nativeToolNames: z.array(z.string().min(1)).optional(),
+  auxiliaryToolNames: z.array(z.string().min(1)).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
   features: z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
@@ -43,6 +44,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   limits: z.strictObject({
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),
     maxTimeoutMs: z.number().int().positive(), maxConcurrentInstances: z.number().int().positive(),
+    minPrimaryTools:z.number().int().nonnegative().optional(),
   }),
 }).superRefine((value, context) => {
   if (!value.models.some(model => model.modelId === value.defaultModelId)) {
@@ -86,4 +88,3 @@ export function validateRuntimeLauncherDelivery(descriptorInput: unknown, capabi
   if (!capabilities.observability) issues.push("OBSERVABILITY_NOT_DECLARED");
   return issues;
 }
-

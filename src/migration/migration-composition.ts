@@ -3,6 +3,7 @@ import {FileExecutionConfigurationRepository} from '../execution-configuration/f
 import type {MigrationAnalyzer,MigrationImplementer} from './application/migration-agent-port.js';
 import {MigrationCandidateInspectionService} from './application/migration-candidate-inspection-service.js';
 import {MigrationCandidateService} from './application/migration-candidate-service.js';
+import {MigrationNativeBindingService} from './application/migration-native-binding-service.js';
 import type {MigrationDiagnosisPort} from './application/migration-diagnosis-port.js';
 import type {MigrationEnvironmentRepository} from './application/migration-environment-repository.js';
 import type {MigrationEvalPackCatalog} from './application/migration-eval-pack-catalog.js';
@@ -90,6 +91,7 @@ export function createMigrationServices(options:MigrationCompositionOptions){
     supplementService:new MigrationSupplementService(projects,supplements),
     suiteService:new MigrationSuiteService(projects,skills,analyzer,suiteGenerator,agentResults,preparations),
     candidateService:new MigrationCandidateService(projects,skills,diagnostics),
+    nativeBindingService:new MigrationNativeBindingService(projects,skills),
     generationService:new MigrationGenerationService(projects,skills,supplements,new PortableCandidatePackager(),implementationService,new MigrationCandidateInspectionService(diagnostics)),
     technicalValidation,
     evaluationService,

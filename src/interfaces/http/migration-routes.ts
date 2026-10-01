@@ -41,6 +41,22 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
     return skills.uploadMigrationZip(request.body);
   });
   app.post("/api/migrations", request => migrations.create(request.body));
+  app.get<{Params:{id:string};Querystring:{environmentId:string}}>("/api/migrations/:id/native-tools",async request=>{
+    await migrations.get(request.params.id);
+    const query=z.strictObject({environmentId:z.string().min(1)}).parse(request.query);
+    return environments.nativeToolCatalog(query.environmentId);
+  });
+  app.post<{Params:{id:string}}>("/api/migrations/:id/native-candidate",async request=>{
+    const body=z.strictObject({baseAssetId:z.string().min(1),tools:z.array(z.string()),acknowledgeContracts:z.literal(true),
+      targets:z.array(z.strictObject({environmentId:z.string().min(1),catalogDigest:z.string().regex(/^[a-f0-9]{64}$/u)})).min(1).max(2)}).parse(request.body);
+    const targets=[];
+    for(const target of body.targets){
+      const current=await environments.nativeToolCatalog(target.environmentId);
+      if(current.catalog.catalogDigest!==target.catalogDigest)throw Object.assign(new Error('工具目录已变化，请重新查看合同后确认'),{statusCode:409});
+      targets.push(current);
+    }
+    return migrations.nativeCandidate(request.params.id,{baseAssetId:body.baseAssetId,tools:body.tools,acknowledgeContracts:body.acknowledgeContracts},targets);
+  });
   app.get<{ Params: { id: string } }>("/api/migrations/:id", request => migrations.get(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/analyze", request => migrations.analyze(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/diagnose", request => migrations.diagnose(request.params.id, true));

@@ -3,6 +3,7 @@ import type { EnvironmentRecord } from '../../shared/contracts/environment.js';
 export interface MigrationEnvironmentRepository {
   get(environmentId:string):Promise<EnvironmentRecord|null>;
   preflight?(record:EnvironmentRecord):Promise<{status:string;capabilities?:{runtime:{type:string;version:string}}}>;
+  nativeToolCatalog?(environmentId:string):Promise<import('../../shared/contracts/native-tool-catalog.js').NativeBindingTarget>;
 }
 
 export async function resolveManagedMigrationEnvironment(

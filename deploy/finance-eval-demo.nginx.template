@@ -11,7 +11,7 @@ server {
     ssl_certificate /etc/nginx/ssl/demo/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/demo/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
-    client_max_body_size 64k;
+    client_max_body_size 8m;
 
     location = /__auth_check {
         internal;

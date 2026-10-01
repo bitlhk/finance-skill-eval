@@ -99,6 +99,7 @@ export type MigrationProject = {
     runtimeConfigurationDigest?: string;
   }>;
   assessment: "NOT_VALIDATED";
+  nativeBindings?:{candidateDigest:string;bindings:import('../../shared/contracts/native-tool-catalog.js').NativeSkillBindings;recordedAt:string};
   runtimeDelivery?: RuntimeLauncherBinding;
   runtimeDeliveries?: Record<string, RuntimeLauncherBinding>;
   reviews?: Array<{

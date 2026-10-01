@@ -38,6 +38,10 @@ type WorkflowEvidence = {
  * mutable "current step": refreshing the page must reconstruct the same workflow state.
  */
 export function migrationWorkflow(project: MigrationProject, evidence: WorkflowEvidence): MigrationWorkflow {
+  if(project.candidate&&project.nativeBindings?.candidateDigest===project.candidate.artifactSha256){
+    return {stage:evidence.evaluationCompleted?'EXPORT':'EVALUATE',furthestStage:evidence.evaluationCompleted?6:5,
+      allowedActions:['EVALUATE','EXPORT'],blockers:evidence.evaluationCompleted?[]:['已绑定准入工具；本候选尚需实际执行与业务效果验证']};
+  }
   if (!project.inspection) {
     return { stage: 'DIAGNOSE', furthestStage: 1, allowedActions: ['INSPECT'], blockers: ['尚未完成 Skill 与 Tool 检查'] };
   }

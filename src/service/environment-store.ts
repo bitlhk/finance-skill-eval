@@ -11,6 +11,10 @@ import {
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
 import { RuntimeLauncherAdapter, runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
 import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult } from '../shared/contracts/runtime-builder.js';
+import {nativeToolCatalogSchema} from '../shared/contracts/native-tool-catalog.js';
+import {readBoundedJson} from '../runtime-launcher.js';
+import type {ResolvedSkillSource} from '../direct-model-runtime.js';
+import type {SkillVariant} from '../contracts.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if(record.type==='execution_environment')return {};
@@ -29,6 +33,18 @@ export class EnvironmentStore {
 
   async initialize(): Promise<void> {
     await ensureDirectory(this.directory);
+  }
+
+  async nativeToolCatalog(environmentId:string){
+    const record=await this.get(environmentId);
+    if(record?.type!=='runtime_launcher')throw Object.assign(new Error('请选择已登记的原生 Runtime Launcher'),{statusCode:409});
+    const response=await fetch(new URL('v1/native-tool-catalog',record.baseUrl),{
+      headers:headersFor(record),redirect:'error',signal:AbortSignal.timeout(10000),
+    });
+    if(!response.ok)throw Object.assign(new Error('此环境尚未配置已准入工具合同目录'),{statusCode:409});
+    const catalog=nativeToolCatalogSchema.parse(await readBoundedJson(response,1_048_576,'Native tool catalog'));
+    if(catalog.runtime.type!==record.runtimeType)throw Object.assign(new Error('工具目录与登记的 Runtime 不一致'),{statusCode:409});
+    return {environmentId,catalog};
   }
 
   async list(): Promise<EnvironmentRecord[]> {
@@ -72,7 +88,8 @@ export class EnvironmentStore {
     });
   }
 
-  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string}):Promise<{
+  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string;
+    conformance?:{skill:ResolvedSkillSource;requiredTools:string[]}}):Promise<{
     environment:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;capabilities:RuntimeLauncherCapabilities;created:boolean;
   }>{
     const requirements=runtimeBuildRequirementsSchema.parse(input.requirements);
@@ -112,13 +129,19 @@ export class EnvironmentStore {
     if(issues.length)throw Object.assign(new Error(`Builder 交付未通过验收: ${issues.join(', ')}`),{statusCode:400,issues});
     const headers:Record<string,string>=authorization?{authorization}:{};
     const model=capabilities.models.find(item=>item.modelId===capabilities.defaultModelId)!;
+    const skill=input.conformance?.skill??null;
+    const variant:SkillVariant=skill?{mode:'skill_version',skillId:skill.skillId,version:skill.version,artifactSha256:skill.artifactSha256}
+      :{mode:'without_target_skill',skillId:'finance-eval-conformance'};
+    const requiredTools=input.conformance?.requiredTools??[];
+    const probeFiles=!skill||requiredTools.includes('read_case_file');
     const adapter=new RuntimeLauncherAdapter({baseUrl:launcher.baseUrl,headers,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},
-      variant:{mode:'without_target_skill',skillId:'finance-eval-conformance'},skill:null,environment:{environmentId:`conformance-${launcher.deploymentId}`},configuration:{conformance:'finance.runtime-launcher.v1'},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,60_000),requireStatusPoll:true});
+      variant,skill,environment:{environmentId:`conformance-${launcher.deploymentId}`,requiredToolNames:requiredTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
     const probeId=`conformance-${randomUUID()}`;
     try{
       await adapter.prepare({runId:probeId});
-      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant:{mode:'without_target_skill',skillId:'finance-eval-conformance'},evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:'Read the mounted probe file and return CONFORMANCE_OK.',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools:[],workspaceFiles:[{path:'conformance/probe.txt',content:'CONFORMANCE_OK'}],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:'Launcher completed the isolated lifecycle.',dimension:'business_completeness',weight:1,required:true,allOf:['CONFORMANCE_OK'],anyOf:[],noneOf:[]}]}});
+      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant,evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:probeFiles?'仅核验案例文件：读取 conformance/probe.txt 并返回其内容。不要办理业务。':'这是生命周期连通检查，请只回复 CONFORMANCE_OK，不调用业务工具。',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools,workspaceFiles:probeFiles?[{path:'conformance/probe.txt',content:'CONFORMANCE_OK'}]:[],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:'Launcher completed the isolated lifecycle.',dimension:'business_completeness',weight:1,required:true,allOf:['CONFORMANCE_OK'],anyOf:[],noneOf:[]}]}});
       if(evidence.status!=='completed'||!evidence.runtimeIdentityVerified||!evidence.streamCompleted||!evidence.output.includes('CONFORMANCE_OK'))throw new Error(evidence.error??'Launcher conformance execution did not complete with the mounted probe data');
+      if(skill&&probeFiles&&!evidence.toolCalls.some(call=>call.name==='read_case_file'&&call.status==='completed'))throw new Error('Lifecycle probe did not execute the declared file tool');
     }catch(error){conformanceError=error instanceof Error?error:new Error(String(error));}
     try{await adapter.cleanup();}catch(error){conformanceError=new Error(`${conformanceError?`${conformanceError.message}; `:''}实例清理失败: ${error instanceof Error?error.message:String(error)}`);}
     if(conformanceError)throw Object.assign(new Error(`Launcher 生命周期验收失败: ${conformanceError.message}`),{statusCode:400});

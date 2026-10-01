@@ -1,5 +1,6 @@
 import { api } from "./api-client";
 import {selectedVersion,versionSelectionKey} from './skill-version-selection';
+import {launcherCompatibility} from './launcher-compatibility';
 import { EnvironmentView } from "./features/environments/EnvironmentView";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { accessToken, apiPath, basePath, tokenKey, downloadApi } from './api-path';
@@ -192,6 +193,8 @@ export function App() {
     : null;
   const preparationRequiresTools = selectedPreparation?.cases.some(item => item.requiredTools.length > 0) ?? false;
   const selectedFeaturedSkill = catalog?.featuredSkills.find(item => item.skillId === selectedSkillId) ?? null;
+  const requiredLauncherTools=[...new Set([...(selectedPack?selectedFeaturedSkill?.requiredTools??[]:[]),...cases.filter(c=>selectedCases.includes(c.caseId)).flatMap(c=>c.requiredTools)])].sort();
+  const requiredLauncherToolsKey=JSON.stringify(requiredLauncherTools);
   const targetSkillId = selectedPack?.targetSkillId ?? selectedPreparation?.skillId ?? selectedSkillId;
   const packVersionOptions = selectedFeaturedSkill?.versions.map(item => ({
     version: item.version,
@@ -266,6 +269,10 @@ export function App() {
     setEnvironmentInspection(null);
     try {
       const inspection=await api<EnvironmentInspection>(`/api/environments/${environmentId}/preflight`, { method: "POST" });
+      if(inspection.status==='ready'&&inspection.capabilities){
+        const issues=launcherCompatibility(inspection.capabilities,requiredLauncherTools);
+        if(issues.length){inspection.status='failed';inspection.error=issues.join('；');}
+      }
       if(sequence===inspectionSequence.current) setEnvironmentInspection(inspection);
     } catch (cause) {
       if(sequence!==inspectionSequence.current) return;
@@ -288,7 +295,7 @@ export function App() {
       return;
     }
     void inspectEnvironment(runtimeEnvironmentId);
-  }, [runtime, runtimeEnvironmentId, selection]);
+  }, [runtime, runtimeEnvironmentId, selection, requiredLauncherToolsKey]);
 
   useEffect(()=>{
     let current=true;
@@ -296,11 +303,14 @@ export function App() {
     if(runtime!=="dual_runtime"||!launcherPair.left||!launcherPair.right){setLauncherStatus("请选择两个评测环境");return;}
     setLauncherStatus("正在核对两侧环境");
     Promise.all([launcherPair.left,launcherPair.right].map(id=>api<EnvironmentInspection>(`/api/environments/${id}/preflight`,{method:"POST"})))
-      .then(results=>{if(!current)return;const ready=results.every(result=>result.status==="ready");setLauncherReady(ready);
+      .then(results=>{if(!current)return;for(const result of results){if(result.status==='ready'){
+        const issues=launcherCompatibility(result.capabilities,requiredLauncherTools);
+        if(issues.length){result.status='failed';result.error=issues.join('；');}
+      }}const ready=results.every(result=>result.status==="ready");setLauncherReady(ready);
         setLauncherStatus(ready?results.map(result=>`${result.capabilities?.runtime.type??"未知"} ${result.capabilities?.runtime.version??""}`).join(" / "):results.filter(result=>result.status!=="ready").map(result=>result.error||"预检失败").join("；"));})
       .catch(cause=>{if(current)setLauncherStatus(String(cause));});
     return ()=>{current=false;};
-  },[runtime,launcherPair.left,launcherPair.right]);
+  },[runtime,launcherPair.left,launcherPair.right,requiredLauncherToolsKey]);
 
   useEffect(()=>{
     if(runtime!=="dual_runtime"||!catalog)return;
