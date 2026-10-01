@@ -229,6 +229,16 @@ try{
   }
 
   await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();
+  await expect(page.getByLabel('Builder Result JSON')).toBeVisible();
+  for(const [target,label] of [['agentscope','AgentScope Java'],['openjiuwen','OpenJiuwen Java']]){
+    await page.getByLabel('交付目标',{exact:true}).selectOption(target);
+    const requested=page.waitForRequest(request=>request.url().includes('/runtime-requirements.yaml?'));
+    await page.getByRole('button',{name:`下载 ${label} 需求 YAML`,exact:true}).click();
+    assert.equal(new URL((await requested).url()).searchParams.get('runtimeType'),target);
+  }
+  // This fixture has no Runtime extension requirements: exports may be rejected.
+  // This check proves browser target selection, not a successful Builder delivery.
+  pass('runtime_import_remains_visible_and_download_targets_are_explicit');
   await page.locator('.stage-actions').getByRole('button',{name:'验证能否运行',exact:true}).click();
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
   await scriptCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
