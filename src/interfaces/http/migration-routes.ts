@@ -48,15 +48,21 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{ Params: { id: string } }>("/api/migrations/:id/inspect", request => migrations.inspect(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/inspect/source", request => migrations.inspect(request.params.id, true));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-configuration", request => migrations.runtimeConfiguration(request.params.id));
-  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => migrations.runtimeRequirements(request.params.id));
+  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => {
+    const query=z.strictObject({runtimeType:z.enum(['openjiuwen','agentscope']).optional()}).parse(request.query);
+    return migrations.runtimeRequirements(request.params.id,query.runtimeType);
+  });
   app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-deliveries", async request => {
     const body=z.strictObject({result:z.unknown(),trustReference:z.string().regex(/^[a-z0-9-]+$/u),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
     return runtimeDeliveries.acceptAndBind(request.params.id,{result:body.result,trustReference:body.trustReference,name:body.name});
   });
-  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => reply
+  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => {
+    const query=z.strictObject({runtimeType:z.enum(['openjiuwen','agentscope']).optional()}).parse(request.query);
+    return reply
     .type("application/yaml; charset=utf-8")
     .header("content-disposition", 'attachment; filename="runtime-build-requirements.yaml"')
-    .send(await migrations.runtimeRequirementsYaml(request.params.id)));
+    .send(await migrations.runtimeRequirementsYaml(request.params.id,query.runtimeType));
+  });
   app.put<{ Params: { id: string; dependencyId: string } }>("/api/migrations/:id/runtime-configuration/:dependencyId", request =>
     migrations.saveRuntimeDependency(request.params.id, request.params.dependencyId, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/check-business-connection", request =>

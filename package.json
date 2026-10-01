@@ -37,7 +37,7 @@
     "test:ui:migration-enterprise": "pnpm build && node scripts/verify-enterprise-examples-page.mjs",
     "test:ui:migration-acceptance": "pnpm build && node scripts/verify-migration-acceptance-ui.mjs",
     "test:migration:enterprise:offline": "node scripts/verify-enterprise-examples-offline.mjs",
-    "test:ui:migration-v2:private": "pnpm build && vite build --base=/migration/ --outDir=../web-dist-private && MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs",
+    "test:ui:migration-v2:private": "pnpm build && VITE_PRIVATE_WORKSPACE=true vite build --base=/migration/ --outDir=../web-dist-private && MIGRATION_TEST_WEB_DIR=web-dist-private MIGRATION_TEST_PREFIX=/migration/ MIGRATION_TEST_PRIVATE_GATEWAY=true node scripts/verify-migration-v2-ui.mjs",
     "test:skeleton:mcp": "pnpm build:core && node scripts/verify-mcp-templates.mjs",
     "serve": "node dist/service/server.js",
     "serve:codex": "FINANCE_EVAL_JUDGE_PROVIDER=codex_cli node dist/service/server.js",

@@ -32,8 +32,8 @@ export class MigrationStore {
   async inspection(id:string){return this.services.inspectionService.inspection(id);}
   async decide(id:string,toolId:string,input:unknown){return this.services.planningService.decide(id,toolId,input);}
   async plan(id:string){return this.services.planningService.plan(id);}
-  async runtimeRequirements(id:string){return this.services.planningService.runtimeRequirements(id);}
-  async runtimeRequirementsYaml(id:string){return this.services.planningService.runtimeRequirementsYaml(id);}
+  async runtimeRequirements(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirements(id,runtimeType);}
+  async runtimeRequirementsYaml(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirementsYaml(id,runtimeType);}
   async bindRuntimeDelivery(id:string,input:unknown){return this.services.planningService.bindRuntimeDelivery(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.services.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.services.technicalValidation.list(id);}

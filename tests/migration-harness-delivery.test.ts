@@ -113,6 +113,13 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/inspect`,headers})).statusCode).toBe(200);
     const yaml=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml`,headers});
     expect(yaml.statusCode).toBe(200);expect(yaml.headers['content-type']).toContain('application/yaml');expect(yaml.body).toContain('requirementsDigest:');
+    const scopedYaml=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml?runtimeType=agentscope`,headers});
+    const scopedJson=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements?runtimeType=agentscope`,headers});
+    expect(scopedYaml.statusCode).toBe(200);
+    expect(scopedJson.statusCode).toBe(200);
+    expect(scopedYaml.body).toContain('agentscope');
+    expect(scopedYaml.body).toContain(scopedJson.json().requirementsDigest);
+    expect((await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml?runtimeType=unknown`,headers})).statusCode).toBe(400);
     const plan=await app.inject({method:'GET',url:`/api/migrations/${id}/plan`,headers});
     expect(plan.statusCode).toBe(200);expect(plan.json()).toMatchObject({generationAllowed:true,technicalValidationAllowed:false});
     const requirementsResponse=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements`,headers});

@@ -69,8 +69,14 @@ are retained but not offered as new Launcher execution environments.
 
 A delivery must retain its accepted requirementsDigest and match the registered
 deployment and expiry. Old bindings lacking this digest require re-admission.
-The current project still has a single Runtime delivery binding; projects with
-different unresolved Runtime requirements on both targets are not yet supported.
+Projects retain accepted deliveries by environment ID so admitting a second Runtime
+does not overwrite the first. The legacy `runtimeDelivery` field remains the latest
+binding for older readers. Execution checks each selected environment against its
+own requirements and accepted delivery; one target cannot satisfy another's gap.
+Both requirements endpoints (JSON and YAML) accept `runtimeType=openjiuwen` or
+`runtimeType=agentscope`, defaulting to OpenJiuwen for existing callers. Unknown
+targets are rejected. This is delivery binding, not implementation of the Builder
+requirements-to-result facade.
 Technical validation of generated tools has its own requirements gate and is not
 bypassed by the comparison feature.
 
@@ -90,3 +96,15 @@ mutations additionally require the configured Origin. This does not provide team
 workspaces. The gateway must overwrite identity headers from verified SSO state.
 Never populate this configuration using a client-supplied identity or automatically
 share the old migration workspace with all logged-in users.
+
+## Verification follow-up
+
+The isolated native probe passed with both history and model snapshots explicitly
+enabled, as required by the installed observation asset. It covered four cases
+across the two real Java SDKs with a controlled model and synthetic bank, including
+wire-level generation parameters, separate sessions/customers, identical installed
+method content and owned-build cleanup. No qualification check was removed.
+This does not establish live-model quality, nonempty case workspaces or public SSO
+acceptance. The migration browser fixture now returns the requested generation
+configuration and checks the current candidate-answer label; it remains a fixture,
+not native-Runtime or model-wire evidence.

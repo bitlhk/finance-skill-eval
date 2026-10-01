@@ -123,6 +123,7 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
   if(request.method==='GET'&&url.pathname==='/v1/runtime-capabilities')return json({schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'e2e-fixture'},models:[{modelId:'fixture-execution',upstreamModelId:'fixture-execution',label:'E2E 执行模型'}],defaultModelId:'fixture-execution',features:{streaming:false,asyncLaunch:false,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxArchiveBytes:8_000_000,maxFiles:500,maxTimeoutMs:310_000,maxConcurrentInstances:4}});
   if(request.method==='POST'&&url.pathname==='/v1/runtime-instances'){
     const input=await body(),instanceId=`fixture-${instances.size+1}`,configurationDigest=`fixture-configuration-${instances.size+1}`;
+    if(input.generation)assert.deepEqual(input.generation,{schemaVersion:'finance.eval-generation.v1',temperature:0,top_p:1,max_tokens:2048});
     instances.set(instanceId,{input,configurationDigest});
     return json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId,status:'ready',executeEndpoint:`/v1/runtime-instances/${instanceId}/execute`,expiresAt:new Date(Date.now()+300_000).toISOString(),error:null,configurationDigest});
   }
@@ -134,6 +135,7 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
       output:'订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',elapsedMs:5,toolCalls:(input.requiredTools??[]).map(name=>({name,status:'completed'})),
       loadedSkills:skill?[{skillId:skill.skillId,version:skill.version}]:[],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,
       metadata:{skillArtifactSha256:skill?.artifactSha256,instanceConfigurationDigest:stored.configurationDigest,workspaceFilesDigest:null,
+        ...(stored.input.generation?{declaredModelParameters:{temperature:stored.input.generation.temperature,top_p:stored.input.generation.top_p,max_tokens:stored.input.generation.max_tokens},modelGenerationHostVerified:true,modelParametersBasis:'CONTROLLED_FIXTURE_NOT_MODEL_WIRE'}:{}),
         toolEvidence:(input.requiredTools??[]).map(tool=>({tool,resultDigest:'a'.repeat(64)}))}});
   }
   const instance=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)$/u);
@@ -267,7 +269,7 @@ try{
   await expect(page.getByText('最新 1/1 通过',{exact:true})).toBeVisible({timeout:STEP});
   const assessedCase=page.locator('.assessment-case').filter({hasText:'suite-order-1'});
   await assessedCase.locator(':scope > summary').click();
-  await assessedCase.getByText('迁移后回答',{exact:true}).click();
+  await assessedCase.getByText('迁移候选回答',{exact:true}).click();
   await expect(assessedCase.getByText('订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',{exact:true})).toBeVisible();
   pass('candidate_effect_assessment_passed');
 

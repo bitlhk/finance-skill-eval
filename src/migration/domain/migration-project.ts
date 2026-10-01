@@ -100,6 +100,7 @@ export type MigrationProject = {
   }>;
   assessment: "NOT_VALIDATED";
   runtimeDelivery?: RuntimeLauncherBinding;
+  runtimeDeliveries?: Record<string, RuntimeLauncherBinding>;
   reviews?: Array<{
     candidateDigest: string;
     decision: "ACCEPTED" | "NEEDS_CHANGES";

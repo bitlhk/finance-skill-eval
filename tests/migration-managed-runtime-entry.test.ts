@@ -6,6 +6,7 @@ import {MigrationOpenJiuwenService} from '../src/migration/application/migration
 import {MigrationReportService} from '../src/migration/application/migration-report-service.js';
 import {runtimeBuildRequirements} from '../src/migration/domain/migration-harness.js';
 import {unresolvedMigrationRuntimeRequirements} from '../src/migration/application/migration-runtime-requirements.js';
+import {MigrationPlanningService} from '../src/migration/application/migration-planning-service.js';
 
 function project():MigrationProject {
   const inspection=inspectionFixture([]);
@@ -105,6 +106,43 @@ it('does not borrow an OJ delivery to satisfy the AS side of CC',async()=>{
     runtimeBindings:{left:{environmentId:oj.environmentId},right:{environmentId:as.environmentId}},
   }})).rejects.toThrow('Runtime 能力缺口');
   expect(evaluate).not.toHaveBeenCalled();
+});
+
+it('retains independent deliveries for both CC targets and rejects drift on either side',async()=>{
+  const value=project(),oj=launcher(),as={...launcher('agentscope'),environmentId:'env-as'};
+  addRequirement(value);deliver(value,oj);
+  const ojBinding=value.runtimeDelivery!;
+  deliver(value,as);
+  value.runtimeDeliveries={[oj.environmentId]:ojBinding,[as.environmentId]:value.runtimeDelivery!};
+  const {entry,repo,evaluate}=services(value,oj);
+  repo.get.mockImplementation(async id=>id===oj.environmentId?oj:id===as.environmentId?as:null);
+  const body={pair:'CC',configuration:{runtime:{type:'runtime_launcher',environmentId:oj.environmentId},
+    runtimeBindings:{left:{environmentId:oj.environmentId},right:{environmentId:as.environmentId}}}};
+  await entry.validate(value.id,body);
+  expect(evaluate).toHaveBeenCalledOnce();
+  evaluate.mockClear();
+  as.delivery!.resultDigest='f'.repeat(64);
+  await expect(entry.validate(value.id,body)).rejects.toThrow('Runtime 能力缺口');
+  expect(evaluate).not.toHaveBeenCalled();
+});
+
+it('persists both deliveries while retaining the legacy latest binding',async()=>{
+  const value=project(),oj=launcher(),as={...launcher('agentscope'),environmentId:'env-as'};
+  addRequirement(value);deliver(value,oj);
+  const first=structuredClone(value.runtimeDelivery!);
+  deliver(value,as);
+  const second=structuredClone(value.runtimeDelivery!);
+  value.runtimeDelivery=first;
+  let saved=structuredClone(value);
+  const projects={get:async()=>structuredClone(saved),save:async(next:MigrationProject)=>{saved=structuredClone(next)},
+    runExclusive:async(_id:string,action:()=>Promise<unknown>)=>action()};
+  const service=new MigrationPlanningService(projects as never,{serialize:()=>null});
+  await service.bindRuntimeDelivery(value.id,second);
+  expect(saved.runtimeDeliveries).toEqual({[oj.environmentId]:first,[as.environmentId]:second});
+  expect(saved.runtimeDelivery).toEqual(second);
+  await service.bindRuntimeDelivery(value.id,first);
+  expect(saved.runtimeDeliveries).toEqual({[oj.environmentId]:first,[as.environmentId]:second});
+  expect(saved.runtimeDelivery).toEqual(first);
 });
 
 it.each(['missing-digest','expired','wrong-digest','wrong-request','record-drift','missing-environment','incomplete-contract','changed-contract','conformance'])(

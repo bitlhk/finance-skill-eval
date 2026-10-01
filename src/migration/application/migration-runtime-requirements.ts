@@ -19,7 +19,10 @@ export async function unresolvedMigrationRuntimeRequirements(
   const inspection=project.sourceInspection??project.inspection;
   let requirements=inspection?runtimeBuildRequirements(inspection,{runtimeType:selected?.launcher.runtimeType??'openjiuwen'}):null;
   if(!requirements||!('requestId' in requirements))return requirements;
-  const binding=bindingSchema.safeParse(project.runtimeDelivery);
+  const environmentId=selected?.launcher.environmentId;
+  const candidate=environmentId?project.runtimeDeliveries?.[environmentId]
+    ??(project.runtimeDelivery?.environmentId===environmentId?project.runtimeDelivery:undefined):project.runtimeDelivery;
+  const binding=bindingSchema.safeParse(candidate);
   if(!binding.success)return requirements;
   const resolved=selected??await resolveManagedMigrationEnvironment(environments,binding.data.environmentId);
   if(!resolved||resolved.launcher.environmentId!==binding.data.environmentId)return requirements;
