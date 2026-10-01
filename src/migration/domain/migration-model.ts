@@ -108,6 +108,8 @@ export function buildMigrationPlan(inspection:ProjectInspection,decisions:ToolDe
     // form's language into the plan.
     const language=(supported?decision!.language:undefined)||recommendLanguage(form,tool.language);
     const blockingReasons:string[]=[],warnings:string[]=[];
+    if(tool.portability==='INCOMPLETE')blockingReasons.push('工具实现或合同不完整，请补充实际实现与输入输出约定并重新诊断；选择生成形式不能补齐依赖');
+    if(tool.portability==='UNSUPPORTED')blockingReasons.push('此工具不在当前迁移支持范围内，需要先完成外部适配与准入');
     if(form==='MCP'&&inspection.dependencyAnalysis?.dependencies.some(d=>d.toolIds.includes(tool.toolId)&&d.owner==='RUNTIME'&&d.action==='INJECT'&&d.binding?.kind!=='HTTP_HEADER'&&d.binding?.kind!=='SERVICE_ENV'))blockingReasons.push('系统尚未确定运行依赖的传递方式，请返回诊断并重新分析迁移方案');
     if(!supported)blockingReasons.push('请重新选择 MCP 或 Python 脚本');
     const targets:readonly string[]=form==='MCP'?MCP_TARGETS:SCRIPT_TARGETS;

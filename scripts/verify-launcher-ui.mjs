@@ -39,11 +39,29 @@ try{
   await page.goto(url);
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button',{name:'进入工作区',exact:true}).click();
+  let asset;
+  if(process.env.LAUNCHER_MIGRATION_FLOW==='true'){
+    await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+    await page.getByRole('button',{name:'新建迁移',exact:true}).click();
+    await page.locator('input[type=file][multiple]').setInputFiles({name:'native-method.zip',mimeType:'application/zip',buffer:Buffer.from(info.skill.archiveBase64,'base64')});
+    await expect(page.getByRole('button',{name:'确认方案，进入生成',exact:true})).toBeEnabled({timeout:600000});
+    const projects=await api('/api/migrations');assert.equal(projects.length,1);
+    await writeFile(path.join(output,'migration-before-generation.json'),JSON.stringify(await api(`/api/migrations/${projects[0].id}/report`),null,2));
+    await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();
+    const generating=page.waitForResponse(response=>response.url().endsWith('/generate')&&response.request().method()==='POST',{timeout:600000});
+    await page.getByRole('button',{name:'开始生成',exact:true}).click();
+    const response=await generating;const generated=await response.json();
+    await writeFile(path.join(output,'migration-generated.json'),JSON.stringify(generated,null,2));
+    assert(response.ok(),JSON.stringify(generated));assert(generated.candidate);
+    asset=generated.candidate;
+    checks.push('Browser uploaded, analyzed and generated a migration candidate; no formal publication');
+  }else{
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
   const upload=page.waitForResponse(response=>response.url().endsWith('/api/skills/upload')&&response.request().method()==='POST');
   await page.locator('input[type=file]').setInputFiles({name:'controlled-method.zip',mimeType:'application/zip',buffer:Buffer.from(info.skill.archiveBase64,'base64')});
-  const uploaded=await upload;assert(uploaded.ok());const asset=await uploaded.json();
+  const uploaded=await upload;assert(uploaded.ok());asset=await uploaded.json();
   checks.push('Skill uploaded through browser, original ZIP bytes');
+  }
   const cases=[0,1].map(index=>({caseId:`balance-repeat-${index+1}`,name:`Balance repeat ${index+1}`,prompt:`请查询我的账户余额。EVAL_CASE_${index+1}`,evaluationGoal:'Return supported balance facts without a write',
     requiredTools:['account_balance_query',...(caseFiles?['read_case_file']:[])],
     ...(caseFiles?{workspaceFiles:[{path:'case.txt',content:`BROWSER_CASE_FILE_${index+1}`}]}:{}),
