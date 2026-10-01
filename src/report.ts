@@ -68,6 +68,7 @@ export function buildSuggestions(
   const suggestions: SkillOptimizationSuggestion[] = [];
   if(pack.metadata.assessmentMode==='natural_language')return suggestions;
   for (const result of cases) {
+    if(result.left.status!=='completed'||result.right.status!=='completed')continue;
     const evalCase = pack.cases.find(item => item.caseId === result.caseId);
     if (!evalCase) continue;
     for (const criterion of evalCase.rubric) {
@@ -147,7 +148,9 @@ export function buildReport(input: {
       rightWins,
       ties,
       ...(runtimeComparison?{runtimeComparison}:{}),
-      headline: runtimeComparison
+      headline: input.cases.some(c=>c.left.status!=='completed'||c.right.status!=='completed')&&!runtimeComparison
+        ? `执行未完整完成：${input.cases.filter(c=>c.left.status!=='completed'||c.right.status!=='completed').length}/${input.cases.length} 个案例存在执行失败或中断；不能据此判断专业质量`
+        : runtimeComparison
         ? `同候选跨 Runtime 目标评估：左侧 ${runtimeComparison.left.PASS}/${input.cases.length} 条通过，右侧 ${runtimeComparison.right.PASS}/${input.cases.length} 条通过；左侧 ${runtimeComparison.left.unavailable} 条不可用，右侧 ${runtimeComparison.right.unavailable} 条不可用`
         : input.cases.some(c=>c.judge?.serviceComparison||c.left.metadata.baselineService)
         ? `原服务对比：${input.cases.filter(c=>c.judge?.serviceComparison?.verdict==='PASS').length}/${input.cases.length} 条通过`

@@ -43,3 +43,16 @@ it('does not treat a failed runtime as a quality PASS even in inconsistent store
   const value=report([item]);expect(value.summary.runtimeComparison?.left).toMatchObject({PASS:0,unavailable:1});
   const html=renderHtmlReport(value);expect(html).toContain('左侧 · 不可用');expect(html).not.toContain('左侧 · PASS');
 });
+it('does not call a failed paired execution completed or diagnose its empty answer as a Skill gap',()=>{
+  const item={...row('unavailable','PASS'),caseId:pack.cases[0]!.caseId,judge:null,judgeError:'execution failed'};
+  item.left.output='';item.right.output='';
+  const value=buildReport({pack,reportId:'failed-pair',runtimeAdapterId:'two-runtimes',judgeId:'model-pairwise:test',cases:[item]});
+  expect(value.summary.headline).toContain('执行未完整完成');
+  expect(value.summary.headline).not.toContain('左右输出已完成');
+  expect(value.suggestions).toEqual([]);
+});
+it('keeps model grading unavailability separate from completed execution',()=>{
+  const item={...row('PASS','PASS'),judge:null,judgeError:'Judge unavailable'};
+  const value=buildReport({pack,reportId:'judge-unavailable',runtimeAdapterId:'two-runtimes',judgeId:'model-pairwise:test',cases:[item]});
+  expect(value.summary.headline).toContain('左右输出已完成');
+});
