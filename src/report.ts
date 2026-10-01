@@ -223,8 +223,8 @@ export function renderHtmlReport(report: EvaluationReport): string {
       <p class="goal">${escapeHtml(item.evaluationGoal)}</p>
       <details><summary>本轮题目</summary><pre>${escapeHtml(item.prompt)}</pre></details>
       <div class="columns">
-        <article><h3>${isService?'原服务':'左侧'}</h3><pre>${escapeHtml(formatOutput(item.left.output))}</pre></article>
-        <article><h3>${isService?'迁移后 Skill':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output))}</pre></article>
+        <article><h3>${isService?'原服务':'左侧'}</h3><pre>${escapeHtml(formatOutput(item.left.output || item.left.error || '未记录回答'))}</pre></article>
+        <article><h3>${isService?'迁移后 Skill':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output || item.right.error || '未记录回答'))}</pre></article>
       </div>
       <div class="judge">
         <h3>${runtimeMode?'同候选跨 Runtime 目标评估':isService?'原服务对比':judge?.goalAssessment?'业务目标评估':'金融专业评价'}</h3>

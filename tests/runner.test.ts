@@ -1,6 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeCaseNotExecutedError } from '../src/adapters.js';
+import { renderHtmlReport } from '../src/report.js';
 import {
   DeterministicRubricJudge,
   loadEvalPack,
@@ -23,6 +24,7 @@ describe("evaluation runner lifecycle", () => {
     expect(result.cases[0]!.left.metadata).toEqual({executionDisposition:'NOT_EXECUTED', blockedByCaseId:'first-failure'});
     expect(result.cases[0]!.left.toolCalls).toEqual([]);
     expect(result.cases[0]!.judge).toBeNull();
+    expect(renderHtmlReport(result)).toContain('本题未执行');
     expect(compare).not.toHaveBeenCalled();
     expect(cleanup).toHaveBeenCalledOnce();
   });

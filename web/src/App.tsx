@@ -73,7 +73,7 @@ function statusText(status: EvaluationJob["status"]): string {
     preparing: "准备中",
     running: "执行中",
     judging: "评阅中",
-    completed: "已完成",
+    completed: "评测完成",
     failed: "失败",
     cancelled: "已取消",
     interrupted: "已中断",
@@ -864,9 +864,9 @@ function RunEvidence({ job }: { job: EvaluationJob }) {
   return <section className="run-section">
     <div className="run-head">
       <div><span className={`run-status ${job.status}`}>{statusText(job.status)}</span><h2>{job.report?.summary.headline ?? job.stageLabel}</h2><p className="mono">{job.jobId}</p></div>
-      <div className="progress-block"><strong>{progress}%</strong><div><span style={{ width: `${progress}%` }} /></div><small>{job.progress.completedRuns}/{job.progress.totalRuns || "-"} 次候选执行</small></div>
+      <div className="progress-block"><strong>{progress}%</strong><div><span style={{ width: `${progress}%` }} /></div><small>{job.progress.completedRuns}/{job.progress.totalRuns || "-"} 项案例处理</small></div>
     </div>
-    {job.configuration.runtime.type === "replay" ? <div className="evidence-notice"><Archive size={16} /><span><strong>冻结证据回放</strong>：本轮复核已固化输出和评分，不代表刚刚重新调用了 Agent。</span></div> : <div className="evidence-notice live"><Activity size={16} /><span><strong>在线执行</strong>：左右候选通过所选 Runtime 在本轮实际运行。</span></div>}
+    {job.configuration.runtime.type === "replay" ? <div className="evidence-notice"><Archive size={16} /><span><strong>冻结证据回放</strong>：本轮复核已固化输出和评分，不代表刚刚重新调用了 Agent。</span></div> : <div className="evidence-notice live"><Activity size={16} /><span><strong>在线评测</strong>：各题执行结果分别核对；评测结束不代表所有案例执行或质量验收通过。</span></div>}
     {job.error ? <div className="run-error"><CircleAlert size={17} /><div><strong>{job.error.code}</strong><p>{job.error.message}</p></div></div> : null}
     {job.questionSet ? <details className="question-receipt"><summary>本轮 AI 题集 · {job.questionSet.cases.length} 题 · {job.questionSet.fingerprint.slice(0, 12)}</summary><p>出题模型：{job.questionSet.model.modelId} · 已读取：{job.questionSet.sourceFiles.join("、")}</p>{job.questionSet.cases.map(item => <div key={item.caseId}><strong>{item.name}</strong><MarkdownContent content={item.prompt} /></div>)}</details> : null}
     {job.report ? <ReportResult job={job} /> : <LiveEvidence job={job} />}
@@ -879,7 +879,7 @@ function LiveEvidence({ job }: { job: EvaluationJob }) {
   return <div className="live-cases">{byCase.map(caseId => <div className="live-case" key={caseId}><h3>{caseId}</h3><div className="answer-grid">{(["left", "right"] as const).map(side => {
     const evidence = job.evidence.find(item => item.caseId === caseId && item.side === side);
     const live = job.live?.[`${caseId}:${side}`];
-    return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.status === "completed" ? "执行完成" : "执行失败" : live?.status ?? "等待执行"}</small>
+    return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.metadata.executionDisposition === 'NOT_EXECUTED' ? '未执行' : evidence.status === "completed" ? "执行完成" : "执行失败" : live?.status ?? "等待执行"}</small>
       <div className="tool-events">{(evidence?.toolCalls ?? live?.toolCalls ?? []).map((tool,i) => <span key={`${tool.name}-${i}`} className={tool.status}>{tool.status === "running" ? <RefreshCw className="spin" size={12} /> : null}{tool.name} · {tool.status}</span>)}</div>
       <MarkdownContent streaming={!evidence && !TERMINAL.has(job.status)} content={evidence?.output || evidence?.error || live?.output || "等待模型输出"} />{evidence?<ExecutionIdentity evidence={evidence}/>:null}</article>;
   })}</div></div>)}</div>;
