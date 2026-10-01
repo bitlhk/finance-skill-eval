@@ -124,8 +124,8 @@ not native-Runtime or model-wire evidence.
 
 ## 2026-10-01 final closeout verification
 
-Runtime code: Eval 10d0ff84, Builder 2a17c78d, Harness db8e79cf. The Eval local
-suite passed 416 tests and type checking; Builder passed 1908 tests with five
+Runtime code: Eval 2f82dd74, Builder 2cff15f6, Harness 30ad032. The Eval local
+suite passed 417 tests and type checking; Builder passed 1909 tests with five
 explicit skips. Fresh packaged-host qualification and controlled native delivery
 were rerun. These are candidate revisions, not deployed or merged versions.
 
@@ -134,11 +134,11 @@ The latest evidence is kept under the operator's
 
 | Path | Scope and outcome |
 | --- | --- |
-| `case-live-browser-r2` | Uploaded supported read-only Skill: real model, four native executions, facts/files/Lock/history/cleanup passed. |
-| `prebuilt-live-r5` | Immutable sample 1.0.3: both native runtimes passed the fixed synthetic case through the browser. |
-| `migration-native-live-r12` | Same 1.0.3 source uploaded, analyzed, explicitly bound to both targets, migrated to an immutable temporary candidate, four real-model case executions and cleanup passed. No formal publication required. |
-| `candidate-delivery-live-r2` | Pinned staged release: both real builds SUCCEEDED and Eval lifecycle admission PASSED; owned instances reclaimed. |
-| `unified-candidate-ingress-20261001-unified-10d0ff84.json` | 18 trusted-ingress checks passed. This is NOT an actual SSO login. |
+| `case-live-browser-r4` | Uploaded sample 1.0.3: real model, four native executions, facts/files/Lock/history/cleanup passed. |
+| `prebuilt-live-r6` | Immutable sample 1.0.3: both native runtimes passed the fixed synthetic case through the browser. |
+| `migration-native-live-r13` | Same 1.0.3 source uploaded, analyzed, explicitly bound to both targets, migrated to an immutable temporary candidate, four real-model case executions and cleanup passed. No formal publication required. |
+| `case-launcher-native-r6` | Controlled final-JAR verification: actual two builds and Eval lifecycle admission passed; owned instances reclaimed. |
+| `unified-candidate-ingress-20261001-unified-2f82dd74.json` | 18 trusted-ingress checks passed. This is NOT an actual SSO login. |
 
 The sample digest is
 `db573f2d2339caffeee32023440eacd853a075d28afd4b78f284eaad0a73943f`.
@@ -155,13 +155,25 @@ distinguishes referenced managed tools from migrating their implementation.
 Explicit runtime dependencies still block native binding. This does not guarantee
 all future model outputs or dependency analyses are correct.
 
+The older uploaded-method fixture still produced an empty accountId in
+`case-live-browser-r3`. That run remains FAILED: the invalid call was rejected,
+the following case on that side was NOT_EXECUTED, and the other side completed.
+Positive three-path acceptance uses the same versioned 1.0.3 sample; it is not a
+claim that every uploaded Skill or every stochastic model run succeeds.
+
+Final file-workspace review found ambiguous NUL-delimited digest framing when
+NUL was permitted in content. Eval, Builder and the Java workspace now reject NUL
+text consistently; normal text retains the V1 digest. The regression failed on
+the old implementation. New JARs were requalified rather than inheriting old
+artifact evidence (`case-native-as-r4`, `case-host-as-r4`, `case-host-oj-r4`).
+
 After an unverified execution failure, later cases on that Runtime are recorded as
 NOT_EXECUTED and are not quality-scored; no implicit replay or new instance is
 created. Host failures retain only allowlisted error classes. Background migration
 diagnostics are awaited on service close so test/data cleanup cannot race a final
 write.
 
-Release `20261001-unified-10d0ff84` is staged only. Real administrator SSO login,
+Release `20261001-unified-2f82dd74` is staged only. Real administrator SSO login,
 second-account browser denial, final data synchronization and public cutover are
 still required. Existing production services, data and Locks remain unchanged.
 Do not close Issue 38 or represent these isolated browser checks as public
