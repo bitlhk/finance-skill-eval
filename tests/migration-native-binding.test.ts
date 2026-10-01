@@ -7,6 +7,7 @@ import {createEvaluationService} from '../src/service/server.js';
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 import {nativeToolCatalogSchema} from '../src/shared/contracts/native-tool-catalog.js';
 import {analysisFixture,analyzedTool} from './analysis-fixture.js';
+import type {MigrationAnalyzer} from '../src/migration/application/migration-agent-port.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{vi.unstubAllGlobals();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true})});
@@ -24,10 +25,10 @@ it('validates catalog identity and rejects duplicate tool identities',()=>{
   expect(()=>nativeToolCatalogSchema.parse({...body,catalogDigest:canonicalSha256(body)})).toThrow();
 });
 
-async function fixture(extra:Record<string,string>={}){
+async function fixture(extra:Record<string,string>={},analyzer?:MigrationAnalyzer){
   const dir=await mkdtemp(path.join(os.tmpdir(),'native-bind-'));dirs.push(dir);
   const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:dir,accessToken:'test',publicDemo:false,
-    migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['SKILL.md'],portability:'INCOMPLETE'})]),
+    migrationAnalyzer:analyzer??analysisFixture([analyzedTool({name:'lookup',sourcePaths:['SKILL.md'],portability:'INCOMPLETE'})]),
     migrationImplementer:async()=>{throw Error('Native binding must not generate implementation')}});
   const headers={authorization:'Bearer test'};
   const post=(url:string,payload:unknown)=>app.inject({method:'POST',url,headers,payload});
@@ -67,5 +68,27 @@ it('rejects stale catalogs, omitted tools, unknown owners and executable uploads
     expect((await f.post(url,{...f.body,tools:['other']})).statusCode).toBe(409);
     const result=await f.post(url,f.body);expect(result.statusCode).toBe(409);
     expect(result.body).toMatch(/上传代码|规范错误/);
+  }finally{await f.app.close()}
+});
+it('does not discard an explicit runtime dependency when binding an admitted tool',async()=>{
+  const declaration='Tool lookup requires API_TOKEN from the runtime before querying.';
+  const base=analysisFixture([analyzedTool({name:'lookup',sourcePaths:['SKILL.md'],portability:'INCOMPLETE'})]);
+  const analyzer:MigrationAnalyzer=async input=>{
+    const result=await base(input),payload=result.payload as Record<string,unknown>;
+    return {...result,payload:{...payload,dependencyAnalysis:{
+      ...(payload.dependencyAnalysis as Record<string,unknown>),dependencies:[{
+        key:'tool-token',name:'Tool token',kind:'CONFIG',owner:'RUNTIME',action:'INJECT',
+        contractStatus:'KNOWN',sensitive:true,binding:{kind:'SERVICE_ENV',name:'API_TOKEN'},
+        purpose:'Explicit source requirement',blocking:true,availability:'UNKNOWN',
+        references:[{toolName:'lookup',path:'references/connection.txt',snippet:declaration}],
+      }],
+    }}};
+  };
+  const f=await fixture({'references/connection.txt':declaration},analyzer);
+  try{
+    const result=await f.post(`/api/migrations/${f.project.id}/native-candidate`,f.body);
+    expect(result.statusCode).toBe(409);expect(result.body).toContain('额外运行依赖');
+    const report=(await f.app.inject({url:`/api/migrations/${f.project.id}/report`,headers:f.headers})).json();
+    expect(report.project.candidate).toBeNull();
   }finally{await f.app.close()}
 });
