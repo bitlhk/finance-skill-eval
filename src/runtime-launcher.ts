@@ -102,7 +102,15 @@ async function readExecution(response:Response,request:RuntimeExecutionRequest):
       if(event.evidence){
         if(serializedBytes(event.evidence)>RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes)throw new Error(`Runtime Launcher evidence exceeds ${RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes} bytes`);
         value=event.evidence;
-      }else if(event.schemaVersion==='finance.runtime-observation.v1')forwardObservation(runtimeObservationEventSchema.parse(event),request);
+      }else if(event.schemaVersion==='finance.runtime-observation.v1'){
+        const observation=runtimeObservationEventSchema.parse(event);
+        forwardObservation(observation,request);
+        if(observation.kind==='execution.failed'){
+          const code=observation.payload.error?.code;
+          // Preserve a normalized failure code, never arbitrary upstream message text.
+          throw new Error(`Runtime execution failed: ${code&&/^[A-Z][A-Z0-9_]{0,119}$/u.test(code)?code:'EXECUTION_FAILED'}`);
+        }
+      }
       else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
     }
   }finally{await reader.cancel().catch(()=>undefined);}

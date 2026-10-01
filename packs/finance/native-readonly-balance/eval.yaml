@@ -1,9 +1,9 @@
 schemaVersion: finance.skill-eval.pack.v1
 packId: native-readonly-balance-v1
-version: 1.0.1
+version: 1.0.2
 domain: account-service
 targetSkillId: native-readonly-balance
-targetSkillVersion: 1.0.1
+targetSkillVersion: 1.0.2
 description: 受管双 Java Runtime 的合成余额与案例文件核验，不执行银行写操作。
 models:
   analyzer: &model
@@ -17,8 +17,8 @@ variants:
   right:
     mode: skill_version
     skillId: native-readonly-balance
-    version: 1.0.1
-    artifactSha256: b1c14e8547fffba588b97cbec69fd4c3c1e868621cd224881849be92fc4a95e2
+    version: 1.0.2
+    artifactSha256: 0ee8e6b2c520dcc53b3064f79f8bcf7a7c860d487bfbff31a4cf57cbd4c7750e
 judgeProfileFile: profiles/judge.yaml
 caseFiles: [cases/balance.yaml]
 metadata:

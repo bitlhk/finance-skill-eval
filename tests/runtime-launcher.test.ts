@@ -9,6 +9,22 @@ const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
+  it('preserves a normalized execution failure and still reclaims the instance',async()=>{
+    const deleted=vi.fn();
+    const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
+    const event={schemaVersion:'finance.runtime-observation.v1',eventId:'failure-1',sequence:1,occurredAt:'2026-10-01T00:00:00.000Z',traceId:'trace-1',instanceId:'instance-1',runId:'run-1',caseId:'case-1',side:'right',source:{adapter:'launcher',synthesized:true},kind:'execution.failed',payload:{error:{code:'RUNTIME_EVIDENCE_UNVERIFIED',message:'private upstream detail',retryable:false}}};
+    vi.stubGlobal('fetch',async(input:unknown,init:RequestInit)=>{
+      if(init.method==='DELETE'){deleted();return new Response(null,{status:204})}
+      if(String(input).endsWith('/execute'))return new Response(`data: ${JSON.stringify(event)}\n\n`,{headers:{'content-type':'text/event-stream'}});
+      return Response.json(state);
+    });
+    const model={providerId:'managed',modelId:'execution',parameters:{}};
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
+    await runtime.prepare({runId:'run-1'});
+    try{await expect(runtime.execute({runId:'run-1',side:'right',evalCase,model,variant})).rejects.toThrow('Runtime execution failed: RUNTIME_EVIDENCE_UNVERIFIED')}
+    finally{await runtime.cleanup()}
+    expect(deleted).toHaveBeenCalledOnce();
+  });
   it('validates a complete generation contract without accepting unsupported options',()=>{
     const valid={schemaVersion:'finance.eval-generation.v1',temperature:0.25,top_p:0.8,max_tokens:1234};
     expect(launcherGenerationSchema.parse(valid)).toEqual(valid);
