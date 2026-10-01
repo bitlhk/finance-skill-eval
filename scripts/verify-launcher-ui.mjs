@@ -12,6 +12,7 @@ await mkdir(output,{mode:0o700});
 const token=randomBytes(24).toString('hex');
 process.env.FINANCE_LAUNCHER_TEST_TOKEN=info.token;
 const modelId=info.modelId??'launcher-model';
+const caseFiles=info.runtimes.oj.requiredToolNames.includes('read_case_file');
 const modelFile=path.join(output,'models.json');
 await writeFile(modelFile,JSON.stringify({schemaVersion:'finance.skill-eval.execution-models.v1',defaultModelId:modelId,
   models:[{providerId:'managed-launcher',modelId,label:'Managed comparison model',availability:'ready',parameters:{temperature:0.25,top_p:0.8,max_tokens:1234}}]}));
@@ -44,7 +45,9 @@ try{
   const uploaded=await upload;assert(uploaded.ok());const asset=await uploaded.json();
   checks.push('Skill uploaded through browser, original ZIP bytes');
   const cases=[0,1].map(index=>({caseId:`balance-repeat-${index+1}`,name:`Balance repeat ${index+1}`,prompt:`请查询我的账户余额。EVAL_CASE_${index+1}`,evaluationGoal:'Return supported balance facts without a write',
-    requiredTools:['account_balance_query'],rubric:[{criterionId:'balance-facts',label:'Balance facts',description:'Synthetic balance returned',dimension:'business_completeness',weight:1,anyOf:['(?<![\\d,])12,?345\\.67(?!\\d)']}]}));
+    requiredTools:['account_balance_query',...(caseFiles?['read_case_file']:[])],
+    ...(caseFiles?{workspaceFiles:[{path:'case.txt',content:`BROWSER_CASE_FILE_${index+1}`}]}:{}),
+    rubric:[{criterionId:'balance-facts',label:'Balance facts',description:'Synthetic balance returned',dimension:'business_completeness',weight:1,anyOf:['(?<![\\d,])12,?345\\.67(?!\\d)']}]}));
   await api(`/api/skills/${asset.assetId}/prepare/manual`,{summary:'Fixed repeated read-only cases; synthetic data, not human quality acceptance',cases});
   await page.reload();
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
@@ -73,6 +76,12 @@ try{
   for(const row of job.evidence){
     assert.equal(row.status,'completed');assert.equal(row.runtimeIdentityVerified,true);
     assert(row.toolCalls.some(call=>call.name==='account_balance_query'&&call.status==='completed'));
+    if(caseFiles){
+      assert(row.toolCalls.some(call=>call.name==='read_case_file'&&call.status==='completed'));
+      assert.equal(row.metadata.caseWorkspace.closed,true);
+      assert.equal(row.metadata.caseWorkspace.reads.length,1);
+      assert(row.metadata.workspaceFilesDigest);
+    }
     assert(row.metadata.runtimeLockSha256&&row.metadata.executionHistoryRequestId&&row.metadata.retainedEvidenceRef);
     assert.deepEqual(row.metadata.declaredModelParameters,{temperature:0.25,top_p:0.8,max_tokens:1234});
   }

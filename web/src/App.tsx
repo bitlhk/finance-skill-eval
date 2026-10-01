@@ -1,4 +1,5 @@
 import { api } from "./api-client";
+import {selectedVersion,versionSelectionKey} from './skill-version-selection';
 import { EnvironmentView } from "./features/environments/EnvironmentView";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { accessToken, apiPath, basePath, tokenKey, downloadApi } from './api-path';
@@ -97,7 +98,7 @@ function directExecutionRole(catalog: Catalog) {
 }
 
 function variantSelection(variant: SkillVariant): string {
-  return variant.mode === "without_target_skill" ? "without_target_skill" : `version:${variant.version}`;
+  return variant.mode === "without_target_skill" ? "without_target_skill" : versionSelectionKey(variant);
 }
 
 function runtimeTypeLabel(value: Environment["runtimeType"]): string {
@@ -204,7 +205,7 @@ export function App() {
   const versionOptions = [...new Map([
     ...packVersionOptions,
     ...(catalog?.uploadedSkills.filter(item => item.skillId === targetSkillId).map(item => ({ version: item.version, artifactSha256: item.artifactSha256, packId: null })) ?? []),
-  ].map(item => [item.version, item])).values()];
+  ].map(item => [versionSelectionKey(item), item])).values()];
   const initializedSelection = useRef("");
   useEffect(() => {
     if ((!selectedPack && !selectedPreparation) || initializedSelection.current === selection) return;
@@ -225,7 +226,7 @@ export function App() {
           : "runtime_launcher",
       );
       setLeftVariantSelection("without_target_skill");
-      setRightVariantSelection(`version:${selectedPreparation.skillVersion}`);
+      setRightVariantSelection(versionSelectionKey(selectedUploadedSkill??{version:selectedPreparation.skillVersion}));
       const executionModel = catalog?.modelRoles.execution.model;
       if (executionModel) {
         setLeftModelKey(modelKey(executionModel));
@@ -345,8 +346,9 @@ export function App() {
     ?? catalog?.modelRoles.execution.model;
   const resolveVariant = (value: string): SkillVariant => {
     if (value === "without_target_skill") return { mode: "without_target_skill", skillId: targetSkillId };
-    const version = value.replace(/^version:/u, "");
-    const option = versionOptions.find(item => item.version === version);
+    const option = selectedVersion(value,versionOptions);
+    if(!option)throw new Error("所选 Skill 版本无法唯一确定，请重新选择具体产物");
+    const version = option.version;
     return {
       mode: "skill_version",
       skillId: targetSkillId,
@@ -359,7 +361,7 @@ export function App() {
   const mixedVariables = leftVariantSelection !== rightVariantSelection && leftModelKey !== rightModelKey;
   const selectedVariantsHaveArtifacts = [leftVariantSelection, rightVariantSelection].every(value => {
     if (value === "without_target_skill") return true;
-    const option = versionOptions.find(item => `version:${item.version}` === value);
+    const option = selectedVersion(value,versionOptions);
     return Boolean(option && catalog?.uploadedSkills.some(asset =>
       asset.skillId === targetSkillId
       && asset.version === option.version
@@ -428,7 +430,7 @@ export function App() {
     setError("");
     try {
       const dualRuntime=runtime==="dual_runtime";
-      const boundAsset=(value:string)=>catalog?.uploadedSkills.find(item=>item.skillId===targetSkillId&&`version:${item.version}`===value);
+      const boundAsset=(value:string)=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]);
       const leftAsset=boundAsset(leftVariantSelection),rightAsset=boundAsset(rightVariantSelection);
       if(dualRuntime&&(!leftAsset||!rightAsset||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要两侧已导入的 Skill 版本和相同模型");
       const job = await api<EvaluationJob>("/api/runs", {
@@ -500,7 +502,7 @@ export function App() {
     && (runtime !== 'runtime_launcher' || runtimeEnvironmentId)
     && (runtime !== 'runtime_launcher' || environmentInspection?.status === "ready")
     && (runtime!=="dual_runtime" || launcherReady && !dynamicQuestions && leftModelKey===rightModelKey
-      && [leftVariantSelection,rightVariantSelection].every(value=>catalog?.uploadedSkills.some(item=>item.skillId===targetSkillId&&`version:${item.version}`===value))
+      && [leftVariantSelection,rightVariantSelection].every(value=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]))
       && Number.isFinite(generation.temperature)&&generation.temperature>=0&&generation.temperature<=2
       && Number.isFinite(generation.top_p)&&generation.top_p>0&&generation.top_p<=1
       && Number.isInteger(generation.max_tokens)&&generation.max_tokens>=1&&generation.max_tokens<=32768)
@@ -827,19 +829,19 @@ function ComparisonConfigurator(props: {
   onSelectionChange(value: string): void;
   onModelChange(value: string): void;
 }) {
-  const selectedVersion = props.versions.find(item => `version:${item.version}` === props.selection);
+  const selected = selectedVersion(props.selection,props.versions);
   return <section className={props.target ? "comparison-panel target configurable" : "comparison-panel configurable"}>
     <div className="comparison-panel-head"><div className="side-badge">{props.side}</div><div><span>{props.title}</span><strong>对比配置</strong></div>{props.locked ? <small><Archive size={12} />配置已锁定</small> : null}</div>
     <div className="comparison-fields">
-      <label className="field"><span>Skill</span><select value={props.selection} disabled={props.locked} onChange={event => props.onSelectionChange(event.target.value)}>
+      <label className="field"><span>Skill</span><select value={selected?versionSelectionKey(selected):props.selection} disabled={props.locked} onChange={event => props.onSelectionChange(event.target.value)}>
         <option value="without_target_skill">不加载当前 Skill</option>
-        {props.versions.map(item => <option key={item.version} value={`version:${item.version}`}>v{item.version}</option>)}
+        {props.versions.map(item => <option key={versionSelectionKey(item)} value={versionSelectionKey(item)}>v{item.version}{props.versions.filter(other=>other.version===item.version).length>1?` · ${item.artifactSha256?.slice(0,8)??'摘要未记录'}`:''}</option>)}
       </select></label>
       <label className="field"><span>模型</span><select value={props.modelKeyValue} disabled={props.locked} onChange={event => props.onModelChange(event.target.value)}>
         {props.models.map(model => {const label=model.label??model.modelId,upstream=model.upstreamModelId??model.modelId;return <option key={modelKey(model)} value={modelKey(model)} disabled={Boolean(model.availability && model.availability !== "ready")} title={model.statusNote}>{label===upstream?upstream:`${label} · ${upstream}`}{model.availability === "unavailable" ? " · 暂不可用" : model.availability === "unverified" ? " · 待验证" : ""}</option>})}
       </select></label>
     </div>
-    <div className="comparison-foot">{selectedVersion ? <span>装配 Skill v{selectedVersion.version}{selectedVersion.artifactSha256 ? <> · SHA <b className="mono">{selectedVersion.artifactSha256.slice(0, 12)}</b></> : null}</span> : <span>不装配当前 Skill；保留相同的 Runtime 与工具环境。</span>}</div>
+    <div className="comparison-foot">{selected ? <span>装配 Skill v{selected.version}{selected.artifactSha256 ? <> · SHA <b className="mono">{selected.artifactSha256.slice(0, 12)}</b></> : null}</span> : <span>{props.selection==='without_target_skill'?'不装配当前 Skill；保留相同的 Runtime 与工具环境。':'所选版本无法唯一确定，请重新选择。'}</span>}</div>
   </section>;
 }
 
