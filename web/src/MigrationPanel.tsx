@@ -43,7 +43,7 @@ const suggestedLanguage=(tool:Tool,form:Form):string=>form==='SCRIPT'&&tool.reco
 const defaultDecision=(tool:Tool)=>{const form=suggestedForm(tool);return {form,language:suggestedLanguage(tool,form),reason:''};};
 const incompleteToolFiles=(inspection:Inspection)=>{const paths=new Set(inspection.tools.flatMap(tool=>tool.sourcePaths));return inspection.staticAnalysis?.toolIncompleteFiles??inspection.staticAnalysis?.incompleteFiles.filter(item=>paths.has(item.path))??[];};
 
-export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}:{catalog:Catalog;api:Api;uploadedAsset?:SkillAsset|null;onUpload?:()=>void;refreshKey?:number}){
+export function MigrationPanel({catalog,api,uploadedAsset,onUpload,onUseAsset,refreshKey=0}:{catalog:Catalog;api:Api;uploadedAsset?:SkillAsset|null;onUpload?:()=>void;onUseAsset?:(asset:SkillAsset)=>Promise<void>;refreshKey?:number}){
   const [projects,setProjects]=useState<Project[]>([]),[legacyProjects,setLegacyProjects]=useState<LegacyProject[]>([]),[project,setProject]=useState<Project|null>(null),[report,setReport]=useState<Report|null>(null);
   const [listView,setListView]=useState(true),[stage,setStage]=useState(0),[furthestStage,setFurthestStage]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [generating,setGenerating]=useState(false);
@@ -120,7 +120,7 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload,refreshKey=0}
     {stage===4&&project&&inspection&&<ValidationStep api={api} refresh={()=>loadReport()} inspection={inspection} project={project} report={report} currentValidations={currentValidations} toolInputs={toolInputs} setToolInputs={setToolInputs} toolEndpoints={toolEndpoints} setToolEndpoints={setToolEndpoints} validateTool={t=>void run(()=>validateTool(t))} busy={busy} next={()=>goToStage(5)}/>}
     {stage===5&&project&&<MigrationAssessmentStep key={`${project.id}:${project.candidate?.artifactSha256}`} api={api} projectId={project.id} candidateDigest={project.candidate?.artifactSha256} suites={report?.suites??[]} experiments={report?.experiments??[]} busy={busy} refresh={()=>loadReport()} runtimeId={runtimeId} setRuntimeId={setRuntimeId} rightRuntimeId={rightRuntimeId} setRightRuntimeId={setRightRuntimeId} runtimes={catalog.executionRuntimes} modelKey={modelKey} setModelKey={setModelKey} runtimeModelKey={runtimeModelKey} setRuntimeModelKey={setRuntimeModelKey} generation={runtimeGeneration} setGeneration={setRuntimeGeneration} packId={packId} setPackId={setPackId} run={async input=>{setBusy(true);try{await validateRuntime(input)}finally{setBusy(false)}}} generate={async()=>{setBusy(true);try{await generateSuite()}finally{setBusy(false)}}} next={()=>goToStage(6)}
     />}
-    {stage===6&&project&&<DownloadStep project={project} report={report} busy={busy} downloadStarted={downloadStarted} download={()=>void run(download)}/>}
+    {stage===6&&project&&<><DownloadStep project={project} report={report} busy={busy} downloadStarted={downloadStarted} download={()=>void run(download)}/>{project.candidate&&onUseAsset&&<section className="stage-actions"><div><strong>候选版本已保存到 Skill 资产</strong><span>继续准备测试题并选择 Runtime；保存不代表正式发布或执行准入通过。</span><small>SHA {project.candidate.artifactSha256.slice(0,16)}</small></div><button className="button primary" disabled={busy} onClick={()=>void run(()=>onUseAsset(project.candidate!))}>在 Skill 资产中继续测试<ChevronRight size={16}/></button></section>}</>}
   </section>;
 }
 

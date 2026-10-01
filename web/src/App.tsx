@@ -112,6 +112,7 @@ export function App() {
   const [accessInput, setAccessInput] = useState("");
   const [view, setView] = useState<View>("catalog");
   const [migrationSource,setMigrationSource]=useState<SkillAsset|null>(null);
+  const [focusedAsset,setFocusedAsset]=useState<string|null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [selection, setSelection] = useState("");
@@ -590,8 +591,8 @@ export function App() {
             onBack={() => setView("catalog")}
           />
         ) : null}
-        {view === "migration" && catalog?.publicDemo===false ? <MigrationWorkspace catalog={catalog} source={migrationSource} onChanged={refresh}/> : null}
-        {view === "skills" && catalog ? <SkillAssetsView catalog={catalog} onChanged={refresh} onMigrate={asset=>{setMigrationSource(asset);setView('migration');}} onSelectPreparation={id => {
+        {view === "migration" && catalog?.publicDemo===false ? <MigrationWorkspace catalog={catalog} source={migrationSource} onChanged={refresh} onUseAsset={async asset=>{await refresh();setFocusedAsset(asset.assetId);setView('skills');}}/> : null}
+        {view === "skills" && catalog ? <SkillAssetsView catalog={catalog} focusedAsset={focusedAsset} onChanged={refresh} onMigrate={asset=>{setMigrationSource(asset);setView('migration');}} onSelectPreparation={id => {
           const preparation = catalog.preparations.find(item => item.preparationId === id);
           if (preparation) setSelectedSkillId(preparation.skillId);
           setSelection(`prep:${id}`);
@@ -906,7 +907,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
   </div>;
 }
 
-function MigrationWorkspace({catalog,source,onChanged}:{catalog:Catalog;source:SkillAsset|null;onChanged():Promise<void>}) {
+function MigrationWorkspace({catalog,source,onChanged,onUseAsset}:{catalog:Catalog;source:SkillAsset|null;onChanged():Promise<void>;onUseAsset(asset:SkillAsset):Promise<void>}) {
   const [uploadedAsset,setUploadedAsset]=useState(source),[error,setError]=useState(''),[uploading,setUploading]=useState(false);
   const [imports,setImports]=useState<ImportResult[]>([]),[refreshKey,setRefreshKey]=useState(0);
   const input=useRef<HTMLInputElement>(null);
@@ -923,15 +924,16 @@ function MigrationWorkspace({catalog,source,onChanged}:{catalog:Catalog;source:S
     {error&&<p role="alert">{error}</p>}{uploading&&<p role="status">上传中</p>}
     {imports.length>0&&<ul aria-label="导入结果">{imports.map((r,i)=><li key={i}>{r.name}：{r.status==='IMPORTED'?'已导入':r.error}</li>)}</ul>}
     <input hidden ref={input} type="file" multiple accept=".zip,.md,application/zip,text/markdown" onChange={e=>{const files=Array.from(e.target.files??[]);if(files.length)void upload(files);e.target.value='';}}/>
-    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUpload={()=>{if(!uploading)input.current?.click();}}/>
+    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUseAsset={onUseAsset} onUpload={()=>{if(!uploading)input.current?.click();}}/>
   </div>;
 }
 
-function SkillAssetsView({ catalog, onChanged, onSelectPreparation,onMigrate }: { catalog: Catalog; onChanged(): Promise<void>; onSelectPreparation(id: string): void;onMigrate(asset:SkillAsset):void }) {
+function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation,onMigrate }: { catalog: Catalog; focusedAsset?:string|null;onChanged(): Promise<void>; onSelectPreparation(id: string): void;onMigrate(asset:SkillAsset):void }) {
   const [uploading, setUploading] = useState(false);
   const [preparing, setPreparing] = useState("");
   const [message, setMessage] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(()=>{if(focusedAsset)document.getElementById(`asset-${focusedAsset}`)?.focus();},[focusedAsset,catalog.uploadedSkills]);
   const upload = async (file: File) => {
     setUploading(true); setMessage("");
     try {
@@ -953,7 +955,7 @@ function SkillAssetsView({ catalog, onChanged, onSelectPreparation,onMigrate }: 
     <section className="asset-section"><div className="section-title"><div><h2>用户上传</h2><p>上传资产只用于当前评测服务，不会发布到 Skill 市场。</p></div><span>{catalog.uploadedSkills.length} 个</span></div>
       <div className="asset-table">{catalog.uploadedSkills.length ? catalog.uploadedSkills.map(skill => {
         const preps = catalog.preparations.filter(item => item.skillAssetId === skill.assetId);
-        return <div className="asset-row" key={skill.assetId}><div className="asset-icon"><FileArchive size={20} /></div><div><strong>{skill.displayName}</strong><small>{skill.skillId}@{skill.version} · {skill.fileCount} 个文件</small><p>{skill.description}</p><em className="mono">SHA {skill.artifactSha256.slice(0, 16)}</em></div><div className="asset-actions"><button className="button secondary" onClick={()=>onMigrate(skill)}><ArrowRightLeft size={16}/>发起迁移</button><button className="button secondary" onClick={() => prepare(skill.assetId)} disabled={preparing === skill.assetId || !catalog.modelRoles.analyzer.configured}><Sparkles size={16} />{preparing === skill.assetId ? "出题中" : "AI 生成试题"}</button>{preps[0] ? <button className="icon-button" title="进入评测" onClick={() => onSelectPreparation(preps[0].preparationId)}><ChevronRight size={18} /></button> : null}</div></div>;
+        return <div className="asset-row" id={`asset-${skill.assetId}`} tabIndex={-1} key={skill.assetId}><div className="asset-icon"><FileArchive size={20} /></div><div><strong>{skill.displayName}</strong>{focusedAsset===skill.assetId&&<span className="state-tag">本次迁移候选 · 待执行验证</span>}<small>{skill.skillId}@{skill.version} · {skill.fileCount} 个文件</small><p>{skill.description}</p><em className="mono">SHA {skill.artifactSha256.slice(0, 16)}</em></div><div className="asset-actions"><button className="button secondary" onClick={()=>onMigrate(skill)}><ArrowRightLeft size={16}/>发起迁移</button><button className="button secondary" onClick={() => prepare(skill.assetId)} disabled={preparing === skill.assetId || !catalog.modelRoles.analyzer.configured}><Sparkles size={16} />{preparing === skill.assetId ? "出题中" : "AI 生成试题"}</button>{preps[0] ? <button className="icon-button" title="进入评测" onClick={() => onSelectPreparation(preps[0].preparationId)}><ChevronRight size={18} /></button> : null}</div></div>;
       }) : <div className="empty-table">尚未上传 Skill ZIP</div>}</div>
     </section>
     <section className="asset-section"><div className="section-title"><div><h2>预制 Eval Pack</h2><p>由金融 SOP、Golden Cases 与 Judge Rubric 共同定义。</p></div><span>{catalog.evalPacks.length} 套</span></div><div className="asset-table">{catalog.evalPacks.map(pack => <div className="asset-row" key={pack.packId}><div className="asset-icon"><Archive size={20} /></div><div><strong>{pack.targetSkillId}</strong><small>v{pack.targetSkillVersion} · {pack.caseCount} 题 · {pack.domain}</small><p>{pack.description}</p><em className="mono">PACK {pack.fingerprint.slice(0, 16)}</em></div><span className={pack.replayReady ? "state-tag ready" : "state-tag"}>{pack.replayReady ? "可回放" : "需在线 Runtime"}</span></div>)}</div></section>

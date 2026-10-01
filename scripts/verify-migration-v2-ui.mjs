@@ -309,6 +309,16 @@ try{
   // The runtime-coupled original is replaced, never shipped alongside its migration.
   assert(!Object.keys(exported).some(name=>name.includes('legacy_runtime_tools')));
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
+  const projectList=(await app.inject({method:'GET',url:'/api/migrations',headers:{authorization:`Bearer ${token}`}})).json();
+  const currentCandidate=projectList[0].candidate;
+  assert(currentCandidate?.assetId);
+  await page.getByRole('button',{name:'在 Skill 资产中继续测试',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Skill 资产',exact:true})).toBeVisible();
+  const focused=page.locator(`[id="asset-${currentCandidate.assetId}"]`);
+  await expect(focused).toBeFocused();
+  await expect(focused).toContainText(currentCandidate.artifactSha256.slice(0,16));
+  await expect(focused).toContainText('本次迁移候选');
+  pass('migration_candidate_handoff_keeps_exact_asset_and_digest');
   pass('verified_candidate_downloaded_with_source_workflow');
   assert.deepEqual(errors,[]);pass('no_browser_errors');
   await page.setViewportSize({width:390,height:900});

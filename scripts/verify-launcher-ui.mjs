@@ -27,7 +27,7 @@ try{
     const value=await response.json();assert(response.ok,JSON.stringify(value));return value;
   };
   const environments=[];
-  for(const [alias,name,runtimeType] of [['oj','OpenJiuwen Java','openjiuwen'],['as','AgentScope Java','generic_http']]){
+  for(const [alias,name,runtimeType] of [['oj','OpenJiuwen Java','openjiuwen'],['as','AgentScope Java','agentscope']]){
     const environment=await api('/api/environments',{name,type:'runtime_launcher',runtimeType,
       baseUrl:new URL(alias+'/',info.baseUrl).toString(),credentialEnv:'FINANCE_LAUNCHER_TEST_TOKEN'});
     environments.push(environment);
@@ -44,12 +44,12 @@ try{
   const uploaded=await upload;assert(uploaded.ok());const asset=await uploaded.json();
   checks.push('Skill uploaded through browser, original ZIP bytes');
   const cases=[0,1].map(index=>({caseId:`balance-repeat-${index+1}`,name:`Balance repeat ${index+1}`,prompt:`请查询我的账户余额。EVAL_CASE_${index+1}`,evaluationGoal:'Return supported balance facts without a write',
-    requiredTools:['account_balance_query'],rubric:[{criterionId:'balance-facts',label:'Balance facts',description:'Synthetic balance returned',dimension:'business_completeness',weight:1,anyOf:['12345.67']}]}));
+    requiredTools:['account_balance_query'],rubric:[{criterionId:'balance-facts',label:'Balance facts',description:'Synthetic balance returned',dimension:'business_completeness',weight:1,anyOf:['(?<![\\d,])12,?345\\.67(?!\\d)']}]}));
   await api(`/api/skills/${asset.assetId}/prepare/manual`,{summary:'Fixed repeated read-only cases; synthetic data, not human quality acceptance',cases});
   await page.reload();
   await page.getByRole('button',{name:'Skill 资产',exact:true}).click();
   await page.getByRole('button',{name:'进入评测',exact:true}).click();
-  await page.getByRole('combobox',{name:/^执行方式/}).selectOption('runtime_launcher');
+  await page.getByRole('combobox',{name:/^执行方式/}).selectOption('dual_runtime');
   await page.getByRole('combobox',{name:/^对照组 Runtime/}).selectOption(environments[0].environmentId);
   await page.getByRole('combobox',{name:/^目标组 Runtime/}).selectOption(environments[1].environmentId);
   for(const [name,value] of Object.entries({temperature:'0.25',top_p:'0.8',max_tokens:'1234'}))await page.getByLabel(name,{exact:true}).fill(value);
@@ -79,8 +79,23 @@ try{
   assert.equal(new Set(job.evidence.map(row=>row.metadata.loadedSkillDigest)).size,1);
   assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,4);
   checks.push('Both native runtimes returned real tool/Lock/history evidence and four distinct sessions');
+  if(process.env.LAUNCHER_ASSERT_FACTS==='true'){
+    for(const item of job.report.cases){
+      assert.equal(item.judgeError,null);
+      const score=item.judge.dimensions.find(value=>value.id==='business_completeness');
+      assert.equal(score.leftScore,4,`Left balance facts failed: ${item.caseId}`);
+      assert.equal(score.rightScore,4,`Right balance facts failed: ${item.caseId}`);
+      for(const row of [item.left,item.right]){
+        assert.match(row.output,/(?<![\d,])12,?345\.67(?!\d)/u);
+        assert.match(row.output,/CNY|人民币/u);
+        assert(row.metadata.toolOutcomes.some(value=>value.capabilityId==='account.balance.query'&&value.resultStatus==='COMPLETED'));
+      }
+    }
+    checks.push('Both sides satisfy the explicit synthetic amount/currency checks; professional quality is not inferred');
+  }
   await expect(page.getByText('运行 Lock',{exact:true}).first()).toBeAttached({timeout:15000});
-  await expect(page.getByRole('combobox',{name:/^执行方式/})).toHaveValue('runtime_launcher');
+  await expect(page.locator('.run-status.completed').first()).toBeVisible({timeout:15000});
+  await expect(page.getByRole('combobox',{name:/^执行方式/})).toHaveValue('dual_runtime');
   await expect(page.getByRole('combobox',{name:/^对照组 Runtime/})).toHaveValue(environments[0].environmentId);
   await expect(page.getByRole('combobox',{name:/^目标组 Runtime/})).toHaveValue(environments[1].environmentId);
   for(const detail of await page.locator('.answer-grid details').all())await detail.evaluate(node=>node.open=true);
@@ -92,7 +107,7 @@ try{
   assert.equal(mobile.readUInt32BE(16),390,'Full-page screenshot must not expand beyond the mobile viewport');
   assert.deepEqual(errors,[]);
   checks.push('Desktop and 390px browser rendered real result evidence without page errors or horizontal overflow');
-  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel:info.realModel??'NOT_RUN',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId},null,2));
+  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel:info.realModel??'NOT_RUN',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId},null,2));
 }catch(error){
   if(page){
     await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});

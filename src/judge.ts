@@ -113,12 +113,21 @@ export class DeterministicRubricJudge implements PairwiseJudge {
       ? "tie" as const
       : leftTotal > rightTotal ? "left" as const : "right" as const;
     const difference = Math.abs(leftTotal - rightTotal);
+    const bothFullyCovered = leftChecks.length > 0
+      && leftChecks.every(check => check.passed)
+      && rightChecks.every(check => check.passed);
+    const neitherCovered = !leftChecks.some(check => check.passed)
+      && !rightChecks.some(check => check.passed);
     return {
       winner,
       confidence: difference >= 4 ? "high" : difference >= 2 ? "medium" : "low",
       summary: winner === "tie"
-        ? "两侧均覆盖了当前确定性规则要求，需由业务 Judge 比较表达与判断质量。"
-        : `${winner === "left" ? "左侧" : "右侧"}覆盖了更多金融专业闭环要素。`,
+        ? bothFullyCovered
+          ? "两侧均满足当前确定性规则；专业判断与表达质量仍需另行评估。"
+          : neitherCovered
+            ? "两侧均未满足当前确定性规则；请核对回答、规则及执行证据，不能据此认定业务通过。"
+            : "两侧确定性规则得分相同，但未全部满足规则；请查看各维度结果与未覆盖要求。"
+        : `${winner === "left" ? "左侧" : "右侧"}在当前确定性规则中得分更高；不代表完整专业质量验收通过。`,
       dimensions,
       reviewerLabel: input.profile.reviewerLabel,
     };
