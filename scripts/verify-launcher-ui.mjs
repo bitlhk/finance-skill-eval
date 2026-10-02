@@ -7,6 +7,7 @@ import {chromium,expect} from '@playwright/test';
 import {createEvaluationService} from '../dist/service/server.js';
 import {zipSync} from 'fflate';
 import {installNativeSample} from './install-native-sample.mjs';
+import {loadEvalPack} from '../dist/eval-pack.js';
 
 const info=JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_INFO,'utf8'));
 const output=path.resolve(process.env.LAUNCHER_UI_OUTPUT);
@@ -20,6 +21,11 @@ await writeFile(modelFile,JSON.stringify({schemaVersion:'finance.skill-eval.exec
   models:[{providerId:'managed-launcher',modelId,label:'Managed comparison model',availability:'ready',parameters:{temperature:0.25,top_p:0.8,max_tokens:1234}}]}));
 process.env.FINANCE_EVAL_EXECUTION_CATALOG=modelFile;
 const prebuilt=process.env.LAUNCHER_PREBUILT_FLOW==='true';
+if(prebuilt){
+  const pack=await loadEvalPack(path.resolve('packs/finance/native-readonly-balance/eval.yaml'));
+  assert.equal(info.bankFixture?.id,pack.metadata?.fixtureVersion,
+    'PREBUILT_FIXTURE_MISMATCH: use the bank fixture pinned by this evaluation pack; do not score a different bank snapshot');
+}
 const builtin=prebuilt?await installNativeSample(path.join(output,'data')):null;
 const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'data'),
   publicDirectory:path.resolve('web-dist'),accessToken:token,publicDemo:false});

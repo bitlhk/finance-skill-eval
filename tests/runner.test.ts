@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { RuntimeCaseNotExecutedError } from '../src/adapters.js';
+import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from '../src/adapters.js';
 import { renderHtmlReport } from '../src/report.js';
 import {
   DeterministicRubricJudge,
@@ -10,6 +10,18 @@ import {
 } from "../src/index.js";
 
 describe("evaluation runner lifecycle", () => {
+  it('retains failure correlation without scoring or asserting successful installation', async () => {
+    const pack = await loadEvalPack(path.resolve('packs/finance/investment-research/eval.yaml'));
+    pack.cases = pack.cases.slice(0, 1);
+    const compare = vi.fn(), cleanup = vi.fn(async () => undefined);
+    const metadata = {launcherDiagnostics: {basis:'LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION',buildId:'agent-test'}};
+    const runtime: RuntimeAdapter = {adapterId:'failed-launcher',
+      async execute() {throw new RuntimeExecutionFailure('Runtime execution failed: EVAL_TOOL_EXECUTION_FAILED',metadata);},cleanup};
+    const result = await runEvaluation({pack,runtime,judge:{judgeId:'no-score-on-failure',compare}});
+    expect(result.cases[0]!.left).toMatchObject({status:'failed',runtimeIdentityVerified:false,loadedSkills:[],metadata});
+    expect(compare).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
   it('records blocked cases as not executed and excludes them from quality scoring', async () => {
     const pack = await loadEvalPack(path.resolve('packs/finance/investment-research/eval.yaml'));
     pack.cases = pack.cases.slice(0, 1);

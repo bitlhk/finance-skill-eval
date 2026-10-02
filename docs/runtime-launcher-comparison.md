@@ -21,6 +21,18 @@ runtime, a trading route, a public upload endpoint, or a new evaluation engine.
 
 ## Contract additions
 
+- Failure observations are correlated to the requested run, case, side and
+  instance before being forwarded. Recognized Builder native diagnostics retain
+  only bounded build/Host/run/trace identifiers, with the basis
+  `LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION`. The runner keeps these lookup
+  keys on failed evidence without asserting installed Skills, identity, tools or
+  model parameters; failed cases are not quality-scored or automatically retried.
+  Old failures without these identifiers remain unchanged.
+- The isolated native browser probe checks a preset Pack's fixture identity
+  before executing it. Its one-account controlled bank is not interchangeable
+  with the candidate site's five-account snapshot. A fixture mismatch is a test
+  setup failure, not a Runtime quality result.
+
 - `RuntimeInstanceRequest.generation` is optional for older clients. When present,
   all three parameters are required with `schemaVersion=finance.eval-generation.v1`.
   Unknown keys, incomplete settings, invalid numbers and unsupported values are

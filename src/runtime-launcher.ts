@@ -1,6 +1,6 @@
 import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
-import { RuntimeCaseNotExecutedError } from './adapters.js';
+import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
@@ -90,7 +90,7 @@ async function* boundedSseFrames(reader:ReadableStreamDefaultReader<Uint8Array>)
   }
   if(pending.some(byte=>![9,10,13,32].includes(byte)))throw new Error('Runtime Launcher SSE stream ended with an unfinished frame');
 }
-async function readExecution(response:Response,request:RuntimeExecutionRequest):Promise<unknown>{
+async function readExecution(response:Response,request:RuntimeExecutionRequest,instanceId:string):Promise<unknown>{
   if(!response.headers.get('content-type')?.includes('text/event-stream'))return readBoundedJson(response,RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes,'Runtime Launcher evidence');
   if(!response.body)throw new Error('Runtime instance stream is empty');
   const reader=response.body.getReader(),decoder=new TextDecoder();let value:unknown;
@@ -105,11 +105,25 @@ async function readExecution(response:Response,request:RuntimeExecutionRequest):
         value=event.evidence;
       }else if(event.schemaVersion==='finance.runtime-observation.v1'){
         const observation=runtimeObservationEventSchema.parse(event);
+        if((observation.runId!==undefined&&observation.runId!==request.runId)
+            ||(observation.caseId!==undefined&&observation.caseId!==request.evalCase.caseId)
+            ||(observation.side!==undefined&&observation.side!==request.side)||observation.instanceId!==instanceId)
+          throw new Error('Runtime observation does not match the requested case');
         forwardObservation(observation,request);
         if(observation.kind==='execution.failed'){
           const code=observation.payload.error?.code;
+          const metadata:Record<string,unknown>={instanceId,launcherTraceId:observation.traceId};
+          if(observation.source.adapter==='finance-solution-builder'
+              &&observation.source.nativeEventType==='builder.execution-correlation.v1'){
+            const raw=observation.native?.data;
+            const fields=raw&&typeof raw==='object'?raw as Record<string,unknown>:{};
+            const diagnostic=Object.fromEntries(['buildId','hostInstanceId','hostRunId','hostTraceId']
+              .filter(key=>typeof fields[key]==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/u.test(fields[key] as string))
+              .map(key=>[key,fields[key]]));
+            if(Object.keys(diagnostic).length)metadata.launcherDiagnostics={basis:'LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION',...diagnostic};
+          }
           // Preserve a normalized failure code, never arbitrary upstream message text.
-          throw new Error(`Runtime execution failed: ${code&&/^[A-Z][A-Z0-9_]{0,119}$/u.test(code)?code:'EXECUTION_FAILED'}`);
+          throw new RuntimeExecutionFailure(`Runtime execution failed: ${code&&/^[A-Z][A-Z0-9_]{0,119}$/u.test(code)?code:'EXECUTION_FAILED'}`,metadata);
         }
       }
       else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
@@ -193,7 +207,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
       headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[]}))});
     if(!response.ok)throw await responseError(response);
-    const payload=await readExecution(response,request);
+    const payload=await readExecution(response,request,this.instance.instanceId);
     const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);
     if(evidence.runId!==request.runId||evidence.side!==request.side||evidence.caseId!==request.evalCase.caseId)throw new Error('Runtime instance evidence does not match the requested case');
     if(evidence.modelId!==this.options.model.modelId)throw new Error('Runtime instance used a different model');
