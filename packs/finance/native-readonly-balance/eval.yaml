@@ -1,6 +1,6 @@
 schemaVersion: finance.skill-eval.pack.v1
 packId: native-readonly-balance-v1
-version: 1.0.3
+version: 1.0.4
 domain: account-service
 targetSkillId: native-readonly-balance
 targetSkillVersion: 1.0.3
@@ -20,7 +20,10 @@ variants:
     version: 1.0.3
     artifactSha256: db573f2d2339caffeee32023440eacd853a075d28afd4b78f284eaad0a73943f
 judgeProfileFile: profiles/judge.yaml
-caseFiles: [cases/balance.yaml]
+caseFiles: [cases/accounts-20261002.yaml]
 metadata:
   dataMode: synthetic-snapshot
   evidenceSemantics: native-runtime-live-tools-synthetic-bank
+  fixtureVersion: synthetic-accounts-20261002-v1
+  fixtureBasis: independently-authorized-synthetic-read
+  priorCaseFile: cases/balance.yaml
