@@ -1,4 +1,5 @@
 import path from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
 import { z } from "zod";
 import type { ModelAdapter } from "../adapters.js";
 import { CodexCliModelAdapter } from "../codex-cli-model.js";
@@ -82,18 +83,27 @@ export function configuredModelRole(
   const environment = roleEnvironment(role, fallbackModel);
   const provider = process.env[`FINANCE_EVAL_${role}_PROVIDER`]?.trim().toLowerCase();
   if ((role === "JUDGE" || role === "OPTIMIZER" || role === "MIGRATION") && provider === "codex_cli") {
+    const command = process.env.FINANCE_EVAL_CODEX_BIN?.trim() || "codex";
+    const candidates = path.isAbsolute(command) || command.includes("/") || command.includes("\\")
+      ? [path.resolve(command)]
+      : (process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map(dir => path.resolve(dir, command));
+    const executable = candidates.find(candidate => {
+      try { accessSync(candidate, constants.X_OK); return statSync(candidate).isFile(); }
+      catch { return false; }
+    });
     return {
-      configured: true,
+      // Executable readiness is not a claim that remote authentication/model access was verified.
+      configured: Boolean(executable),
       model: {
         providerId: "codex-host",
         modelId: process.env[`FINANCE_EVAL_${role}_MODEL`]?.trim() || "gpt-6-astra",
         label: role === "JUDGE" ? "Codex 匿名 Judge" : role === "MIGRATION" ? "Codex 代码迁移模型" : "Codex Skill 优化模型",
         parameters: {},
       },
-      adapter: new CodexCliModelAdapter({
-        executable: process.env.FINANCE_EVAL_CODEX_BIN?.trim() || "codex",
+      adapter: executable ? new CodexCliModelAdapter({
+        executable,
         timeoutMs: 300_000,
-      }),
+      }) : null,
     };
   }
   const configured = Boolean(environment.baseUrl.trim() && environment.apiKey.trim());
