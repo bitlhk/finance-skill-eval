@@ -2,13 +2,17 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {randomBytes} from 'node:crypto';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, writeFile, cp} from 'node:fs/promises';
 import path from 'node:path';
 import {chromium, expect} from '@playwright/test';
 import {zipSync, unzipSync} from 'fflate';
 import {createEvaluationService} from '../dist/service/server.js';
 import {canonicalSha256} from '../dist/shared/json-canonicalization.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
+import {stageCandidatePack} from '../dist/service/candidate-pack-staging.js';
+import {SkillStore} from '../dist/service/skill-store.js';
+import {loadEvalPack} from '../dist/eval-pack.js';
+import {parse as parseYaml} from 'yaml';
 
 assert(process.env.METHOD_ONLY_UI_OUTPUT, 'Set METHOD_ONLY_UI_OUTPUT to a new isolated evidence directory');
 const output = path.resolve(process.env.METHOD_ONLY_UI_OUTPUT);
@@ -19,7 +23,7 @@ const nativePaths = process.env.METHOD_ONLY_NATIVE_FIXTURES
 const native = nativePaths ? Object.fromEntries(await Promise.all(Object.entries(nativePaths).map(async ([type, file]) =>
   [type, JSON.parse(await readFile(file, 'utf8'))]))) : null;
 const flow = process.env.METHOD_ONLY_UI_FLOW ?? 'migration';
-assert(['migration', 'upload'].includes(flow));
+assert(['migration', 'upload', 'prebuilt'].includes(flow));
 const source = '---\nname: supplied-dialogue-review\nversion: 1.0.0\ndescription: Review only the supplied synthetic dialogue.\nallowed-tools: []\n---\nReview the supplied dialogue and cite its evidence. Ask for missing information.\n';
 const reference = 'Only supplied dialogue is evidence. No customer or bank lookup is available.\n';
 const calls = [];
@@ -42,6 +46,7 @@ const fixture = http.createServer((req, res) => {
 await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
 let app, browser, page;
 const judge = native ? await controlledGoalJudge() : null;
+let prebuilt, originalPack, root = process.cwd();
 const checks = [], errors = [];
 try {
   if (native) {
@@ -57,7 +62,23 @@ try {
         parameters: {temperature: 0, top_p: 1, max_tokens: 1024}}]}));
     process.env.FINANCE_EVAL_EXECUTION_CATALOG = modelFile;
   }
-  app = await createEvaluationService({rootDirectory: process.cwd(), dataDirectory: path.join(output, 'data'),
+  if (flow === 'prebuilt') {
+    assert(native, 'Prebuilt acceptance requires actual native fixtures');
+    const skill = native.openjiuwen.skill;
+    assert.deepEqual(skill.files, native.agentscope.skill.files);
+    const archive = Buffer.from(skill.archiveBase64, 'base64');
+    root = path.join(output, 'root'); await mkdir(root);
+    await stageCandidatePack({sourcePack: path.resolve('packs/finance', skill.skillId + '-online/eval.yaml'),
+      archive, archiveSha256: skill.archiveSha256, skillId: skill.skillId, skillVersion: skill.version,
+      packId: skill.skillId + '-native-browser', packVersion: '1.0.0', toolMapping: {}, outputDirectory: path.join(output, 'staged')});
+    await mkdir(path.join(root, 'packs/finance'), {recursive: true});
+    await cp(path.join(output, 'staged/packs/candidate'), path.join(root, 'packs/finance/candidate'), {recursive: true});
+    await cp('packs/finance/catalog.yaml', path.join(root, 'packs/finance/catalog.yaml'));
+    originalPack = await loadEvalPack(path.join(root, 'packs/finance/candidate/eval.yaml'));
+    prebuilt = await new SkillStore(path.join(output, 'data')).uploadZip(archive);
+    assert.equal(prebuilt.artifactSha256, originalPack.variants.right.artifactSha256);
+  }
+  app = await createEvaluationService({rootDirectory: root, dataDirectory: path.join(output, 'data'),
     publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false,
     migrationAnalyzer: async () => ({status: 'PRODUCED', payload: {status: 'PRODUCED', skill: {status: 'COMPLIANT', findings: []},
       tools: [], dependencyAnalysis: {dependencies: [], chains: []}}, scanner: {scannerDigest: 'a'.repeat(64), coverage: []}}),
@@ -82,7 +103,14 @@ try {
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button', {name: '进入工作区', exact: true}).click();
   let asset;
-  if (flow === 'upload') {
+  if (flow === 'prebuilt') {
+    asset = prebuilt;
+    const catalog = parseYaml(await readFile('packs/finance/catalog.yaml', 'utf8'));
+    const name = catalog.skills.find(row => row.skillId === asset.skillId).displayName;
+    await page.locator('.skill-list-item').filter({has: page.getByRole('heading', {name, exact: true})})
+      .getByRole('button', {name: '进入评测', exact: true}).click();
+    checks.push('Original curated no-tool method and resources selected with original fixed development cases');
+  } else if (flow === 'upload') {
     await page.getByRole('button', {name: 'Skill 资产', exact: true}).click();
     const uploaded = page.waitForResponse(r => r.url().endsWith('/api/skills/upload') && r.request().method() === 'POST');
     await page.locator('input[type=file]').setInputFiles({name: 'dialogue-review.zip', mimeType: 'application/zip',
@@ -132,12 +160,13 @@ try {
   }
   await page.getByRole('button', {name: '在 Skill 资产中继续测试', exact: true}).click();
   }
-  await expect(page.locator(`#asset-${asset.assetId}`)).toBeVisible();
+  if (flow !== 'prebuilt') await expect(page.locator(`#asset-${asset.assetId}`)).toBeVisible();
   assert.deepEqual(errors, []);
   if (!native && flow === 'migration') assert(calls.filter(c => c.path.endsWith('/v1/native-tool-catalog')).length >= 4);
   assert(calls.every(c => c.method === 'GET' && /\/v1\/(native-tool-catalog|runtime-capabilities)$/u.test(c.path)));
   checks.push('Selected immutable version reachable in Skill assets');
   if (native) {
+    if (flow !== 'prebuilt') {
     await api(`/api/skills/${asset.assetId}/prepare/manual`, {summary: 'Controlled no-tool execution, not quality acceptance',
       cases: [1, 2].map(index => ({caseId: 'dialogue-' + index, name: 'Synthetic dialogue ' + index,
         prompt: 'Review only this supplied synthetic dialogue. UNIQUE_DIALOGUE_' + index, requiredTools: [],
@@ -148,6 +177,7 @@ try {
     await page.reload();
     await page.getByRole('button', {name: 'Skill 资产', exact: true}).click();
     await page.locator(`#asset-${asset.assetId}`).getByRole('button', {name: '进入评测', exact: true}).click();
+    }
     await page.getByRole('combobox', {name: /^执行方式/u}).selectOption('dual_runtime');
     await page.getByRole('combobox', {name: /^对照组 Runtime/u}).selectOption(environments[0].environmentId);
     await page.getByRole('combobox', {name: /^目标组 Runtime/u}).selectOption(environments[1].environmentId);
@@ -166,7 +196,8 @@ try {
       await new Promise(resolve => setTimeout(resolve, 1000));
     } while (Date.now() < deadline);
     await writeFile(path.join(output, 'native-job.json'), JSON.stringify(job, null, 2), {mode: 0o600});
-    assert.equal(job.status, 'completed', JSON.stringify(job.error)); assert.equal(job.evidence.length, 4);
+    const expectedExecutions = 2 * (originalPack?.cases.length ?? 2);
+    assert.equal(job.status, 'completed', JSON.stringify(job.error)); assert.equal(job.evidence.length, expectedExecutions);
     for (const row of job.evidence) {
       assert.equal(row.status, 'completed', JSON.stringify(row.error)); assert.equal(row.runtimeIdentityVerified, true);
       assert.deepEqual(row.toolCalls, []); assert.equal(row.skillVersion, asset.version);
@@ -175,19 +206,28 @@ try {
       assert.deepEqual(row.metadata.declaredModelParameters, {temperature: 0, top_p: 1, max_tokens: 1024});
     }
     assert.equal(new Set(job.evidence.map(row => row.metadata.loadedSkillDigest)).size, 1);
-    assert.equal(new Set(job.evidence.map(row => row.metadata.sessionId)).size, 4);
-    assert.equal(judge.calls.length, 4);
+    assert.equal(new Set(job.evidence.map(row => row.metadata.sessionId)).size, expectedExecutions);
+    assert.equal(judge.calls.length, expectedExecutions);
+    if (originalPack) for (const input of judge.calls) {
+      const evalCase = originalPack.cases.find(row => row.prompt === input.task); assert(evalCase);
+      assert.deepEqual(input.criteria.map(row => row.description), evalCase.rubric.map(row => row.description));
+    }
     for (const item of job.report.cases) for (const side of ['left', 'right']) {
       assert.equal(item.judge.runtimeComparison[side].status, 'assessed');
       assert.equal(item.judge.runtimeComparison[side].assessment.verdict, 'INDETERMINATE');
     }
     await expect(page.locator('.run-status.completed').first()).toBeVisible({timeout: 15000});
     await page.screenshot({path: path.join(output, 'native-results.png'), fullPage: true});
+    for (const width of [390, 320]) {
+      await page.setViewportSize({width, height: 844});
+      await expect.poll(() => page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth))).toBeLessThanOrEqual(width);
+      await page.screenshot({path: path.join(output, `native-results-${width}.png`), fullPage: true});
+    }
     assert.deepEqual(errors, []);
-    checks.push('Selected immutable Skill dynamically built on both native Java runtimes; four fresh case sessions, matching method/version, Locks and history');
+    checks.push(`Selected immutable Skill dynamically built on both native Java runtimes; ${expectedExecutions} fresh case sessions, matching method/version, Locks and history`);
   }
   await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS', scope: native ? 'CONTROLLED_NATIVE_SKILL_BROWSER' : 'CONTROLLED_MIGRATION_UI_ONLY',
-    analysis: flow === 'migration' ? 'CONTROLLED' : 'NOT_RUN', catalogs: flow === 'upload' ? 'NOT_USED' : native ? 'REAL_LAUNCHER' : 'CONTROLLED', runtimeExecution: native ? 'PASSED' : 'NOT_RUN', realModel: 'NOT_RUN', sso: 'NOT_TESTED',
+    analysis: flow === 'migration' ? 'CONTROLLED' : 'NOT_RUN', catalogs: flow !== 'migration' ? 'NOT_USED' : native ? 'REAL_LAUNCHER' : 'CONTROLLED', runtimeExecution: native ? 'PASSED' : 'NOT_RUN', realModel: 'NOT_RUN', sso: 'NOT_TESTED',
     flow, deployed: false, checks, calls, candidateDigest: asset.artifactSha256}, null, 2));
 } catch (error) {
   if (page) {await page.screenshot({path: path.join(output, 'failure.png'), fullPage: true});
