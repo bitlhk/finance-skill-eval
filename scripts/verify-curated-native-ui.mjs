@@ -11,47 +11,49 @@ import {SkillStore} from '../dist/service/skill-store.js';
 import {loadEvalPack} from '../dist/eval-pack.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
 
-const output = path.resolve(process.env.CURATED_UI_OUTPUT);
+async function verifyEntry(entry, shared) {
+const output = path.resolve(entry.output);
 await mkdir(output, {mode: 0o700});
-const flow = process.env.CURATED_UI_FLOW ?? 'prebuilt';
+const flow = entry.flow ?? 'prebuilt';
 assert(['prebuilt', 'upload', 'migration'].includes(flow));
 const paths = JSON.parse(await readFile(process.env.CURATED_UI_FIXTURES, 'utf8'));
 const fixtures = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([key, file]) =>
   [key, JSON.parse(await readFile(file, 'utf8'))])));
 assert.deepEqual(Object.keys(fixtures).sort(), ['agentscope', 'openjiuwen']);
-const skill = JSON.parse(await readFile(path.join(process.env.CURATED_UI_SKILL_PROBE, 'skill.json'), 'utf8'));
+const skill = JSON.parse(await readFile(path.join(entry.skillProbe, 'skill.json'), 'utf8'));
 const archive = Buffer.from(skill.archiveBase64, 'base64');
 const sourceFiles = unzipSync(archive);
 const sourceMethod = Buffer.from(sourceFiles['SKILL.md']).toString();
 const sourceHeader = parseYaml(sourceMethod.split('---')[1]);
 const declaredTools = sourceHeader['allowed-tools'];
 assert(Array.isArray(declaredTools) && declaredTools.length > 0);
-const root = path.join(output, 'root'), data = path.join(output, 'data');
+const root = shared?.root ?? path.join(output, 'root'), data = shared?.data ?? path.join(output, 'data');
 await mkdir(path.join(root, 'packs/finance'), {recursive: true});
-await cp(path.join(process.env.CURATED_UI_STAGING, 'packs/candidate'), path.join(root, 'packs/finance/candidate'), {recursive: true});
+if (!shared) await cp(path.join(entry.stagedPack, 'packs/candidate'), path.join(root, 'packs/finance/candidate'), {recursive: true});
 await cp('packs/finance/catalog.yaml', path.join(root, 'packs/finance/catalog.yaml'));
 if (flow === 'migration') {
   await mkdir(path.join(root, 'scripts'));
   await cp('scripts/scan-migration.py', path.join(root, 'scripts/scan-migration.py'));
 }
-const pack = await loadEvalPack(path.join(root, 'packs/finance/candidate/eval.yaml'));
+const pack = await loadEvalPack(path.join(entry.stagedPack, 'packs/candidate/eval.yaml'));
 assert.equal(pack.targetSkillId, skill.skillId);
 assert.equal(pack.targetSkillVersion, skill.version);
 const catalog = parseYaml(await readFile('packs/finance/catalog.yaml', 'utf8'));
 const displayName = catalog.skills.find(row => row.skillId === skill.skillId)?.displayName;
 assert(displayName, 'Use an actual curated catalog entry');
-const token = randomBytes(32).toString('hex');
+const token = shared?.token ?? randomBytes(32).toString('hex');
 const generation = {temperature: 0, top_p: 1, max_tokens: 1024};
 const modelFile = path.join(output, 'models.json');
 await writeFile(modelFile, JSON.stringify({schemaVersion: 'finance.skill-eval.execution-models.v1', defaultModelId: 'launcher-model',
   models: [{providerId: 'managed-launcher', modelId: 'launcher-model', label: 'Controlled native model', availability: 'ready', parameters: generation}]}));
 process.env.FINANCE_EVAL_EXECUTION_CATALOG = modelFile;
-const judge = await controlledGoalJudge(), judgeCalls = judge.calls;
+const judge = shared?.judge ?? await controlledGoalJudge(), judgeCalls = judge.calls, judgeStart = judge.calls.length;
+if (shared) shared.judge = judge;
 let app, browser, page, asset;
 const errors = [], checks = [];
 try {
   if (flow === 'prebuilt') asset = await new SkillStore(data).uploadZip(archive);
-  app = await createEvaluationService({rootDirectory: root, dataDirectory: data, publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false,
+  app = shared?.app ?? await createEvaluationService({rootDirectory: root, dataDirectory: data, publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false,
     ...(flow === 'migration' ? {
       migrationAnalyzer: async () => ({status: 'PRODUCED', payload: {status: 'PRODUCED', skill: {status: 'COMPLIANT', findings: []},
         tools: declaredTools.map(name => ({name, sourcePaths: ['SKILL.md'], language: null, portability: 'RUNTIME_BOUND',
@@ -64,15 +66,16 @@ try {
         scanner: {scannerDigest: 'a'.repeat(64), coverage: []}}),
       migrationImplementer: async () => {throw Error('Native binding must not generate or run uploaded code');},
     } : {})});
-  const url = await app.listen({host: '127.0.0.1', port: 0});
+  const url = shared?.url ?? await app.listen({host: '127.0.0.1', port: 0});
+  if (shared) Object.assign(shared, {app, url});
   const api = async (route, body) => {
     const response = await fetch(url + route, {method: body === undefined ? 'GET' : 'POST',
       headers: {authorization: 'Bearer ' + token, 'content-type': 'application/json'},
       ...(body === undefined ? {} : {body: JSON.stringify(body)})});
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
   };
-  const environments = [];
-  for (const [type, name] of [['openjiuwen', 'OpenJiuwen Java'], ['agentscope', 'AgentScope Java']]) {
+  const environments = shared?.environments ?? [];
+  if (!environments.length) for (const [type, name] of [['openjiuwen', 'OpenJiuwen Java'], ['agentscope', 'AgentScope Java']]) {
     const fixture = fixtures[type]; assert.equal(fixture.status, 'READY');
     assert.equal(new URL(fixture.baseUrl).hostname, '127.0.0.1');
     const credential = 'FINANCE_CURATED_UI_' + type.toUpperCase() + '_TOKEN';
@@ -80,6 +83,7 @@ try {
     environments.push(await api('/api/environments', {name, type: 'runtime_launcher', runtimeType: type,
       baseUrl: new URL(type + '/', fixture.baseUrl).toString(), credentialEnv: credential}));
   }
+  if (shared) shared.environments = environments;
   browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH});
   page = await browser.newPage({viewport: {width: 1366, height: 900}});
   page.on('pageerror', error => errors.push(error.message));
@@ -179,8 +183,8 @@ try {
   }
   assert.equal(new Set(job.evidence.map(row => row.metadata.loadedSkillDigest)).size, 1);
   assert.equal(new Set(job.evidence.map(row => row.metadata.sessionId)).size, job.evidence.length);
-  assert.equal(judgeCalls.length, job.evidence.length);
-  for (const input of judgeCalls) {
+  assert.equal(judgeCalls.length - judgeStart, job.evidence.length);
+  for (const input of judgeCalls.slice(judgeStart)) {
     const evalCase = pack.cases.find(row => row.prompt === input.task); assert(evalCase);
     assert.deepEqual(input.criteria.map(row => row.description), evalCase.rubric.map(row => row.description));
     assert(input.runtimeEvidence?.sourceFacts?.length, 'Judge must receive verified source facts');
@@ -211,6 +215,10 @@ try {
   const beforeView = judgeCalls.length;
   await page.reload(); await api(`/api/runs/${created.jobId}`);
   assert.equal(judgeCalls.length, beforeView); assert.deepEqual(errors, []);
+  if (shared) {
+    shared.jobIds.push(job.jobId);
+    for (const id of shared.jobIds) assert.equal((await api(`/api/runs/${id}`)).status, 'completed');
+  }
   checks.push('Original Skill and development cases, native dynamic builds, same generation parameters, per-case sessions, Lock/history and projected facts');
   checks.push('Real page at 1366/390/320; controlled Judge preserves INDETERMINATE rather than claiming answer quality');
   await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS', scope: 'CONTROLLED_CURATED_NATIVE_BROWSER', flow,
@@ -223,6 +231,40 @@ try {
     await writeFile(path.join(output, 'failure-body.txt'), await page.locator('body').innerText());}
   throw error;
 } finally {
-  await writeFile(path.join(output, 'judge-calls.json'), JSON.stringify(judgeCalls, null, 2));
-  await browser?.close(); await app?.close(); await judge.close();
+  await writeFile(path.join(output, 'judge-calls.json'), JSON.stringify(judgeCalls.slice(judgeStart), null, 2));
+  await browser?.close();
+  if (!shared) {await app?.close(); await judge.close();}
+}
+}
+
+if (process.env.CURATED_UI_COHORT) {
+  const output = path.resolve(process.env.CURATED_UI_OUTPUT);
+  await mkdir(output, {mode: 0o700});
+  const entries = JSON.parse(await readFile(process.env.CURATED_UI_COHORT, 'utf8'));
+  assert(Array.isArray(entries) && entries.length > 1);
+  // Shared service mode currently covers immutable curated entries and uploads.
+  // Migration needs its own analyzer fixture; do not silently reuse another Skill's analysis.
+  assert(entries.every(entry => ['prebuilt', 'upload'].includes(entry.flow ?? 'prebuilt')));
+  const shared = {root: path.join(output, 'root'), data: path.join(output, 'data'),
+    token: randomBytes(32).toString('hex'), jobIds: []};
+  await mkdir(path.join(shared.root, 'packs/finance'), {recursive: true});
+  const packs = new Set();
+  for (const entry of entries) {
+    const directory = path.join(entry.stagedPack, 'packs/candidate');
+    const pack = await loadEvalPack(path.join(directory, 'eval.yaml'));
+    if (packs.has(pack.packId)) continue;
+    await cp(directory, path.join(shared.root, 'packs/finance', String(packs.size)), {recursive: true});
+    packs.add(pack.packId);
+  }
+  try {
+    for (const [index, entry] of entries.entries()) {
+      await verifyEntry({...entry, output: path.join(output, 'entry-' + index)}, shared);
+    }
+    await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS',
+      scope: 'SAME_EVAL_SERVICE_AND_WORKSPACE', jobIds: shared.jobIds, serviceRestarts: 0,
+      environmentCount: shared.environments.length, realModel: 'NOT_RUN', sso: 'NOT_TESTED'}, null, 2));
+  } finally {await shared.app?.close(); await shared.judge?.close();}
+} else {
+  await verifyEntry({output: process.env.CURATED_UI_OUTPUT, flow: process.env.CURATED_UI_FLOW,
+    skillProbe: process.env.CURATED_UI_SKILL_PROBE, stagedPack: process.env.CURATED_UI_STAGING});
 }
