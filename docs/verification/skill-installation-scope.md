@@ -49,3 +49,19 @@ binding, candidate ZIP preservation, return to Skill assets, and 1366/390/320px
 screenshots. All fixture requests must be read-only capability/catalog queries.
 The report marks Runtime execution, real model and SSO as untested; a successful
 candidate download is not a release or full evaluation acceptance.
+
+For native execution, Builder's `engineering/verify_method_only_native_browser.py`
+starts two independently qualified Java Launcher fixtures and invokes the same
+browser check. `--flow migration` exercises exported native bindings;
+`--flow upload` exercises an ordinary standard Skill upload. Both select dual
+Runtime in the page, submit two synthetic cases and inspect four case results,
+method/version identity, installation Lock/history references, per-case sessions,
+actual model HTTP parameters and final process cleanup. Case preparation is via
+the existing manual preparation API, not AI question generation or a full manual
+authoring workflow. The model is controlled and login uses an isolated local
+token, so these runs do not prove model quality or platform SSO.
+
+The browser runner may also consume `METHOD_ONLY_NATIVE_FIXTURES`, a private JSON
+map from `openjiuwen` and `agentscope` to active fixture info files, plus
+`METHOD_ONLY_UI_FLOW=migration|upload`. These are test inputs, not deployment
+configuration; fixture info contains a temporary token and must not be published.
