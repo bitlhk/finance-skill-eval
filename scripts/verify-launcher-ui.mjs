@@ -9,7 +9,10 @@ import {zipSync} from 'fflate';
 import {installNativeSample} from './install-native-sample.mjs';
 import {loadEvalPack} from '../dist/eval-pack.js';
 
-const info=JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_INFO,'utf8'));
+const fixtureMap=process.env.LAUNCHER_FIXTURE_MAP
+  ?JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_MAP,'utf8')):null;
+const fixtures=fixtureMap?Object.fromEntries(await Promise.all(Object.entries(fixtureMap).map(async([key,file])=>[key,JSON.parse(await readFile(file,'utf8'))]))):null;
+const info=fixtures?.oj??JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_INFO,'utf8'));
 const output=path.resolve(process.env.LAUNCHER_UI_OUTPUT);
 await mkdir(output,{mode:0o700});
 const token=randomBytes(24).toString('hex');
@@ -23,7 +26,7 @@ process.env.FINANCE_EVAL_EXECUTION_CATALOG=modelFile;
 const prebuilt=process.env.LAUNCHER_PREBUILT_FLOW==='true';
 if(prebuilt){
   const pack=await loadEvalPack(path.resolve('packs/finance/native-readonly-balance/eval.yaml'));
-  assert.equal(info.bankFixture?.id,pack.metadata?.fixtureVersion,
+  for(const fixture of fixtures?Object.values(fixtures):[info])assert.equal(fixture.bankFixture?.id,pack.metadata?.fixtureVersion,
     'PREBUILT_FIXTURE_MISMATCH: use the bank fixture pinned by this evaluation pack; do not score a different bank snapshot');
 }
 const builtin=prebuilt?await installNativeSample(path.join(output,'data')):null;
@@ -39,8 +42,10 @@ try{
   };
   const environments=[];
   for(const [alias,name,runtimeType] of [['oj','OpenJiuwen Java','openjiuwen'],['as','AgentScope Java','agentscope']]){
+    const current=fixtures?.[alias]??info;
+    const credential='FINANCE_LAUNCHER_TEST_TOKEN_'+alias.toUpperCase();process.env[credential]=current.token;
     const environment=await api('/api/environments',{name,type:'runtime_launcher',runtimeType,
-      baseUrl:new URL(alias+'/',info.baseUrl).toString(),credentialEnv:'FINANCE_LAUNCHER_TEST_TOKEN'});
+      baseUrl:new URL(alias+'/',current.baseUrl).toString(),credentialEnv:credential});
     environments.push(environment);
   }
   browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});
@@ -136,6 +141,7 @@ try{
   assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,job.evidence.length);
   checks.push('Both native runtimes returned tool/Lock/history evidence and a fresh session for every case');
   if(process.env.LAUNCHER_ASSERT_FACTS==='true'){
+    assert(!prebuilt,'Use the versioned independent bank acceptance for prebuilt accounts; legacy single-account matcher is not applicable');
     for(const item of job.report.cases){
       assert.equal(item.judgeError,null);
       const score=item.judge.dimensions.find(value=>value.id==='business_completeness');
