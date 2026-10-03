@@ -150,6 +150,15 @@ try {
   for (const width of [1366, 390, 320]) {
     await page.setViewportSize({width, height: width > 400 ? 900 : 844});
     await expect.poll(() => page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth))).toBeLessThanOrEqual(width);
+    assert(await page.locator('.runtime-goal-strip').evaluate(node => {
+      const boxes = [...node.children].map(child => child.getBoundingClientRect());
+      return boxes.every((a, i) => boxes.slice(i + 1).every(b =>
+        Math.min(a.right, b.right) - Math.max(a.left, b.left) <= 1 || Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) <= 1))
+        && [...node.querySelectorAll('button')].every(button => {
+          const a = button.getBoundingClientRect(), b = button.parentElement.getBoundingClientRect();
+          return a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom;
+        });
+    }), 'Result metrics and download actions must not overlap');
     await page.screenshot({path: path.join(output, `result-${width}.png`), fullPage: true});
   }
   const beforeView = judgeCalls.length;

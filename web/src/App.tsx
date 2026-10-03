@@ -907,7 +907,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
   const runtimeComparison = job.configuration.evaluationMode==='candidate_runtime_comparison' || report.cases.some(item=>item.judge?.runtimeComparison);
   return <div className="report-result">
     {report.cases.some(c => c.right.metadata?.dataMode?.includes("synthetic")) ? <div className="evidence-notice">数据来源：只读模拟业务快照；模型与 MCP 工具本轮实际执行，不代表真实客户业务验收。</div> : null}
-    <div className="score-strip">
+    <div className={`score-strip${runtimeComparison ? ' runtime-goal-strip' : ''}`}>
       {runtimeComparison ? (['left','right'] as const).map(side=>{const counts=runtimeGoalCounts(report.cases,side);return <div key={side}><span>{side==='left'?'A':'B'} · 独立目标评估</span><strong>{counts.PASS}/{report.cases.length} 通过</strong><small>未通过 {counts.FAIL} · 无法判断 {counts.INDETERMINATE} · 未评估 {counts.unavailable}</small><small>平均执行 {(report.summary.meanElapsedMs[side]/1000).toFixed(1)}s</small></div>;}) : <><div><span>A 胜</span><strong>{report.summary.leftWins}</strong></div><div className="winner-metric"><span>B 胜</span><strong>{report.summary.rightWins}</strong></div><div><span>持平</span><strong>{report.summary.ties}</strong></div><div><span>平均耗时</span><strong>{Math.round((report.summary.meanElapsedMs.left + report.summary.meanElapsedMs.right) / 2000)}s</strong></div></>}
       <div className="report-downloads">{(['html','json'] as const).map(format=><button className="button secondary" key={format} onClick={()=>void downloadApi(`/api/runs/${job.jobId}/export?format=${format}`,`${job.jobId}.${format}`).catch(error=>window.alert(error.message))}><Download size={15}/>{format.toUpperCase()}</button>)}</div>
     </div>
