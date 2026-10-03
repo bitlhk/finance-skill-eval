@@ -382,6 +382,7 @@ export function App() {
   });
   const changeRightVariant = (value: string) => {
     setRightVariantSelection(value);
+    if(runtime==='dual_runtime')setLeftVariantSelection(value);
   };
 
   const connectStream = (jobId: string) => {
@@ -587,12 +588,12 @@ export function App() {
             setJudgeMode={setJudgeMode}
             leftVariantSelection={leftVariantSelection}
             rightVariantSelection={rightVariantSelection}
-            setLeftVariantSelection={setLeftVariantSelection}
+            setLeftVariantSelection={value=>{setLeftVariantSelection(value);if(runtime==='dual_runtime')setRightVariantSelection(value);}}
             setRightVariantSelection={changeRightVariant}
             leftModelKey={leftModelKey}
             rightModelKey={rightModelKey}
-            setLeftModelKey={setLeftModelKey}
-            setRightModelKey={setRightModelKey}
+            setLeftModelKey={value=>{setLeftModelKey(value);if(runtime==='dual_runtime')setRightModelKey(value);}}
+            setRightModelKey={value=>{setRightModelKey(value);if(runtime==='dual_runtime')setLeftModelKey(value);}}
             versionOptions={versionOptions}
             sameConfiguration={sameConfiguration}
             mixedVariables={mixedVariables}
