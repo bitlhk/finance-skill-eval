@@ -168,6 +168,7 @@ export type EvaluationJob = {
     preparationId?: string;
     runtime: { type: string; environmentId?: string };
     judgeMode: string;
+    evaluationMode?: 'pairwise' | 'candidate_assessment' | 'service_comparison' | 'candidate_runtime_comparison';
     caseSource?: "fixed" | "ai_generated";
   };
   pack: { targetSkillId: string; targetSkillVersion: string; caseCount: number } | null;

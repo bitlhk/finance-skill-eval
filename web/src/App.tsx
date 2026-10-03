@@ -1,6 +1,7 @@
 import { api } from "./api-client";
 import {selectedVersion,versionSelectionKey} from './skill-version-selection';
 import {launcherCompatibility} from './launcher-compatibility';
+import {dualRuntimeConfiguration} from './dual-runtime-configuration';
 import { EnvironmentView } from "./features/environments/EnvironmentView";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { accessToken, apiPath, basePath, tokenKey, downloadApi } from './api-path';
@@ -41,6 +42,7 @@ import {
 import { MarkdownContent } from "./MarkdownContent";
 import { MethodologyView } from "./MethodologyView";
 import { ResultCharts } from "./ResultCharts";
+import {RuntimeGoalResults, runtimeGoalCounts} from './RuntimeGoalResults';
 import { OptimizationPanel } from "./OptimizationPanel";
 import { MigrationPanel } from './MigrationPanel';
 import type {
@@ -442,7 +444,7 @@ export function App() {
       const dualRuntime=runtime==="dual_runtime";
       const boundAsset=(value:string)=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]);
       const leftAsset=boundAsset(leftVariantSelection),rightAsset=boundAsset(rightVariantSelection);
-      if(dualRuntime&&(!leftAsset||!rightAsset||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要两侧已导入的 Skill 版本和相同模型");
+      if(dualRuntime&&(!leftAsset||!rightAsset||leftAsset.assetId!==rightAsset.assetId||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要同一份已导入 Skill 和相同模型");
       const job = await api<EvaluationJob>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
@@ -455,7 +457,7 @@ export function App() {
           judgeMode,
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
-          ...(dualRuntime ? {executionModel:{...executionReference(selectedLeftModel!),parameters:generation},
+          ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation),
             runtimeBindings:{left:{environmentId:launcherPair.left,skillAssetId:leftAsset!.assetId},right:{environmentId:launcherPair.right,skillAssetId:rightAsset!.assetId}}}
             : {...(selectedLeftModel ? { leftExecutionModel: executionReference(selectedLeftModel) } : {}),
                ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {})}),
@@ -511,7 +513,7 @@ export function App() {
     && (runtime !== 'runtime_launcher' || selectedVariantsHaveArtifacts)
     && (runtime !== 'runtime_launcher' || runtimeEnvironmentId)
     && (runtime !== 'runtime_launcher' || environmentInspection?.status === "ready")
-    && (runtime!=="dual_runtime" || launcherReady && !dynamicQuestions && leftModelKey===rightModelKey
+    && (runtime!=="dual_runtime" || launcherReady && !dynamicQuestions && leftModelKey===rightModelKey && leftVariantSelection===rightVariantSelection && judgeMode==='model'
       && [leftVariantSelection,rightVariantSelection].every(value=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]))
       && Number.isFinite(generation.temperature)&&generation.temperature>=0&&generation.temperature<=2
       && Number.isFinite(generation.top_p)&&generation.top_p>0&&generation.top_p<=1
@@ -572,7 +574,7 @@ export function App() {
             selectedCases={selectedCases}
             setSelectedCases={setSelectedCases}
             runtime={runtime}
-            setRuntime={value=>{setRuntime(value);if(value==="dual_runtime"){setCaseSource("fixed");setLeftVariantSelection(rightVariantSelection);setRightModelKey(leftModelKey);}}}
+            setRuntime={value=>{setRuntime(value);if(value==="dual_runtime"){setCaseSource("fixed");setJudgeMode('model');setLeftVariantSelection(rightVariantSelection);setRightModelKey(leftModelKey);}}}
             launcherPair={launcherPair} setLauncherPair={setLauncherPair} launcherStatus={launcherStatus}
             generation={generation} setGeneration={setGeneration}
             directModelAllowed={!preparationRequiresTools}
@@ -778,7 +780,7 @@ function EvaluationView(props: {
             <option value="">请选择</option>
             {props.catalog.executionRuntimes.map(item => <option value={item.runtimeId} key={item.runtimeId}>{item.name} · {runtimeTypeLabel(item.runtimeType)} · {item.toolCount} 个工具</option>)}
           </select></label> : null}
-          <label className="field"><span>评分方式</span><select disabled={Boolean(active)} value={props.judgeMode} onChange={event => props.setJudgeMode(event.target.value as typeof props.judgeMode)}>
+          <label className="field"><span>评分方式</span><select disabled={Boolean(active)||props.runtime==='dual_runtime'} value={props.judgeMode} onChange={event => props.setJudgeMode(event.target.value as typeof props.judgeMode)}>
             {!dynamic && !props.catalog.publicDemo && target && 'deterministicReady' in target && target.deterministicReady ? <option value="deterministic">规则量表</option> : null}
             <option value="model" disabled={!props.catalog.modelRoles.judge.configured}>匿名模型 Judge{props.catalog.modelRoles.judge.configured ? ` · ${props.catalog.modelRoles.judge.model.modelId}` : " · 未配置"}</option>
           </select></label>
@@ -902,17 +904,18 @@ function ExecutionIdentity({evidence}:{evidence:Evidence}) {
 function ReportResult({ job }: { job: EvaluationJob }) {
   const publicDemo = useContext(PublicDemoContext);
   const report = job.report!;
+  const runtimeComparison = job.configuration.evaluationMode==='candidate_runtime_comparison' || report.cases.some(item=>item.judge?.runtimeComparison);
   return <div className="report-result">
     {report.cases.some(c => c.right.metadata?.dataMode?.includes("synthetic")) ? <div className="evidence-notice">数据来源：只读模拟业务快照；模型与 MCP 工具本轮实际执行，不代表真实客户业务验收。</div> : null}
     <div className="score-strip">
-      <div><span>A 胜</span><strong>{report.summary.leftWins}</strong></div><div className="winner-metric"><span>B 胜</span><strong>{report.summary.rightWins}</strong></div><div><span>持平</span><strong>{report.summary.ties}</strong></div><div><span>平均耗时</span><strong>{Math.round((report.summary.meanElapsedMs.left + report.summary.meanElapsedMs.right) / 2000)}s</strong></div>
+      {runtimeComparison ? (['left','right'] as const).map(side=>{const counts=runtimeGoalCounts(report.cases,side);return <div key={side}><span>{side==='left'?'A':'B'} · 独立目标评估</span><strong>{counts.PASS}/{report.cases.length} 通过</strong><small>未通过 {counts.FAIL} · 无法判断 {counts.INDETERMINATE} · 未评估 {counts.unavailable}</small><small>平均执行 {(report.summary.meanElapsedMs[side]/1000).toFixed(1)}s</small></div>;}) : <><div><span>A 胜</span><strong>{report.summary.leftWins}</strong></div><div className="winner-metric"><span>B 胜</span><strong>{report.summary.rightWins}</strong></div><div><span>持平</span><strong>{report.summary.ties}</strong></div><div><span>平均耗时</span><strong>{Math.round((report.summary.meanElapsedMs.left + report.summary.meanElapsedMs.right) / 2000)}s</strong></div></>}
       <div className="report-downloads">{(['html','json'] as const).map(format=><button className="button secondary" key={format} onClick={()=>void downloadApi(`/api/runs/${job.jobId}/export?format=${format}`,`${job.jobId}.${format}`).catch(error=>window.alert(error.message))}><Download size={15}/>{format.toUpperCase()}</button>)}</div>
     </div>
-    <ResultCharts report={report} />
+    {runtimeComparison ? null : <ResultCharts report={report} />}
     {report.cases.map(item => <section className="result-case" key={item.caseId}>
-      <header><div><span>{item.caseId}</span><h3>{item.name}</h3></div><strong className={`winner winner-${item.judge?.winner ?? "none"}`}>{item.judge?.winner === "right" ? "B 更优" : item.judge?.winner === "left" ? "A 更优" : item.judge ? "持平" : "未评阅"}</strong></header>
+      <header><div><span>{item.caseId}</span><h3>{item.name}</h3></div><strong className={`winner winner-${item.judge?.winner ?? "none"}`}>{runtimeComparison ? '逐侧验收' : item.judge?.winner === "right" ? "B 更优" : item.judge?.winner === "left" ? "A 更优" : item.judge ? "持平" : "未评阅"}</strong></header>
       <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
-      <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>
+      {runtimeComparison ? <RuntimeGoalResults item={item}/> : <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>}
     </section>)}
     {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
     <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span></footer>
