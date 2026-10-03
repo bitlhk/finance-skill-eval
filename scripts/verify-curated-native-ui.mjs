@@ -1,29 +1,39 @@
 /** Original curated cases through the real UI and two native Launchers. Controlled, not quality acceptance. */
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import {randomBytes} from 'node:crypto';
 import {mkdir, readFile, writeFile, cp} from 'node:fs/promises';
 import path from 'node:path';
 import {parse as parseYaml} from 'yaml';
+import {unzipSync} from 'fflate';
 import {chromium, expect} from '@playwright/test';
 import {createEvaluationService} from '../dist/service/server.js';
 import {SkillStore} from '../dist/service/skill-store.js';
 import {loadEvalPack} from '../dist/eval-pack.js';
+import {controlledGoalJudge} from './controlled-goal-judge.mjs';
 
 const output = path.resolve(process.env.CURATED_UI_OUTPUT);
 await mkdir(output, {mode: 0o700});
 const flow = process.env.CURATED_UI_FLOW ?? 'prebuilt';
-assert(['prebuilt', 'upload'].includes(flow));
+assert(['prebuilt', 'upload', 'migration'].includes(flow));
 const paths = JSON.parse(await readFile(process.env.CURATED_UI_FIXTURES, 'utf8'));
 const fixtures = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([key, file]) =>
   [key, JSON.parse(await readFile(file, 'utf8'))])));
 assert.deepEqual(Object.keys(fixtures).sort(), ['agentscope', 'openjiuwen']);
 const skill = JSON.parse(await readFile(path.join(process.env.CURATED_UI_SKILL_PROBE, 'skill.json'), 'utf8'));
 const archive = Buffer.from(skill.archiveBase64, 'base64');
+const sourceFiles = unzipSync(archive);
+const sourceMethod = Buffer.from(sourceFiles['SKILL.md']).toString();
+const sourceHeader = parseYaml(sourceMethod.split('---')[1]);
+const declaredTools = sourceHeader['allowed-tools'];
+assert(Array.isArray(declaredTools) && declaredTools.length > 0);
 const root = path.join(output, 'root'), data = path.join(output, 'data');
 await mkdir(path.join(root, 'packs/finance'), {recursive: true});
 await cp(path.join(process.env.CURATED_UI_STAGING, 'packs/candidate'), path.join(root, 'packs/finance/candidate'), {recursive: true});
 await cp('packs/finance/catalog.yaml', path.join(root, 'packs/finance/catalog.yaml'));
+if (flow === 'migration') {
+  await mkdir(path.join(root, 'scripts'));
+  await cp('scripts/scan-migration.py', path.join(root, 'scripts/scan-migration.py'));
+}
 const pack = await loadEvalPack(path.join(root, 'packs/finance/candidate/eval.yaml'));
 assert.equal(pack.targetSkillId, skill.skillId);
 assert.equal(pack.targetSkillVersion, skill.version);
@@ -36,30 +46,24 @@ const modelFile = path.join(output, 'models.json');
 await writeFile(modelFile, JSON.stringify({schemaVersion: 'finance.skill-eval.execution-models.v1', defaultModelId: 'launcher-model',
   models: [{providerId: 'managed-launcher', modelId: 'launcher-model', label: 'Controlled native model', availability: 'ready', parameters: generation}]}));
 process.env.FINANCE_EVAL_EXECUTION_CATALOG = modelFile;
-const judgeCalls = [];
-const judge = http.createServer(async (req, res) => {
-  try {
-    assert.equal(req.method, 'POST'); assert.equal(req.url, '/v1/chat/completions');
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
-    const request = JSON.parse(Buffer.concat(chunks).toString());
-    const input = JSON.parse(request.messages.find(message => message.role === 'user').content);
-    assert(Array.isArray(input.criteria) && input.criteria.length > 0);
-    judgeCalls.push(input);
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({model: 'controlled-judge', choices: [{message: {role: 'assistant', content: JSON.stringify({
-      checks: input.criteria.map(row => ({criterionIndex: row.criterionIndex, verdict: 'INDETERMINATE',
-        reason: 'Controlled transport fixture; professional quality not evaluated.', evidence: ''}))})}}]}));
-  } catch (error) {res.writeHead(500); res.end(JSON.stringify({error: String(error)}));}
-});
-await new Promise(resolve => judge.listen(0, '127.0.0.1', resolve));
-Object.assign(process.env, {FINANCE_EVAL_JUDGE_PROVIDER: 'openai_compatible',
-  FINANCE_EVAL_JUDGE_BASE_URL: `http://127.0.0.1:${judge.address().port}/v1`,
-  FINANCE_EVAL_JUDGE_API_KEY: 'controlled-test-only', FINANCE_EVAL_JUDGE_MODEL: 'controlled-judge', FINANCE_EVAL_JUDGE_REQUEST_DEFAULTS: '{}'});
+const judge = await controlledGoalJudge(), judgeCalls = judge.calls;
 let app, browser, page, asset;
 const errors = [], checks = [];
 try {
   if (flow === 'prebuilt') asset = await new SkillStore(data).uploadZip(archive);
-  app = await createEvaluationService({rootDirectory: root, dataDirectory: data, publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false});
+  app = await createEvaluationService({rootDirectory: root, dataDirectory: data, publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false,
+    ...(flow === 'migration' ? {
+      migrationAnalyzer: async () => ({status: 'PRODUCED', payload: {status: 'PRODUCED', skill: {status: 'COMPLIANT', findings: []},
+        tools: declaredTools.map(name => ({name, sourcePaths: ['SKILL.md'], language: null, portability: 'RUNTIME_BOUND',
+          input: {description: 'Refer to the admitted contract', schema: null},
+          output: {description: 'Refer to the admitted contract', schema: null}, evidence: [], findings: [],
+          recommendedForm: 'MCP', recommendationReason: 'Controlled analysis of explicit tool declarations, not inferred bank compatibility'})),
+        dependencyAnalysis: {dependencies: [], chains: declaredTools.map(name => ({toolName: name,
+          nodes: [{id: 'declaration', title: 'Explicit tool declaration', detail: 'Controlled source citation', dependencyKeys: [],
+            evidence: [{path: 'SKILL.md', snippet: sourceMethod.split('\n').find(line => line.includes(name))}]}], edges: []}))}},
+        scanner: {scannerDigest: 'a'.repeat(64), coverage: []}}),
+      migrationImplementer: async () => {throw Error('Native binding must not generate or run uploaded code');},
+    } : {})});
   const url = await app.listen({host: '127.0.0.1', port: 0});
   const api = async (route, body) => {
     const response = await fetch(url + route, {method: body === undefined ? 'GET' : 'POST',
@@ -85,7 +89,7 @@ try {
   if (flow === 'prebuilt') {
     await page.locator('.skill-list-item').filter({has: page.getByRole('heading', {name: displayName, exact: true})})
       .getByRole('button', {name: '进入评测', exact: true}).click();
-  } else {
+  } else if (flow === 'upload') {
     await page.getByRole('button', {name: 'Skill 资产', exact: true}).click();
     const uploading = page.waitForResponse(r => r.url().endsWith('/api/skills/upload') && r.request().method() === 'POST');
     await page.locator('input[type=file]').setInputFiles({name: skill.skillId + '.zip', mimeType: 'application/zip', buffer: archive});
@@ -94,9 +98,51 @@ try {
     await page.reload();
     await page.getByRole('button', {name: 'Skill 资产', exact: true}).click();
     await page.locator(`#asset-${asset.assetId}`).getByRole('button', {name: '进入评测', exact: true}).click();
+  } else {
+    await page.getByRole('button', {name: 'Skill 迁移', exact: true}).click();
+    await page.getByRole('button', {name: '新建迁移', exact: true}).click();
+    const inspected = page.waitForResponse(r => r.url().endsWith('/inspect') && r.request().method() === 'POST');
+    await page.locator('input[type=file][multiple]').setInputFiles({name: skill.skillId + '.zip', mimeType: 'application/zip', buffer: archive});
+    const diagnosis = await inspected; assert(diagnosis.ok(), await diagnosis.text());
+    const binding = page.locator('section').filter({has: page.getByRole('heading', {name: '复用已准入工具', exact: true})}).last();
+    await binding.getByLabel('OpenJiuwen Java', {exact: true}).check();
+    await binding.getByLabel('AgentScope Java', {exact: true}).check();
+    await binding.getByRole('button', {name: '检查已准入合同', exact: true}).click();
+    await expect(binding.getByText('所选环境均有对应工具，请核对其真实合同与使用范围。')).toBeVisible();
+    await expect(binding.getByRole('button', {name: '绑定并生成候选', exact: true})).toBeDisabled();
+    await binding.getByLabel('已核对工具合同和用途；绑定不代表候选已执行通过').check();
+    await page.screenshot({path: path.join(output, 'migration-binding.png'), fullPage: true});
+    const generatedResponse = page.waitForResponse(r => r.url().endsWith('/native-candidate') && r.request().method() === 'POST');
+    await binding.getByRole('button', {name: '绑定并生成候选', exact: true}).click();
+    const response = await generatedResponse, generated = await response.json(); assert(response.ok(), JSON.stringify(generated));
+    asset = generated.candidate;
+    assert.equal(generated.nativeBindings.bindings.targets.length, 2);
+    assert.equal(generated.nativeBindings.candidateDigest, asset.artifactSha256);
+    // Eval's immutable file fingerprint and Launcher archive fingerprint have
+    // different canonical representations; compare like-for-like identities.
+    assert.equal(generated.source.artifactSha256, pack.variants.right.artifactSha256);
+    await writeFile(path.join(output, 'migration.json'), JSON.stringify(generated, null, 2));
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', {name: '下载候选', exact: true}).click();
+    const download = await downloaded, candidatePath = path.join(output, 'candidate.zip'); await download.saveAs(candidatePath);
+    const files = unzipSync(await readFile(candidatePath));
+    assert(Buffer.from(files['SKILL.md']).toString().includes(sourceMethod.split('---').slice(2).join('---').trim()));
+    for (const [name, bytes] of Object.entries(sourceFiles)) if (name !== 'SKILL.md') assert.deepEqual(files[name], bytes);
+    assert.deepEqual(JSON.parse(Buffer.from(files['references/finance-native-bindings.txt']).toString()), generated.nativeBindings.bindings);
+    const migrationReport = await api(`/api/migrations/${generated.id}/report`);
+    assert.equal(migrationReport.verification.targetExecution, 'NOT_RUN');
+    await page.getByRole('button', {name: '在 Skill 资产中继续测试', exact: true}).click();
+    await expect(page.locator(`#asset-${asset.assetId}`)).toBeVisible();
+    await api(`/api/skills/${asset.assetId}/prepare/manual`, {summary: 'Original cases for the migrated candidate; controlled, not professional acceptance', cases: pack.cases});
+    await page.reload();
+    await page.getByRole('button', {name: 'Skill 资产', exact: true}).click();
+    await page.locator(`#asset-${asset.assetId}`).getByRole('button', {name: '进入评测', exact: true}).click();
   }
-  assert.equal(asset.skillId, skill.skillId); assert.equal(asset.version, skill.version);
-  assert.equal(asset.artifactSha256, pack.variants.right.artifactSha256);
+  assert.equal(asset.skillId, skill.skillId);
+  if (flow !== 'migration') {
+    assert.equal(asset.version, skill.version);
+    assert.equal(asset.artifactSha256, pack.variants.right.artifactSha256);
+  } else assert.notEqual(asset.artifactSha256, pack.variants.right.artifactSha256);
   await page.getByRole('combobox', {name: /^执行方式/}).selectOption('dual_runtime');
   await page.getByRole('combobox', {name: /^对照组 Runtime/}).selectOption(environments[0].environmentId);
   await page.getByRole('combobox', {name: /^目标组 Runtime/}).selectOption(environments[1].environmentId);
@@ -125,6 +171,7 @@ try {
   assert.equal(job.evidence.length, 2 * pack.cases.length);
   for (const row of job.evidence) {
     assert.equal(row.status, 'completed'); assert.equal(row.runtimeIdentityVerified, true);
+    assert.equal(row.skillVersion, asset.version);
     assert.equal(row.metadata.toolEvidenceCollection.status, 'CAPTURED');
     assert(row.metadata.runtimeLockSha256 && row.metadata.executionHistoryRequestId && row.metadata.retainedEvidenceRef);
     assert.deepEqual(row.metadata.declaredModelParameters, generation);
@@ -168,6 +215,8 @@ try {
   checks.push('Real page at 1366/390/320; controlled Judge preserves INDETERMINATE rather than claiming answer quality');
   await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS', scope: 'CONTROLLED_CURATED_NATIVE_BROWSER', flow,
     skillId: skill.skillId, caseIds: pack.cases.map(row => row.caseId), jobId: job.jobId, checks,
+    analysis: flow === 'migration' ? 'CONTROLLED_EXPLICIT_DECLARATIONS' : 'NOT_RUN',
+    sourceScope: 'Previously adapted readonly Skill; not arbitrary MCP code migration',
     realModel: 'NOT_RUN', professionalQuality: 'NOT_EVALUATED', sso: 'NOT_TESTED', holdout: 'NOT_IN_BROWSER_COHORT'}, null, 2));
 } catch (error) {
   if (page) {await page.screenshot({path: path.join(output, 'failure.png'), fullPage: true});
@@ -175,5 +224,5 @@ try {
   throw error;
 } finally {
   await writeFile(path.join(output, 'judge-calls.json'), JSON.stringify(judgeCalls, null, 2));
-  await browser?.close(); await app?.close(); await new Promise(resolve => judge.close(resolve));
+  await browser?.close(); await app?.close(); await judge.close();
 }

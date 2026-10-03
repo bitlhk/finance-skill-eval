@@ -8,6 +8,7 @@ import {createEvaluationService} from '../dist/service/server.js';
 import {zipSync} from 'fflate';
 import {installNativeSample} from './install-native-sample.mjs';
 import {loadEvalPack} from '../dist/eval-pack.js';
+import {controlledGoalJudge} from './controlled-goal-judge.mjs';
 
 const fixtureMap=process.env.LAUNCHER_FIXTURE_MAP
   ?JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_MAP,'utf8')):null;
@@ -30,6 +31,7 @@ if(prebuilt){
     'PREBUILT_FIXTURE_MISMATCH: use the bank fixture pinned by this evaluation pack; do not score a different bank snapshot');
 }
 const builtin=prebuilt?await installNativeSample(path.join(output,'data')):null;
+const judge=await controlledGoalJudge();
 const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'data'),
   publicDirectory:path.resolve('web-dist'),accessToken:token,publicDemo:false});
 let browser,page;
@@ -108,13 +110,14 @@ try{
   await page.getByRole('combobox',{name:/^对照组 Runtime/}).selectOption(environments[0].environmentId);
   await page.getByRole('combobox',{name:/^目标组 Runtime/}).selectOption(environments[1].environmentId);
   for(const [name,value] of Object.entries({temperature:'0.25',top_p:'0.8',max_tokens:'1234'}))await page.getByLabel(name,{exact:true}).fill(value);
-  await page.getByRole('combobox',{name:/^评分方式/}).selectOption('deterministic');
+  await expect(page.getByRole('combobox',{name:/^评分方式/})).toHaveValue('model');
   await expect(page.getByRole('button',{name:'开始测试',exact:true})).toBeEnabled({timeout:15000});
   await page.screenshot({path:path.join(output,'desktop-configuration.png'),fullPage:true});
   const creating=page.waitForResponse(response=>response.url().endsWith('/api/runs')&&response.request().method()==='POST');
   await page.getByRole('button',{name:'开始测试',exact:true}).click();
   const response=await creating;const created=await response.json();assert(response.ok(),JSON.stringify(created));
   const posted=response.request().postDataJSON();
+  assert.equal(posted.evaluationMode,'candidate_runtime_comparison');
   assert.equal(posted.runtimeBindings.left.environmentId,environments[0].environmentId);
   assert.equal(posted.runtimeBindings.right.environmentId,environments[1].environmentId);
   assert.deepEqual(posted.executionModel.parameters,{temperature:0.25,top_p:0.8,max_tokens:1234});
@@ -139,14 +142,15 @@ try{
   }
   assert.equal(new Set(job.evidence.map(row=>row.metadata.loadedSkillDigest)).size,1);
   assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,job.evidence.length);
+  assert.equal(judge.calls.length,job.evidence.length);
+  for(const item of job.report.cases)for(const side of ['left','right']){
+    assert.equal(item.judge.runtimeComparison[side].status,'assessed');
+    assert.equal(item.judge.runtimeComparison[side].assessment.verdict,'INDETERMINATE');
+  }
   checks.push('Both native runtimes returned tool/Lock/history evidence and a fresh session for every case');
   if(process.env.LAUNCHER_ASSERT_FACTS==='true'){
     assert(!prebuilt,'Use the versioned independent bank acceptance for prebuilt accounts; legacy single-account matcher is not applicable');
     for(const item of job.report.cases){
-      assert.equal(item.judgeError,null);
-      const score=item.judge.dimensions.find(value=>value.id==='business_completeness');
-      assert.equal(score.leftScore,4,`Left balance facts failed: ${item.caseId}`);
-      assert.equal(score.rightScore,4,`Right balance facts failed: ${item.caseId}`);
       for(const row of [item.left,item.right]){
         assert.match(row.output,/(?<![\d,])12,?345\.67(?!\d)/u);
         assert.match(row.output,/CNY|人民币/u);
@@ -177,5 +181,6 @@ try{
   }
   throw error;
 }finally{
-  await browser?.close();await app.close();
+  await writeFile(path.join(output,'judge-calls.json'),JSON.stringify(judge.calls,null,2));
+  await browser?.close();await app.close();await judge.close();
 }

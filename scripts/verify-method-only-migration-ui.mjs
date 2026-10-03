@@ -8,6 +8,7 @@ import {chromium, expect} from '@playwright/test';
 import {zipSync, unzipSync} from 'fflate';
 import {createEvaluationService} from '../dist/service/server.js';
 import {canonicalSha256} from '../dist/shared/json-canonicalization.js';
+import {controlledGoalJudge} from './controlled-goal-judge.mjs';
 
 assert(process.env.METHOD_ONLY_UI_OUTPUT, 'Set METHOD_ONLY_UI_OUTPUT to a new isolated evidence directory');
 const output = path.resolve(process.env.METHOD_ONLY_UI_OUTPUT);
@@ -40,6 +41,7 @@ const fixture = http.createServer((req, res) => {
 });
 await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
 let app, browser, page;
+const judge = native ? await controlledGoalJudge() : null;
 const checks = [], errors = [];
 try {
   if (native) {
@@ -150,12 +152,13 @@ try {
     await page.getByRole('combobox', {name: /^对照组 Runtime/u}).selectOption(environments[0].environmentId);
     await page.getByRole('combobox', {name: /^目标组 Runtime/u}).selectOption(environments[1].environmentId);
     for (const [key, value] of Object.entries({temperature: '0', top_p: '1', max_tokens: '1024'})) await page.getByLabel(key, {exact: true}).fill(value);
-    await page.getByRole('combobox', {name: /^评分方式/u}).selectOption('deterministic');
+    await expect(page.getByRole('combobox', {name: /^评分方式/u})).toHaveValue('model');
     await expect(page.getByRole('button', {name: '开始测试', exact: true})).toBeEnabled({timeout: 15000});
     await page.screenshot({path: path.join(output, 'native-configuration.png'), fullPage: true});
     const creating = page.waitForResponse(r => r.url().endsWith('/api/runs') && r.request().method() === 'POST');
     await page.getByRole('button', {name: '开始测试', exact: true}).click();
     const response = await creating, created = await response.json(); assert(response.ok(), JSON.stringify(created));
+    assert.equal(response.request().postDataJSON().evaluationMode, 'candidate_runtime_comparison');
     let job;
     const deadline = Date.now() + 900000;
     do {job = await api(`/api/runs/${created.jobId}`);
@@ -173,6 +176,11 @@ try {
     }
     assert.equal(new Set(job.evidence.map(row => row.metadata.loadedSkillDigest)).size, 1);
     assert.equal(new Set(job.evidence.map(row => row.metadata.sessionId)).size, 4);
+    assert.equal(judge.calls.length, 4);
+    for (const item of job.report.cases) for (const side of ['left', 'right']) {
+      assert.equal(item.judge.runtimeComparison[side].status, 'assessed');
+      assert.equal(item.judge.runtimeComparison[side].assessment.verdict, 'INDETERMINATE');
+    }
     await expect(page.locator('.run-status.completed').first()).toBeVisible({timeout: 15000});
     await page.screenshot({path: path.join(output, 'native-results.png'), fullPage: true});
     assert.deepEqual(errors, []);
@@ -186,5 +194,6 @@ try {
     await writeFile(path.join(output, 'failure.txt'), await page.locator('body').innerText());}
   throw error;
 } finally {
-  await browser?.close(); await app?.close(); await new Promise(resolve => fixture.close(resolve));
+  if (judge) await writeFile(path.join(output, 'judge-calls.json'), JSON.stringify(judge.calls, null, 2));
+  await browser?.close(); await app?.close(); await judge?.close(); await new Promise(resolve => fixture.close(resolve));
 }
