@@ -10,23 +10,25 @@ import {createEvaluationService} from '../dist/service/server.js';
 import {SkillStore} from '../dist/service/skill-store.js';
 import {loadEvalPack} from '../dist/eval-pack.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
+import {fixtureProfile} from './native-fixture-profile.mjs';
 
 async function verifyEntry(entry, shared) {
 const output = path.resolve(entry.output);
 await mkdir(output, {mode: 0o700});
 const flow = entry.flow ?? 'prebuilt';
 assert(['prebuilt', 'upload', 'migration'].includes(flow));
-const paths = JSON.parse(await readFile(process.env.CURATED_UI_FIXTURES, 'utf8'));
+const paths = JSON.parse(await readFile(entry.fixtures ?? process.env.CURATED_UI_FIXTURES, 'utf8'));
 const fixtures = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([key, file]) =>
   [key, JSON.parse(await readFile(file, 'utf8'))])));
 assert.deepEqual(Object.keys(fixtures).sort(), ['agentscope', 'openjiuwen']);
+const profile = fixtureProfile(fixtures);
 const skill = JSON.parse(await readFile(path.join(entry.skillProbe, 'skill.json'), 'utf8'));
 const archive = Buffer.from(skill.archiveBase64, 'base64');
 const sourceFiles = unzipSync(archive);
 const sourceMethod = Buffer.from(sourceFiles['SKILL.md']).toString();
 const sourceHeader = parseYaml(sourceMethod.split('---')[1]);
 const declaredTools = sourceHeader['allowed-tools'];
-assert(Array.isArray(declaredTools) && declaredTools.length > 0);
+assert(Array.isArray(declaredTools));
 if (shared) shared.analysis = {declaredTools, sourceMethod};
 const root = shared?.root ?? path.join(output, 'root'), data = shared?.data ?? path.join(output, 'data');
 await mkdir(path.join(root, 'packs/finance'), {recursive: true});
@@ -37,6 +39,7 @@ if (flow === 'migration') {
   await cp('scripts/scan-migration.py', path.join(root, 'scripts/scan-migration.py'));
 }
 const pack = await loadEvalPack(path.join(entry.stagedPack, 'packs/candidate/eval.yaml'));
+if (!declaredTools.length) assert(pack.cases.every(row => !row.requiredTools.length), 'No-tool method cannot require case tools');
 assert.equal(pack.targetSkillId, skill.skillId);
 assert.equal(pack.targetSkillVersion, skill.version);
 const catalog = parseYaml(await readFile('packs/finance/catalog.yaml', 'utf8'));
@@ -78,16 +81,17 @@ try {
       ...(body === undefined ? {} : {body: JSON.stringify(body)})});
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
   };
-  const environments = shared?.environments ?? [];
+  const groups = shared ? (shared.environmentGroups ??= new Map()) : new Map();
+  const environments = groups.get(profile.key) ?? [];
+  const groupIndex = groups.size;
   if (!environments.length) for (const [type, name] of [['openjiuwen', 'OpenJiuwen Java'], ['agentscope', 'AgentScope Java']]) {
-    const fixture = fixtures[type]; assert.equal(fixture.status, 'READY');
-    assert.equal(new URL(fixture.baseUrl).hostname, '127.0.0.1');
-    const credential = 'FINANCE_CURATED_UI_' + type.toUpperCase() + '_TOKEN';
+    const fixture = fixtures[type];
+    const credential = 'FINANCE_CURATED_UI_' + groupIndex + '_' + type.toUpperCase() + '_TOKEN';
     process.env[credential] = fixture.token;
-    environments.push(await api('/api/environments', {name, type: 'runtime_launcher', runtimeType: type,
-      baseUrl: new URL(type + '/', fixture.baseUrl).toString(), credentialEnv: credential}));
+    environments.push(await api('/api/environments', {name: entry.profileLabel ? entry.profileLabel + ' · ' + name : name,
+      type: 'runtime_launcher', runtimeType: type, baseUrl: profile.routes[type], credentialEnv: credential}));
   }
-  if (shared) shared.environments = environments;
+  groups.set(profile.key, environments);
   browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH});
   page = await browser.newPage({viewport: {width: 1366, height: 900}});
   page.on('pageerror', error => errors.push(error.message));
@@ -113,8 +117,7 @@ try {
     await page.locator('input[type=file][multiple]').setInputFiles({name: skill.skillId + '.zip', mimeType: 'application/zip', buffer: archive});
     const diagnosis = await inspected; assert(diagnosis.ok(), await diagnosis.text());
     const binding = page.locator('section').filter({has: page.getByRole('heading', {name: '复用已准入工具', exact: true})}).last();
-    await binding.getByLabel('OpenJiuwen Java', {exact: true}).check();
-    await binding.getByLabel('AgentScope Java', {exact: true}).check();
+    for (const environment of environments) await binding.getByLabel(environment.name, {exact: true}).check();
     await binding.getByRole('button', {name: '检查已准入合同', exact: true}).click();
     await expect(binding.getByText('所选环境均有对应工具，请核对其真实合同与使用范围。')).toBeVisible();
     await expect(binding.getByRole('button', {name: '绑定并生成候选', exact: true})).toBeDisabled();
@@ -180,10 +183,12 @@ try {
   for (const row of job.evidence) {
     assert.equal(row.status, 'completed'); assert.equal(row.runtimeIdentityVerified, true);
     assert.equal(row.skillVersion, asset.version);
-    assert.equal(row.metadata.toolEvidenceCollection.status, 'CAPTURED');
+    if (declaredTools.length) assert.equal(row.metadata.toolEvidenceCollection.status, 'CAPTURED');
+    else assert.deepEqual(row.metadata.toolEvidence, []);
     assert(row.metadata.runtimeLockSha256 && row.metadata.executionHistoryRequestId && row.metadata.retainedEvidenceRef);
     assert.deepEqual(row.metadata.declaredModelParameters, generation);
-    assert(row.toolCalls.length && row.toolCalls.every(call => call.status === 'completed'));
+    if (declaredTools.length) assert(row.toolCalls.length && row.toolCalls.every(call => call.status === 'completed'));
+    else assert.deepEqual(row.toolCalls, []);
   }
   assert.equal(new Set(job.evidence.map(row => row.metadata.loadedSkillDigest)).size, 1);
   assert.equal(new Set(job.evidence.map(row => row.metadata.sessionId)).size, job.evidence.length);
@@ -191,7 +196,8 @@ try {
   for (const input of judgeCalls.slice(judgeStart)) {
     const evalCase = pack.cases.find(row => row.prompt === input.task); assert(evalCase);
     assert.deepEqual(input.criteria.map(row => row.description), evalCase.rubric.map(row => row.description));
-    assert(input.runtimeEvidence?.sourceFacts?.length, 'Judge must receive verified source facts');
+    if (declaredTools.length) assert(input.runtimeEvidence?.sourceFacts?.length, 'Judge must receive verified source facts');
+    else assert(!input.runtimeEvidence?.sourceFacts?.length, 'No-tool method must not invent source facts');
   }
   for (const item of job.report.cases) for (const side of ['left', 'right']) {
     assert.equal(item.judge.runtimeComparison[side].status, 'assessed');
@@ -264,7 +270,8 @@ if (process.env.CURATED_UI_COHORT) {
     }
     await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS',
       scope: 'SAME_EVAL_SERVICE_AND_WORKSPACE', jobIds: shared.jobIds, serviceRestarts: 0,
-      environmentCount: shared.environments.length, realModel: 'NOT_RUN', sso: 'NOT_TESTED'}, null, 2));
+      environmentCount: [...shared.environmentGroups.values()].reduce((sum, rows) => sum + rows.length, 0),
+      managedProfileCount: shared.environmentGroups.size, realModel: 'NOT_RUN', sso: 'NOT_TESTED'}, null, 2));
   } finally {await shared.app?.close(); await shared.judge?.close();}
 } else {
   await verifyEntry({output: process.env.CURATED_UI_OUTPUT, flow: process.env.CURATED_UI_FLOW,
