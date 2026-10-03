@@ -25,6 +25,7 @@ import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
 import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 import {RuntimeLauncherAdapter} from '../runtime-launcher.js';
 import {zipSync} from 'fflate';
+import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from './skill-runtime-requirements.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -257,7 +258,8 @@ export class EvaluationRunManager {
         const executablePaths=[...new Set([...(configuration.runtimeCommandBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]),...services.flatMap(service=>service.filePaths)])];
         const resolveSkill = await this.skillResolver(binding.skillAssetId,true,true,executablePaths,true);
         const skill=await resolveSkill(pack.variants[side]);
-        const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,true);
+        const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
+        const descriptor=await this.environmentDescriptor(selectedEnvironment,required,configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,true);
         if(configuration.runtimeToolConfig){
           descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
         }
@@ -298,13 +300,16 @@ export class EvaluationRunManager {
       if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
       const available=new Set(inspection.capabilities.models.map(model=>model.modelId));
       for(const side of ['left','right'] as const)if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
-      const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(evalCase=>evalCase.requiredTools))],[],[],false,configuration.runtimeHarnessTools,true);
-      if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
-      const makeSide=async(side:'left'|'right')=>new RuntimeLauncherAdapter({
+      const makeSide=async(side:'left'|'right')=>{
+        const skill=await resolveSkill(pack.variants[side]);
+        const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
+        const descriptor=await this.environmentDescriptor(selectedEnvironment,required,[],[],false,configuration.runtimeHarnessTools,true);
+        if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
+        return new RuntimeLauncherAdapter({
         baseUrl:launcher.baseUrl,headers:this.options.environments.headers(launcher),side,
-        model:pack.models.execution[side],variant:pack.variants[side],skill:await resolveSkill(pack.variants[side]),
+        model:pack.models.execution[side],variant:pack.variants[side],skill,
         environment:structuredClone(descriptor),timeoutMs:configuration.timeoutMs,
-      });
+      })};
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
     throw new Error(`Unsupported runtime type: ${configuration.runtime satisfies never}`);
@@ -368,6 +373,15 @@ export class EvaluationRunManager {
       commandScripts:selectedScripts,
       candidateMcpServices:candidateMcpServices.filter(service=>exposeAllCandidateTools||service.toolNames.some(name=>requiredTools.includes(name))),
     };
+  }
+
+  private async launcherToolRequirements(environment:EnvironmentRecord,instructions:string|undefined,caseTools:string[]){
+    try{return skillRuntimeRequirements(instructions,caseTools)}
+    catch(error){if(!(error instanceof CaseToolOutsideDeclaration))throw error}
+    const inspected=await this.options.environments.preflight(environment);
+    if(inspected.status!=='ready')throw Error('Runtime Launcher preflight failed');
+    const auxiliary='capabilities' in inspected?inspected.capabilities?.auxiliaryToolNames??[]:[];
+    return skillRuntimeRequirements(instructions,caseTools,auxiliary);
   }
 
   private judgeFor(configuration: RunConfiguration, pack: EvalPack): PairwiseJudge {

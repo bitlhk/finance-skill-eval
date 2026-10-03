@@ -14,7 +14,7 @@ export class MigrationNativeBindingService{
 
   async bind(id:string,input:unknown,targets:NativeBindingTarget[]){
     const parsed=z.strictObject({baseAssetId:z.string().min(1),
-      tools:z.array(z.string().min(1)).min(1).max(64),acknowledgeContracts:z.literal(true)}).parse(input);
+      tools:z.array(z.string().min(1)).max(64),acknowledgeContracts:z.literal(true)}).parse(input);
     return this.projects.runExclusive(id,async()=>{
       const project=await this.projects.get(id),base=project.candidate??project.source;
       if(base.assetId!==parsed.baseAssetId)return conflict('资产已变化，请重新检查并绑定');
@@ -60,6 +60,8 @@ export class MigrationNativeBindingService{
       const match=/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(source);
       const meta=match?YAML.parse(match[1]!):{};
       if(!meta||typeof meta!=='object'||Array.isArray(meta))return conflict('Skill 元数据必须为对象');
+      if(names.length===0&&(!Array.isArray(meta['allowed-tools'])||meta['allowed-tools'].length!==0))
+        return conflict('无工具方法必须明确声明 allowed-tools: []；缺失声明不代表没有依赖');
       if(meta['allowed-tools']!==undefined){
         const declared=Array.isArray(meta['allowed-tools'])?meta['allowed-tools']:String(meta['allowed-tools']).split(/[\s,]+/u).filter(Boolean);
         if(JSON.stringify([...declared].sort())!==JSON.stringify(names))return conflict('工具声明与诊断结果不一致，请补齐诊断后重试');

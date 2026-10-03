@@ -60,6 +60,36 @@ it('binds explicit admitted contracts, freezes both targets and preserves source
     expect(report.workflow.stage).toBe('EVALUATE');expect(report.verification.targetExecution).toBe('NOT_RUN');
   }finally{await f.app.close()}
 });
+it('binds an explicitly tool-free method without inventing a tool or granting execution',async()=>{
+  const source='---\nname: coaching-method\nversion: 1.0.0\ndescription: Review supplied synthetic dialogue without tools.\nallowed-tools: []\n---\nReview only the supplied dialogue. Ask for missing evidence.\n';
+  const f=await fixture({'SKILL.md':source},analysisFixture([]));
+  try{
+    const result=await f.post(`/api/migrations/${f.project.id}/native-candidate`,{...f.body,tools:[]});
+    expect(result.statusCode,result.body).toBe(200);
+    const p=result.json();expect(p.nativeBindings.bindings.tools).toEqual([]);
+    expect(p.nativeBindings.bindings.targets).toHaveLength(2);
+    expect(p.source.artifactSha256).toBe(f.asset.artifactSha256);
+    const exported=await f.app.inject({url:`/api/migrations/${p.id}/export`,headers:f.headers});
+    const files=unzipSync(exported.rawPayload);
+    expect(Buffer.from(files['SKILL.md']!).toString()).toContain('allowed-tools: []');
+    const report=(await f.app.inject({url:`/api/migrations/${p.id}/report`,headers:f.headers})).json();
+    expect(report.verification.targetExecution).toBe('NOT_RUN');
+  }finally{await f.app.close()}
+});
+it('does not use empty binding to erase a diagnosed dependency',async()=>{
+  const f=await fixture();try{
+    const result=await f.post(`/api/migrations/${f.project.id}/native-candidate`,{...f.body,tools:[]});
+    expect(result.statusCode).toBe(409);
+    expect(result.body).toContain('不能遗漏');
+  }finally{await f.app.close()}
+});
+it('does not infer an empty dependency set from a missing declaration',async()=>{
+  const source='---\nname: coaching-method\nversion: 1.0.0\ndescription: Review supplied dialogue.\n---\nReview the supplied dialogue.\n';
+  const f=await fixture({'SKILL.md':source},analysisFixture([]));try{
+    const result=await f.post(`/api/migrations/${f.project.id}/native-candidate`,{...f.body,tools:[]});
+    expect(result.statusCode).toBe(409);expect(result.body).toContain('明确声明');
+  }finally{await f.app.close()}
+});
 it('rejects stale catalogs, omitted tools, unknown owners and executable uploads',async()=>{
   const f=await fixture({'scripts/tool.py':'print(1)'});try{
     const url=`/api/migrations/${f.project.id}/native-candidate`;
