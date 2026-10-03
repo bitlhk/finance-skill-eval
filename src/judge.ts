@@ -190,7 +190,8 @@ export class ModelCandidateJudge implements PairwiseJudge {
     if(input.right.status!=="completed")return judgeResultSchema.parse({winner:"tie",confidence:"high",summary:"迁移候选未完成 Runtime 执行，本题不进行 Skill 质量评分。",
       dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,leftScore:0,rightScore:0,reason:"Runtime 执行未完成。"})),reviewerLabel:"Runtime 完整性判断"});
     const businessEvidence={status:input.right.status,toolCalls:input.right.toolCalls.filter(call=>call.name!=="read_file"),streamCompleted:input.right.streamCompleted,
-      sourceFacts:Array.isArray(input.right.metadata.toolEvidence)?input.right.metadata.toolEvidence.filter((item:{tool?:string})=>item.tool!=="read_file"):[]};
+      sourceFacts:Array.isArray(input.right.metadata.toolEvidence)?input.right.metadata.toolEvidence.filter((item:{tool?:string})=>item.tool!=="read_file"):[],
+      sourceFactsCollection:input.right.metadata.toolEvidenceCollection};
     const messages=[{role:"system" as const,content:[input.profile.domainInstructions,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","Runtime 工具证据是实际执行事实；没有证据时不得把题面中的就绪描述当成已完成调用。","只返回符合约定的 JSON。"].join("\n")},
       {role:"user" as const,content:JSON.stringify({task:input.evalCase.prompt,evaluationGoal:input.evalCase.evaluationGoal,rubric:input.evalCase.rubric,candidateOutput:input.right.output,runtimeEvidence:businessEvidence,
         responseContract:{confidence:"low | medium | high",summary:"string",scoreRule:"score must be a JSON integer from 0 to 4",dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,score:0,reason:"string"}))}})}];
@@ -256,6 +257,7 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     const businessEvidence = (evidence: RuntimeExecutionEvidence) => ({
       sourceFacts: Array.isArray(evidence.metadata.toolEvidence)
         ? evidence.metadata.toolEvidence.filter((item: { tool?: string }) => item.tool !== "read_file") : [],
+      sourceFactsCollection: evidence.metadata.toolEvidenceCollection,
       status: evidence.status,
       toolCalls: evidence.toolCalls.filter(call => call.name !== "read_file"),
       streamCompleted: evidence.streamCompleted,

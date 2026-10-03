@@ -32,6 +32,7 @@ export class ModelGoalJudge implements PairwiseJudge{
    toolCalls:input.right.toolCalls.filter(call=>isBusinessTool(call.name)),
    sourceFacts:Array.isArray(input.right.metadata.toolEvidence)
     ?input.right.metadata.toolEvidence.filter((item:{tool?:string})=>typeof item.tool==='string'&&isBusinessTool(item.tool)):[],
+   sourceFactsCollection:input.right.metadata.toolEvidenceCollection,
   };
   let lastError:unknown;
   let correction='';

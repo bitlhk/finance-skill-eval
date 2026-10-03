@@ -94,7 +94,9 @@ describe('CC contract and candidate identity',()=>{
 describe('independent Runtime goal assessment',()=>{
   it('reuses goal judging with isolated answers and tool evidence, without a winner',async()=>{
     const requests:any[]=[],input=judgeInput();
-    input.left.metadata={toolEvidence:[{tool:'business-left',fact:'left-only'}]};
+    input.left.metadata={toolEvidence:[{tool:'business-left',fact:'left-only'}],
+      toolEvidenceCollection:{status:'PARTIAL',reason:'VERIFIED_NON_COMPLETED_RESULTS',
+        nonCompletedResults:[{resultStatus:'FAILED',resultIndex:0}]}};
     input.right.metadata={toolEvidence:[{tool:'business-right',fact:'right-only'}]};
     const result=await new ModelRuntimeComparisonJudge(goalAdapter(requests),leftModel).compare(input);
     expect(result.runtimeComparison?.left).toMatchObject({status:'assessed',assessment:{verdict:'FAIL'}});
@@ -102,6 +104,8 @@ describe('independent Runtime goal assessment',()=>{
     expect(result.winner).toBeUndefined();expect(result.goalAssessment).toBeUndefined();expect(result.dimensions).toEqual([]);
     expect(requests).toHaveLength(2);expect(requests[0].requestId).not.toBe(requests[1].requestId);
     expect(JSON.parse(requests[0].messages[1].content).runtimeEvidence.sourceFacts).toEqual(input.left.metadata.toolEvidence);
+    expect(JSON.parse(requests[0].messages[1].content).runtimeEvidence.sourceFactsCollection).toEqual(input.left.metadata.toolEvidenceCollection);
+    expect(JSON.parse(requests[1].messages[1].content).runtimeEvidence.sourceFactsCollection).toBeUndefined();
     expect(JSON.stringify(requests[0])).not.toContain('right-only');expect(JSON.stringify(requests[1])).not.toContain('left-only');
     expect(judgeResultSchema.safeParse({...result,winner:'tie'}).success).toBe(false);
     expect(judgeResultSchema.parse(JSON.parse(JSON.stringify(result)))).toEqual(result);
