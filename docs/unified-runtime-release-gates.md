@@ -45,3 +45,18 @@ separately does not prove end-to-end completion. Keep Issue #38 open and the PR
 unreleased until these gates pass. Preserve existing data and rollback releases.
 
 Automated development verification is not independent human acceptance.
+
+## Fixed synthetic MCP source identity
+
+The bounded reference entry verifies the source/dependency manifest at startup.
+It adds `X-Finance-Source-Sha256` to successful and rejected HTTP responses from
+that startup identity, never from an uploaded Skill or caller header. Downstream
+values cannot override it. Harness v2 source configurations require an exact,
+single matching marker before SDK body parsing; mismatches fail closed.
+
+This is a managed deployment consistency check, not authenticated remote
+attestation. Process ownership, protected configuration, authority checks and
+the current loopback-only boundary remain required. Configuration and source
+manifest identities must also be bound to service/Runtime Lock, exact collector
+qualification and build-delivery evidence. Marker compatibility tests alone do
+not admit a curated Pack or justify switching the public root.

@@ -17,7 +17,7 @@ class SourceLimit(Exception):
 
 class BoundedMcpApp:
     def __init__(self, app, *, timeout=10.0, grace=1.0, concurrency=4,
-                 observe=lambda event: None, fatal=lambda: os._exit(70)):
+                 observe=lambda event: None, fatal=lambda: os._exit(70), source_identity=None):
         if not all(math.isfinite(n) and 0 < n <= 30 for n in (timeout, grace)):
             raise ValueError('SOURCE_TIMEOUT_INVALID')
         if type(concurrency) is not int or not 1 <= concurrency <= 16:
@@ -25,6 +25,10 @@ class BoundedMcpApp:
         self.app, self.timeout, self.grace = app, timeout, grace
         self.concurrency, self.observe, self.fatal = concurrency, observe, fatal
         self.active = 0
+        if source_identity is not None and not re.fullmatch('[a-f0-9]{64}', source_identity):
+            raise ValueError('SOURCE_IDENTITY_INVALID')
+        self.identity_headers = ([(b'x-finance-source-sha256', source_identity.encode('ascii'))]
+                                 if source_identity is not None else [])
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -32,7 +36,7 @@ class BoundedMcpApp:
 
         async def reject(status):
             await send({'type': 'http.response.start', 'status': status,
-                        'headers': [(b'content-type', b'application/json')]})
+                        'headers': [(b'content-type', b'application/json'), *self.identity_headers]})
             await send({'type': 'http.response.body', 'body': b'{"error":"SOURCE_REQUEST_REJECTED"}'})
 
         if scope['path'] != '/mcp' or scope['method'] != 'POST':
@@ -66,6 +70,10 @@ class BoundedMcpApp:
             if message['type'] == 'http.response.start':
                 if any(k.lower() == b'mcp-session-id' for k, _ in message.get('headers', [])):
                     raise SourceLimit('STATEFUL_RESPONSE')
+                # This is a deployment consistency marker, not remote attestation or authorization.
+                message = {**message, 'headers': [
+                    (k, v) for k, v in message.get('headers', []) if k.lower() != b'x-finance-source-sha256'
+                ] + self.identity_headers}
                 response_started = True
             sent += len(message.get('body', b''))
             if sent > 262144:
@@ -150,7 +158,7 @@ def main():
     import uvicorn
     source = mcp.http_app(path='/mcp', stateless_http=True, json_response=True)
     print(json.dumps({'sourceIdentitySha256': digest, 'mode': 'STATELESS_BOUNDED'}), flush=True)
-    uvicorn.run(BoundedMcpApp(source), host='127.0.0.1', port=args.port,
+    uvicorn.run(BoundedMcpApp(source, source_identity=digest), host='127.0.0.1', port=args.port,
                 access_log=False, timeout_keep_alive=2, limit_concurrency=16,
                 timeout_graceful_shutdown=3)
 

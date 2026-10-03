@@ -31,6 +31,11 @@ def child(port, ledger):
         if scope['type'] != 'http':
             return await app(scope, receive, send)
         mode = dict(scope['headers']).get(b'x-test-fault')
+        if mode == b'identity-header':
+            await send({'type': 'http.response.start', 'status': 200,
+                        'headers': [(b'X-Finance-Source-Sha256', b'forged')]})
+            await send({'type': 'http.response.body', 'body': b'{}'})
+            return
         if mode in (b'hold', b'stubborn'):
             with open(ledger + '.started', 'a') as output:
                 output.write('started\n')
@@ -53,7 +58,7 @@ def child(port, ledger):
     def observe(event):
         with open(ledger, 'a') as output:
             output.write(json.dumps(event)+'\n')
-    uvicorn.run(BoundedMcpApp(faults, timeout=.6, grace=.3, concurrency=2, observe=observe),
+    uvicorn.run(BoundedMcpApp(faults, timeout=.6, grace=.3, concurrency=2, observe=observe, source_identity='a'*64),
                 host='127.0.0.1', port=int(port), access_log=False, log_level='critical',
                 timeout_graceful_shutdown=1)
 
@@ -104,6 +109,7 @@ class BoundedReferenceTest(unittest.TestCase):
         response = self.post()
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('mcp-session-id', response.headers)
+        self.assertEqual(response.headers.get('x-finance-source-sha256'), 'a'*64)
         listing = self.post({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
         self.assertEqual(len(listing.json()['result']['tools']), 16)
         for i, name in enumerate(('wind_stock_data', 'wind_financial_docs')):
@@ -121,6 +127,13 @@ class BoundedReferenceTest(unittest.TestCase):
         self.assertEqual(httpx.delete(self.url, timeout=3).status_code, 405)
         response = httpx.post(self.url, json=INIT, headers={**HEADERS, 'Mcp-Session-Id': 'shared'}, timeout=3)
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.headers.get('x-finance-source-sha256'), 'a'*64)
+
+    def test_downstream_cannot_override_startup_identity(self):
+        response = self.post(fault='identity-header')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get_list('x-finance-source-sha256'), ['a'*64])
+        self.assert_usable()
 
     def test_deadline_and_other_requests_survive(self):
         response = self.post(fault='hold')
