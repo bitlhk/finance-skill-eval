@@ -35,3 +35,17 @@ Unit and HTTP application checks cover source preservation, empty/omitted tools,
 catalog changes, operator opt-out, per-side dependency scope and old adapter
 compatibility. These do not replace native execution, actual model requests,
 authenticated browser workflow or professional-quality review.
+
+The repeatable local browser check uses the actual service and page with a
+controlled analyzer and two catalog endpoints:
+
+```sh
+pnpm build
+METHOD_ONLY_UI_OUTPUT=/tmp/method-only-ui-unique node scripts/verify-method-only-migration-ui.mjs
+```
+
+Use a new output directory. It checks browser upload, explicit two-target empty
+binding, candidate ZIP preservation, return to Skill assets, and 1366/390/320px
+screenshots. All fixture requests must be read-only capability/catalog queries.
+The report marks Runtime execution, real model and SSO as untested; a successful
+candidate download is not a release or full evaluation acceptance.
