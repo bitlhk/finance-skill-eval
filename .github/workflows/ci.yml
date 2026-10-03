@@ -39,6 +39,8 @@ jobs:
         run: |
           uv sync --project integrations/openjiuwen --frozen
           pnpm test:skeleton:mcp
+      - name: Bounded synthetic MCP source (isolated TCP and pinned identity)
+        run: integrations/openjiuwen/.venv/bin/python -m unittest integrations.openjiuwen.test_bounded_reference_mcp integrations.openjiuwen.test_reference_mcp
       - name: Verify all four enterprise migration fixtures offline
         run: pnpm test:migration:enterprise:offline
       - name: Compile native target (no live credentials or model calls)
