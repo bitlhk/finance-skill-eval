@@ -4,6 +4,59 @@ This checklist supplements the existing migration and Launcher contracts. It doe
 not introduce a second protocol. HTTP/JSON Launcher remains the integration path.
 Only the two managed Java QUERY environments are in scope.
 
+## Formal-entry coverage
+
+Promotion requires both curated and newly uploaded standard Skills. The first
+research integration is a sequencing milestone, not a substitute for accepting
+the other curated Skills. `packs/finance/curated-online.json` is the versioned
+source of the acceptance cohort and cases. At the current baseline it contains:
+
+| Skill | Fixed cases | Source tools requested by those cases |
+| --- | ---: | --- |
+| auto-insurance-advisor | 3 | get_customer_profile, list_products, get_product_detail |
+| investment-research-assistant | 3 | wind_stock_data, wind_financial_docs |
+| transfer-risk-review | 4 | account_balance_query, fraud_transfer_risk_assess |
+| smart-audit-assistant | 3 | audit_case_context, evaluate_audit_human_review |
+| post-loan-risk-control-assistant | 3 | get_post_loan_risk_snapshot, evaluate_post_loan_risk_escalation |
+| goldencoach-stage-evaluation | 3 | None; synthetic conversation materials |
+
+This is 19 cases per Runtime, at least 38 executions across OpenJiuwen Java and
+AgentScope Java before repeat/fault cases. These are required executions, not a
+claim they have passed. Record each Skill/Runtime cell independently. Tool names
+above are the original case references, not implicitly admitted installed tools.
+Resolve each actual Skill's declarations and the complete Pack dependency closure;
+case tool lists are not an installation manifest. Preserve and expose explicit
+source-to-installed tool mappings and original/migrated/reference-file digests.
+Do not admit all draft Packs merely because their Provider artifact is present.
+
+New-upload acceptance must cover these paths on both managed Java Runtimes:
+
+| Upload path | Required result |
+| --- | --- |
+| Standard Skill without tool dependencies | Load its real content/references, run the native model, preserve declared limitations; do not add fictitious tool dependencies to claim success |
+| Standard Skill using admitted QUERY tools | Check exact dependencies, build and install them, prove tool execution and factual results |
+| Skill requiring supported tool migration | Preserve original, analyze, confirm explicit bindings, retain migrated version in the private asset list, select it in evaluation and run both targets |
+| Missing/unknown tool, incompatible protocol, unsupported code | Explain the exact missing requirement and managed extension path; block execution, never silently remove tools or score a fabricated answer as success |
+
+Standard format alone does not establish execution eligibility. Uploaded scripts,
+arbitrary MCP endpoints and TASK operations remain outside this release boundary.
+Reject unsupported inputs explicitly without labeling them business-verified.
+Positive upload cases must be freshly imported through the user workflow rather
+than supplied only as preinstalled methods or backend fixtures.
+
+For each positive path, verify selection, actual installation, input/method and
+model parameter identities, tool facts, missing/unknown handling, result/rubric
+visibility and resource cleanup. No-tool cases must not issue business calls.
+For migration, independently verify that the migrated asset can be selected later
+from the normal test interface. Interface success and business quality are separate
+verdicts; preserve partial/failed outcomes. Cross-Runtime consistency means common
+inputs, compatible factual conclusions and safety boundaries, not identical prose.
+
+Use synthetic sources and real managed models for final acceptance. Synthetic
+MCP results are not live Wind, underwriting, approval or real-funds evidence.
+Human professional-quality review remains separately pending unless performed.
+Do not switch the root based solely on one accepted Skill or a successful build.
+
 ## Browser delivery workflow
 
 - Export requirements for each target, including the target in the download URL
