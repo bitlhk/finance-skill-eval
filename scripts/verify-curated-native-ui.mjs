@@ -27,6 +27,7 @@ const sourceMethod = Buffer.from(sourceFiles['SKILL.md']).toString();
 const sourceHeader = parseYaml(sourceMethod.split('---')[1]);
 const declaredTools = sourceHeader['allowed-tools'];
 assert(Array.isArray(declaredTools) && declaredTools.length > 0);
+if (shared) shared.analysis = {declaredTools, sourceMethod};
 const root = shared?.root ?? path.join(output, 'root'), data = shared?.data ?? path.join(output, 'data');
 await mkdir(path.join(root, 'packs/finance'), {recursive: true});
 if (!shared) await cp(path.join(entry.stagedPack, 'packs/candidate'), path.join(root, 'packs/finance/candidate'), {recursive: true});
@@ -54,16 +55,19 @@ const errors = [], checks = [];
 try {
   if (flow === 'prebuilt') asset = await new SkillStore(data).uploadZip(archive);
   app = shared?.app ?? await createEvaluationService({rootDirectory: root, dataDirectory: data, publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false,
-    ...(flow === 'migration' ? {
-      migrationAnalyzer: async () => ({status: 'PRODUCED', payload: {status: 'PRODUCED', skill: {status: 'COMPLIANT', findings: []},
-        tools: declaredTools.map(name => ({name, sourcePaths: ['SKILL.md'], language: null, portability: 'RUNTIME_BOUND',
+    ...(flow === 'migration' || shared?.migration ? {
+      migrationAnalyzer: async () => {
+        const {declaredTools: tools, sourceMethod: method} = shared?.analysis ?? {declaredTools, sourceMethod};
+        return {status: 'PRODUCED', payload: {status: 'PRODUCED', skill: {status: 'COMPLIANT', findings: []},
+        tools: tools.map(name => ({name, sourcePaths: ['SKILL.md'], language: null, portability: 'RUNTIME_BOUND',
           input: {description: 'Refer to the admitted contract', schema: null},
           output: {description: 'Refer to the admitted contract', schema: null}, evidence: [], findings: [],
           recommendedForm: 'MCP', recommendationReason: 'Controlled analysis of explicit tool declarations, not inferred bank compatibility'})),
-        dependencyAnalysis: {dependencies: [], chains: declaredTools.map(name => ({toolName: name,
+        dependencyAnalysis: {dependencies: [], chains: tools.map(name => ({toolName: name,
           nodes: [{id: 'declaration', title: 'Explicit tool declaration', detail: 'Controlled source citation', dependencyKeys: [],
-            evidence: [{path: 'SKILL.md', snippet: sourceMethod.split('\n').find(line => line.includes(name))}]}], edges: []}))}},
-        scanner: {scannerDigest: 'a'.repeat(64), coverage: []}}),
+            evidence: [{path: 'SKILL.md', snippet: method.split('\n').find(line => line.includes(name))}]}], edges: []}))}},
+        scanner: {scannerDigest: 'a'.repeat(64), coverage: []}};
+      },
       migrationImplementer: async () => {throw Error('Native binding must not generate or run uploaded code');},
     } : {})});
   const url = shared?.url ?? await app.listen({host: '127.0.0.1', port: 0});
@@ -242,11 +246,9 @@ if (process.env.CURATED_UI_COHORT) {
   await mkdir(output, {mode: 0o700});
   const entries = JSON.parse(await readFile(process.env.CURATED_UI_COHORT, 'utf8'));
   assert(Array.isArray(entries) && entries.length > 1);
-  // Shared service mode currently covers immutable curated entries and uploads.
-  // Migration needs its own analyzer fixture; do not silently reuse another Skill's analysis.
-  assert(entries.every(entry => ['prebuilt', 'upload'].includes(entry.flow ?? 'prebuilt')));
+  assert(entries.every(entry => ['prebuilt', 'upload', 'migration'].includes(entry.flow ?? 'prebuilt')));
   const shared = {root: path.join(output, 'root'), data: path.join(output, 'data'),
-    token: randomBytes(32).toString('hex'), jobIds: []};
+    token: randomBytes(32).toString('hex'), jobIds: [], migration: entries.some(entry => entry.flow === 'migration')};
   await mkdir(path.join(shared.root, 'packs/finance'), {recursive: true});
   const packs = new Set();
   for (const entry of entries) {
