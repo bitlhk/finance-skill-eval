@@ -172,6 +172,13 @@ this list from the output report being audited. Its digest and the coverage
 basis are recorded; an incomplete manifest cannot drop an explicitly selected
 case. This is execution coverage, not proof that every answer is correct.
 
+`read_case_file` is a case-workspace auxiliary tool, not a business Capability.
+The audit accepts it only when the immutable Runtime Lock declares the tool and
+allowed paths, the returned workspace digest matches, the retained read receipts
+match the result, and the workspace is closed. Its name alone is not an allowlist.
+This checks Lock/read-receipt consistency; original case-file content still
+requires comparison to the frozen input suite and its digest.
+
 ### Historical single-owner mode
 
 In single-owner mode stores are process-wide, not tenant-aware. For an explicitly selected

@@ -49,6 +49,23 @@ class EvidenceAuditTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data))
 
+    def workspace(self):
+        item = self.job['evidence'][0]
+        meta = item['metadata']
+        saved = json.loads((self.root / 'retained/owner/left/left.json').read_text())
+        workspace = {'schemaVersion': 'finance.case-workspace.v1', 'digest': 'a' * 64,
+                     'paths': ['case.txt'], 'storage': 'IMMUTABLE_CASE_DATA', 'toolName': 'read_case_file'}
+        saved['runtimeLock']['caseWorkspace'] = workspace
+        meta.update(workspaceFilesDigest=workspace['digest'], caseWorkspace={
+            'schemaVersion': workspace['schemaVersion'], 'digest': workspace['digest'], 'closed': True,
+            'reads': [{'path': 'case.txt', 'sha256': 'b' * 64, 'bytes': 10}]})
+        saved['metadata'] = {'caseWorkspace': json.loads(json.dumps(meta['caseWorkspace']))}
+        meta['runtimeLockSha256'] = module.digest(module.canonical(saved['runtimeLock']))
+        meta['retainedEvidenceRef']['sha256'] = module.digest(module.canonical(saved, unicode=True))
+        self.write('retained/owner/left/left.json', saved)
+        item['toolCalls'] = [{'name': 'read_case_file', 'status': 'completed'}]
+        return meta
+
     def test_complete(self):
         self.assertEqual(module.audit(self.job, self.root)['status'], 'PASS')
 
@@ -116,6 +133,56 @@ class EvidenceAuditTests(unittest.TestCase):
     def test_unknown_tool(self):
         self.job['evidence'][0]['toolCalls'] = [{'name': 'not_installed'}]
         self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_workspace_tool_requires_its_own_lock_and_closed_receipts(self):
+        self.workspace()
+        self.assertEqual(module.audit(self.job, self.root)['status'], 'PASS')
+
+    def test_workspace_name_alone_is_not_an_allowlist(self):
+        self.job['evidence'][0]['toolCalls'] = [{'name': 'read_case_file'}]
+        self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_workspace_receipt_mismatch_rejected(self):
+        meta = self.workspace()
+        meta['caseWorkspace']['reads'][0]['path'] = 'another.txt'
+        self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_unclosed_workspace_rejected(self):
+        meta = self.workspace()
+        meta['caseWorkspace']['closed'] = False
+        self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_wrong_workspace_digest_rejected(self):
+        meta = self.workspace()
+        meta['workspaceFilesDigest'] = 'c' * 64
+        self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_workspace_digest_without_lock_rejected(self):
+        self.job['evidence'][0]['metadata']['workspaceFilesDigest'] = 'a' * 64
+        self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_workspace_paths_match_the_safe_relative_path_contract(self):
+        meta = self.workspace()
+        for path in ('/absolute', '../escape', 'x//y', 'x/./y', 'x\\y', 'C:relative', 'x\0y'):
+            with self.subTest(path=repr(path)):
+                receipt = {**meta['caseWorkspace'], 'reads': []}
+                lock = {'caseWorkspace': {'schemaVersion': receipt['schemaVersion'],
+                        'digest': receipt['digest'], 'paths': [path],
+                        'storage': 'IMMUTABLE_CASE_DATA', 'toolName': 'read_case_file'}}
+                tools, valid = module.workspace_tools(lock, {**meta, 'caseWorkspace': receipt},
+                                                      {'metadata': {'caseWorkspace': receipt}}, [])
+                self.assertFalse(valid)
+                self.assertEqual(tools, set())
+
+    def test_workspace_read_count_and_byte_type_are_checked(self):
+        meta = self.workspace()
+        saved = json.loads((self.root / 'retained/owner/left/left.json').read_text())
+        self.assertFalse(module.workspace_tools(saved['runtimeLock'], meta, saved, [
+            {'name': 'read_case_file'}, {'name': 'read_case_file'}])[1])
+        meta['caseWorkspace']['reads'][0]['bytes'] = True
+        saved['metadata']['caseWorkspace'] = meta['caseWorkspace']
+        self.assertFalse(module.workspace_tools(saved['runtimeLock'], meta, saved,
+                                                [{'name': 'read_case_file'}])[1])
 
     def test_reference_escape(self):
         self.job['evidence'][0]['metadata']['retainedEvidenceRef']['collection'] = '../elsewhere'

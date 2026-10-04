@@ -41,6 +41,35 @@ def case_ids(job, manifest):
     return selected, 'REQUEST_SELECTED_CASE_IDS'
 
 
+def workspace_tools(lock, meta, saved, calls):
+    declaration = lock.get('caseWorkspace')
+    receipt = meta.get('caseWorkspace')
+    if declaration is None and receipt is None:
+        return set(), meta.get('workspaceFilesDigest') is None
+    if not isinstance(declaration, dict) or not isinstance(receipt, dict):
+        return set(), False
+    paths = declaration.get('paths', [])
+    reads = receipt.get('reads', [])
+    digest_value = declaration.get('digest', '')
+    valid = (declaration.get('schemaVersion') == receipt.get('schemaVersion') == 'finance.case-workspace.v1'
+             and declaration.get('storage') == 'IMMUTABLE_CASE_DATA'
+             and declaration.get('toolName') == 'read_case_file'
+             and isinstance(digest_value, str) and re.fullmatch(r'[a-f0-9]{64}', digest_value) is not None
+             and digest_value == receipt.get('digest') == meta.get('workspaceFilesDigest')
+             and receipt.get('closed') is True and receipt == saved.get('metadata', {}).get('caseWorkspace')
+             and isinstance(paths, list) and bool(paths)
+             and all(isinstance(p, str) and p and '\\' not in p and '\0' not in p
+                     and not re.match(r'^[A-Za-z]:', p)
+                     and all(part not in {'', '.', '..'} for part in p.split('/')) for p in paths)
+             and len(set(paths)) == len(paths) and isinstance(reads, list) and len(reads) <= 128)
+    if valid:
+        valid = all(isinstance(r, dict) and r.get('path') in paths
+                    and isinstance(r.get('sha256'), str) and re.fullmatch(r'[a-f0-9]{64}', r['sha256'])
+                    and type(r.get('bytes')) is int and r['bytes'] >= 0 for r in reads)
+        valid = valid and sum(c['name'] == 'read_case_file' for c in calls) == len(reads)
+    return ({'read_case_file'} if valid else set()), bool(valid)
+
+
 def audit(job, state, expected_case_ids=None):
     rows, archives = [], []
     evidence = job.get('evidence', [])
@@ -59,6 +88,8 @@ def audit(job, state, expected_case_ids=None):
         receipt = json.loads(confined(state, 'deletion-receipts', meta['buildId'] + '.json').read_text())
         capabilities = [c for pack in lock['installations'] for c in pack['capabilities']]
         tools = {c['toolName'] for c in capabilities}
+        auxiliary, workspace_valid = workspace_tools(lock, meta, saved, item['toolCalls'])
+        tools |= auxiliary
         row = {'caseId': item['caseId'], 'side': item['side'], 'requestId': meta['requestId'],
                'executionCompleted': item['status'] == 'completed' and item['runtimeIdentityVerified'] is True,
                'retainedDigest': digest(canonical(saved, unicode=True)) == ref['sha256'],
@@ -70,6 +101,7 @@ def audit(job, state, expected_case_ids=None):
                'methodInstalled': any(s['digest'] == meta['loadedSkillDigest'] for p in lock['domainInstallations'] for s in p['skills']),
                'onlyReadonlyInstalled': all(c['operation'] == 'QUERY' for c in capabilities),
                'callsMatchInstalledTools': all(c['name'] in tools for c in item['toolCalls']),
+               'caseWorkspaceLockedAndClosed': workspace_valid,
                'deletionReceipt': receipt['artifactLockSha256'] == meta['artifactLockSha256'],
                'buildRemoved': not confined(state, 'workbench', meta['buildId']).exists(),
                'jobRemoved': not confined(state, 'workbench-records', meta['buildId'] + '.json').exists()}
