@@ -164,3 +164,32 @@ Rollback restores the previous release/config and gateway target, without
 deleting the `account-workspaces` directory or overwriting data created after
 release. Do not roll back to a shared private directory while leaving all-account
 ingress enabled. This document and code do not mean production has been switched.
+
+### Candidate-only origin switch
+
+`deploy/promote-account-candidate.py` changes only the existing `/release-check/`
+origin fragment, after review and CI. It reuses the digest-checked atomic replace
+and rollback helper; it does not change the public root, gateway authentication,
+old service, data directories, or Agent versions. The existing gateway must
+already authenticate and replace `X-Demo-User`; the origin must still restrict
+its TCP peer to the gateway. Verify those prerequisites independently.
+
+The release must be a clean pinned checkout under the managed releases directory,
+with account mode and no copied production data. The tool checks health and
+anonymous/missing-factor refusal before changing anything. A dry run writes only
+a receipt. Apply requires the exact prior fragment digest and creates a private
+backup; Nginx check/reload failure restores the old fragment unless intervening
+changes prevent safe rollback. Server credentials are never printed.
+
+```sh
+python3 deploy/promote-account-candidate.py --release "$RELEASE" --receipt "$PLAN"
+python3 deploy/promote-account-candidate.py --release "$RELEASE" \
+  --expected-sha256 "$BEFORE_SHA256" --apply --receipt "$RECEIPT"
+```
+
+After application, check the public candidate without login and with a forged
+identity (both must be refused), then verify real ordinary-account login and
+cross-account isolation. The tool deliberately does not mint an SSO session or
+claim genuine login. Formal-entry promotion remains a separate release gate.
+Rollback restores only the backed-up origin fragment after checking the current
+after-digest, Nginx syntax, and graceful reload. Preserve all new account data.

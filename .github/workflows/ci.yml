@@ -33,7 +33,7 @@ jobs:
       - run: pnpm test
       - run: node scripts/native-fixture-profile.test.mjs
       - run: python -m unittest integrations.openjiuwen.test_script_process integrations.openjiuwen.test_instance_manager
-      - run: python -m unittest tests.test_candidate_proxy_budget
+      - run: python -m unittest tests.test_candidate_proxy_budget tests.test_account_candidate_deploy
       - run: python -m unittest discover -s scripts -p test_retained_launcher_evidence.py
       - run: pnpm build
       - name: Run the MCP skeletons the skill package hands the agent
