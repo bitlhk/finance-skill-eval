@@ -1,6 +1,7 @@
 /** Private browser acceptance against a separately started real Builder Launcher fixture. */
 import assert from 'node:assert/strict';
-import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,cp} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {chromium,expect} from '@playwright/test';
@@ -38,14 +39,17 @@ if(prebuilt){
 }
 const builtin=prebuilt?await installNativeSample(path.join(output,'data')):null;
 const judge=await controlledGoalJudge();
-const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'data'),
+const accountMode=process.env.LAUNCHER_ACCOUNT_WORKSPACES==='true';
+const origin='https://eval.example.test',subject='studio_native_alice';
+const accountHeaders=name=>accountMode?{'x-demo-user':name,origin}:{};
+let app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'data'),
   publicDirectory:path.resolve('web-dist'),accessToken:token,publicDemo:false});
 let browser,page;
 const checks=[];
 try{
-  const url=await app.listen({host:'127.0.0.1',port:0});
+  let url=await app.listen({host:'127.0.0.1',port:0}),seedReady=false;
   const api=async(route,body)=>{
-    const response=await fetch(url+route,{method:body===undefined?'GET':'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    const response=await fetch(url+route,{method:body===undefined?'GET':'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json',...(seedReady?accountHeaders(subject):{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
     const value=await response.json();assert(response.ok,JSON.stringify(value));return value;
   };
   const environments=[];
@@ -56,12 +60,31 @@ try{
       baseUrl:new URL(alias+'/',current.baseUrl).toString(),credentialEnv:credential});
     environments.push(environment);
   }
+  if(accountMode){
+    assert(prebuilt,'Account-mode native probe requires the immutable prebuilt sample');
+    await app.close();
+    const seed=path.join(output,'reviewed-seed');await mkdir(seed,{mode:0o700});
+    for(const name of ['skills','environments','preparations'])await cp(path.join(output,'data',name),path.join(seed,name),{recursive:true});
+    const manifest=JSON.parse(execFileSync(process.execPath,['scripts/workspace-seed-manifest.mjs',seed],{encoding:'utf8'}));
+    await writeFile(path.join(output,'seed-manifest.json'),JSON.stringify(manifest,null,2));
+    app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'account-data'),
+      publicDirectory:path.resolve('web-dist'),accessToken:token,publicDemo:false,workspaceMode:'account',
+      workspaceSubject:undefined,workspaceOrigin:origin,workspaceSeedDirectory:seed,workspaceSeedSha256:manifest.sha256});
+    url=await app.listen({host:'127.0.0.1',port:0});seedReady=true;
+  }
   browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});
   page=await browser.newPage({viewport:{width:1440,height:1000}});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  if(accountMode)await page.route(`${url}/api/**`,async route=>{
+    const headers={...route.request().headers(),authorization:`Bearer ${token}`,...accountHeaders(subject)};
+    if(route.request().method()==='GET')await route.continue({headers});
+    else await route.fulfill({response:await route.fetch({headers,maxRedirects:0})});
+  });
   await page.goto(url);
-  await page.getByLabel('访问令牌').fill(token);
-  await page.getByRole('button',{name:'进入工作区',exact:true}).click();
+  if(!accountMode){
+    await page.getByLabel('访问令牌').fill(token);
+    await page.getByRole('button',{name:'进入工作区',exact:true}).click();
+  }
   let asset;
   if(prebuilt){
     asset=builtin;
@@ -180,7 +203,44 @@ try{
   assert.equal(mobile.readUInt32BE(16),390,'Full-page screenshot must not expand beyond the mobile viewport');
   assert.deepEqual(errors,[]);
   checks.push('Desktop and 390px browser rendered real result evidence without page errors or horizontal overflow');
-  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel,generation,judgeMode:'CONTROLLED_INDETERMINATE',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId},null,2));
+  let secondJob;
+  if(accountMode){
+    const request=async(name,route,body)=>fetch(url+route,{method:body===undefined?'GET':'POST',
+      headers:{authorization:`Bearer ${token}`,...accountHeaders(name),'content-type':'application/json'},
+      ...(body===undefined?{}:{body:JSON.stringify(body)})});
+    for(const suffix of ['', '/export', '/events'])assert.equal((await request('studio_native_bob',`/api/runs/${job.jobId}${suffix}`)).status,404);
+    assert.equal((await request('studio_native_bob',`/api/runs/${job.jobId}/cancel`,{})).status,404);
+    const second=await request('studio_native_bob','/api/runs',posted);
+    assert.equal(second.status,202);secondJob=await second.json();
+    const deadline=Date.now()+900000;
+    do{
+      secondJob=await (await request('studio_native_bob',`/api/runs/${secondJob.jobId}`)).json();
+      if(['completed','failed','cancelled','interrupted'].includes(secondJob.status))break;
+      await new Promise(resolve=>setTimeout(resolve,1000));
+    }while(Date.now()<deadline);
+    await writeFile(path.join(output,'second-account-job.json'),JSON.stringify(secondJob,null,2),{mode:0o600});
+    assert.equal(secondJob.status,'completed',JSON.stringify(secondJob.error));
+    assert.equal(secondJob.evidence.length,job.evidence.length);
+    const previousSessions=new Set(job.evidence.map(row=>row.metadata.sessionId));
+    const previousInstances=new Set(job.evidence.map(row=>row.metadata.instanceId));
+    for(const row of secondJob.evidence){
+      assert(row.status==='completed'&&row.runtimeIdentityVerified);
+      assert(row.metadata.runtimeLockSha256&&row.metadata.executionHistoryRequestId&&row.metadata.retainedEvidenceRef);
+      assert(row.toolCalls.some(call=>call.name==='account_balance_query'&&call.status==='completed'));
+      assert.equal(row.metadata.loadedSkillDigest,job.evidence[0].metadata.loadedSkillDigest);
+      assert(!previousSessions.has(row.metadata.sessionId));
+      assert(row.metadata.instanceId&&!previousInstances.has(row.metadata.instanceId));
+      assert.deepEqual(row.metadata.declaredModelParameters,generation);
+      if(caseFiles)assert(row.metadata.caseWorkspace.closed&&row.metadata.caseWorkspace.reads.length===1);
+    }
+    assert.equal(judge.calls.length,job.evidence.length+secondJob.evidence.length);
+    assert.equal((await request(subject,`/api/runs/${secondJob.jobId}`)).status,404);
+    assert.deepEqual((await (await request(subject,'/api/runs')).json()).runs.map(row=>row.jobId),[job.jobId]);
+    assert.deepEqual((await (await request('studio_native_bob','/api/runs')).json()).runs.map(row=>row.jobId),[secondJob.jobId]);
+    checks.push('Two account stores independently executed both native runtimes with disjoint sessions/instances and denied cross-account history access');
+  }
+  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel,generation,judgeMode:'CONTROLLED_INDETERMINATE',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId,
+    accountMode,secondAccountJobId:secondJob?.jobId,sso:accountMode?'SYNTHETIC_TRUSTED_INGRESS':'NOT_TESTED'},null,2));
 }catch(error){
   if(page){
     await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});

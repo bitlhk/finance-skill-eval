@@ -105,6 +105,16 @@ cross-origin writes, actual ZIP/SSE transport, cross-account run and migration
 access, restart persistence, seed integrity and preserved old-owner data. UI
 verification uses a synthetic ingress; it is not proof of a real SSO session.
 
+The existing `scripts/verify-launcher-ui.mjs` also accepts
+`LAUNCHER_ACCOUNT_WORKSPACES=true` with its prebuilt native fixture. It creates a
+reviewed synthetic seed, submits the same frozen two-Runtime configuration from
+two separate account stores, and checks distinct instances/sessions, Skill and
+model metadata, file closure, Lock/history references and cross-account denial.
+Builder's `engineering/verify_balance_native_browser.py --runtime-pair
+--account-workspaces` drives this probe and reclaims the isolated bank and Hosts.
+Its controlled Judge remains indeterminate; a completed job is not a professional
+quality pass. See `account-native-acceptance-20261004.md` for the recorded scope.
+
 Before changing the public entry, verify real Linggan login with two accounts,
 trusted header replacement and direct-backend refusal; review the shared seed,
 resource limits and migration route policy; then rerun the native dual-Runtime
