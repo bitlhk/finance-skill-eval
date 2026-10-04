@@ -122,7 +122,16 @@ try {
   if(shared?.accountMode)await page.route(`${url}/api/**`,async route=>{
     const headers={...route.request().headers(),authorization:'Bearer '+token,'x-demo-user':shared.subject,origin:shared.origin};
     if(route.request().method()==='GET')await route.continue({headers});
-    else await route.fulfill({response:await route.fetch({headers,maxRedirects:0})});
+    else {
+      try{
+        const timeout=liveAnalysis&&new URL(route.request().url()).pathname.endsWith('/inspect')?650000:30000;
+        await route.fulfill({response:await route.fetch({headers,maxRedirects:0,timeout})});
+      }catch{
+        // Playwright errors can contain the synthetic ingress credential. Return
+        // a bounded fixture failure through the UI instead of crashing the process.
+        await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify({error:'FIXTURE_INGRESS_FAILED'})});
+      }
+    }
   });
   await page.goto(url);
   if(!shared?.accountMode){
