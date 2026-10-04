@@ -121,6 +121,7 @@ export function App() {
   const [selectedSkillId, setSelectedSkillId] = useState("");
   const [selection, setSelection] = useState("");
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
+  const [includeHoldout, setIncludeHoldout] = useState(false);
   const [caseSource, setCaseSource] = useState<"fixed" | "ai_generated">("ai_generated");
   const [leftVariantSelection, setLeftVariantSelection] = useState("without_target_skill");
   const [rightVariantSelection, setRightVariantSelection] = useState("");
@@ -190,12 +191,16 @@ export function App() {
     : null;
   const cases: EvalCaseSummary[] = selectedPack?.cases ?? selectedPreparation?.cases ?? [];
   const dynamicQuestions = Boolean(selectedPack && runtime !== "replay" && caseSource === "ai_generated");
+  const holdoutEnabled = runtime === 'dual_runtime' && !dynamicQuestions && Boolean(selectedPack?.holdoutCaseCount);
+  const useHoldout = holdoutEnabled && includeHoldout;
   const selectedUploadedSkill = selectedPreparation
     ? catalog?.uploadedSkills.find(item => item.assetId === selectedPreparation.skillAssetId) ?? null
     : null;
   const preparationRequiresTools = selectedPreparation?.cases.some(item => item.requiredTools.length > 0) ?? false;
   const selectedFeaturedSkill = catalog?.featuredSkills.find(item => item.skillId === selectedSkillId) ?? null;
-  const requiredLauncherTools=[...new Set([...(selectedPack?selectedFeaturedSkill?.requiredTools??[]:[]),...cases.filter(c=>selectedCases.includes(c.caseId)).flatMap(c=>c.requiredTools)])].sort();
+  const requiredLauncherTools=[...new Set([...(selectedPack?selectedFeaturedSkill?.requiredTools??[]:[]),
+    ...cases.filter(c=>selectedCases.includes(c.caseId)).flatMap(c=>c.requiredTools),
+    ...(useHoldout?selectedPack?.holdoutRequiredTools??[]:[])])].sort();
   const requiredLauncherToolsKey=JSON.stringify(requiredLauncherTools);
   const targetSkillId = selectedPack?.targetSkillId ?? selectedPreparation?.skillId ?? selectedSkillId;
   const packVersionOptions = selectedFeaturedSkill?.versions.map(item => ({
@@ -216,6 +221,7 @@ export function App() {
     if ((!selectedPack && !selectedPreparation) || initializedSelection.current === selection) return;
     initializedSelection.current = selection;
     setSelectedCases(cases.map(item => item.caseId));
+    setIncludeHoldout(false);
     if (selectedPack) {
       setRuntime("runtime_launcher");
       setJudgeMode(catalog?.modelRoles.judge.configured ? "model" : "deterministic");
@@ -464,6 +470,7 @@ export function App() {
                ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {})}),
           caseSource: dynamicQuestions ? "ai_generated" : "fixed",
           selectedCaseIds: dynamicQuestions ? [] : selectedCases,
+          includeHoldout: useHoldout,
           ...(selectedUploadedSkill ? { skillAssetId: selectedUploadedSkill.assetId } : {}),
           timeoutMs: 310000,
         }),
@@ -574,6 +581,9 @@ export function App() {
             setCaseSource={setCaseSource}
             selectedCases={selectedCases}
             setSelectedCases={setSelectedCases}
+            holdoutCaseCount={holdoutEnabled ? selectedPack?.holdoutCaseCount ?? 0 : 0}
+            includeHoldout={useHoldout}
+            setIncludeHoldout={setIncludeHoldout}
             runtime={runtime}
             setRuntime={value=>{setRuntime(value);if(value==="dual_runtime"){setCaseSource("fixed");setJudgeMode('model');setLeftVariantSelection(rightVariantSelection);setRightModelKey(leftModelKey);}}}
             launcherPair={launcherPair} setLauncherPair={setLauncherPair} launcherStatus={launcherStatus}
@@ -687,6 +697,9 @@ function EvaluationView(props: {
   setCaseSource(value: "fixed" | "ai_generated"): void;
   selectedCases: string[];
   setSelectedCases(value: string[]): void;
+  holdoutCaseCount: number;
+  includeHoldout: boolean;
+  setIncludeHoldout(value: boolean): void;
   runtime: ExecutionMode;
   setRuntime(value: ExecutionMode): void;
   launcherPair:LauncherPair;
@@ -813,6 +826,12 @@ function EvaluationView(props: {
         </div> : <span>{props.selectedCases.length}/{props.cases.length} 题</span>}</div>
         {dynamic ? <div className="question-source"><Sparkles size={16} /><span>{props.job?.questionSet ? `本轮 ${questions.length} 题 · ${props.job.questionSet.model.modelId} · 题集 ${props.job.questionSet.fingerprint.slice(0, 12)}` : active ? props.job?.stageLabel : `待开始 · ${props.catalog.modelRoles.analyzer.model.modelId} · 最多 3 题`}</span></div> : null}
         {dynamic && !props.catalog.modelRoles.analyzer.configured ? <div className="run-error">出题模型未配置，请在服务端配置 Analyzer 或选择固定回归题。</div> : null}
+        {props.holdoutCaseCount > 0 ? <label className="holdout-option">
+          <input type="checkbox" checked={props.includeHoldout} disabled={Boolean(active)}
+            onChange={event => props.setIncludeHoldout(event.target.checked)} />
+          <span className="case-copy"><strong>包含冻结留出题（{props.holdoutCaseCount} 题）</strong>
+            <small>本轮共 {props.selectedCases.length + (props.includeHoldout ? props.holdoutCaseCount : 0)} 题，两端使用相同题集。</small></span>
+        </label> : null}
         <div className="case-list">
           {questions.map((item, index) => {
             const checked = dynamic || props.selectedCases.includes(item.caseId);

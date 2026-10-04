@@ -44,7 +44,7 @@ export const runConfigurationSchema = z.strictObject({
   if((value.evaluationMode==='service_comparison')!==Boolean(value.originalService))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比模式必须配置原服务，其他模式不能附带原服务配置'});
   const managedRuntime=value.runtime.type==='runtime_launcher';
   const runtimeComparison=value.evaluationMode==='candidate_runtime_comparison';
-  if(runtimeComparison && (!value.runtimeBindings || !managedRuntime || value.judgeMode!=='model' || value.includeHoldout
+  if(runtimeComparison && (!value.runtimeBindings || !managedRuntime || value.judgeMode!=='model'
     || !value.executionModel || !value.leftExecutionModel || !value.rightExecutionModel || !value.leftVariant || !value.rightVariant
     || fingerprint(value.executionModel)!==fingerprint(value.leftExecutionModel)
     || fingerprint(value.leftExecutionModel.parameters)!==fingerprint(value.rightExecutionModel.parameters)

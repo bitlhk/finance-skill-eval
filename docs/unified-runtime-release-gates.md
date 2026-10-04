@@ -57,6 +57,28 @@ MCP results are not live Wind, underwriting, approval or real-funds evidence.
 Human professional-quality review remains separately pending unless performed.
 Do not switch the root based solely on one accepted Skill or a successful build.
 
+### Frozen holdout coverage in paired Runtime runs
+
+In the ordinary evaluation page, select the same Skill on both managed Java
+Runtimes. Packs with frozen holdout files expose an unchecked **包含冻结留出题**
+option. Selecting it appends that Pack version's complete holdout set to the
+selected development cases on both sides. The catalog exposes only the count
+and required tools, not held-out prompts or rubric content. The additional tools
+participate in the same environment preflight; unsupported dependencies block
+the run. The run configuration and case fingerprint retain the selected scope.
+
+This reuses `includeHoldout` and `holdoutCaseFiles`; it does not generate questions
+or introduce a second suite. Missing holdout sets and duplicate case identities
+are rejected before Runtime preparation. Dynamic generation remains incompatible
+with holdouts. Original-service comparison restrictions are unchanged. Once used
+to tune a Skill, a held-out case is no longer evidence of unseen generalization.
+
+`node scripts/verify-holdout-selection-ui.mjs <evidence-directory>` checks the
+checkbox, dependency preflight, submitted contract and desktop/mobile layout
+against an isolated fixture. It never builds a Runtime or calls a model/bank;
+passing it must not be reported as live cohort acceptance. The Runtime comparison
+tests separately assert the same frozen cases reach both execution sides.
+
 ## Browser delivery workflow
 
 - Export requirements for each target, including the target in the download URL

@@ -199,6 +199,8 @@ export class EvaluationRunManager {
       if (!Array.isArray(holdout) || !holdout.length) throw new Error("这个评测题集没有冻结的留出题");
       selected.push(...holdout.map(item => evalCaseSchema.parse(item)));
     }
+    if (new Set(selected.map(item => item.caseId)).size !== selected.length)
+      throw new Error("固定题与留出题 caseId 冲突，请核对题集版本");
     const executionModel = configuration.executionModel
       ?? (configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
     return {

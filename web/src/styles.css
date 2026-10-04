@@ -164,6 +164,8 @@ button { cursor: pointer; }
 .case-row input { margin-top: 5px; accent-color: #b91c1c; }
 .case-index { color: #a0a6ac; font: 11px ui-monospace, monospace; padding-top: 4px; }
 .case-copy { min-width: 0; display: grid; gap: 5px; }
+.holdout-option { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; padding: 14px 16px; border-bottom: 1px solid #e6e8ea; }
+.holdout-option input { margin-top: 4px; accent-color: #b91c1c; }
 .case-copy strong { font-size: 13px; color: #262a2e; }
 .case-copy small { color: #485058; line-height: 1.55; font-size: 12px; }
 .case-copy em { color: #858c92; font-size: 11px; font-style: normal; line-height: 1.5; }

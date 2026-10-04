@@ -49,6 +49,12 @@ describe('CC contract and candidate identity',()=>{
     const parsed=runConfigurationSchema.parse(configuration());
     expect(parsed.leftExecutionModel).toEqual(leftModel);expect(parsed.rightExecutionModel).toEqual(rightModel);
   });
+  it('accepts frozen holdout cases without relaxing the paired candidate contract',()=>{
+    expect(runConfigurationSchema.parse({...configuration(),includeHoldout:true}).includeHoldout).toBe(true);
+    expect(runConfigurationSchema.safeParse({...configuration(),includeHoldout:true,caseSource:'ai_generated'}).success).toBe(false);
+    expect(runConfigurationSchema.safeParse({...configuration(),includeHoldout:true,
+      rightVariant:{...variant,artifactSha256:source.artifactSha256}}).success).toBe(false);
+  });
   it.each(['executionModel','leftExecutionModel','rightExecutionModel','leftVariant','rightVariant','runtimeBindings'])('rejects missing %s as schema validation',key=>{
     const input:any=configuration();delete input[key];expect(runConfigurationSchema.safeParse(input).success).toBe(false);
   });
@@ -127,6 +133,33 @@ describe('independent Runtime goal assessment',()=>{
     const manager=new EvaluationRunManager({catalog:{get:()=>pack}} as any);
     const resolved=await (manager as any).resolvePack(runConfigurationSchema.parse(configuration()));
     expect(resolved.models.execution).toEqual({left:leftModel,right:rightModel});expect(resolved.variants).toEqual({left:variant,right:variant});
+  });
+  it('runs the same frozen development and holdout inputs on both sides',async()=>{
+    const holdout={...pack.cases[0]!,caseId:'held-out-case',prompt:'Unseen fixed question'};
+    const sourcePack={...pack,holdoutCases:[holdout]};
+    const manager=new EvaluationRunManager({catalog:{get:()=>sourcePack}} as any);
+    const resolved=await (manager as any).resolvePack(runConfigurationSchema.parse({...configuration(),includeHoldout:true}));
+    expect(resolved.cases).toEqual([...pack.cases,holdout]);
+    expect(sourcePack.cases).toHaveLength(1);
+    const execute=vi.fn(async(request:any)=>({...evidence(request.side),caseId:request.evalCase.caseId,runId:request.runId}));
+    const cleanup=vi.fn(async()=>{});
+    const runtime=new SideRuntimeAdapter({left:{adapterId:'left-env',execute,cleanup},right:{adapterId:'right-env',execute,cleanup}});
+    const report=await runEvaluation({pack:resolved,runtime,judge:new ModelRuntimeComparisonJudge(goalAdapter(),leftModel)});
+    expect(report.cases).toHaveLength(2);
+    expect(execute).toHaveBeenCalledTimes(4);
+    for(const testCase of resolved.cases){
+      const calls=execute.mock.calls.map(([request])=>request).filter(request=>request.evalCase.caseId===testCase.caseId);
+      expect(calls.map(request=>request.side).sort()).toEqual(['left','right']);
+      expect(calls[0].evalCase).toEqual(calls[1].evalCase);
+    }
+    expect(cleanup).toHaveBeenCalledTimes(2);
+  });
+  it('rejects missing or conflicting holdout cases before preparing either Runtime',async()=>{
+    const config=runConfigurationSchema.parse({...configuration(),includeHoldout:true});
+    for(const holdoutCases of [[],[pack.cases[0]!]]){
+      const manager=new EvaluationRunManager({catalog:{get:()=>({...pack,holdoutCases})}} as any);
+      await expect((manager as any).resolvePack(config)).rejects.toThrow(/留出题/);
+    }
   });
   it('runs both candidate sides exactly once and retains healthy-side assessment in the runner report',async()=>{
     const execute=vi.fn(async(request:any)=>{

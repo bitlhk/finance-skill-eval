@@ -14,6 +14,8 @@ export type EvalPackSummary = {
   targetSkillVersion: string;
   description: string;
   caseCount: number;
+  holdoutCaseCount?: number;
+  holdoutRequiredTools?: string[];
   cases: EvalCaseSummary[];
   replayReady: boolean;
   deterministicReady?: boolean;
