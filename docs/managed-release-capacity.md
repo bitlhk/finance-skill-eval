@@ -45,7 +45,7 @@ silently satisfy the expanded monitoring contract.
 - No automatic expiry (`FH_SNAPSHOT_RETENTION_SECONDS=0`). This avoids unapproved
   deletion but is not indefinite capacity. Measure, do not assume a constant
   number of model calls per case.
-- Archive budget is separately 128 MiB, with 1 MiB request and 256 KiB manifest
+- Initial archive budget was separately 128 MiB, with 1 MiB request and 256 KiB manifest
   limits. The Host conservatively reserves 1,642,496 bytes per request, including
   both manifests, labels and overhead. Completion does not release reservations.
   Actual file bytes alone therefore cannot show whether another request fits.
@@ -60,6 +60,22 @@ silently satisfy the expanded monitoring contract.
 - A budget increase requires explicit bounded configuration and the existing
   exact-configuration qualification. This monitor never changes quotas or turns
   off admission. Do not multiply these budgets by the account count.
+
+### Candidate amendment, 2026-10-05
+
+After controlled generated-host checks on both Java Runtimes, the curated
+profile alone now has a256MiB archive budget. Bank and method-only profiles
+remain128MiB. Request/manifest limits,512snapshot files,64MiB snapshot bytes,
+owner isolation and retention are unchanged. The read-only capacity monitor
+uses each profile's digest-locked settings; it does not assume this larger
+limit for other deployments.
+
+The amendment preserves all81old curated journals and their reservations,
+leaving82new request reservations at the initial post-amendment scan. Snapshot
+capacity can become the next constraint; no fixed job count or indefinite
+retention is promised. The two previously missing journals remain missing.
+New real-model requests must establish storage success separately from the
+controlled qualification. This is a candidate change, not formal-entry approval.
 - Five-minute scans and batch checks reduce blind spots; they do not reserve
   storage or eliminate a race with a new write. REQUIRED observation admission
   and write failure reporting remain authoritative.
