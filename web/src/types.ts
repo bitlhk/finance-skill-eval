@@ -118,6 +118,7 @@ export type MigrationRuntime = {
 
 export type Catalog = {
   publicDemo?: boolean;
+  managedWorkspace?: boolean;
   serviceVersion: string;
   featuredSkills: FeaturedSkill[];
   evalPacks: EvalPackSummary[];

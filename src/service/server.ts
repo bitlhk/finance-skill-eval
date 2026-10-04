@@ -24,6 +24,9 @@ import { MigrationDiagnostics } from '../migration/infrastructure/migration-diag
 import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
 import { runConfigurationSchema } from "./contracts.js";
+import {createAccountWorkspaces} from './account-workspaces.js';
+import {managedWorkspaceOperation} from './managed-workspace-policy.js';
+import {EvaluationRunBudget} from './evaluation-run-budget.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -63,10 +66,16 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator} = {},
+  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;runBudget?:EvaluationRunBudget} = {},
 ): Promise<FastifyInstance> {
-  const {migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
+  const {migrationAnalyzer,migrationImplementer,migrationSuite,runBudget,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
+  if(config.workspaceMode==='account'){
+    const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
+    const app=await createAccountWorkspaces(config,child=>createEvaluationService({...overrides,...child,runBudget:sharedBudget}));
+    await registerWeb(app,config);
+    return app;
+  }
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   if(config.workspaceSubject && (!config.accessToken || config.publicDemo || !/^studio_[a-zA-Z0-9_-]+$/.test(config.workspaceSubject)
       || !config.workspaceOrigin || new URL(config.workspaceOrigin).origin!==config.workspaceOrigin
@@ -95,13 +104,15 @@ export async function createEvaluationService(
     environments,
     jobs,
     maxConcurrentRuns: config.maxConcurrentRuns,
+    managedWorkspace:config.managedWorkspace,
+    runBudget,
     resolveMigrationRuntime:async runtimeId=>await environments.get(runtimeId),
     resolveServiceEnvironment:(reference,toolNames)=>migrations.resolveServiceEnvironment(reference,toolNames),
   });
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  app.addHook('onClose',async()=>{await diagnostics.close();});
+  app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
@@ -140,6 +151,8 @@ export async function createEvaluationService(
     }
   });
   app.addHook("preValidation", async (request, reply) => {
+    if(config.managedWorkspace&&!managedWorkspaceOperation(request.method,request.routeOptions.url??request.url))
+      return reply.code(403).send({error:'MANAGED_CONFIGURATION_REQUIRED',message:'此入口使用平台已配置的执行环境；新增接口或代码需由维护者审核接入。'});
     if(!config.publicDemo || !request.url.startsWith('/api/') || request.method==='GET') return;
     demo.identity(request.headers['x-demo-user']);
     const origin = request.headers.origin;
@@ -198,6 +211,7 @@ export async function createEvaluationService(
       schemaVersion: "finance.skill-eval.catalog.v1",
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
       publicDemo: Boolean(config.publicDemo),
+      managedWorkspace:Boolean(config.managedWorkspace),
       featuredSkills: catalog.listFeaturedSkills(onlineRuntimeReady).map(skill => ({ ...skill,
         evaluationStatus: skill.evaluationStatus === "pack_required" ? "pack_required" :
           onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),
@@ -356,6 +370,11 @@ export async function createEvaluationService(
     return reply.type("application/json").send(job.report);
   });
 
+  await registerWeb(app,config);
+  return app;
+}
+
+async function registerWeb(app:FastifyInstance,config:ServiceConfig){
   try {
     await readFile(path.join(config.publicDirectory, "index.html"));
     await app.register(fastifyStatic, {
@@ -375,7 +394,6 @@ export async function createEvaluationService(
       "Finance Skill Eval service is ready. Build the web console with pnpm build:web.",
     ));
   }
-  return app;
 }
 
 async function main(): Promise<void> {

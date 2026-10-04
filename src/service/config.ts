@@ -18,6 +18,12 @@ export type ServiceConfig = {
   publicDemo?: boolean;
   workspaceSubject?: string;
   workspaceOrigin?: string;
+  workspaceMode?: 'single' | 'account';
+  workspaceSeedDirectory?: string;
+  workspaceSeedSha256?: string;
+  workspaceMaxAccounts?: number;
+  /** Internal account-service policy; not a browser-selected option. */
+  managedWorkspace?: boolean;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
 };
 
@@ -40,6 +46,7 @@ export type ConfiguredModelRole = {
 
 export function loadServiceConfig(): ServiceConfig {
   const rootDirectory = path.resolve(process.env.FINANCE_EVAL_ROOT ?? process.cwd());
+  const workspaceMode=z.enum(['single','account']).parse(process.env.FINANCE_EVAL_WORKSPACE_MODE??'single');
   return {
     rootDirectory,
     dataDirectory: path.resolve(process.env.FINANCE_EVAL_DATA_DIR ?? path.join(rootDirectory, "data")),
@@ -50,6 +57,10 @@ export function loadServiceConfig(): ServiceConfig {
     publicDemo: process.env.FINANCE_EVAL_PUBLIC_DEMO === "true",
     workspaceSubject: process.env.FINANCE_EVAL_WORKSPACE_SUBJECT?.trim() || undefined,
     workspaceOrigin: process.env.FINANCE_EVAL_WORKSPACE_ORIGIN?.trim() || undefined,
+    workspaceMode,
+    workspaceSeedDirectory:process.env.FINANCE_EVAL_WORKSPACE_SEED_DIRECTORY?.trim()||undefined,
+    workspaceSeedSha256:process.env.FINANCE_EVAL_WORKSPACE_SEED_SHA256?.trim()||undefined,
+    workspaceMaxAccounts:Number(process.env.FINANCE_EVAL_WORKSPACE_MAX_ACCOUNTS??64),
     launcherTrust:launcherTrustConfiguration(),
     maxConcurrentRuns: Math.max(
       1,

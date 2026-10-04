@@ -99,9 +99,18 @@ selector contract and one fixed synthetic balance/file case. It does not make th
 other featured Wind, insurance or lending dependencies automatically available.
 Unsupported tools continue to block native evaluation with a missing-tool list.
 
-## Single-admin deployment gate
+## Account entry (2026-10-04 candidate)
 
-Current stores are process-wide, not tenant-aware. For an explicitly selected
+The current requested policy admits every authenticated Linggan account, without
+an administrator whitelist. The optional `account` workspace mode partitions
+personal assets and history, while approved examples and execution environments
+are seeded by the operator. See [account workspace deployment](account-workspaces.md)
+for configuration, resource limits and the remaining SSO release checks. A passed
+controlled ingress test is not a real Linggan login or a production deployment.
+
+### Historical single-owner mode
+
+In single-owner mode stores are process-wide, not tenant-aware. For an explicitly selected
 administrator only, FINANCE_EVAL_WORKSPACE_SUBJECT and
 FINANCE_EVAL_WORKSPACE_ORIGIN require a server-only ingress credential plus an
 exact authenticated gateway subject. All private API reads and writes are gated;

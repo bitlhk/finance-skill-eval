@@ -26,6 +26,8 @@ import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 import {RuntimeLauncherAdapter} from '../runtime-launcher.js';
 import {zipSync} from 'fflate';
 import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from './skill-runtime-requirements.js';
+import {requireManagedRun} from './managed-workspace-policy.js';
+import type {EvaluationRunBudget} from './evaluation-run-budget.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -34,6 +36,8 @@ type RunManagerOptions = {
   environments: EnvironmentStore;
   jobs: EvaluationJobStore;
   maxConcurrentRuns: number;
+  managedWorkspace?:boolean;
+  runBudget?:EvaluationRunBudget;
   resolveMigrationRuntime?:(runtimeId:string)=>Promise<EnvironmentRecord|null>;
   resolveServiceEnvironment?:(reference:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string},toolNames:string[])=>Promise<{configuration:Record<string,string>;secrets:Record<string,string>}>;
 };
@@ -67,6 +71,8 @@ export class EvaluationRunManager {
   private readonly queue: string[] = [];
   private readonly active = new Map<string, AbortController>();
   private readonly events = new EventEmitter();
+  private readonly pending=new Set<Promise<void>>();
+  private closing=false;
 
   constructor(private readonly options: RunManagerOptions) {
     this.events.setMaxListeners(200);
@@ -79,7 +85,9 @@ export class EvaluationRunManager {
   }
 
   async create(input: unknown, frozenQuestions?: FrozenQuestionSet): Promise<EvaluationJob> {
+    if(this.closing)throw Object.assign(new Error('Evaluation service is closing'),{statusCode:503});
     const configuration = runConfigurationSchema.parse(input);
+    if(this.options.managedWorkspace)requireManagedRun(configuration);
     const bindings=configuration.runtimeBindings;
     const environmentIds=bindings
       ? [...new Set((configuration.evaluationMode==='candidate_assessment'||configuration.evaluationMode==='service_comparison'
@@ -113,7 +121,7 @@ export class EvaluationRunManager {
 
   async retry(jobId: string): Promise<EvaluationJob> {
     const existing = this.options.jobs.get(jobId);
-    if (!existing) throw new Error(`Unknown evaluation run: ${jobId}`);
+    if (!existing) throw Object.assign(new Error('Evaluation run not found'),{statusCode:404});
     if (!["failed", "cancelled", "interrupted"].includes(existing.status)) {
       throw new Error("只有失败、已取消或已中断的运行可以重试");
     }
@@ -122,7 +130,7 @@ export class EvaluationRunManager {
 
   async cancel(jobId: string): Promise<EvaluationJob> {
     const job = this.options.jobs.get(jobId);
-    if (!job) throw new Error(`Unknown evaluation run: ${jobId}`);
+    if (!job) throw Object.assign(new Error('Evaluation run not found'),{statusCode:404});
     const queuedIndex = this.queue.indexOf(jobId);
     if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
     this.active.get(jobId)?.abort();
@@ -141,19 +149,28 @@ export class EvaluationRunManager {
   }
 
   private async pump(): Promise<void> {
-    while (this.active.size < this.options.maxConcurrentRuns && this.queue.length > 0) {
+    while (!this.closing && this.active.size < this.options.maxConcurrentRuns && this.queue.length > 0) {
       const jobId = this.queue.shift();
       if (!jobId) return;
       const job = this.options.jobs.get(jobId);
       if (!job || job.status !== "queued") continue;
       const controller = new AbortController();
       this.active.set(jobId, controller);
-      void this.execute(job, controller)
+      const execute=()=>this.execute(job,controller);
+      const operation=(this.options.runBudget?this.options.runBudget.schedule(execute,controller.signal):execute())
         .finally(() => {
           this.active.delete(jobId);
+          this.pending.delete(operation);
           void this.pump();
         });
+      this.pending.add(operation);
     }
+  }
+
+  async close():Promise<void>{
+    this.closing=true;
+    await Promise.all([...this.queue,...this.active.keys()].map(id=>this.cancel(id)));
+    await Promise.allSettled([...this.pending]);
   }
 
   private async resolvePack(configuration: RunConfiguration): Promise<EvalPack> {
