@@ -178,6 +178,8 @@ allowed paths, the returned workspace digest matches, the retained read receipts
 match the result, and the workspace is closed. Its name alone is not an allowlist.
 This checks Lock/read-receipt consistency; original case-file content still
 requires comparison to the frozen input suite and its digest.
+The two sides must also record the same business timezone and the same workspace
+input digest for each case; different cases may carry different input files.
 
 ### Historical single-owner mode
 

@@ -137,6 +137,11 @@ def audit(job, state, expected_case_ids=None):
     for name, key in [('sameSkill', 'loadedSkillDigest'), ('sameModelConfiguration', 'modelConfigVersion'),
                       ('sameGeneration', 'declaredModelParameters'), ('sameBusinessDate', 'businessDate')]:
         checks[name] = bool(evidence) and len({json.dumps(e['metadata'][key], sort_keys=True) for e in evidence}) == 1
+    zones = [e['metadata'].get('businessTimeZone') for e in evidence]
+    checks['sameBusinessTimeZone'] = bool(zones) and all(isinstance(z, str) and z for z in zones) and len(set(zones)) == 1
+    checks['sameCaseWorkspaceInputs'] = bool(ids) and all(
+        len({e['metadata'].get('workspaceFilesDigest') for e in evidence if e['caseId'] == case_id}) == 1
+        for case_id in ids)
     return {'status': 'PASS' if all(checks.values()) else 'FAIL', 'checks': checks, 'rows': rows, 'archives': archives,
             'caseCoverageBasis': basis, 'expectedCaseIds': ids,
             'qualitySummary': job['report'].get('summary'), 'qualityIsSeparateFromExecutionAudit': True,

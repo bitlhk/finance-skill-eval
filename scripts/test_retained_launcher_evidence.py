@@ -21,7 +21,8 @@ class EvidenceAuditTests(unittest.TestCase):
             meta = {'requestId': side, 'sessionId': side, 'runId': side, 'buildId': side,
                     'loadedSkillDigest': 'skill', 'runtime': {'type': family},
                     'modelConfigVersion': 'model-v1', 'declaredModelParameters': {'temperature': 0},
-                    'businessDate': '2026-09-20', 'artifactLockSha256': 'artifact', 'skillArtifactSha256': 'source'}
+                    'businessDate': '2026-09-20', 'businessTimeZone': 'Asia/Shanghai',
+                    'artifactLockSha256': 'artifact', 'skillArtifactSha256': 'source'}
             lock = {'runtime': {'family': family}, 'installations': [],
                     'domainInstallations': [{'skills': [{'digest': 'skill'}]}]}
             saved = {**{key: meta[key] for key in ('requestId', 'sessionId', 'runId', 'buildId')}, 'runtimeLock': lock}
@@ -49,10 +50,10 @@ class EvidenceAuditTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data))
 
-    def workspace(self):
-        item = self.job['evidence'][0]
+    def workspace(self, side='left'):
+        item = next(e for e in self.job['evidence'] if e['side'] == side)
         meta = item['metadata']
-        saved = json.loads((self.root / 'retained/owner/left/left.json').read_text())
+        saved = json.loads((self.root / f'retained/owner/{side}/{side}.json').read_text())
         workspace = {'schemaVersion': 'finance.case-workspace.v1', 'digest': 'a' * 64,
                      'paths': ['case.txt'], 'storage': 'IMMUTABLE_CASE_DATA', 'toolName': 'read_case_file'}
         saved['runtimeLock']['caseWorkspace'] = workspace
@@ -62,7 +63,7 @@ class EvidenceAuditTests(unittest.TestCase):
         saved['metadata'] = {'caseWorkspace': json.loads(json.dumps(meta['caseWorkspace']))}
         meta['runtimeLockSha256'] = module.digest(module.canonical(saved['runtimeLock']))
         meta['retainedEvidenceRef']['sha256'] = module.digest(module.canonical(saved, unicode=True))
-        self.write('retained/owner/left/left.json', saved)
+        self.write(f'retained/owner/{side}/{side}.json', saved)
         item['toolCalls'] = [{'name': 'read_case_file', 'status': 'completed'}]
         return meta
 
@@ -118,6 +119,16 @@ class EvidenceAuditTests(unittest.TestCase):
         self.job['evidence'][1]['metadata']['sessionId'] = 'left'
         self.assertFalse(module.audit(self.job, self.root)['checks']['freshCaseSessions'])
 
+    def test_same_date_with_different_or_unknown_timezone_is_not_equivalent(self):
+        for timezone in ('UTC', None):
+            with self.subTest(timezone=timezone):
+                self.job['evidence'][1]['metadata']['businessTimeZone'] = timezone
+                self.assertFalse(module.audit(self.job, self.root)['checks']['sameBusinessTimeZone'])
+
+    def test_case_file_inputs_must_match_between_runtime_sides(self):
+        self.job['evidence'][1]['metadata']['workspaceFilesDigest'] = 'f' * 64
+        self.assertFalse(module.audit(self.job, self.root)['checks']['sameCaseWorkspaceInputs'])
+
     def test_retained_build(self):
         (self.root / 'workbench/left').mkdir(parents=True)
         self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
@@ -136,6 +147,7 @@ class EvidenceAuditTests(unittest.TestCase):
 
     def test_workspace_tool_requires_its_own_lock_and_closed_receipts(self):
         self.workspace()
+        self.workspace('right')
         self.assertEqual(module.audit(self.job, self.root)['status'], 'PASS')
 
     def test_workspace_name_alone_is_not_an_allowlist(self):
