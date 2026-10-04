@@ -3,6 +3,7 @@ import type {ModelAdapter} from './adapters.js';
 import {judgeResultSchema,type ModelRef} from './contracts.js';
 import type {PairwiseJudge} from './judge.js';
 import {parseFirstJsonObject} from './json-response.js';
+import {judgeCaseFiles,caseFileJudgeGuidance} from './judge-case-files.js';
 const responseSchema=z.strictObject({checks:z.array(z.strictObject({criterionIndex:z.number().int().nonnegative(),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().trim().min(1).max(3000),evidence:z.string().max(6000)})).min(1).max(20)});
 const runtimeSupportTools=new Set(['read_file','skill_tool','list_skill','workspace_info']);
 const isBusinessTool=(name:string)=>!runtimeSupportTools.has(name);
@@ -33,6 +34,8 @@ export class ModelGoalJudge implements PairwiseJudge{
    sourceFacts:Array.isArray(input.right.metadata.toolEvidence)
     ?input.right.metadata.toolEvidence.filter((item:{tool?:string})=>typeof item.tool==='string'&&isBusinessTool(item.tool)):[],
    sourceFactsCollection:input.right.metadata.toolEvidenceCollection,
+   caseFiles:judgeCaseFiles(input.evalCase,input.right),
+   caseFileEvidenceScope:input.evalCase.workspaceFiles?.length?caseFileJudgeGuidance:undefined,
   };
   let lastError:unknown;
   let correction='';

@@ -10,6 +10,33 @@ It does not add A2A, a planner, TASK execution, or arbitrary uploaded code execu
 
 ## Responsibilities and transport
 
+### Case-file evidence for Judges
+
+Goal, Runtime-comparison, candidate and pairwise Judges receive a bounded
+`caseFiles` projection, separate from bank `sourceFacts`. It is calculated from
+the current case inputs and verified Launcher receipts, never from the model's
+claim that it read a file. Case identity, Runtime identity, closed workspace,
+workspace digest, read path, UTF-8 byte count, file SHA-256 and a completed
+`read_case_file` call must agree. Unknown or inconsistent receipts give
+`NOT_VERIFIED`; absent reads give `READ_NOT_RECORDED`, not proof of non-execution.
+
+The projection does not transmit file bodies. A positive `exactTextInAnswer`
+span identifies an exact whole-file quotation already present in the answer
+(UTF-16 offsets, end exclusive). Null does not prove an error: extraction or
+paraphrasing remains unverified. Matching a quotation is not professional quality
+acceptance and never turns a Judge verdict into PASS. Private, unquoted file text
+continues to stay out of Judge prompts. Strict JSON output requirements remain
+independent; fences must not be stripped to manufacture a passing answer.
+
+After building the evaluator at a clean fixed commit, the opt-in
+`scripts/verify-codex-judge-live.mjs saved-job.json new-output-directory pinned-eval.yaml`
+can grade an approved synthetic run with the configured real Judge. It requires
+`FINANCE_EVAL_JUDGE_PROVIDER=codex_cli` and
+`FINANCE_EVAL_JUDGE_MODEL=gpt-6-astra`. This writes a separate assessment with
+source digest and evaluator commit, never rewrites history or reexecutes tools.
+Its PASS status means both Judge requests were assessed, not that both answers
+passed or that the public release is accepted; inspect `verdicts` separately.
+
 Eval owns imported Skill versions, migration candidates, frozen cases, scoring and
 comparison. Builder owns managed dependency resolution, compilation, admission,
 temporary instances and cleanup. Harness supplies capability contracts, Provider
