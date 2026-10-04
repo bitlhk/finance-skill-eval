@@ -137,3 +137,39 @@ Seven new relay checks fail on the old implementation; all15 relay checks pass
 after the change. These tests prove budget forwarding and diagnostic behavior,
 not upstream reliability. The revised genuine analysis must still pass before
 claiming live migration closure; no production budget or service was changed.
+
+The bounded follow-up `approved-native-analysis-role-budget-r1` passed actual
+upload/project/inspection with the same approved archive. All4 model requests
+returned; no parameter rejection or transport failure occurred. Each sent
+temperature0.2/max_tokens32000/stream=false; all responses identified
+`deepseek-v4-flash-ga-260731` in this run. The longest call took147.204seconds,
+which exceeds the old probe ceiling. The result was COMPLETE with exactly the
+two declared tools and located source evidence. This remains a narrow analysis
+check, not dual-Runtime execution, genuine SSO or professional-quality approval.
+The wire report SHA256 is
+`69e8c70c632e4aa0fe342c3026e56b8e620c0e41cf4cb5751fc1c0cd30c7e49c`.
+
+## Three-path browser closure for the bounded readonly method
+
+At Eval7ee3aa5 / Builderfa45fb0c / Harness8f2c6a0,
+`approved-live-risk-analysis-browser-r4` passed migration, prebuilt and direct
+upload in one service/workspace without restart. Migration used actual A2
+analysis, then reused admitted tool bindings; it did not generate executable
+uploaded code or formally publish a new public asset. Each path ran the same3
+development cases on OpenJiuwen Java0.1.15 and AgentScope Java2.0.3:18 executions,
+18 distinct sessions, exact installed method identities, source facts and
+generation settings checked. Another synthetic account could not read/export
+the records. Browser1366/390/320 screenshots are retained per path.
+
+Storage inspection found36 model request/response pairs,72 actual body files
+(809502bytes),18 complete archives,0 missing digests,0 unconfirmed writes,
+0 write failures and0 dropped events. Owned processes were reclaimed and a
+subsequent process search found no remaining browser/analyzer/fixture processes.
+
+This is functional closure for one previously adapted readonly Skill, not all
+curated Skills or arbitrary MCP migration. The analyzer made3 actual requests
+without failures; the returned aliases included both `deepseek-v4-flash-ga-260731`
+and `deepseek-v4-flash-0731`. Their equivalence is not established. Judge remained
+controlled and reported INDETERMINATE; professional quality and real Linggan SSO
+remain unverified. No merge, production deployment or formal entry switch follows
+solely from this evidence. Earlier failures remain retained.
