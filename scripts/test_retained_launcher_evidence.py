@@ -14,12 +14,13 @@ class EvidenceAuditTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.job = {'status': 'completed', 'report': {'cases': [{'caseId': 'case'}]}, 'evidence': []}
+        self.job = {'status': 'completed', 'report': {'cases': [{'caseId': 'case'}]}, 'evidence': [],
+                    'configuration': {side + 'Variant': {'artifactSha256': 'source'} for side in ('left', 'right')}}
         for side, family in [('left', 'openjiuwen'), ('right', 'agentscope')]:
             meta = {'requestId': side, 'sessionId': side, 'runId': side, 'buildId': side,
                     'loadedSkillDigest': 'skill', 'runtime': {'type': family},
                     'modelConfigVersion': 'model-v1', 'declaredModelParameters': {'temperature': 0},
-                    'businessDate': '2026-09-20', 'artifactLockSha256': 'artifact'}
+                    'businessDate': '2026-09-20', 'artifactLockSha256': 'artifact', 'skillArtifactSha256': 'source'}
             lock = {'runtime': {'family': family}, 'installations': [],
                     'domainInstallations': [{'skills': [{'digest': 'skill'}]}]}
             saved = {**{key: meta[key] for key in ('requestId', 'sessionId', 'runId', 'buildId')}, 'runtimeLock': lock}
@@ -68,6 +69,10 @@ class EvidenceAuditTests(unittest.TestCase):
 
     def test_lock_digest(self):
         self.job['evidence'][0]['metadata']['runtimeLockSha256'] = 'wrong'
+        self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
+
+    def test_wrong_source_skill(self):
+        self.job['configuration']['leftVariant']['artifactSha256'] = 'another-skill'
         self.assertFalse(module.audit(self.job, self.root)['checks']['executionVersionAndCleanup'])
 
     def test_unknown_tool(self):

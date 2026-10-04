@@ -45,6 +45,8 @@ def audit(job, state):
                'retainedDigest': digest(canonical(saved, unicode=True)) == ref['sha256'],
                'lockDigest': digest(canonical(lock)) == meta['runtimeLockSha256'],
                'runtimeMatchesLock': lock['runtime']['family'] == meta['runtime']['type'],
+               'requestedArtifact': bool(meta.get('skillArtifactSha256')) and meta['skillArtifactSha256']
+                   == job.get('configuration', {}).get(item['side'] + 'Variant', {}).get('artifactSha256'),
                'requestIdentity': all(saved[k] == meta[k] for k in ('requestId', 'sessionId', 'runId', 'buildId')),
                'methodInstalled': any(s['digest'] == meta['loadedSkillDigest'] for p in lock['domainInstallations'] for s in p['skills']),
                'onlyReadonlyInstalled': all(c['operation'] == 'QUERY' for c in capabilities),
