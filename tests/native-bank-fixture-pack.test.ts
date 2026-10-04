@@ -1,12 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { loadEvalPack } from '../src/eval-pack.js';
+import { fingerprint } from '../src/contracts.js';
 
 describe('versioned native bank fixture', () => {
-  it('keeps Skill identity while replacing the unrelated legacy case', async () => {
+  it('pins the output-format method revision without relaxing the bank case', async () => {
     const pack = await loadEvalPack('packs/finance/native-readonly-balance/eval.yaml');
-    expect(pack.version).toBe('1.0.4');
-    expect(pack.targetSkillVersion).toBe('1.0.3');
+    expect(pack.version).toBe('1.0.5');
+    expect(pack.targetSkillVersion).toBe('1.0.4');
+    const source = await readFile('examples/native-readonly-balance/SKILL.md');
+    expect(pack.variants.right.artifactSha256).toBe(fingerprint([{name:'SKILL.md',content:source.toString('base64')}]));
+    expect(source.toString()).toContain('不加 Markdown 代码围栏');
     expect(pack.cases.map(c => c.caseId)).toEqual(['NATIVE-ACCOUNTS-20261002']);
     const c = pack.cases[0]!;
     expect(c.evaluationGoal).not.toContain('12345.67');
