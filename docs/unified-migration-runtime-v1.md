@@ -135,6 +135,34 @@ are seeded by the operator. See [account workspace deployment](account-workspace
 for configuration, resource limits and the remaining SSO release checks. A passed
 controlled ingress test is not a real Linggan login or a production deployment.
 
+### Separate catalog assets from installed migration code
+
+Deployments may set `FINANCE_EVAL_ROOT` to a generated catalog directory. When
+that directory is not the application checkout, set the server-only absolute
+`FINANCE_EVAL_MIGRATION_PROJECT_ROOT` to the fixed Eval release checkout containing
+`integrations/openjiuwen/analyze_agent.py` and `migrate_agent.py`. This is installed
+platform code, never a path obtained from an uploaded Skill. Both migration
+stages use it; the catalog and private workspace locations remain unchanged.
+Without the override the legacy `FINANCE_EVAL_ROOT`/working-directory behavior
+is preserved. A missing installed entry fails before a subprocess starts.
+
+### Reconcile a saved native run
+
+Operators can verify retained installation Locks, per-case sessions, snapshot
+digests and deletion receipts without replaying the business:
+
+```sh
+python3 scripts/verify-retained-launcher-evidence.py \
+  --job /path/to/saved-job.json --state /path/to/launcher-state \
+  --out /path/to/new-audit.json
+python3 -m unittest discover -s scripts -p test_retained_launcher_evidence.py
+```
+
+The report separates execution evidence from the original quality verdicts. It
+does not prove network-wire model parameters or genuine SSO. It checks only the
+requests in the selected saved job, so another active run does not contaminate
+its archive-completeness result. Output must be a new file; old reports remain.
+
 ### Historical single-owner mode
 
 In single-owner mode stores are process-wide, not tenant-aware. For an explicitly selected

@@ -31,6 +31,7 @@ import type {MigrationValidationRunner} from './application/migration-technical-
 import {AgentMigrationDependencyAnalyzer} from './infrastructure/migration-dependencies.js';
 import {AgentResultMapper} from './infrastructure/migration-agent-result-mapper.js';
 import {analyzeWithAgent,implementWithAgent} from './infrastructure/migration-agent-gateway.js';
+import {migrationProjectRoot} from './infrastructure/migration-agent-runner.js';
 import {PortableCandidatePackager} from './infrastructure/migration-candidate-packager.js';
 import {FileMigrationPreparationPackFactory} from './infrastructure/migration-preparation-pack-factory.js';
 import {MigrationProjectRepository} from './infrastructure/migration-project-repository.js';
@@ -63,11 +64,11 @@ export function createMigrationServices(options:MigrationCompositionOptions){
   const {root,skills,runs,jobs,catalog,preparations,optimizers,diagnostics,environments}=options;
   const projects=options.projects??new MigrationProjectRepository(root);
   const analyzer=options.analyzer??((input)=>analyzeWithAgent(input,{
-    projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+    projectRoot:migrationProjectRoot(),
     modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model',
   }));
   const implementer=options.implementer??((input)=>implementWithAgent(input,{
-    projectRoot:process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd(),
+    projectRoot:migrationProjectRoot(),
     modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model',
   }));
   const suiteGenerator=options.suiteGenerator??((input)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')));
