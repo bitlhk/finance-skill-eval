@@ -145,7 +145,7 @@ export async function createEvaluationService(
       return reply.code(401).send({ error: "UNAUTHORIZED", message: "访问令牌无效" });
     }
     if(config.workspaceSubject){
-      if(request.headers['x-demo-user']!==config.workspaceSubject)return reply.code(403).send({error:'WORKSPACE_OWNER_REQUIRED',message:'此工作区仅向指定管理员开放。'});
+      if(request.headers['x-demo-user']!==config.workspaceSubject)return reply.code(403).send({error:'WORKSPACE_OWNER_REQUIRED',message:'当前登录账号无权访问此工作区，请使用自己的工作区。'});
       if(!['GET','HEAD','OPTIONS'].includes(request.method) && request.headers.origin!==config.workspaceOrigin)
         return reply.code(403).send({error:'WORKSPACE_ORIGIN_REQUIRED',message:'请从工作区页面发起操作。'});
     }
