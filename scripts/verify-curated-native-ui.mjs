@@ -78,8 +78,7 @@ try {
       migrationAnalyzer: async input => {
         if(liveAnalysis){
           const result=await analyzeWithAgent(input,{projectRoot:process.cwd(),
-            modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID,maxIterations:12,maxTokens:32000,
-            modelTimeoutMs:120000,timeoutMs:600000});
+            modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID,maxIterations:12,maxTokens:32000});
           await writeFile(path.join(shared?.analysis.output??output,'actual-analysis.json'),JSON.stringify(result,null,2),{mode:0o600});
           return result;
         }
@@ -124,7 +123,7 @@ try {
     if(route.request().method()==='GET')await route.continue({headers});
     else {
       try{
-        const timeout=liveAnalysis&&new URL(route.request().url()).pathname.endsWith('/inspect')?650000:30000;
+        const timeout=liveAnalysis&&new URL(route.request().url()).pathname.endsWith('/inspect')?950000:30000;
         await route.fulfill({response:await route.fetch({headers,maxRedirects:0,timeout})});
       }catch{
         // Playwright errors can contain the synthetic ingress credential. Return
@@ -154,7 +153,7 @@ try {
     await page.getByRole('button', {name: 'Skill 迁移', exact: true}).click();
     await page.getByRole('button', {name: '新建迁移', exact: true}).click();
     const inspected = page.waitForResponse(r => r.url().endsWith('/inspect') && r.request().method() === 'POST',
-      {timeout:liveAnalysis?650000:30000});
+      {timeout:liveAnalysis?950000:30000});
     await page.locator('input[type=file][multiple]').setInputFiles({name: skill.skillId + '.zip', mimeType: 'application/zip', buffer: archive});
     const diagnosis = await inspected; assert(diagnosis.ok(), await diagnosis.text());
     const inspection=await diagnosis.json();

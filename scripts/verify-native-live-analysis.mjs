@@ -28,8 +28,7 @@ try{
   app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:path.join(output,'data'),
     accessToken:token,publicDemo:false,managedWorkspace:true,
     migrationAnalyzer:async input=>{
-      const result=await analyzeWithAgent(input,{projectRoot:process.cwd(),modelId,maxIterations:12,maxTokens:32000,
-        modelTimeoutMs:120000,timeoutMs:600000});
+      const result=await analyzeWithAgent(input,{projectRoot:process.cwd(),modelId,maxIterations:12,maxTokens:32000});
       await writeFile(path.join(output,'analysis.json'),JSON.stringify(result,null,2),{mode:0o600});
       return result;
     },migrationImplementer:async()=>{throw Error('Uploaded code generation not permitted in this probe');}});

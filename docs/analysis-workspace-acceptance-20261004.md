@@ -116,3 +116,24 @@ retains analysis/inspection evidence and requires located tool references before
 the existing binding, candidate generation and dual-Runtime workflow. Default
 controlled verification is unchanged. The mode alone is not acceptance evidence;
 Judge quality and real SSO remain separately labeled.
+
+## Follow-up: match the actual analyzer budgets
+
+The first live browser run was interrupted by the synthetic account ingress's
+30-second HTTP timeout. A later run allowed the ingress to wait, but A2 failed
+after approximately493 seconds with a model request timeout. It produced zero
+native executions; the failed raw reports remain failed.
+
+Both acceptance scripts had overridden the analyzer's per-call budget to120
+seconds, while the product's ANALYZER role defaults to600 seconds and the agent
+runner has a900-second total deadline. The scripts now reuse those product
+budgets instead of the shorter override. The live browser fixture waits up to950
+seconds for inspection only; other ingress requests retain their30-second bound.
+The engineering model relay accepts an explicit integer budget from1 to600
+seconds(default120), with sanitized per-attempt outcome/elapsed evidence and a
+distinct timeout code. Its32-request limit and model/parameter checks remain.
+
+Seven new relay checks fail on the old implementation; all15 relay checks pass
+after the change. These tests prove budget forwarding and diagnostic behavior,
+not upstream reliability. The revised genuine analysis must still pass before
+claiming live migration closure; no production budget or service was changed.
