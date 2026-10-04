@@ -9,11 +9,17 @@ import {zipSync} from 'fflate';
 import {installNativeSample} from './install-native-sample.mjs';
 import {loadEvalPack} from '../dist/eval-pack.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
+import {fixtureExecution} from './native-fixture-profile.mjs';
+import {launcherGenerationSchema} from '../dist/runtime-launcher.js';
 
 const fixtureMap=process.env.LAUNCHER_FIXTURE_MAP
   ?JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_MAP,'utf8')):null;
 const fixtures=fixtureMap?Object.fromEntries(await Promise.all(Object.entries(fixtureMap).map(async([key,file])=>[key,JSON.parse(await readFile(file,'utf8'))]))):null;
 const info=fixtures?.oj??JSON.parse(await readFile(process.env.LAUNCHER_FIXTURE_INFO,'utf8'));
+const realModel=fixtureExecution({openjiuwen:fixtures?.oj??info,agentscope:fixtures?.as??info},
+  process.env.LAUNCHER_UI_EXECUTION_MODE??'CONTROLLED');
+const generation=launcherGenerationSchema.omit({schemaVersion:true}).parse(
+  JSON.parse(process.env.LAUNCHER_UI_GENERATION??'{"temperature":0.25,"top_p":0.8,"max_tokens":1234}'));
 const output=path.resolve(process.env.LAUNCHER_UI_OUTPUT);
 await mkdir(output,{mode:0o700});
 const token=randomBytes(24).toString('hex');
@@ -22,7 +28,7 @@ const modelId=info.modelId??'launcher-model';
 const caseFiles=info.runtimes.oj.requiredToolNames.includes('read_case_file');
 const modelFile=path.join(output,'models.json');
 await writeFile(modelFile,JSON.stringify({schemaVersion:'finance.skill-eval.execution-models.v1',defaultModelId:modelId,
-  models:[{providerId:'managed-launcher',modelId,label:'Managed comparison model',availability:'ready',parameters:{temperature:0.25,top_p:0.8,max_tokens:1234}}]}));
+  models:[{providerId:'managed-launcher',modelId,label:realModel==='LIVE'?'Approved live native model':'Controlled native model',availability:'ready',parameters:generation}]}));
 process.env.FINANCE_EVAL_EXECUTION_CATALOG=modelFile;
 const prebuilt=process.env.LAUNCHER_PREBUILT_FLOW==='true';
 if(prebuilt){
@@ -109,7 +115,8 @@ try{
   await page.getByRole('combobox',{name:/^执行方式/}).selectOption('dual_runtime');
   await page.getByRole('combobox',{name:/^对照组 Runtime/}).selectOption(environments[0].environmentId);
   await page.getByRole('combobox',{name:/^目标组 Runtime/}).selectOption(environments[1].environmentId);
-  for(const [name,value] of Object.entries({temperature:'0.25',top_p:'0.8',max_tokens:'1234'}))await page.getByLabel(name,{exact:true}).fill(value);
+  for(const name of ['temperature','top_p','max_tokens'])await page.getByLabel(name,{exact:true}).fill(String(generation[name]));
+  if(generation.thinking)await page.getByRole('combobox',{name:'思考模式',exact:true}).selectOption(generation.thinking.type);
   await expect(page.getByRole('combobox',{name:/^评分方式/})).toHaveValue('model');
   await expect(page.getByRole('button',{name:'开始测试',exact:true})).toBeEnabled({timeout:15000});
   await page.screenshot({path:path.join(output,'desktop-configuration.png'),fullPage:true});
@@ -120,7 +127,7 @@ try{
   assert.equal(posted.evaluationMode,'candidate_runtime_comparison');
   assert.equal(posted.runtimeBindings.left.environmentId,environments[0].environmentId);
   assert.equal(posted.runtimeBindings.right.environmentId,environments[1].environmentId);
-  assert.deepEqual(posted.executionModel.parameters,{temperature:0.25,top_p:0.8,max_tokens:1234});
+  assert.deepEqual(posted.executionModel.parameters,generation);
   checks.push('Browser submitted both Launcher bindings and one explicit generation configuration');
   let job;
   const deadline=Date.now()+900000;
@@ -138,7 +145,7 @@ try{
       assert(row.metadata.workspaceFilesDigest);
     }
     assert(row.metadata.runtimeLockSha256&&row.metadata.executionHistoryRequestId&&row.metadata.retainedEvidenceRef);
-    assert.deepEqual(row.metadata.declaredModelParameters,{temperature:0.25,top_p:0.8,max_tokens:1234});
+    assert.deepEqual(row.metadata.declaredModelParameters,generation);
   }
   assert.equal(new Set(job.evidence.map(row=>row.metadata.loadedSkillDigest)).size,1);
   assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,job.evidence.length);
@@ -173,7 +180,7 @@ try{
   assert.equal(mobile.readUInt32BE(16),390,'Full-page screenshot must not expand beyond the mobile viewport');
   assert.deepEqual(errors,[]);
   checks.push('Desktop and 390px browser rendered real result evidence without page errors or horizontal overflow');
-  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel:info.realModel??'NOT_RUN',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId},null,2));
+  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel,generation,judgeMode:'CONTROLLED_INDETERMINATE',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId},null,2));
 }catch(error){
   if(page){
     await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});
