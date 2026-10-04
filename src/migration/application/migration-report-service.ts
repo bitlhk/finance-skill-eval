@@ -27,7 +27,7 @@ export class MigrationReportService {
   async report(id:string) {
     const value=await this.projects.get(id);
     const runtimeRequirements=await unresolvedMigrationRuntimeRequirements(value,this.environments);
-    const diagnosis=this.diagnostics?await this.diagnostics.diagnose(value.source):null;
+    const diagnosis=this.diagnostics?await this.diagnostics.readCurrent(value.source):null;
     const currentAsset=value.candidate??value.source;
     const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
     const technicalValidations=(value.technicalValidations??[]).map(result=>({...result,current:result.assetDigest===currentAsset.artifactSha256&&(!result.runtimeConfigurationDigest||result.runtimeConfigurationDigest===runtimeDigest)}));

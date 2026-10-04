@@ -50,6 +50,17 @@ export class MigrationDiagnostics implements MigrationDiagnosisPort {
   constructor(private root:string,private data:string,private skills:MigrationSkillRepository,
     private model:()=>ConfiguredModelRole=()=>configuredModelRole('ANALYZER')){}
   private file(asset:SkillAssetRecord){return path.join(this.data,'migration-diagnostics',asset.artifactSha256+'.json');}
+  private async scannerDigest(){
+    return createHash('sha256').update(await readFile(path.join(this.root,'scripts/scan-migration.py'))).update(ANALYZER_SCHEMA_VERSION).digest('hex');
+  }
+  async readCurrent(asset:SkillAssetRecord):Promise<Diagnosis|null>{
+    let value:Diagnosis;
+    try{value=await readJson<Diagnosis>(this.file(asset));}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}
+    if(value.assetId!==asset.assetId||value.digest!==asset.artifactSha256
+      ||value.scannerDigest!==await this.scannerDigest())return null;
+    return value;
+  }
   async close():Promise<void>{
     this.closing=true;
     // Project creation starts diagnostics in the background; shutdown must await its final writes.
@@ -63,7 +74,7 @@ export class MigrationDiagnostics implements MigrationDiagnosisPort {
     try{return await job;}finally{this.pending.delete(asset.artifactSha256);}
   }
   private async scan(asset:SkillAssetRecord,retry:boolean):Promise<Diagnosis>{
-    const scannerDigest=createHash('sha256').update(await readFile(path.join(this.root,'scripts/scan-migration.py'))).update(ANALYZER_SCHEMA_VERSION).digest('hex');
+    const scannerDigest=await this.scannerDigest();
     const archive=await this.skills.readArchive(asset.assetId);
     const files:Record<string,string>={},skipped:Array<{path:string;status:string}>=[];
     for(const [name,bytes] of Object.entries(archive)){

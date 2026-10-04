@@ -181,6 +181,13 @@ requires comparison to the frozen input suite and its digest.
 The two sides must also record the same business timezone and the same workspace
 input digest for each case; different cases may carry different input files.
 
+Migration report reads consume saved diagnosis evidence only. They do not start
+or await the optional model-assisted diagnosis. Missing or outdated saved
+diagnostics remain absent; an in-flight explanation stays `RUNNING`, not passed.
+Explicit inspection/diagnosis and existing candidate admission still enforce
+their original checks. This keeps a completed inspection's binding controls
+available while a separate explanation is slow.
+
 ### Historical single-owner mode
 
 In single-owner mode stores are process-wide, not tenant-aware. For an explicitly selected
