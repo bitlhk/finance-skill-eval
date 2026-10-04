@@ -88,10 +88,35 @@ must be checked in every terminal path, including incomplete builds.
 2. Real managed model and synthetic bank: browser upload, analysis/migration,
    two target builds, same cases, tool results, evidence, rubric and cleanup.
    A nonempty answer or successful job status is not sufficient.
-3. Identity: map the specified administrator to a trusted SSO subject. Verify a
-   second authenticated subject cannot read assets, records, downloads or APIs;
-   also reject spoofed forwarded headers at untrusted ingress. Never use a
-   browser-supplied email as authorization.
+3. Identity: every authenticated Linggan account is eligible; no administrator
+   allowlist is required. Map the verified SSO subject to its own workspace.
+   Two real accounts must each be able to use the service, but neither may read
+   the other's private assets, records or downloads. Also reject anonymous or
+   spoofed forwarded headers at untrusted ingress. Never use a browser-supplied
+   email as authorization, or share the legacy owner's directory with new users.
+
+Both gateway hops must allow synchronous analysis to finish: the current agent
+runner total deadline is900 seconds, so the versioned Nginx templates use a950
+second read timeout. This is an idle upstream-read budget, not a new model or
+execution deadline. Keep the existing body/send limits, authentication and loopback
+boundaries. Check deployed candidate fragments as well as these templates; merely
+updating repository files does not change a running gateway. An operator override
+of the analyzer deadline requires checking every hop again. Do not fix this by
+disabling timeouts or retrying the business operation.
+
+`node scripts/verify-inspection-proxy-budget.mjs <new-evidence-directory>` runs
+two isolated loopback Nginx hops with scaled timings. Either short hop returns504;
+both covering the synthetic backend deadline preserve its409 response. This is
+not a real-model, authentication or production traversal test. It stops its own
+processes and never reloads the running gateway.
+
+For the existing candidate fragments only,
+`python deploy/update-candidate-inspection-budget.py --target origin|gateway`
+prints a hash-only plan. Applying requires `--apply --expected-sha256 <plan-hash>`
+on the corresponding machine. It preserves headers/routes/send limits, saves a
+private backup, verifies Nginx before/after, and reloads. A check/reload failure
+restores the old fragment only if the file still equals this operation's output.
+Concurrent edits cause refusal. This updates neither application nor root entry.
 
 Report the three results separately. Passing interface tests and native probes
 separately does not prove end-to-end completion. Keep Issue #38 open and the PR
