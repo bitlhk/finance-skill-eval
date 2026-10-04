@@ -23,6 +23,11 @@ ZIP upload and SSE remain the same APIs. Stores and in-memory caches are scoped
 to one subject. Changing an ID in a URL cannot select another subject's store.
 Logging into Linggan does not grant bank permissions or bypass Launcher admission.
 
+A2 source-inspection file tools also enforce their temporary workspace boundary;
+account API isolation alone is not a file-tool sandbox. See
+`analysis-workspace-acceptance-20261004.md` for the synthetic before/after probe
+and the limited first real-model inspection, including unresolved wire differences.
+
 ## Optional configuration
 
 Default `FINANCE_EVAL_WORKSPACE_MODE=single` preserves existing behavior.

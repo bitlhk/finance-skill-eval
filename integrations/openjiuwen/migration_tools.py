@@ -56,7 +56,7 @@ async def _scan(workspace: Path) -> dict[str, Any]:
 
     files: dict[str, str] = {}
     for path in sorted(workspace.rglob("*")):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(workspace.resolve()):
             continue
         rel = path.relative_to(workspace).as_posix()
         if rel.startswith((".", "AGENT.md", "SOUL.md", "IDENTITY.md", "USER.md", "HEARTBEAT.md")):
@@ -748,8 +748,8 @@ _TYPE_SUFFIXES = {
 
 def _readable_files(root: Path, workspace: Path):
     """Every text file under `root`, in path order, skipping what grep itself would skip."""
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
+    for path in ([root] if root.is_file() else sorted(root.rglob("*"))):
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(workspace.resolve()):
             continue
         if _SKIP_DIRS.intersection(path.relative_to(workspace).parts):
             continue
@@ -818,7 +818,7 @@ def build_grep_tool(workspace: Path, capture: list[dict[str, Any]] | None = None
         numbered = options.get("-n", True) is not False
 
         base = target if target.is_dir() else target.parent
-        files = [target] if target.is_file() else list(_readable_files(target, root))
+        files = list(_readable_files(target, root))
         lines: list[str] = []
         matched_files = 0
         total = 0

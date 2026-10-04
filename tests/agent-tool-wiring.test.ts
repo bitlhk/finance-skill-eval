@@ -28,10 +28,20 @@ it('gives both agents our grep, which reads the files instead of shelling out',a
 // explaining the omission is not itself a failure.
 it('hands neither agent a shell tool',async()=>{
   for(const agent of agents){
-    const imported=(await source(agent)).match(/from openjiuwen\.harness\.tools import[\s\S]*?\)/)?.[0]??'';
-    expect(imported,`${agent} imports tools from the harness`).toContain('from openjiuwen.harness.tools import');
+    const code=await source(agent);
+    const imported=agent==='analyze_agent.py'
+      ?code.match(/from analysis_file_tools import[^\n]*/)?.[0]??''
+      :code.match(/from openjiuwen\.harness\.tools import[\s\S]*?\)/)?.[0]??'';
+    expect(imported,`${agent} has an explicit file tool list`).not.toBe('');
     for(const tool of ['BashTool','PowerShellTool','CodeTool','TerminalTool']){
       expect(imported,`${agent} does not import ${tool}`).not.toContain(tool);
     }
   }
+});
+
+it('binds every general A2 file tool to the per-request workspace',async()=>{
+  const code=await source('analyze_agent.py');
+  for(const name of ['WorkspaceReadFileTool','WorkspaceGlobTool','WorkspaceListDirTool'])
+    expect(code).toContain(`${name}(workspace, sys_op, lang, agent_id)`);
+  expect(code).not.toContain('from openjiuwen.harness.tools import');
 });

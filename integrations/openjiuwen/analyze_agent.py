@@ -28,8 +28,9 @@ logging.disable(logging.INFO)
 from pathlib import Path as _Path  # noqa: E402
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
-from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_JUDGEMENT,
+from harness_tools import (FilesystemOnlyRail, SKILL_JUDGEMENT,
                            ToolTraceRail, skill_rail)  # noqa: E402
+from analysis_file_tools import WorkspaceReadFileTool, WorkspaceGlobTool, WorkspaceListDirTool  # noqa: E402
 from migration_tools import build_grep_tool, build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
@@ -149,7 +150,6 @@ async def run(body: dict) -> None:
     from openjiuwen.core.sys_operation.base import OperationMode
     from openjiuwen.core.sys_operation.sys_operation import SysOperationCard
     from openjiuwen.harness.subagents.explore_agent import create_explore_agent
-    from openjiuwen.harness.tools import GlobTool, ListDirTool
 
     from model_config import resolve_model, request_settings
 
@@ -176,11 +176,11 @@ async def run(body: dict) -> None:
         # (below) is what keeps a shell out: without it the harness registers one at skill-refresh
         # time, and `bash` can write, which would make "read-only" a claim rather than a boundary.
         tools = [
-            AbsoluteLineReadFileTool(sys_op, lang, agent_id),
+            WorkspaceReadFileTool(workspace, sys_op, lang, agent_id),
             # Ours, not the harness's: that one shells out, and on Windows it cannot start.
             build_grep_tool(workspace, tool_trace),
-            GlobTool(sys_op, lang, agent_id),
-            ListDirTool(sys_op, lang, agent_id),
+            WorkspaceGlobTool(workspace, sys_op, lang, agent_id),
+            WorkspaceListDirTool(workspace, sys_op, lang, agent_id),
             build_run_scanner(workspace, scanner_results),
         ]
 
