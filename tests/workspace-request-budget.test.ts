@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {WorkspaceRequestBudget,requiresWorkspaceBudget} from '../src/service/workspace-request-budget.js';
+import {WorkspaceRequestBudget,requiresWorkspaceBudget,isWorkspacePreflight} from '../src/service/workspace-request-budget.js';
 
 it('bounds one account without consuming another account allowance',()=>{
   let now=0;
@@ -33,9 +33,17 @@ it.each([
   ['GET','/api/runs/a/export',false],['GET','/api/runs/a/events',false],
   ['GET','/api/catalog',false],['GET','/api/migrations',false],
   ['POST','/api/runs/a/cancel',false],['POST','/api/optimizations/a/decision',false],
+  ['POST','/api/environments/env-a/preflight',false],
   ['DELETE','/api/unknown/new-route',true],['OPTIONS','/api/runs',false],
 ])('classifies %s %s without blocking cancellation', (method,route,expected)=>{
   expect(requiresWorkspaceBudget(method,route)).toBe(expected);
+});
+
+it('recognizes only the non-executing preflight route',()=>{
+  expect(isWorkspacePreflight('POST','/api/environments/env-a/%70reflight?x=1')).toBe(true);
+  expect(isWorkspacePreflight('PUT','/api/environments/env-a/preflight')).toBe(false);
+  expect(isWorkspacePreflight('POST','/api/environments/env-a')).toBe(false);
+  expect(isWorkspacePreflight('POST','/api/environments/env-a/preflight/execute')).toBe(false);
 });
 
 it.each([

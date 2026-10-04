@@ -3,7 +3,7 @@ import {lstat,mkdir,readdir,readFile,writeFile,rename,rm} from 'node:fs/promises
 import path from 'node:path';
 import Fastify,{type FastifyInstance} from 'fastify';
 import type {ServiceConfig} from './config.js';
-import {WorkspaceRequestBudget,requiresWorkspaceBudget} from './workspace-request-budget.js';
+import {WorkspaceRequestBudget,requiresWorkspaceBudget,isWorkspacePreflight} from './workspace-request-budget.js';
 
 const subjectPattern=/^studio_[a-zA-Z0-9_-]{1,120}$/u;
 const seedRoots=new Set(['skills','environments','preparations']);
@@ -49,6 +49,9 @@ export async function createAccountWorkspaces(config:ServiceConfig,
   if(!Number.isInteger(maximum)||maximum<1||maximum>256)fail('WORKSPACE_ACCOUNT_LIMIT_INVALID');
   const requestBudget=new WorkspaceRequestBudget(config.workspaceRequestLimits??{
     perAccount:20,global:80,windowSeconds:60,
+  });
+  const preflightBudget=new WorkspaceRequestBudget(config.workspacePreflightLimits??{
+    perAccount:60,global:240,windowSeconds:60,
   });
   if(!config.workspaceSeedDirectory||!config.workspaceSeedSha256)throw new Error('WORKSPACE_SEED_REQUIRED');
   const seed=await readWorkspaceSeed(config.workspaceSeedDirectory,config.workspaceSeedSha256);
@@ -100,11 +103,12 @@ export async function createAccountWorkspaces(config:ServiceConfig,
     if(!['GET','HEAD','OPTIONS'].includes(request.method)&&request.headers.origin!==config.workspaceOrigin)
       return reply.code(403).send({error:'WORKSPACE_ORIGIN_REQUIRED'});
     if(closing)return reply.code(503).send({error:'WORKSPACES_CLOSING'});
-    if(requiresWorkspaceBudget(request.method,request.url)){
-      const refusal=requestBudget.take(subject);
+    const preflight=isWorkspacePreflight(request.method,request.url);
+    if(preflight||requiresWorkspaceBudget(request.method,request.url)){
+      const refusal=(preflight?preflightBudget:requestBudget).take(subject);
       if(refusal)return reply.code(429).header('retry-after',String(refusal.retryAfterSeconds)).send({
-        error:'WORKSPACE_REQUEST_LIMIT',scope:refusal.scope,retryAfterSeconds:refusal.retryAfterSeconds,
-        message:`${refusal.scope==='ACCOUNT'?'当前账号':'当前服务'}请求较多，请在 ${refusal.retryAfterSeconds} 秒后重试。已有任务继续运行，仍可查看或取消。`,
+        error:'WORKSPACE_REQUEST_LIMIT',scope:refusal.scope,budget:preflight?'PREFLIGHT':'WORK',retryAfterSeconds:refusal.retryAfterSeconds,
+        message:`${refusal.scope==='ACCOUNT'?'当前账号':'当前服务'}${preflight?'连接检查':'请求'}较多，请在 ${refusal.retryAfterSeconds} 秒后重试。已有任务继续运行，仍可查看或取消。`,
       });
     }
     if(!apps.has(subject)){

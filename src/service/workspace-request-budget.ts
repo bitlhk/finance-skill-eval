@@ -24,9 +24,20 @@ export class WorkspaceRequestBudget {
   }
 }
 
+function routePath(url:string){
+  try{return decodeURIComponent(new URL(url,'http://workspace.invalid').pathname);}catch{return null;}
+}
+
+export function isWorkspacePreflight(method:string,url:string):boolean{
+  return method==='POST'&&/^\/api\/environments\/[^/]+\/preflight\/?$/u.test(routePath(url)??'');
+}
+
 export function requiresWorkspaceBudget(method:string,url:string):boolean{
-  let route:string;
-  try{route=decodeURIComponent(new URL(url,'http://workspace.invalid').pathname);}catch{return true;}
+  const route=routePath(url);
+  if(route===null)return true;
+  // Capability inspection does not build an Agent or execute a model/tool.
+  // It has a separate bounded allowance so UI preflight cannot starve a run.
+  if(isWorkspacePreflight(method,url))return false;
   if(method==='OPTIONS')return false;
   if(method==='GET'||method==='HEAD'){
     // These existing read endpoints may initialize missing model-assisted diagnostics.

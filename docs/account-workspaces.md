@@ -38,6 +38,8 @@ FINANCE_EVAL_WORKSPACE_MAX_ACCOUNTS=64
 FINANCE_EVAL_WORKSPACE_REQUESTS_PER_ACCOUNT=20
 FINANCE_EVAL_WORKSPACE_REQUESTS_GLOBAL=80
 FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS=60
+FINANCE_EVAL_WORKSPACE_PREFLIGHTS_PER_ACCOUNT=60
+FINANCE_EVAL_WORKSPACE_PREFLIGHTS_GLOBAL=240
 ```
 
 Keep the existing server-only access credential configured. Account mode refuses
@@ -84,13 +86,19 @@ only by hiding buttons.
 
 All account evaluation jobs share `FINANCE_EVAL_MAX_CONCURRENT_RUNS` (1-4), with a
 FIFO queue and cancellation of waiting jobs. Closing the service cancels tracked
-jobs and waits for cleanup. In account mode, all API mutations share a rolling
-request limit (default20/account and80/service per60seconds). Existing migration
+jobs and waits for cleanup. In account mode, work-producing API mutations share
+a rolling request limit (default20/account and80/service per60seconds). Existing migration
 diagnosis/inspection/report/export reads also consume this limit because they
 may initialize missing AI diagnostics. Run history reads do not. Run cancellation
 and optimization decisions remain available when saturated. A rejected request
 gets429, a `Retry-After` header and a wait message before reaching its handler;
 rejections do not consume extra slots and do not cancel existing work.
+
+The POST environment `preflight` route only inspects registered capabilities;
+it does not build or execute an Agent. It uses a separate rolling allowance
+(default60/account and240/service over the same window) so normal Runtime/model
+selection cannot consume the user's start/generate allowance. Both kinds return
+429 with `budget: PREFLIGHT` or `WORK`; neither kind disables cancellation.
 
 The request limit is an in-process admission rate, not monetary accounting or
 per-model-attempt concurrency. One admitted workflow may make several model
@@ -131,6 +139,15 @@ Builder's `engineering/verify_balance_native_browser.py --runtime-pair
 --account-workspaces` drives this probe and reclaims the isolated bank and Hosts.
 Its controlled Judge remains indeterminate; a completed job is not a professional
 quality pass. See `account-native-acceptance-20261004.md` for the recorded scope.
+
+For the complete managed-profile cohort, Builder's existing
+`engineering/verify_managed_profile_workspace.py` accepts `--account-workspaces`.
+It first prepares a separate operator-reviewed seed, then runs prebuilt, upload,
+migration, method-only and bank/file browser flows as an ordinary account.
+Another account must receive404 for each run and export. Configuration is the
+same local evidence-path configuration used by the shared-profile probe; never
+point it at production state. The migration analyzer and Judge are controlled,
+not evidence of real analysis quality or real SSO authentication.
 
 Before changing the public entry, verify real Linggan login with two accounts,
 trusted header replacement and direct-backend refusal; review the shared seed,

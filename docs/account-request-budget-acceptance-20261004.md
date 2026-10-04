@@ -1,5 +1,10 @@
 # Account request-budget acceptance
 
+This records the initial limiter acceptance at59af867. The full native account
+cohort subsequently exposed preflight requests consuming work slots. Current
+behavior separates bounded preflight admission; see `account-workspaces.md`.
+The original counts and reports below are historical, not final release proof.
+
 This closes the unbounded ingress-request gap introduced by opening workspaces
 to ordinary authenticated Linggan accounts. It does not introduce an account
 role, monetary quota service, new Runtime or new execution protocol.

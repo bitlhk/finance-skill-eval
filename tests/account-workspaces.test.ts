@@ -107,12 +107,16 @@ it('rejects excess work before the child handler and always permits reads and ca
   const {app,config}=await setup();await app.close();apps.splice(apps.indexOf(app),1);
   const calls:string[]=[];
   const service=await createAccountWorkspaces({...config,host:'127.0.0.1',port:0,publicDirectory:'',maxConcurrentRuns:1,
-    workspaceRequestLimits:{perAccount:1,global:2,windowSeconds:60}},async()=>{
+    workspaceRequestLimits:{perAccount:1,global:2,windowSeconds:60},
+    workspacePreflightLimits:{perAccount:2,global:4,windowSeconds:60}},async()=>{
     const child=Fastify();
     child.all('/api/*',async request=>{calls.push(request.url);return {handled:true};});
     return child;
   });apps.push(service);
   const send=(subject:string,url:string,method:'GET'|'POST'='POST')=>service.inject({method,url,headers:headers(subject)});
+  for(let i=0;i<2;i++)expect((await send('studio_a','/api/environments/env-a/preflight')).statusCode).toBe(200);
+  expect((await send('studio_a','/api/environments/env-a/preflight')).statusCode).toBe(429);
+  expect(calls).toHaveLength(2);calls.length=0;
   expect((await service.inject({method:'POST',url:'/api/runs',headers:{...headers('studio_a'),authorization:'Bearer wrong'}})).statusCode).toBe(401);
   expect((await send('studio_a','/api/runs')).statusCode).toBe(200);
   const denied=await send('studio_a','/api/migrations/m/analyze');

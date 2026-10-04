@@ -24,6 +24,7 @@ export type ServiceConfig = {
   workspaceSeedSha256?: string;
   workspaceMaxAccounts?: number;
   workspaceRequestLimits?: WorkspaceRequestLimits;
+  workspacePreflightLimits?: WorkspaceRequestLimits;
   /** Internal account-service policy; not a browser-selected option. */
   managedWorkspace?: boolean;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
@@ -66,6 +67,11 @@ export function loadServiceConfig(): ServiceConfig {
     workspaceRequestLimits:{
       perAccount:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUESTS_PER_ACCOUNT??20),
       global:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUESTS_GLOBAL??80),
+      windowSeconds:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS??60),
+    },
+    workspacePreflightLimits:{
+      perAccount:Number(process.env.FINANCE_EVAL_WORKSPACE_PREFLIGHTS_PER_ACCOUNT??60),
+      global:Number(process.env.FINANCE_EVAL_WORKSPACE_PREFLIGHTS_GLOBAL??240),
       windowSeconds:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS??60),
     },
     launcherTrust:launcherTrustConfiguration(),

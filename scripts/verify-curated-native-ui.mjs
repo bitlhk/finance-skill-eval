@@ -1,6 +1,7 @@
 /** Actual UI and native Launchers; explicit live mode still uses a controlled Judge, not quality acceptance. */
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {mkdir, readFile, writeFile, cp} from 'node:fs/promises';
 import path from 'node:path';
 import {parse as parseYaml} from 'yaml';
@@ -60,8 +61,11 @@ if (shared) shared.judge = judge;
 let app, browser, page, asset;
 const errors = [], checks = [];
 try {
-  if (flow === 'prebuilt') asset = await new SkillStore(data).uploadZip(archive);
+  if (flow === 'prebuilt') asset = shared?.accountMode
+    ? shared.seedAssets.get(skill.skillId+'@'+skill.version) : await new SkillStore(data).uploadZip(archive);
   app = shared?.app ?? await createEvaluationService({rootDirectory: root, dataDirectory: data, publicDirectory: path.resolve('web-dist'), accessToken: token, publicDemo: false,
+    ...(shared?.accountMode?{workspaceMode:'account',workspaceSubject:undefined,workspaceOrigin:shared.origin,
+      workspaceSeedDirectory:shared.seedDirectory,workspaceSeedSha256:shared.seedSha256}:{}),
     ...(flow === 'migration' || shared?.migration ? {
       migrationAnalyzer: async () => {
         const {declaredTools: tools, sourceMethod: method} = shared?.analysis ?? {declaredTools, sourceMethod};
@@ -81,7 +85,8 @@ try {
   if (shared) Object.assign(shared, {app, url});
   const api = async (route, body) => {
     const response = await fetch(url + route, {method: body === undefined ? 'GET' : 'POST',
-      headers: {authorization: 'Bearer ' + token, 'content-type': 'application/json'},
+      headers: {authorization: 'Bearer ' + token, 'content-type': 'application/json',
+        ...(shared?.accountMode?{'x-demo-user':shared.subject,origin:shared.origin}:{})},
       ...(body === undefined ? {} : {body: JSON.stringify(body)})});
     const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value;
   };
@@ -99,9 +104,16 @@ try {
   browser = await chromium.launch({headless: true, executablePath: process.env.CHROMIUM_PATH});
   page = await browser.newPage({viewport: {width: 1366, height: 900}});
   page.on('pageerror', error => errors.push(error.message));
+  if(shared?.accountMode)await page.route(`${url}/api/**`,async route=>{
+    const headers={...route.request().headers(),authorization:'Bearer '+token,'x-demo-user':shared.subject,origin:shared.origin};
+    if(route.request().method()==='GET')await route.continue({headers});
+    else await route.fulfill({response:await route.fetch({headers,maxRedirects:0})});
+  });
   await page.goto(url);
-  await page.getByLabel('访问令牌').fill(token);
-  await page.getByRole('button', {name: '进入工作区', exact: true}).click();
+  if(!shared?.accountMode){
+    await page.getByLabel('访问令牌').fill(token);
+    await page.getByRole('button', {name: '进入工作区', exact: true}).click();
+  }
   if (flow === 'prebuilt') {
     await page.locator('.skill-list-item').filter({has: page.getByRole('heading', {name: displayName, exact: true})})
       .getByRole('button', {name: '进入评测', exact: true}).click();
@@ -250,6 +262,12 @@ try {
   if (shared) {
     shared.jobIds.push(job.jobId);
     for (const id of shared.jobIds) assert.equal((await api(`/api/runs/${id}`)).status, 'completed');
+    if(shared.accountMode){
+      for(const route of [`/api/runs/${job.jobId}`,`/api/runs/${job.jobId}/export`]){
+        const other=await fetch(url+route,{headers:{authorization:'Bearer '+token,'x-demo-user':'studio_other',origin:shared.origin}});
+        assert.equal(other.status,404,'A separate account must not see this run');
+      }
+    }
   }
   checks.push('Original Skill and development cases, native dynamic builds, same generation parameters, per-case sessions, Lock/history and projected facts');
   checks.push('Real page at 1366/390/320; controlled Judge preserves INDETERMINATE rather than claiming answer quality');
@@ -257,14 +275,14 @@ try {
     skillId: skill.skillId, caseIds: pack.cases.map(row => row.caseId), jobId: job.jobId, checks,
     analysis: flow === 'migration' ? 'CONTROLLED_EXPLICIT_DECLARATIONS' : 'NOT_RUN',
     sourceScope: 'Previously adapted readonly Skill; not arbitrary MCP code migration',
-    realModel, judgeMode:'CONTROLLED', professionalQuality: 'NOT_EVALUATED', sso: 'NOT_TESTED', holdout: 'NOT_IN_BROWSER_COHORT'}, null, 2));
+    realModel, judgeMode:'CONTROLLED', professionalQuality: 'NOT_EVALUATED', sso: shared?.accountMode?'SYNTHETIC_TRUSTED_INGRESS':'NOT_TESTED', holdout: 'NOT_IN_BROWSER_COHORT'}, null, 2));
 } catch (error) {
   if (page) {await page.screenshot({path: path.join(output, 'failure.png'), fullPage: true});
     await writeFile(path.join(output, 'failure-body.txt'), await page.locator('body').innerText());}
   throw error;
 } finally {
   await writeFile(path.join(output, 'judge-calls.json'), JSON.stringify(judgeCalls.slice(judgeStart), null, 2));
-  await browser?.close();
+  try {await page?.unrouteAll({behavior:'wait'});} finally {await browser?.close();}
   if (!shared) {await app?.close(); await judge.close();}
 }
 }
@@ -276,8 +294,10 @@ if (process.env.CURATED_UI_COHORT) {
   assert(Array.isArray(entries) && entries.length > 1);
   assert(entries.every(entry => ['prebuilt', 'upload', 'migration'].includes(entry.flow ?? 'prebuilt')));
   const shared = {root: path.join(output, 'root'), data: path.join(output, 'data'),
-    token: randomBytes(32).toString('hex'), jobIds: [], migration: entries.some(entry => entry.flow === 'migration')};
+    token: randomBytes(32).toString('hex'), jobIds: [], migration: entries.some(entry => entry.flow === 'migration'),
+    accountMode:process.env.CURATED_UI_ACCOUNT_WORKSPACES==='true',origin:'https://eval.example.test',subject:'studio_native_user'};
   await mkdir(path.join(shared.root, 'packs/finance'), {recursive: true});
+  await cp('packs/finance/catalog.yaml',path.join(shared.root,'packs/finance/catalog.yaml'));
   const packs = new Set();
   for (const entry of entries) {
     const directory = path.join(entry.stagedPack, 'packs/candidate');
@@ -287,6 +307,41 @@ if (process.env.CURATED_UI_COHORT) {
     packs.add(pack.packId);
   }
   try {
+    if(shared.accountMode){
+      // Operator initialization is separate from the ordinary account workflow.
+      // Copy only reviewed synthetic Skills and managed environment references.
+      const seedData=path.join(output,'operator-seed-data');
+      const operator=await createEvaluationService({rootDirectory:shared.root,dataDirectory:seedData,
+        accessToken:shared.token,publicDemo:false});
+      shared.environmentGroups=new Map();shared.seedAssets=new Map();
+      try{
+        for(const entry of entries){
+          const skill=JSON.parse(await readFile(path.join(entry.skillProbe,'skill.json'),'utf8'));
+          if((entry.flow??'prebuilt')==='prebuilt'){
+            const asset=await new SkillStore(seedData).uploadZip(Buffer.from(skill.archiveBase64,'base64'));
+            shared.seedAssets.set(skill.skillId+'@'+skill.version,asset);
+          }
+          const paths=JSON.parse(await readFile(entry.fixtures,'utf8'));
+          const fixtures=Object.fromEntries(await Promise.all(Object.entries(paths).map(async([key,file])=>[key,JSON.parse(await readFile(file,'utf8'))])));
+          const profile=fixtureProfile(fixtures);
+          if(shared.environmentGroups.has(profile.key))continue;
+          const group=[];
+          for(const [type,name] of [['openjiuwen','OpenJiuwen Java'],['agentscope','AgentScope Java']]){
+            const credential='FINANCE_CURATED_UI_'+shared.environmentGroups.size+'_'+type.toUpperCase()+'_TOKEN';
+            process.env[credential]=fixtures[type].token;
+            const response=await operator.inject({method:'POST',url:'/api/environments',headers:{authorization:'Bearer '+shared.token},payload:{
+              name:(entry.profileLabel?entry.profileLabel+' · ':'')+name,type:'runtime_launcher',runtimeType:type,
+              baseUrl:profile.routes[type],credentialEnv:credential}});
+            assert.equal(response.statusCode,200,response.body);group.push(response.json());
+          }
+          shared.environmentGroups.set(profile.key,group);
+        }
+      }finally{await operator.close();}
+      shared.seedDirectory=path.join(output,'reviewed-seed');await mkdir(shared.seedDirectory,{mode:0o700});
+      for(const name of ['skills','environments','preparations'])await cp(path.join(seedData,name),path.join(shared.seedDirectory,name),{recursive:true});
+      const manifest=JSON.parse(execFileSync(process.execPath,['scripts/workspace-seed-manifest.mjs',shared.seedDirectory],{encoding:'utf8'}));
+      await writeFile(path.join(output,'seed-manifest.json'),JSON.stringify(manifest,null,2));shared.seedSha256=manifest.sha256;
+    }
     for (const [index, entry] of entries.entries()) {
       await verifyEntry({...entry, output: path.join(output, 'entry-' + index)}, shared);
     }
@@ -295,7 +350,8 @@ if (process.env.CURATED_UI_COHORT) {
       environmentCount: [...shared.environmentGroups.values()].reduce((sum, rows) => sum + rows.length, 0),
       managedProfileCount: shared.environmentGroups.size,
       realModel: process.env.CURATED_UI_EXECUTION_MODE==='LIVE'?'LIVE':'NOT_RUN',
-      judgeMode:'CONTROLLED', professionalQuality:'NOT_EVALUATED', sso: 'NOT_TESTED'}, null, 2));
+      judgeMode:'CONTROLLED', professionalQuality:'NOT_EVALUATED', accountMode:shared.accountMode,
+      operatorSeedInitialization:shared.accountMode,sso: shared.accountMode?'SYNTHETIC_TRUSTED_INGRESS':'NOT_TESTED'}, null, 2));
   } finally {await shared.app?.close(); await shared.judge?.close();}
 } else {
   await verifyEntry({output: process.env.CURATED_UI_OUTPUT, flow: process.env.CURATED_UI_FLOW,
