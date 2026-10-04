@@ -108,7 +108,14 @@ def audit(job, state, expected_case_ids=None):
         rows.append(row)
         owner = confined(state, 'execution-history', ref['ownerScope'])
         history = confined(owner, meta['requestId'] + '.jsonl')
-        events = [json.loads(line) for line in history.read_text().splitlines()]
+        try:
+            history_text = history.read_text()
+        except FileNotFoundError:
+            archives.append({'requestId': meta['requestId'], 'snapshotParts': 0,
+                             'snapshotDigestsAndWrites': False, 'pairedClientSnapshots': False,
+                             'terminalComplete': False, 'gap': 'HISTORY_FILE_MISSING'})
+            continue
+        events = [json.loads(line) for line in history_text.splitlines()]
         terminal = [e for e in events if e.get('recordType') == 'terminal']
         snapshots = [e for e in events if e.get('recordType') == 'model-snapshot']
         writes = {(e.get('callId'), e.get('part')): e for e in events if e.get('recordType') == 'model-snapshot-storage'}

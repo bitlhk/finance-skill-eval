@@ -115,6 +115,16 @@ class EvidenceAuditTests(unittest.TestCase):
         (self.root / 'execution-history/owner/model-snapshots/left.call.request.json').write_text('changed')
         self.assertFalse(module.audit(self.job, self.root)['checks']['archivesComplete'])
 
+    def test_missing_history_is_reported_without_hiding_other_evidence(self):
+        (self.root / 'execution-history/owner/left.jsonl').unlink()
+        result = module.audit(self.job, self.root)
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertFalse(result['checks']['archivesComplete'])
+        self.assertTrue(result['checks']['executionVersionAndCleanup'])
+        self.assertEqual(len(result['archives']), 2)
+        self.assertEqual(result['archives'][0]['gap'], 'HISTORY_FILE_MISSING')
+        self.assertTrue(result['archives'][1]['terminalComplete'])
+
     def test_shared_session(self):
         self.job['evidence'][1]['metadata']['sessionId'] = 'left'
         self.assertFalse(module.audit(self.job, self.root)['checks']['freshCaseSessions'])
