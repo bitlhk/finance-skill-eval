@@ -1,6 +1,6 @@
 import type {MigrationRuntime,ModelRef} from './types';
 
-export type RuntimeGeneration={temperature:number;top_p:number;max_tokens:number};
+export type RuntimeGeneration={temperature:number;top_p:number;max_tokens:number;thinking?:{type:'disabled'}};
 export const DEFAULT_RUNTIME_GENERATION:RuntimeGeneration={temperature:0,top_p:1,max_tokens:2048};
 
 export function migrationRuntimeLabel(type:MigrationRuntime['runtimeType']):string{
@@ -29,7 +29,7 @@ export function commonRuntimeModels(left:MigrationRuntime|undefined,right:Migrat
 }
 
 export function runtimeModelReference(model:ModelRef,generation:RuntimeGeneration):ModelRef{
-  return {providerId:model.providerId,modelId:model.modelId,label:model.label,parameters:{temperature:generation.temperature,top_p:generation.top_p,max_tokens:generation.max_tokens}};
+  return {providerId:model.providerId,modelId:model.modelId,label:model.label,parameters:{temperature:generation.temperature,top_p:generation.top_p,max_tokens:generation.max_tokens,...(generation.thinking?{thinking:{type:'disabled' as const}}:{})}};
 }
 
 type RuntimeSideResult={status:'assessed';assessment:{verdict:'PASS'|'FAIL'|'INDETERMINATE'}}|{status:'unavailable';error:string};

@@ -32,7 +32,7 @@ export type ModelRef = {
   providerLabel?: string;
   availability?: "ready" | "unverified" | "unavailable";
   statusNote?: string;
-  parameters?: Record<string, string | number | boolean | null>;
+  parameters?: Record<string, string | number | boolean | null | {type:'disabled'}>;
 };
 
 export type SkillVariant =

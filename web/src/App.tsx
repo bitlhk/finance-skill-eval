@@ -62,7 +62,7 @@ import type {
 type View = "catalog" | "evaluation" | "skills" | "migration" | "environment" | "methodology" | "history";
 type ExecutionMode = "replay" | "direct_model" | "runtime_launcher" | "dual_runtime";
 type LauncherPair = {left:string;right:string};
-type Generation = {temperature:number;top_p:number;max_tokens:number};
+type Generation = {temperature:number;top_p:number;max_tokens:number;thinking?:{type:'disabled'}};
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const PublicDemoContext = createContext(false);
@@ -789,6 +789,7 @@ function EvaluationView(props: {
         {props.runtime==="dual_runtime"?<><div className="environment-controls">
           {(["left","right"] as const).map((side,index)=><label className="field" key={side}><span>{index===0?"对照组 Runtime":"目标组 Runtime"}</span><select disabled={Boolean(active)} value={props.launcherPair[side]} onChange={event=>props.setLauncherPair({...props.launcherPair,[side]:event.target.value})}><option value="">请选择</option>{props.catalog.executionRuntimes.map(item=><option key={item.runtimeId} value={item.runtimeId}>{item.name} · {runtimeTypeLabel(item.runtimeType)}</option>)}</select></label>)}
           {(["temperature","top_p","max_tokens"] as const).map(name=><label className="field" key={name}><span>{name}</span><input type="number" disabled={Boolean(active)} min={name==="top_p"?0.01:name==="max_tokens"?1:0} max={name==="temperature"?2:name==="top_p"?1:32768} step={name==="max_tokens"?1:0.01} value={Number.isFinite(props.generation[name])?props.generation[name]:""} onChange={event=>props.setGeneration({...props.generation,[name]:event.target.value===""?NaN:Number(event.target.value)})}/></label>)}
+          <label className="field"><span>思考模式</span><select disabled={Boolean(active)} value={props.generation.thinking?.type??'default'} onChange={event=>{const {thinking,...base}=props.generation;props.setGeneration(event.target.value==='disabled'?{...base,thinking:{type:'disabled'}}:base)}}><option value="default">模型默认</option><option value="disabled">关闭（需受管连接支持）</option></select></label>
         </div><p role="status">{props.launcherStatus}</p></>:null}
         {props.runtime==="dual_runtime"?null:props.runtime === "replay" ? <div className="environment-readiness replay"><Archive size={16} /><span><strong>冻结证据已就绪</strong>本轮复核固化的真实或受控输出；左右版本与模型保持锁定。</span></div> : props.runtime === "direct_model" ? <div className="environment-readiness ready"><CircleCheck size={16} /><span><strong>文本执行环境</strong>适用于不依赖工具的上传 Skill，本轮不连接 MCP。</span></div> : <div className={`environment-readiness ${props.environmentChecking ? "checking" : props.environmentInspection?.status ?? "waiting"}`}>
           {props.environmentChecking ? <RefreshCw className="spin" size={16} /> : props.environmentInspection?.status === "ready" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}

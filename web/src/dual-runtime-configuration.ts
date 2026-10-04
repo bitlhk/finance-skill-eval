@@ -1,8 +1,8 @@
 import type {ModelRef} from './types';
 
 /** The same Skill on two runtimes is independent goal assessment, not a relative winner. */
-export function dualRuntimeConfiguration(model: ModelRef, parameters: Record<string, number>) {
-  const execution = {...model, parameters: {...parameters}};
+export function dualRuntimeConfiguration(model: ModelRef, parameters: Record<string, unknown>) {
+  const execution = {...model, parameters: structuredClone(parameters)};
   return {
     evaluationMode: 'candidate_runtime_comparison' as const,
     judgeMode: 'model' as const,

@@ -21,6 +21,9 @@ describe('migration Runtime comparison UI contract',()=>{
     expect(migrationRuntimeLabel('agentscope')).toBe('AgentScope Java');
     expect(runtimeModelReference(runtime('oj','openjiuwen','model','upstream').models[0]!,DEFAULT_RUNTIME_GENERATION).parameters)
       .toEqual({temperature:0,top_p:1,max_tokens:2048});
+    const generation={...DEFAULT_RUNTIME_GENERATION,thinking:{type:'disabled' as const}};
+    expect(runtimeModelReference(runtime('oj','openjiuwen','model','upstream').models[0]!,generation).parameters)
+      .toEqual(generation);
   });
 
   it('marks CC quality successful only when every side is assessed PASS',()=>{

@@ -8,12 +8,21 @@ const strictRecordValueSchema = z.union([
   z.null(),
 ]);
 
+const modelParametersSchema = z.record(z.union([
+  strictRecordValueSchema, z.strictObject({type:z.literal('disabled')}),
+])).superRefine((parameters, context) => {
+  for (const [key,value] of Object.entries(parameters)) {
+    if (value !== null && typeof value === 'object' && key !== 'thinking')
+      context.addIssue({code:z.ZodIssueCode.custom,path:[key],message:'Only the closed thinking mode supports an object value.'});
+  }
+});
+
 export const modelRefSchema = z.strictObject({
   providerId: z.string().min(1),
   modelId: z.string().min(1),
   label: z.string().min(1).optional(),
   credentialRef: z.string().min(1).optional(),
-  parameters: z.record(strictRecordValueSchema).default({}),
+  parameters: modelParametersSchema.default({}),
 });
 
 export const skillVariantSchema = z.discriminatedUnion("mode", [

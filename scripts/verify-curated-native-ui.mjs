@@ -11,6 +11,7 @@ import {SkillStore} from '../dist/service/skill-store.js';
 import {loadEvalPack} from '../dist/eval-pack.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
 import {fixtureProfile} from './native-fixture-profile.mjs';
+import {launcherGenerationSchema} from '../dist/runtime-launcher.js';
 
 async function verifyEntry(entry, shared) {
 const output = path.resolve(entry.output);
@@ -46,7 +47,9 @@ const catalog = parseYaml(await readFile('packs/finance/catalog.yaml', 'utf8'));
 const displayName = catalog.skills.find(row => row.skillId === skill.skillId)?.displayName;
 assert(displayName, 'Use an actual curated catalog entry');
 const token = shared?.token ?? randomBytes(32).toString('hex');
-const generation = {temperature: 0, top_p: 1, max_tokens: 1024};
+const generation = launcherGenerationSchema.omit({schemaVersion:true}).parse(
+  process.env.CURATED_UI_GENERATION ? JSON.parse(process.env.CURATED_UI_GENERATION)
+    : {temperature: 0, top_p: 1, max_tokens: 1024});
 const modelFile = path.join(output, 'models.json');
 await writeFile(modelFile, JSON.stringify({schemaVersion: 'finance.skill-eval.execution-models.v1', defaultModelId: 'launcher-model',
   models: [{providerId: 'managed-launcher', modelId: 'launcher-model', label: 'Controlled native model', availability: 'ready', parameters: generation}]}));
@@ -157,7 +160,25 @@ try {
   await page.getByRole('combobox', {name: /^执行方式/}).selectOption('dual_runtime');
   await page.getByRole('combobox', {name: /^对照组 Runtime/}).selectOption(environments[0].environmentId);
   await page.getByRole('combobox', {name: /^目标组 Runtime/}).selectOption(environments[1].environmentId);
-  for (const [key, value] of Object.entries(generation)) await page.getByLabel(key, {exact: true}).fill(String(value));
+  for (const key of ['temperature','top_p','max_tokens']) await page.getByLabel(key, {exact: true}).fill(String(generation[key]));
+  const thinkingMode = page.getByRole('combobox', {name:'思考模式', exact:true});
+  await expect(thinkingMode).toHaveValue('default');
+  if (generation.thinking) {
+    await thinkingMode.selectOption('disabled');
+    await expect(thinkingMode).toHaveValue('disabled');
+    await thinkingMode.selectOption('default');
+    await expect(thinkingMode).toHaveValue('default');
+    await thinkingMode.selectOption('disabled');
+  }
+  for (const width of [1366,390,320]) {
+    await page.setViewportSize({width,height:width>400?900:844});
+    await expect.poll(()=>page.evaluate(()=>Math.max(document.documentElement.scrollWidth,document.body.scrollWidth))).toBeLessThanOrEqual(width);
+    const mode=thinkingMode;
+    await mode.scrollIntoViewIfNeeded();
+    assert(await mode.evaluate(node=>{const a=node.getBoundingClientRect(),b=node.parentElement.getBoundingClientRect();return a.width>80&&a.left>=b.left-1&&a.right<=b.right+1;}));
+    await page.screenshot({path:path.join(output,`configuration-${width}.png`),fullPage:true});
+  }
+  await page.setViewportSize({width:1366,height:900});
   await expect(page.getByRole('combobox', {name: /^评分方式/})).toHaveValue('model');
   await expect(page.getByRole('button', {name: '开始测试', exact: true})).toBeEnabled({timeout: 15000});
   await page.screenshot({path: path.join(output, 'desktop-configuration.png'), fullPage: true});
