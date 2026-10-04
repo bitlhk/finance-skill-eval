@@ -1,6 +1,6 @@
 import type {ModelAdapter} from './adapters.js';
 import {judgeResultSchema,type JudgeResult,type ModelRef} from './contracts.js';
-import {ModelGoalJudge} from './goal-judge.js';
+import {ModelGoalJudge,GOAL_JUDGE_POLICY_VERSION} from './goal-judge.js';
 import type {PairwiseJudge} from './judge.js';
 
 type SideAssessment=NonNullable<JudgeResult['runtimeComparison']>['left'];
@@ -10,7 +10,7 @@ export class ModelRuntimeComparisonJudge implements PairwiseJudge {
   readonly assessesSidesIndependently=true;
   readonly judgeId:string;
   constructor(private readonly adapter:ModelAdapter,private readonly model:ModelRef) {
-    this.judgeId=`model-runtime-goals:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
+    this.judgeId=`model-runtime-goals:${GOAL_JUDGE_POLICY_VERSION}:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
   }
   async compare(input:Parameters<PairwiseJudge['compare']>[0]):Promise<JudgeResult> {
     const assess=async(side:'left'|'right'):Promise<SideAssessment>=>{

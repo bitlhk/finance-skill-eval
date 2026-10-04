@@ -79,6 +79,14 @@ against an isolated fixture. It never builds a Runtime or calls a model/bank;
 passing it must not be reported as live cohort acceptance. The Runtime comparison
 tests separately assert the same frozen cases reach both execution sides.
 
+The goal Judge policy `business-time-v1` includes the recorded business date,
+time zone and source basis from identity-verified Launcher evidence. Wall-clock
+execution timestamps and source update times must not replace a fixed synthetic
+business date. Missing/invalid/unverified clock metadata remains `NOT_VERIFIED`;
+the Judge must not invent today's date. This is Runtime-reported context, not
+independent attestation. Preserve old scores; any re-assessment gets a separate
+record with its source report digest and new Judge policy identity.
+
 ## Browser delivery workflow
 
 - Export requirements for each target, including the target in the download URL
