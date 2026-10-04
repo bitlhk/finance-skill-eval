@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
 
+export function fixtureExecution(fixtures, mode='CONTROLLED') {
+  assert(['CONTROLLED','LIVE'].includes(mode), 'Explicit fixture execution mode required');
+  const live=mode==='LIVE';
+  for(const family of ['openjiuwen','agentscope']) {
+    assert(fixtures[family], 'Both fixture declarations required');
+    assert.equal(fixtures[family].realModel==='LIVE',live,
+      'Page execution mode must match both actual Launcher fixtures');
+  }
+  return live?'LIVE':'NOT_RUN';
+}
+
 // Test fixtures are loopback-only. Preserve their declared routes, not an alias
 // guessed from a Runtime family or whichever environment was registered first.
 export function fixtureProfile(fixtures) {

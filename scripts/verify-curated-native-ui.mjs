@@ -1,4 +1,4 @@
-/** Original curated cases through the real UI and two native Launchers. Controlled, not quality acceptance. */
+/** Actual UI and native Launchers; explicit live mode still uses a controlled Judge, not quality acceptance. */
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
 import {mkdir, readFile, writeFile, cp} from 'node:fs/promises';
@@ -10,7 +10,7 @@ import {createEvaluationService} from '../dist/service/server.js';
 import {SkillStore} from '../dist/service/skill-store.js';
 import {loadEvalPack} from '../dist/eval-pack.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
-import {fixtureProfile} from './native-fixture-profile.mjs';
+import {fixtureProfile, fixtureExecution} from './native-fixture-profile.mjs';
 import {launcherGenerationSchema} from '../dist/runtime-launcher.js';
 
 async function verifyEntry(entry, shared) {
@@ -23,6 +23,7 @@ const fixtures = Object.fromEntries(await Promise.all(Object.entries(paths).map(
   [key, JSON.parse(await readFile(file, 'utf8'))])));
 assert.deepEqual(Object.keys(fixtures).sort(), ['agentscope', 'openjiuwen']);
 const profile = fixtureProfile(fixtures);
+const realModel = fixtureExecution(fixtures, process.env.CURATED_UI_EXECUTION_MODE ?? 'CONTROLLED');
 const skill = JSON.parse(await readFile(path.join(entry.skillProbe, 'skill.json'), 'utf8'));
 const archive = Buffer.from(skill.archiveBase64, 'base64');
 const sourceFiles = unzipSync(archive);
@@ -52,7 +53,7 @@ const generation = launcherGenerationSchema.omit({schemaVersion:true}).parse(
     : {temperature: 0, top_p: 1, max_tokens: 1024});
 const modelFile = path.join(output, 'models.json');
 await writeFile(modelFile, JSON.stringify({schemaVersion: 'finance.skill-eval.execution-models.v1', defaultModelId: 'launcher-model',
-  models: [{providerId: 'managed-launcher', modelId: 'launcher-model', label: 'Controlled native model', availability: 'ready', parameters: generation}]}));
+  models: [{providerId: 'managed-launcher', modelId: 'launcher-model', label: realModel==='LIVE'?'Approved live native model':'Controlled native model', availability: 'ready', parameters: generation}]}));
 process.env.FINANCE_EVAL_EXECUTION_CATALOG = modelFile;
 const judge = shared?.judge ?? await controlledGoalJudge(), judgeCalls = judge.calls, judgeStart = judge.calls.length;
 if (shared) shared.judge = judge;
@@ -252,11 +253,11 @@ try {
   }
   checks.push('Original Skill and development cases, native dynamic builds, same generation parameters, per-case sessions, Lock/history and projected facts');
   checks.push('Real page at 1366/390/320; controlled Judge preserves INDETERMINATE rather than claiming answer quality');
-  await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS', scope: 'CONTROLLED_CURATED_NATIVE_BROWSER', flow,
+  await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS', scope: realModel==='LIVE'?'LIVE_CURATED_NATIVE_BROWSER_CONTROLLED_JUDGE':'CONTROLLED_CURATED_NATIVE_BROWSER', flow,
     skillId: skill.skillId, caseIds: pack.cases.map(row => row.caseId), jobId: job.jobId, checks,
     analysis: flow === 'migration' ? 'CONTROLLED_EXPLICIT_DECLARATIONS' : 'NOT_RUN',
     sourceScope: 'Previously adapted readonly Skill; not arbitrary MCP code migration',
-    realModel: 'NOT_RUN', professionalQuality: 'NOT_EVALUATED', sso: 'NOT_TESTED', holdout: 'NOT_IN_BROWSER_COHORT'}, null, 2));
+    realModel, judgeMode:'CONTROLLED', professionalQuality: 'NOT_EVALUATED', sso: 'NOT_TESTED', holdout: 'NOT_IN_BROWSER_COHORT'}, null, 2));
 } catch (error) {
   if (page) {await page.screenshot({path: path.join(output, 'failure.png'), fullPage: true});
     await writeFile(path.join(output, 'failure-body.txt'), await page.locator('body').innerText());}
@@ -292,7 +293,9 @@ if (process.env.CURATED_UI_COHORT) {
     await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS',
       scope: 'SAME_EVAL_SERVICE_AND_WORKSPACE', jobIds: shared.jobIds, serviceRestarts: 0,
       environmentCount: [...shared.environmentGroups.values()].reduce((sum, rows) => sum + rows.length, 0),
-      managedProfileCount: shared.environmentGroups.size, realModel: 'NOT_RUN', sso: 'NOT_TESTED'}, null, 2));
+      managedProfileCount: shared.environmentGroups.size,
+      realModel: process.env.CURATED_UI_EXECUTION_MODE==='LIVE'?'LIVE':'NOT_RUN',
+      judgeMode:'CONTROLLED', professionalQuality:'NOT_EVALUATED', sso: 'NOT_TESTED'}, null, 2));
   } finally {await shared.app?.close(); await shared.judge?.close();}
 } else {
   await verifyEntry({output: process.env.CURATED_UI_OUTPUT, flow: process.env.CURATED_UI_FLOW,
