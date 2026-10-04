@@ -163,6 +163,15 @@ does not prove network-wire model parameters or genuine SSO. It checks only the
 requests in the selected saved job, so another active run does not contaminate
 its archive-completeness result. Output must be a new file; old reports remain.
 
+Case coverage is checked against the submitted `selectedCaseIds`, not against
+the output report's own case list. Duplicate report cases and entire omitted
+requested cases fail. For implicit-all, generated or holdout runs, also provide
+`--case-manifest /path/to/frozen-case-ids.json`: a JSON array of expected IDs
+from the frozen input suite, including holdouts when requested. Do not create
+this list from the output report being audited. Its digest and the coverage
+basis are recorded; an incomplete manifest cannot drop an explicitly selected
+case. This is execution coverage, not proof that every answer is correct.
+
 ### Historical single-owner mode
 
 In single-owner mode stores are process-wide, not tenant-aware. For an explicitly selected

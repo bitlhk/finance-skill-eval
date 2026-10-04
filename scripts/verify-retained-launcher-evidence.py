@@ -25,13 +25,32 @@ def confined(root, *parts):
     return candidate
 
 
-def audit(job, state):
+def case_ids(job, manifest):
+    configuration = job.get('configuration', {})
+    selected = configuration.get('selectedCaseIds', [])
+    def valid(values):
+        return (isinstance(values, list) and bool(values)
+                and all(isinstance(value, str) and value for value in values)
+                and len(set(values)) == len(values))
+    if manifest is not None:
+        if not valid(manifest) or not set(selected).issubset(manifest):
+            raise ValueError('INVALID_CASE_MANIFEST')
+        return manifest, 'EXPLICIT_FROZEN_CASE_MANIFEST'
+    if configuration.get('caseSource', 'fixed') != 'fixed' or configuration.get('includeHoldout') or not valid(selected):
+        raise ValueError('CASE_MANIFEST_REQUIRED')
+    return selected, 'REQUEST_SELECTED_CASE_IDS'
+
+
+def audit(job, state, expected_case_ids=None):
     rows, archives = [], []
     evidence = job.get('evidence', [])
-    expected = {(case['caseId'], side) for case in job['report']['cases'] for side in ('left', 'right')}
+    ids, basis = case_ids(job, expected_case_ids)
+    report_ids = [case['caseId'] for case in job['report']['cases']]
+    expected = {(case, side) for case in ids for side in ('left', 'right')}
     actual = Counter((item['caseId'], item['side']) for item in evidence)
     checks = {'runCompleted': job['status'] == 'completed',
-              'exactCaseCoverage': bool(expected) and set(actual) == expected and all(n == 1 for n in actual.values())}
+              'exactCaseCoverage': (bool(expected) and set(actual) == expected and all(n == 1 for n in actual.values())
+                                    and len(report_ids) == len(ids) and set(report_ids) == set(ids))}
     for item in evidence:
         meta = item['metadata']
         ref = meta['retainedEvidenceRef']
@@ -87,6 +106,7 @@ def audit(job, state):
                       ('sameGeneration', 'declaredModelParameters'), ('sameBusinessDate', 'businessDate')]:
         checks[name] = bool(evidence) and len({json.dumps(e['metadata'][key], sort_keys=True) for e in evidence}) == 1
     return {'status': 'PASS' if all(checks.values()) else 'FAIL', 'checks': checks, 'rows': rows, 'archives': archives,
+            'caseCoverageBasis': basis, 'expectedCaseIds': ids,
             'qualitySummary': job['report'].get('summary'), 'qualityIsSeparateFromExecutionAudit': True,
             'wireParametersIndependentlyVerified': False, 'genuineSsoVerified': False, 'publicCutover': False,
             'basis': 'RETAINED_LOCK_HISTORY_SNAPSHOTS_AND_DELETION_RECEIPTS_ZERO_NEW_HTTP'}
@@ -97,9 +117,14 @@ if __name__ == '__main__':
     parser.add_argument('--job', required=True, type=Path)
     parser.add_argument('--state', required=True, type=Path)
     parser.add_argument('--out', required=True, type=Path)
+    parser.add_argument('--case-manifest', type=Path,
+                        help='Frozen expected case-ID JSON array, required for holdout/generated/implicit-all cases')
     args = parser.parse_args()
     raw = args.job.read_bytes()
-    result = audit(json.loads(raw), args.state)
+    manifest_raw = args.case_manifest.read_bytes() if args.case_manifest else None
+    result = audit(json.loads(raw), args.state, json.loads(manifest_raw) if manifest_raw is not None else None)
+    if manifest_raw is not None:
+        result['expectedCaseManifestSha256'] = digest(manifest_raw)
     result['sourceJobSha256'] = digest(raw)
     with args.out.open('x') as output:
         json.dump(result, output, ensure_ascii=False, indent=2)

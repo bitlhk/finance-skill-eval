@@ -16,6 +16,7 @@ class EvidenceAuditTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.job = {'status': 'completed', 'report': {'cases': [{'caseId': 'case'}]}, 'evidence': [],
                     'configuration': {side + 'Variant': {'artifactSha256': 'source'} for side in ('left', 'right')}}
+        self.job['configuration'].update(selectedCaseIds=['case'], caseSource='fixed', includeHoldout=False)
         for side, family in [('left', 'openjiuwen'), ('right', 'agentscope')]:
             meta = {'requestId': side, 'sessionId': side, 'runId': side, 'buildId': side,
                     'loadedSkillDigest': 'skill', 'runtime': {'type': family},
@@ -54,6 +55,43 @@ class EvidenceAuditTests(unittest.TestCase):
     def test_missing_case_side(self):
         self.job['evidence'].pop()
         self.assertFalse(module.audit(self.job, self.root)['checks']['exactCaseCoverage'])
+
+    def test_whole_requested_case_missing_from_report_and_evidence(self):
+        self.job['configuration']['selectedCaseIds'].append('missing-case')
+        self.assertFalse(module.audit(self.job, self.root)['checks']['exactCaseCoverage'])
+
+    def test_duplicate_report_case_rejected(self):
+        self.job['report']['cases'].append({'caseId': 'case'})
+        self.assertFalse(module.audit(self.job, self.root)['checks']['exactCaseCoverage'])
+
+    def test_holdout_needs_frozen_manifest(self):
+        self.job['configuration']['includeHoldout'] = True
+        with self.assertRaisesRegex(ValueError, 'CASE_MANIFEST_REQUIRED'):
+            module.audit(self.job, self.root)
+
+    def test_implicit_all_cases_needs_frozen_manifest(self):
+        self.job['configuration']['selectedCaseIds'] = []
+        with self.assertRaisesRegex(ValueError, 'CASE_MANIFEST_REQUIRED'):
+            module.audit(self.job, self.root)
+
+    def test_manifest_does_not_make_omitted_holdout_pass(self):
+        self.job['configuration']['includeHoldout'] = True
+        result = module.audit(self.job, self.root, ['case', 'holdout-case'])
+        self.assertFalse(result['checks']['exactCaseCoverage'])
+        self.assertEqual(result['caseCoverageBasis'], 'EXPLICIT_FROZEN_CASE_MANIFEST')
+
+    def test_manifest_cannot_drop_requested_cases(self):
+        with self.assertRaisesRegex(ValueError, 'INVALID_CASE_MANIFEST'):
+            module.audit(self.job, self.root, ['another-case'])
+
+    def test_manifest_rejects_duplicates(self):
+        with self.assertRaisesRegex(ValueError, 'INVALID_CASE_MANIFEST'):
+            module.audit(self.job, self.root, ['case', 'case'])
+
+    def test_explicit_manifest_for_unselected_cases(self):
+        self.job['configuration']['selectedCaseIds'] = []
+        result = module.audit(self.job, self.root, ['case'])
+        self.assertEqual(result['status'], 'PASS')
 
     def test_corrupt_body(self):
         (self.root / 'execution-history/owner/model-snapshots/left.call.request.json').write_text('changed')
