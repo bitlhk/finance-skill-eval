@@ -154,6 +154,39 @@ unreleased until these gates pass. Preserve existing data and rollback releases.
 
 Automated development verification is not independent human acceptance.
 
+## Root-path static release check
+
+Vite embeds its base path in static assets and API URLs. Do not promote the
+`/release-check/` static directory unchanged to `/`. Build a separate root
+artifact from the accepted frontend commit; preserve the candidate artifact and
+current root for rollback. Verify frontend source differences explicitly when
+the backend and frontend commits differ.
+
+```bash
+pnpm exec vite build --base=/ --outDir=/new/release/web-root
+node scripts/verify-formal-entry-paths.mjs \
+  /new/release/web-root /new/evidence/root-browser \
+  http://127.0.0.1:PORT /private/config/ingress-token \
+  studio_TEST_SUBJECT run-EXISTING-SYNTHETIC-RUN-ID
+```
+
+Use an existing completed synthetic run owned by that test subject. The probe
+serves only the new static build on an ephemeral loopback port. It allows a small
+read-only API path set and blocks all writes, including initialization preflight.
+It replaces browser identity headers with the configured trusted test identity;
+therefore this is explicitly NOT an SSO or public gateway test. It tests root
+assets/API prefixes, a retained obsolete browser token, exact history selection,
+JSON report download, original record digest, and1366/390/320pixel layouts.
+The ingress credential stays server-side and is never put in an artifact/report.
+
+Before actual root promotion, separately check the current gateway and origin
+configuration, both authentication/header boundaries, upload limits and long
+analysis timeouts. Keep legacy route/data handling explicit; do not remove old
+services or redirect a write request during a static rollout. Root routing and
+static artifacts must be switched consistently, with configuration digests,
+backups, syntax validation and post-switch public verification. This probe has
+no deploy/reload mode and cannot satisfy those public release gates by itself.
+
 ## Fixed synthetic MCP source identity
 
 The bounded reference entry verifies the source/dependency manifest at startup.
