@@ -13,6 +13,14 @@ import {loadEvalPack} from '../dist/eval-pack.js';
 import {controlledGoalJudge} from './controlled-goal-judge.mjs';
 import {fixtureProfile, fixtureExecution} from './native-fixture-profile.mjs';
 import {launcherGenerationSchema} from '../dist/runtime-launcher.js';
+import {analyzeWithAgent} from '../dist/migration/infrastructure/migration-agent.js';
+
+const liveAnalysis=process.env.CURATED_UI_LIVE_ANALYSIS==='true';
+if(liveAnalysis){
+  assert.equal(process.env.FINANCE_EVAL_LIVE_ANALYSIS_APPROVED,'true');
+  assert(process.env.FINANCE_EVAL_AGENT_MODEL_ID,'An explicitly configured analysis model is required');
+  process.env.FINANCE_EVAL_MIGRATION_AGENT='on';
+}
 
 async function verifyEntry(entry, shared) {
 const output = path.resolve(entry.output);
@@ -32,7 +40,7 @@ const sourceMethod = Buffer.from(sourceFiles['SKILL.md']).toString();
 const sourceHeader = parseYaml(sourceMethod.split('---')[1]);
 const declaredTools = sourceHeader['allowed-tools'];
 assert(Array.isArray(declaredTools));
-if (shared) shared.analysis = {declaredTools, sourceMethod};
+if (shared) shared.analysis = {declaredTools, sourceMethod, output};
 const root = shared?.root ?? path.join(output, 'root'), data = shared?.data ?? path.join(output, 'data');
 await mkdir(path.join(root, 'packs/finance'), {recursive: true});
 if (!shared) await cp(path.join(entry.stagedPack, 'packs/candidate'), path.join(root, 'packs/finance/candidate'), {recursive: true});
@@ -67,7 +75,14 @@ try {
     ...(shared?.accountMode?{workspaceMode:'account',workspaceSubject:undefined,workspaceOrigin:shared.origin,
       workspaceSeedDirectory:shared.seedDirectory,workspaceSeedSha256:shared.seedSha256}:{}),
     ...(flow === 'migration' || shared?.migration ? {
-      migrationAnalyzer: async () => {
+      migrationAnalyzer: async input => {
+        if(liveAnalysis){
+          const result=await analyzeWithAgent(input,{projectRoot:process.cwd(),
+            modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID,maxIterations:12,maxTokens:32000,
+            modelTimeoutMs:120000,timeoutMs:600000});
+          await writeFile(path.join(shared?.analysis.output??output,'actual-analysis.json'),JSON.stringify(result,null,2),{mode:0o600});
+          return result;
+        }
         const {declaredTools: tools, sourceMethod: method} = shared?.analysis ?? {declaredTools, sourceMethod};
         return {status: 'PRODUCED', payload: {status: 'PRODUCED', skill: {status: 'COMPLIANT', findings: []},
         tools: tools.map(name => ({name, sourcePaths: ['SKILL.md'], language: null, portability: 'RUNTIME_BOUND',
@@ -129,9 +144,17 @@ try {
   } else {
     await page.getByRole('button', {name: 'Skill 迁移', exact: true}).click();
     await page.getByRole('button', {name: '新建迁移', exact: true}).click();
-    const inspected = page.waitForResponse(r => r.url().endsWith('/inspect') && r.request().method() === 'POST');
+    const inspected = page.waitForResponse(r => r.url().endsWith('/inspect') && r.request().method() === 'POST',
+      {timeout:liveAnalysis?650000:30000});
     await page.locator('input[type=file][multiple]').setInputFiles({name: skill.skillId + '.zip', mimeType: 'application/zip', buffer: archive});
     const diagnosis = await inspected; assert(diagnosis.ok(), await diagnosis.text());
+    const inspection=await diagnosis.json();
+    await writeFile(path.join(output,'inspection.json'),JSON.stringify(inspection,null,2),{mode:0o600});
+    if(liveAnalysis){
+      assert.equal(inspection.dependencyAnalysis?.status,'COMPLETE');
+      assert.deepEqual(inspection.tools.map(tool=>tool.name).sort(),[...declaredTools].sort());
+      assert(inspection.tools.every(tool=>tool.evidence?.length>0));
+    }
     const binding = page.locator('section').filter({has: page.getByRole('heading', {name: '复用已准入工具', exact: true})}).last();
     for (const environment of environments) await binding.getByLabel(environment.name, {exact: true}).check();
     await binding.getByRole('button', {name: '检查已准入合同', exact: true}).click();
@@ -273,7 +296,7 @@ try {
   checks.push('Real page at 1366/390/320; controlled Judge preserves INDETERMINATE rather than claiming answer quality');
   await writeFile(path.join(output, 'report.json'), JSON.stringify({status: 'PASS', scope: realModel==='LIVE'?'LIVE_CURATED_NATIVE_BROWSER_CONTROLLED_JUDGE':'CONTROLLED_CURATED_NATIVE_BROWSER', flow,
     skillId: skill.skillId, caseIds: pack.cases.map(row => row.caseId), jobId: job.jobId, checks,
-    analysis: flow === 'migration' ? 'CONTROLLED_EXPLICIT_DECLARATIONS' : 'NOT_RUN',
+    analysis: flow === 'migration' ? (liveAnalysis?'REAL_MODEL':'CONTROLLED_EXPLICIT_DECLARATIONS') : 'NOT_RUN',
     sourceScope: 'Previously adapted readonly Skill; not arbitrary MCP code migration',
     realModel, judgeMode:'CONTROLLED', professionalQuality: 'NOT_EVALUATED', sso: shared?.accountMode?'SYNTHETIC_TRUSTED_INGRESS':'NOT_TESTED', holdout: 'NOT_IN_BROWSER_COHORT'}, null, 2));
 } catch (error) {
@@ -350,6 +373,7 @@ if (process.env.CURATED_UI_COHORT) {
       environmentCount: [...shared.environmentGroups.values()].reduce((sum, rows) => sum + rows.length, 0),
       managedProfileCount: shared.environmentGroups.size,
       realModel: process.env.CURATED_UI_EXECUTION_MODE==='LIVE'?'LIVE':'NOT_RUN',
+      analysis: shared.migration?(liveAnalysis?'REAL_MODEL':'CONTROLLED_EXPLICIT_DECLARATIONS'):'NOT_RUN',
       judgeMode:'CONTROLLED', professionalQuality:'NOT_EVALUATED', accountMode:shared.accountMode,
       operatorSeedInitialization:shared.accountMode,sso: shared.accountMode?'SYNTHETIC_TRUSTED_INGRESS':'NOT_TESTED'}, null, 2));
   } finally {await shared.app?.close(); await shared.judge?.close();}

@@ -42,6 +42,6 @@ it('hands neither agent a shell tool',async()=>{
 it('binds every general A2 file tool to the per-request workspace',async()=>{
   const code=await source('analyze_agent.py');
   for(const name of ['WorkspaceReadFileTool','WorkspaceGlobTool','WorkspaceListDirTool'])
-    expect(code).toContain(`${name}(workspace, sys_op, lang, agent_id)`);
+    expect(code).toContain(`${name}(workspace, sys_op, lang, agent_id`);
   expect(code).not.toContain('from openjiuwen.harness.tools import');
 });

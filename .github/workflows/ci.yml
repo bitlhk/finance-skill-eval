@@ -43,7 +43,7 @@ jobs:
       - name: Bounded synthetic MCP source (isolated TCP and pinned identity)
         run: integrations/openjiuwen/.venv/bin/python -m unittest integrations.openjiuwen.test_bounded_reference_mcp integrations.openjiuwen.test_reference_mcp
       - name: Analysis file tools cannot read another workspace
-        run: integrations/openjiuwen/.venv/bin/python -m unittest tests.test_analysis_file_boundary tests.test_analysis_workspace_text
+        run: integrations/openjiuwen/.venv/bin/python -m unittest tests.test_analysis_file_boundary tests.test_analysis_workspace_text tests.test_analysis_model_wire
       - name: Verify all four enterprise migration fixtures offline
         run: pnpm test:migration:enterprise:offline
       - name: Compile native target (no live credentials or model calls)

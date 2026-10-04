@@ -176,7 +176,7 @@ async def run(body: dict) -> None:
         # (below) is what keeps a shell out: without it the harness registers one at skill-refresh
         # time, and `bash` can write, which would make "read-only" a claim rather than a boundary.
         tools = [
-            WorkspaceReadFileTool(workspace, sys_op, lang, agent_id),
+            WorkspaceReadFileTool(workspace, sys_op, lang, agent_id, enable_image_multimodal=False),
             # Ours, not the harness's: that one shells out, and on Windows it cannot start.
             build_grep_tool(workspace, tool_trace),
             WorkspaceGlobTool(workspace, sys_op, lang, agent_id),
@@ -222,6 +222,9 @@ async def run(body: dict) -> None:
             # but it does not have to be built at all.
             auto_create_workspace=False,
             enable_task_loop=False,
+            # Source diagnosis is text/code only. The SDK's default auto mode
+            # otherwise sends unrelated background image-probing model requests.
+            enable_read_image_multimodal=False,
         )
 
         result = await agent.invoke({

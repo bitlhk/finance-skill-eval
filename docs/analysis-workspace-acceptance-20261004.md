@@ -90,3 +90,29 @@ The narrow analysis report's PASS does not override the wire discrepancies.
 Real SSO, reviewed release configuration, live migration/native browser closure
 and remaining case/quality gates are separate. No merge or formal-entry switch
 is authorized merely by this report.
+
+## Follow-up: text-only SDK model traffic
+
+The actual A2 subprocess was exercised against a local synthetic HTTP model.
+Before the fix, it sent two image probe requests with temperature0/max_tokens32
+alongside two expected text requests with temperature0.2/max_tokens32000.
+This reproduces the unexpected request shape without external model calls; the
+previous live rejected bodies remain unavailable, so they are not retroactively
+reclassified. SDK `DeepAgent._resolve_read_image_multimodal` schedules this probe
+when its public `enable_read_image_multimodal` configuration is unset.
+
+A2 now explicitly disables image attachment/probing through that existing SDK
+configuration and the read tool option. It remains text/source-code analysis;
+image contents are not interpreted as migration evidence. No SDK source changed.
+`tests.test_analysis_model_wire` runs the actual subprocess, checks its produced
+result and every captured HTTP request, and passes with the other12 Python tests.
+Before/after logs are `analysis-image-wire-before.log` and
+`analysis-image-wire-after.log` in the release evidence directory.
+
+The existing curated native browser verifier has an opt-in
+`CURATED_UI_LIVE_ANALYSIS=true` mode, requiring explicit transfer approval and a
+configured analyzer model. It invokes the real analyzer during page upload,
+retains analysis/inspection evidence and requires located tool references before
+the existing binding, candidate generation and dual-Runtime workflow. Default
+controlled verification is unchanged. The mode alone is not acceptance evidence;
+Judge quality and real SSO remain separately labeled.
