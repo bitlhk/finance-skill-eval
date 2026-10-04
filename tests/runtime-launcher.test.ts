@@ -9,6 +9,13 @@ const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
+  it('accepts only the bounded optional non-thinking mode',()=>{
+    const base={schemaVersion:'finance.eval-generation.v1',temperature:0,top_p:1,max_tokens:8192};
+    expect(launcherGenerationSchema.parse({...base,thinking:{type:'disabled'}}).thinking).toEqual({type:'disabled'});
+    for(const thinking of [null,{},'disabled',{type:'enabled'},{type:'disabled',key:'private'}])
+      expect(()=>launcherGenerationSchema.parse({...base,thinking})).toThrow();
+    expect(launcherGenerationSchema.parse(base)).not.toHaveProperty('thinking');
+  });
   it.each(['runId','caseId','side','instanceId'])('rejects a failure observation with another %s before forwarding it',async(field)=>{
     const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
     const event={schemaVersion:'finance.runtime-observation.v1',eventId:'failure-1',sequence:1,occurredAt:'2026-10-01T00:00:00.000Z',traceId:'trace-1',instanceId:'instance-1',runId:'run-1',caseId:'case-1',side:'right',source:{adapter:'launcher',synthesized:true},kind:'execution.failed',payload:{error:{code:'EVAL_TOOL_EXECUTION_FAILED',message:'private',retryable:false}},[field]:field==='side'?'left':'another'};

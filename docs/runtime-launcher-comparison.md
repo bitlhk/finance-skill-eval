@@ -35,6 +35,12 @@ runtime, a trading route, a public upload endpoint, or a new evaluation engine.
 
 - `RuntimeInstanceRequest.generation` is optional for older clients. When present,
   all three parameters are required with `schemaVersion=finance.eval-generation.v1`.
+  An optional `thinking: {type: "disabled"}` is supported only when the managed
+  Builder model binding explicitly declares `generationExtensions: ["thinking.disabled"]`.
+  Omission preserves the endpoint default. Unknown modes/options reject; no proxy
+  silently adds this field. Both sides must use the same parameters, with their
+  frozen configuration and actual request checks reported separately. An older
+  Launcher may reject the extension; Eval does not silently retry without it.
   Unknown keys, incomplete settings, invalid numbers and unsupported values are
   rejected, not silently discarded. Empty legacy model parameters omit this field.
 - `capabilities.nativeToolNames` optionally advertises preset-scoped native tools.

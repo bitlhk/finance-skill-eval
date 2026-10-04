@@ -27,6 +27,7 @@ export const launcherGenerationSchema=z.strictObject({
   temperature:z.number().finite().min(0).max(2),
   top_p:z.number().finite().gt(0).max(1),
   max_tokens:z.number().int().min(1).max(32768),
+  thinking:z.strictObject({type:z.literal('disabled')}).optional(),
 });
 export type RuntimeInstanceRequest={
   schemaVersion:'finance.skill-eval.runtime-instance.v1';runId:string;side:EvaluationSide;modelId:string;
