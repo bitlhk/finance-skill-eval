@@ -6,6 +6,7 @@ import { CodexCliModelAdapter } from "../codex-cli-model.js";
 import type { ModelRef } from "../contracts.js";
 import { OpenAiCompatibleModelAdapter } from "../openai-compatible-model.js";
 import { runtimeLauncherBaseUrlSchema } from "../shared/contracts/runtime-launcher.js";
+import type {WorkspaceRequestLimits} from './workspace-request-budget.js';
 
 export type ServiceConfig = {
   rootDirectory: string;
@@ -22,6 +23,7 @@ export type ServiceConfig = {
   workspaceSeedDirectory?: string;
   workspaceSeedSha256?: string;
   workspaceMaxAccounts?: number;
+  workspaceRequestLimits?: WorkspaceRequestLimits;
   /** Internal account-service policy; not a browser-selected option. */
   managedWorkspace?: boolean;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
@@ -61,6 +63,11 @@ export function loadServiceConfig(): ServiceConfig {
     workspaceSeedDirectory:process.env.FINANCE_EVAL_WORKSPACE_SEED_DIRECTORY?.trim()||undefined,
     workspaceSeedSha256:process.env.FINANCE_EVAL_WORKSPACE_SEED_SHA256?.trim()||undefined,
     workspaceMaxAccounts:Number(process.env.FINANCE_EVAL_WORKSPACE_MAX_ACCOUNTS??64),
+    workspaceRequestLimits:{
+      perAccount:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUESTS_PER_ACCOUNT??20),
+      global:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUESTS_GLOBAL??80),
+      windowSeconds:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS??60),
+    },
     launcherTrust:launcherTrustConfiguration(),
     maxConcurrentRuns: Math.max(
       1,

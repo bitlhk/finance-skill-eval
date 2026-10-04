@@ -4,9 +4,9 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {zipSync,strToU8} from 'fflate';
-import type {FastifyInstance} from 'fastify';
+import Fastify,{type FastifyInstance} from 'fastify';
 import {createEvaluationService} from '../src/service/server.js';
-import {readWorkspaceSeed} from '../src/service/account-workspaces.js';
+import {createAccountWorkspaces,readWorkspaceSeed} from '../src/service/account-workspaces.js';
 import {requireManagedRun,managedWorkspaceOperation} from '../src/service/managed-workspace-policy.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 
@@ -101,6 +101,30 @@ it('does not accept arbitrary execution payloads even when they use a managed La
   expect(()=>requireManagedRun(base)).not.toThrow();
   expect(()=>requireManagedRun({...base,runtimeHarnessTools:['bash']})).toThrow('平台已准入');
   expect(()=>requireManagedRun({...base,runtimeMcpBindings:{left:[],right:[{assetDigest:'a'.repeat(64),toolNames:['x'],filePaths:['run.js'],start:['node','run.js']}]}})).toThrow('平台已准入');
+});
+
+it('rejects excess work before the child handler and always permits reads and cancellation',async()=>{
+  const {app,config}=await setup();await app.close();apps.splice(apps.indexOf(app),1);
+  const calls:string[]=[];
+  const service=await createAccountWorkspaces({...config,host:'127.0.0.1',port:0,publicDirectory:'',maxConcurrentRuns:1,
+    workspaceRequestLimits:{perAccount:1,global:2,windowSeconds:60}},async()=>{
+    const child=Fastify();
+    child.all('/api/*',async request=>{calls.push(request.url);return {handled:true};});
+    return child;
+  });apps.push(service);
+  const send=(subject:string,url:string,method:'GET'|'POST'='POST')=>service.inject({method,url,headers:headers(subject)});
+  expect((await service.inject({method:'POST',url:'/api/runs',headers:{...headers('studio_a'),authorization:'Bearer wrong'}})).statusCode).toBe(401);
+  expect((await send('studio_a','/api/runs')).statusCode).toBe(200);
+  const denied=await send('studio_a','/api/migrations/m/analyze');
+  expect(denied.statusCode).toBe(429);expect(denied.headers['retry-after']).toBe('60');
+  expect(denied.json().scope).toBe('ACCOUNT');
+  expect((await send('studio_b','/api/skills/s/prepare')).statusCode).toBe(200);
+  expect((await send('studio_c','/api/migrations/m/%64iagnosis?view=all','GET')).statusCode).toBe(429);
+  expect(calls).toEqual(['/api/runs','/api/skills/s/prepare']);
+  expect((await send('studio_a','/api/runs/run-a','GET')).statusCode).toBe(200);
+  expect((await send('studio_a','/api/runs/run-a/cancel')).statusCode).toBe(200);
+  expect((await send('studio_b','/api/optimizations/o/decision')).statusCode).toBe(200);
+  expect(calls).toHaveLength(5);
 });
 
 it('preserves HTTP uploads, SSE and persisted history without exposing another account records',async()=>{

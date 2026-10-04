@@ -35,6 +35,9 @@ FINANCE_EVAL_WORKSPACE_SUBJECT=<verified owner of the old private directory>
 FINANCE_EVAL_WORKSPACE_SEED_DIRECTORY=<operator-reviewed seed directory>
 FINANCE_EVAL_WORKSPACE_SEED_SHA256=<canonical manifest sha256>
 FINANCE_EVAL_WORKSPACE_MAX_ACCOUNTS=64
+FINANCE_EVAL_WORKSPACE_REQUESTS_PER_ACCOUNT=20
+FINANCE_EVAL_WORKSPACE_REQUESTS_GLOBAL=80
+FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS=60
 ```
 
 Keep the existing server-only access credential configured. Account mode refuses
@@ -81,9 +84,23 @@ only by hiding buttons.
 
 All account evaluation jobs share `FINANCE_EVAL_MAX_CONCURRENT_RUNS` (1-4), with a
 FIFO queue and cancellation of waiting jobs. Closing the service cancels tracked
-jobs and waits for cleanup. This is not a general per-user cost quota: analysis
-and migration-generation requests still need ingress rate/budget controls before
-broad access. Do not promise unlimited usage or unlimited accounts.
+jobs and waits for cleanup. In account mode, all API mutations share a rolling
+request limit (default20/account and80/service per60seconds). Existing migration
+diagnosis/inspection/report/export reads also consume this limit because they
+may initialize missing AI diagnostics. Run history reads do not. Run cancellation
+and optimization decisions remain available when saturated. A rejected request
+gets429, a `Retry-After` header and a wait message before reaching its handler;
+rejections do not consume extra slots and do not cancel existing work.
+
+The request limit is an in-process admission rate, not monetary accounting or
+per-model-attempt concurrency. One admitted workflow may make several model
+calls; diagnostics can continue after the HTTP request returns. Limits reset on
+process restart. Configure a provider-side spending cap as well before wider
+usage. All account requests must reach the same service process; multiple
+replicas would have separate limits and must not share the data directory.
+The global request count is bounded to10000, the window to1-86400seconds, and
+the per-account count must be positive and no larger than the global count.
+Do not promise unlimited usage or unlimited accounts.
 
 The workspace process cache is bounded to `WORKSPACE_MAX_ACCOUNTS` (1-256,
 default 64); excess distinct accounts receive `WORKSPACE_CAPACITY_REACHED` until
@@ -117,7 +134,7 @@ quality pass. See `account-native-acceptance-20261004.md` for the recorded scope
 
 Before changing the public entry, verify real Linggan login with two accounts,
 trusted header replacement and direct-backend refusal; review the shared seed,
-resource limits and migration route policy; then rerun the native dual-Runtime
+resource limits, model-provider spending limits and migration route policy; then rerun the native dual-Runtime
 flow. The existing real-model quality gates are independent and remain in force.
 
 Back up configuration and point the gateway to a separate candidate first.

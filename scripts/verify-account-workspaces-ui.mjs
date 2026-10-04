@@ -10,9 +10,11 @@ const root=await mkdtemp(path.join(tmpdir(),'eval-account-ui-'));
 const out=path.resolve(process.env.ACCOUNT_UI_OUTPUT??'reports/account-workspaces-ui');
 await mkdir(out,{recursive:true});await mkdir(path.join(root,'seed'));
 const origin='https://eval.example.test';
+const budgetTest=process.env.ACCOUNT_UI_BUDGET_TEST==='true';
 const app=await createEvaluationService({rootDirectory:process.cwd(),publicDirectory:path.resolve('web-dist'),
   dataDirectory:path.join(root,'data'),accessToken:'synthetic-ingress',publicDemo:false,
   workspaceMode:'account',workspaceOrigin:origin,workspaceSubject:undefined,
+  ...(budgetTest?{workspaceRequestLimits:{perAccount:1,global:2,windowSeconds:60}}:{}),
   workspaceSeedDirectory:path.join(root,'seed'),workspaceSeedSha256:createHash('sha256').update('[]').digest('hex')});
 const base=await app.listen({host:'127.0.0.1',port:0});
 const browser=await chromium.launch();
@@ -53,9 +55,19 @@ try{
   await alice.reload();
   await alice.getByRole('button',{name:'Skill 资产',exact:true}).click();
   await expect(alice.locator('.asset-row').filter({hasText:'account-isolation-example'})).toBeVisible();
+  if(budgetTest){
+    const refused=alice.waitForResponse(response=>response.url().endsWith('/api/skills/upload')&&response.request().method()==='POST');
+    await alice.locator('input[type=file]').setInputFiles({name:'second-account-example.zip',mimeType:'application/zip',buffer:zip});
+    const response=await refused;expect(response.status()).toBe(429);
+    expect(Number(response.headers()['retry-after'])).toBeGreaterThan(0);
+    await expect(alice.getByText(/当前账号请求较多，请在/)).toBeVisible();
+    await alice.screenshot({path:path.join(out,'request-budget-message.png'),fullPage:true});
+    await expect(alice.locator('.asset-row').filter({hasText:'account-isolation-example'})).toHaveCount(1);
+  }
   expect(errors).toEqual([]);
   await writeFile(path.join(out,'report.json'),JSON.stringify({status:'PASSED',scope:'controlled account ingress, real service and browser',
     accounts:2,viewports:[1366,390,320],upload:true,accountIsolation:true,managedEnvironmentControls:true,reload:true,
+    requestBudget:budgetTest?'VISIBLE_429_EXISTING_ASSET_PRESERVED':'NOT_TESTED',
     actualLingganLogin:'NOT_RUN',nativeRuntime:'NOT_RUN',modelCalls:0,bankCalls:0,errors},null,2));
   console.log(JSON.stringify({status:'PASSED',out}));
 }finally{await browser.close();await app.close();await rm(root,{recursive:true,force:true});}
