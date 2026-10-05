@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import {describeSkillRuntimeRequirements} from './skill-runtime-requirements.js';
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fastifyStatic from "@fastify/static";
@@ -197,7 +198,7 @@ export async function createEvaluationService(
       const inspection=await environments.inspect(environment);if(inspection.status!=='ready'||!inspection.capabilities)return null;
       const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
       return {runtimeId:environment.environmentId,launcherEnvironmentId:resolved.launcher.environmentId,name:environment.name,runtimeType:resolved.launcher.runtimeType,endpoint:resolved.launcher.baseUrl,
-        mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,
+        mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,inspection,
         transport:'runtime_launcher' as const,defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
       } catch { return null; }
     }))).filter(item=>item!==null);
@@ -216,7 +217,13 @@ export async function createEvaluationService(
         evaluationStatus: skill.evaluationStatus === "pack_required" ? "pack_required" :
           onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),
       evalPacks,
-      uploadedSkills,
+      uploadedSkills:await Promise.all(uploadedSkills.map(async asset=>{
+        try{
+          const archive=await skills.readArchive(asset.assetId);
+          return {...asset,runtimeRequirements:describeSkillRuntimeRequirements(Buffer.from(archive[asset.skillFile]!).toString('utf8'))};
+        }
+        catch{return {...asset,runtimeRequirements:{status:'invalid',tools:[],error:'无法读取该版本 Skill 声明'}};}
+      })),
       preparations: savedPreparations.map(preparation => ({...preparation,
         deterministicReady: preparation.cases.length > 0 && preparation.cases.every(item =>
           item.rubric.length > 0 && item.rubric.every(rule => rule.allOf.length + rule.anyOf.length + rule.noneOf.length > 0)),

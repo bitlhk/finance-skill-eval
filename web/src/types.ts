@@ -64,6 +64,7 @@ export type FeaturedSkill = {
 };
 
 export type SkillAsset = {
+  runtimeRequirements?: {status:'declared'|'unspecified'|'invalid';tools:string[];error?:string};
   assetId: string;
   skillId: string;
   version: string;
@@ -106,6 +107,7 @@ export type EnvironmentInspection = {
 };
 
 export type MigrationRuntime = {
+  inspection?:EnvironmentInspection;
   runtimeId: string;
   launcherEnvironmentId: string;
   name: string;

@@ -52,6 +52,7 @@ jobs:
       - name: Compile native target (no live credentials or model calls)
         run: mvn -B -f examples/migration-native-host/pom.xml package
       - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/verify-environment-matching-ui.mjs /tmp/eval-matching-ui
       - name: Private subpath build
         run: VITE_PRIVATE_WORKSPACE=true pnpm exec vite build --base=/migration/ --outDir=../web-dist-private
       - name: Authenticated browser regression, on the private subpath

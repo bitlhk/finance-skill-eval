@@ -2,6 +2,16 @@ import YAML from 'yaml';
 
 export class CaseToolOutsideDeclaration extends Error{}
 
+export function describeSkillRuntimeRequirements(source:string):{status:'declared'|'unspecified'|'invalid';tools:string[];error?:string}{
+  try{
+    const tools=skillRuntimeRequirements(source,[]);
+    const match=/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(source);
+    const metadata=match?YAML.parse(match[1]!):null;
+    const declared=metadata&&typeof metadata==='object'&&('allowed-tools' in metadata||'allowedTools' in metadata);
+    return {status:declared?'declared':'unspecified',tools};
+  }catch(error){return {status:'invalid',tools:[],error:error instanceof Error?error.message:'Skill 工具声明无效'};}
+}
+
 /** Installation scope comes from explicit method metadata, not the selected test subset. */
 export function skillRuntimeRequirements(instructions:string|undefined,caseTools:string[],auxiliaryTools:string[]=[]):string[]{
   const cases=[...new Set(caseTools)].sort();

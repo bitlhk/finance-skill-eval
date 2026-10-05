@@ -418,3 +418,15 @@ button { cursor: pointer; }
 .markdown-content table { display: block; overflow-x: auto; max-width: 100%; }
 @media (max-width: 640px) { .optimization-stages { grid-template-columns: repeat(2,minmax(0,1fr)); } .quality-chart { height: 230px; } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none !important; } }
+.comparison-modes { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 16px; }
+.comparison-modes button { border: 1px solid #d0d5dd; background: #fff; color: #475467; padding: 9px 16px; border-radius: 6px; min-height: 40px; font-size: 14px; }
+.comparison-modes button[aria-pressed="true"] { border-color: #bd2334; background: #fff2f3; color: #a51e2c; }
+.comparison-modes button:focus-visible { outline: 2px solid #bd2334; outline-offset: 2px; }
+.environment-match-summary { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; margin-bottom: 16px; color: #475467; }
+.environment-details { margin-top: 12px; font-size: 13px; overflow-wrap: anywhere; }
+.environment-details summary { cursor: pointer; color: #475467; }
+.runtime-lifecycle { display: flex; gap: 8px; align-items: flex-start; color: #667085; font-size: 12px; line-height: 1.6; }
+.runtime-lifecycle svg { flex-shrink: 0; margin-top: 3px; }
+.environment-controls > .field { min-width: 0; }
+.environment-controls select { max-width: 100%; text-overflow: ellipsis; }
+@media (max-width: 640px) { .comparison-modes { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); } .comparison-modes button { padding: 8px 4px; font-size: 12px; overflow-wrap: anywhere; } }

@@ -115,6 +115,8 @@ description: 根据已核验风险证据形成审核建议。
               dimension:"business_completeness",weight:1,...(hasRule?{anyOf:["verified"]}:{})}]}]}});
         expect(prepared.statusCode).toBe(200);
         const updated = (await app.inject({url:"/api/catalog"})).json();
+        expect(updated.uploadedSkills.find((item:{assetId:string})=>item.assetId===uploaded.json().assetId)
+          .runtimeRequirements).toEqual({status:'unspecified',tools:[]});
         expect(updated.preparations.find((item:{preparationId:string})=>item.preparationId===prepared.json().preparationId)
           .deterministicReady).toBe(hasRule);
       }
