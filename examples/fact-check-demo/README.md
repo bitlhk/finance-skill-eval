@@ -4,14 +4,13 @@
 
 ## 打包与上传
 
-在仓库根目录运行（需要 zip 命令）：
+在仓库根目录安装依赖后运行（Node.js 与项目已有 fflate 依赖，无需系统 zip 命令）：
 
 ```sh
-zip -j /tmp/fact-check-demo.zip examples/fact-check-demo/SKILL.md
-unzip -l /tmp/fact-check-demo.zip
+node examples/fact-check-demo/package.mjs /tmp/fact-check-demo.zip
 ```
 
-归档中只应有 SKILL.md。复测时使用新的输出文件路径，避免 zip 命令将旧归档中的其他文件保留下来。
+归档中只有 SKILL.md；命令输出路径与 SHA256。输出文件存在时会拒绝覆盖，复测可选择新的输出路径。
 
 1. 用本人灵感账号进入 Finance Eval，打开「Skill 资产」。
 2. 点击「上传 Skill ZIP」，选择归档；等待明确成功信息并核对资产名称与版本。
