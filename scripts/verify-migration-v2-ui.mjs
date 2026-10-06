@@ -141,7 +141,14 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
   const instance=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)$/u);
   if(request.method==='DELETE'&&instance){instances.delete(instance[1]);response.statusCode=204;return response.end();}
   if(request.method==='POST'&&url.pathname==='/v1/chat/completions'){
-    await body();return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify({checks:[{criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'}]})}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
+    const input=await body();
+    const assessment=JSON.parse(input.messages.find(message=>message.role==='user').content);
+    assert.deepEqual(assessment.requiredCriterionIndices,[0,1]);
+    assert.match(assessment.criteria[1].description,/事实/u);
+    return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify({checks:[
+      {criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'},
+      {criterionIndex:1,verdict:'PASS',reason:'受控工具结果支持订单事实，回答没有混入宿主日期或工具环境。',evidence:'订单 ORDER-001：币种 CNY'},
+    ]})}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
   }
   response.statusCode=404;response.end();
 })().catch(error=>{response.statusCode=500;response.end(String(error));});});
