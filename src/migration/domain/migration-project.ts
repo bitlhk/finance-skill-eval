@@ -30,6 +30,7 @@ const skillAssetReferenceSchema = z.object({
 export const persistedMigrationProjectSchema = z.object({
   schemaVersion: z.literal("finance.skill-migration.v2"),
   id: migrationProjectIdSchema,
+  revisionOf: migrationProjectIdSchema.optional(),
   name: z.string().min(1),
   createdAt: z.string().min(1),
   source: skillAssetReferenceSchema,
@@ -72,6 +73,7 @@ export type MigrationProject = {
   id: string;
   name: string;
   createdAt: string;
+  revisionOf?: string;
   source: SkillAssetRecord;
   candidate: SkillAssetRecord | null;
   candidateNotes: string;

@@ -263,6 +263,10 @@ button { cursor: pointer; }
 .asset-row small, .asset-row em { color: #7a8289; font-size: 11px; font-style: normal; }
 .asset-row p { margin: 2px 0; color: #515960; font-size: 11px; line-height: 1.5; }
 .asset-actions { display: flex; gap: 7px; }
+.asset-suite-picker { display: grid; gap: 12px; min-width: 0; }
+.asset-suite-picker label { display: grid; gap: 6px; min-width: 0; }
+.asset-suite-picker select { width: 100%; min-width: 0; max-width: 100%; }
+.asset-suite-picker .asset-actions { flex-wrap: wrap; }
 .empty-table { padding: 40px; color: #858c92; text-align: center; font-size: 12px; }
 .environment-form { display: grid; grid-template-columns: 1fr 1fr 1fr 2fr 1fr auto; gap: 12px; align-items: end; margin-top: 18px; padding: 16px; border: 1px solid #dce0e3; background: #fff; }
 .mcp-binding-field { grid-column: 1 / -1; display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid #e6e8ea; }

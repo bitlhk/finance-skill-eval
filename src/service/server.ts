@@ -10,6 +10,7 @@ import { renderHtmlReport, type EvaluationReport } from "../report.js";
 import { EvalPackCatalog } from "./catalog.js";
 import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./config.js";
 import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
+import {simpleMigrationSuiteSchema,simpleMigrationCases} from '../migration/domain/simple-migration-suite.js';
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { registerMigrationRoutes } from "../interfaces/http/migration-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
@@ -293,6 +294,13 @@ export async function createEvaluationService(
       source: "ai_generated",
       evaluationContext: generated.evaluationContext,
     });
+  });
+
+  app.post<{ Params: { assetId: string } }>("/api/skills/:assetId/prepare/import", async request => {
+    const suite = simpleMigrationSuiteSchema.parse(request.body);
+    const skill = await skills.get(request.params.assetId);
+    if (!skill) throw Object.assign(new Error('Skill asset not found'), {statusCode:404});
+    return preparations.create({skill,summary:suite.name,cases:simpleMigrationCases(suite),source:'manual'});
   });
 
   app.post<{ Params: { assetId: string } }>("/api/skills/:assetId/prepare/manual", async request => {

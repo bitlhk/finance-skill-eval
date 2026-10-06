@@ -1021,7 +1021,7 @@ function MigrationWorkspace({catalog,source,onChanged,onUseAsset}:{catalog:Catal
       const asset=await api<SkillAsset>('/api/migrations/upload',{method:'POST',body:new Blob([bytes as BlobPart]),headers:{'content-type':'application/zip'}});
       // Single uploads are opened and created by MigrationPanel. Batch uploads remain in
       // the project list, so create one project per successful file here.
-      if(files.length>1)await api('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:asset.assetId,name:`${asset.displayName} 迁移`})});
+      if(files.length>1)await api('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:asset.assetId,name:`${asset.displayName} 迁移`,createMode:'new'})});
       single=asset;
     });setImports(results);await onChanged();setUploadedAsset(files.length===1?single:null);setRefreshKey(n=>n+1);
   }catch(e){setError(String(e));}finally{setUploading(false);}}
@@ -1038,6 +1038,24 @@ function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation
   const [preparing, setPreparing] = useState("");
   const [message, setMessage] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const suiteInput = useRef<HTMLInputElement | null>(null);
+  const [suiteAsset,setSuiteAsset] = useState('');
+  const [suiteId,setSuiteId] = useState('');
+  const [importingSuite,setImportingSuite] = useState(false);
+  const selectedAsset = catalog.uploadedSkills.find(a=>a.assetId===suiteAsset)
+    ?? catalog.uploadedSkills.find(a=>a.assetId===focusedAsset) ?? catalog.uploadedSkills[0];
+  const historicalSuites = catalog.preparations.filter(p=>p.skillAssetId===selectedAsset?.assetId);
+  const selectedSuite = historicalSuites.find(p=>p.preparationId===suiteId) ?? historicalSuites[0];
+  async function importSuite(file:File){
+    if(!selectedAsset||importingSuite)return;
+    setImportingSuite(true);setMessage('');
+    try{
+      if(file.size>1048576)throw new Error('测试集 JSON 不得超过 1 MB');
+      const imported=await api<Preparation>(`/api/skills/${selectedAsset.assetId}/prepare/import`,{method:'POST',body:JSON.stringify(JSON.parse(await file.text()))});
+      await onChanged();setSuiteId(imported.preparationId);setMessage('已创建测试集副本，原测试集与评分未修改。');
+    }catch(error){setMessage(error instanceof Error?error.message:String(error));}
+    finally{setImportingSuite(false);}
+  }
   useEffect(()=>{if(focusedAsset)document.getElementById(`asset-${focusedAsset}`)?.focus();},[focusedAsset,catalog.uploadedSkills]);
   const upload = async (file: File) => {
     setUploading(true); setMessage("");
@@ -1057,6 +1075,14 @@ function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation
   };
   return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL ARTIFACTS</span><h1>Skill 资产</h1><p>上传候选 ZIP，校验 SKILL.md 后由 Analyzer 生成测试方案。</p></div><button className="button primary" onClick={() => inputRef.current?.click()} disabled={uploading}><FileArchive size={17} />{uploading ? "上传中" : "上传 Skill ZIP"}</button><input hidden ref={inputRef} type="file" accept=".zip,application/zip" onChange={event => { const file = event.target.files?.[0]; if (file) void upload(file); }} /></section>
     {message ? <div className="info-banner">{message}</div> : null}
+    {selectedAsset&&<section className="asset-section asset-suite-picker" aria-label="历史测试集与导入副本">
+      <h2>测试集</h2>
+      <label>源资产<select value={selectedAsset.assetId} onChange={e=>{setSuiteAsset(e.target.value);setSuiteId('');}}>{catalog.uploadedSkills.map(a=><option key={a.assetId} value={a.assetId}>{a.displayName} · {a.version} · {a.artifactSha256.slice(0,8)}</option>)}</select></label>
+      <label>历史测试集<select value={selectedSuite?.preparationId??''} onChange={e=>setSuiteId(e.target.value)} disabled={!historicalSuites.length}>{!historicalSuites.length&&<option value="">暂无测试集</option>}{historicalSuites.map(p=><option key={p.preparationId} value={p.preparationId}>{p.summary} · {p.cases.length}题 · {p.createdAt} · {p.preparationId}</option>)}</select></label>
+      <div className="asset-actions"><button className="button secondary" disabled={!selectedSuite||importingSuite} onClick={()=>selectedSuite&&onSelectPreparation(selectedSuite.preparationId)}><ChevronRight size={16}/>使用所选测试集</button>
+      <button className="button secondary" disabled={importingSuite} onClick={()=>suiteInput.current?.click()}><FileArchive size={16}/>{importingSuite?'导入中':'导入测试集副本'}</button></div>
+      <input hidden ref={suiteInput} type="file" accept=".json,application/json" onChange={e=>{const file=e.target.files?.[0];if(file)void importSuite(file);e.target.value='';}}/>
+    </section>}
     <section className="asset-section"><div className="section-title"><div><h2>用户上传</h2><p>上传资产只用于当前评测服务，不会发布到 Skill 市场。</p></div><span>{catalog.uploadedSkills.length} 个</span></div>
       <div className="asset-table">{catalog.uploadedSkills.length ? catalog.uploadedSkills.map(skill => {
         const preps = catalog.preparations.filter(item => item.skillAssetId === skill.assetId);

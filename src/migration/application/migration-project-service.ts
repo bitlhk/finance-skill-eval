@@ -9,6 +9,8 @@ import { migrationConflict as conflict } from "./migration-errors.js";
 const createMigrationProjectSchema = z.strictObject({
   sourceAssetId: z.string().min(1),
   name: z.string().min(1).max(120),
+  createMode: z.enum(['reuse','new']).default('reuse'),
+  revisionOf: z.string().min(1).optional(),
 });
 
 export class MigrationProjectService {
@@ -37,13 +39,20 @@ export class MigrationProjectService {
 
       const existing = (await this.projects.list()).find(project =>
         project.source.artifactSha256 === source.artifactSha256 && project.name === parsed.name);
-      if (existing) return existing;
+      if (parsed.revisionOf) {
+        const parent = await this.projects.get(parsed.revisionOf);
+        if (parsed.createMode !== 'new' || parent.source.artifactSha256 !== source.artifactSha256)
+          return conflict('新修订必须引用同一源 Skill');
+      }
+      if (existing && parsed.createMode === 'reuse') return existing;
 
       const project: MigrationProject = {
         schemaVersion: "finance.skill-migration.v2",
         id: `migration-${randomUUID()}`,
         name: parsed.name,
         createdAt: new Date().toISOString(),
+        ...(parsed.createMode === 'new' && (parsed.revisionOf ?? existing?.id)
+          ? {revisionOf: parsed.revisionOf ?? existing!.id} : {}),
         source,
         candidate: null,
         candidateNotes: "",

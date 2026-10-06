@@ -76,6 +76,27 @@ it('binds an explicitly tool-free method without inventing a tool or granting ex
     expect(report.verification.targetExecution).toBe('NOT_RUN');
   }finally{await f.app.close()}
 });
+it('creates a new same-source revision without modifying the frozen candidate',async()=>{
+  const f=await fixture();try{
+    const old=(await f.post(`/api/migrations/${f.project.id}/native-candidate`,f.body)).json();
+    const before=(await f.app.inject({url:`/api/migrations/${old.id}`,headers:f.headers})).body;
+    const reused=(await f.post('/api/migrations',{sourceAssetId:f.asset.assetId,name:'Native migration'})).json();
+    expect(reused.id).toBe(old.id);
+    const revision=(await f.post('/api/migrations',{sourceAssetId:f.asset.assetId,name:'Native migration',createMode:'new',revisionOf:old.id})).json();
+    expect(revision.id).not.toBe(old.id);expect(revision.revisionOf).toBe(old.id);
+    expect(revision.source.artifactSha256).toBe(old.source.artifactSha256);
+    expect(revision.candidate).toBeNull();expect(revision.nativeBindings).toBeUndefined();expect(revision.runs).toEqual([]);
+    await f.post(`/api/migrations/${revision.id}/inspect`,{});
+    const fresh=(type:string)=>{const {catalogDigest:_,...body}=catalog(type);body.deploymentId+='-new';return {...body,catalogDigest:canonicalSha256(body)};};
+    vi.stubGlobal('fetch',async(url:URL)=>new Response(JSON.stringify(fresh(url.pathname.split('/')[1]!))));
+    const changed={...f.body,targets:f.body.targets.map((t,index)=>({...t,catalogDigest:fresh(index===0?'openjiuwen':'agentscope').catalogDigest}))};
+    const result=await f.post(`/api/migrations/${revision.id}/native-candidate`,changed);
+    expect(result.statusCode,result.body).toBe(200);
+    expect(result.json().candidate.artifactSha256).not.toBe(old.candidate.artifactSha256);
+    expect((await f.app.inject({url:`/api/migrations/${old.id}`,headers:f.headers})).body).toBe(before);
+  }finally{await f.app.close()}
+});
+
 it('does not use empty binding to erase a diagnosed dependency',async()=>{
   const f=await fixture();try{
     const result=await f.post(`/api/migrations/${f.project.id}/native-candidate`,{...f.body,tools:[]});
