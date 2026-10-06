@@ -349,6 +349,11 @@ try{
   pass('source_suite_import_creates_copies_history_selectable_migration_unchanged');
   await mkdir(path.resolve('reports/migration-v2-ui'),{recursive:true});
   await page.screenshot({path:'reports/migration-v2-ui/history-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:900});
+  const pickerWidth=await suitePicker.boundingBox(),selectWidth=await suitePicker.getByRole('combobox').nth(1).boundingBox();
+  assert(selectWidth.width>=pickerWidth.width-4,'Suite selector must fill the mobile panel');
+  await page.screenshot({path:'reports/migration-v2-ui/history-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1366,height:900});
   await suitePicker.getByRole('button',{name:'使用所选测试集',exact:true}).click();
   await expect(page.getByText(frozenSuite.cases[0].input,{exact:true}).first()).toBeVisible();
   pass('historical_suite_opens_original_questions');
