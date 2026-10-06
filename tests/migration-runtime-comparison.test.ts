@@ -121,7 +121,7 @@ describe('independent Runtime goal assessment',()=>{
     for(const side of ['left','right'] as const)input[side].metadata={executionMode:'runtime-launcher',
       businessDate:side==='left'?'2026-09-05':'2026-09-06',businessTimeZone:'Asia/Shanghai',businessDateBasis:'VERSIONED_SYNTHETIC_DATASET'};
     const judge=new ModelRuntimeComparisonJudge(goalAdapter(requests),leftModel);
-    expect(judge.judgeId).toContain('model-runtime-goals:business-time-v1:');
+    expect(judge.judgeId).toContain('model-runtime-goals:fact-provenance-v2:');
     await judge.compare(input);
     expect(requests.map(request=>JSON.parse(request.messages[1].content).runtimeEvidence.businessTime.businessDate))
       .toEqual(['2026-09-05','2026-09-06']);

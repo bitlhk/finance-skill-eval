@@ -9,6 +9,17 @@ const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
+  it.each([false,true])('records cleanup receipts without inferring resource reclamation from HTTP success (receipt=%s)',async(withReceipt)=>{
+    const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
+    vi.stubGlobal('fetch',async(_input:unknown,init:RequestInit)=>init.method==='DELETE'
+      ?Response.json(withReceipt?{deleted:true,cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',instanceId:'instance-1',status:'RELEASED',buildRetirement:'BACKEND_RETIRED',temporaryCandidate:'NOT_INDEPENDENTLY_VERIFIED',privateValue:'DO_NOT_COPY'}}:{deleted:true})
+      :Response.json(state));
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters:{}},variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
+    await runtime.prepare({runId:'run-1'});await runtime.cleanup();
+    expect(runtime.finalizationEvidence().status).toBe(withReceipt?'RELEASED':'UNKNOWN');
+    expect(runtime.finalizationEvidence()).not.toHaveProperty('privateValue');
+    if(withReceipt)expect(runtime.finalizationEvidence().temporaryCandidate).toBe('NOT_INDEPENDENTLY_VERIFIED');
+  });
   it('accepts only the bounded optional non-thinking mode',()=>{
     const base={schemaVersion:'finance.eval-generation.v1',temperature:0,top_p:1,max_tokens:8192};
     expect(launcherGenerationSchema.parse({...base,thinking:{type:'disabled'}}).thinking).toEqual({type:'disabled'});

@@ -56,3 +56,14 @@ it('keeps model grading unavailability separate from completed execution',()=>{
   const value=buildReport({pack,reportId:'judge-unavailable',runtimeAdapterId:'two-runtimes',judgeId:'model-pairwise:test',cases:[item]});
   expect(value.summary.headline).toContain('左右输出已完成');
 });
+
+it('does not turn missing or partial token accounting into zero consumption',()=>{
+  const unknown=row('PASS','PASS');
+  expect(report([unknown]).summary.totalTokens).toEqual({left:null,right:null});
+  const known=row('PASS','PASS');
+  known.left.usage={inputTokens:3,outputTokens:2,totalTokens:5};
+  known.right.usage={inputTokens:0,outputTokens:0,totalTokens:0};
+  expect(report([known]).summary.totalTokens).toEqual({left:5,right:0});
+  expect(report([known,unknown]).summary.totalTokens).toEqual({left:null,right:null});
+  expect(report([]).summary.totalTokens).toEqual({left:null,right:null});
+});

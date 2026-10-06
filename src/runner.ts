@@ -221,6 +221,7 @@ export async function runEvaluation(input: {
 }): Promise<EvaluationReport> {
   const runId = `finance-skill-eval-${randomUUID()}`;
   const evidence: EvidenceByCase = new Map();
+  let cleanupRequested=false;
   let completedRuns = 0;
   input.onProgress?.({
     stage: "preparing",
@@ -285,12 +286,15 @@ export async function runEvaluation(input: {
         judgeError,
       });
     }
+    cleanupRequested=true;
+    await input.runtime.cleanup?.();
     const report = buildReport({
       pack: input.pack,
       runtimeAdapterId: input.runtime.adapterId,
       judgeId: input.judge.judgeId,
       cases,
       reportId: runId,
+      finalization:input.runtime.finalizationEvidence?.(),
     });
     input.onProgress?.({
       stage: "completed",
@@ -299,6 +303,6 @@ export async function runEvaluation(input: {
     });
     return report;
   } finally {
-    await input.runtime.cleanup?.();
+    if(!cleanupRequested)await input.runtime.cleanup?.();
   }
 }

@@ -60,6 +60,7 @@ export interface RuntimeAdapter {
   prepare?(context:RuntimePrepareContext): Promise<void>;
   execute(request: RuntimeExecutionRequest): Promise<RuntimeExecutionEvidence>;
   cleanup?(): Promise<void>;
+  finalizationEvidence?(): Record<string, unknown>;
 }
 
 export type ModelMessage = {

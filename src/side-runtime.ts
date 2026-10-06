@@ -24,4 +24,8 @@ export class SideRuntimeAdapter implements RuntimeAdapter {
     }
     if (errors.length) throw new AggregateError(errors, 'Runtime side cleanup failed');
   }
+  finalizationEvidence():Record<string,unknown> {
+    return {left:this.sides.left.finalizationEvidence?.()??{status:'UNKNOWN'},
+      right:this.sides.right.finalizationEvidence?.()??{status:'UNKNOWN'}};
+  }
 }

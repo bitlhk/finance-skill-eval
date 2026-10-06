@@ -1,4 +1,5 @@
 import { api } from "./api-client";
+import {evidenceLabels} from '../../src/evidence-labels';
 import {selectedVersion,versionSelectionKey} from './skill-version-selection';
 import {matchEnvironments,chooseEnvironment,inspectionIssues,type EnvironmentMatch} from './environment-matching';
 import {dualRuntimeConfiguration} from './dual-runtime-configuration';
@@ -971,9 +972,13 @@ function LiveEvidence({ job }: { job: EvaluationJob }) {
 function ExecutionIdentity({evidence}:{evidence:Evidence}) {
   const data=evidence.metadata;
   if(!data?.runtime)return null;
+  const labels=evidenceLabels(data,evidence.toolCalls.length);
   return <details className="question-receipt"><summary>{data.runtime.type} {data.runtime.version} · {Math.round(evidence.elapsedMs)} ms · {evidence.status==="completed"?"执行返回":"执行失败"}</summary>
     <p>Skill 版本：{evidence.skillVersion??"未记录"} · {data.publicationStatus==="NOT_PUBLISHED"?"临时候选，未发布":data.publicationStatus==="PUBLISHED"?"已发布方法":"发布状态未记录"}</p>
-    <p>工具：{evidence.toolCalls.map(item=>`${item.name} (${item.status})`).join("、")||"未记录调用"}</p>
+    <p>工具：{labels.tools}</p>
+    {evidence.toolCalls.length?<p>{evidence.toolCalls.map(item=>`${item.name} (${item.status})`).join("、")}</p>:null}
+    <p>Token：{typeof evidence.usage?.totalTokens==='number'?evidence.usage.totalTokens:'未知，未取得用量'}</p>
+    <p>{labels.archive}</p><p>{labels.cleanup}</p>
     {evidence.error?<p role="alert">{evidence.error}</p>:null}
     <dl>{Object.entries({"实际方法摘要":data.loadedSkillDigest,"安装资产摘要":data.installationDigest,"制品 Lock":data.artifactLockSha256,"运行 Lock":data.runtimeLockSha256,
       "运行记录请求":data.executionHistoryRequestId,"保留证据引用":data.retainedEvidenceRef,"业务日期":data.businessDate,"时区":data.businessTimeZone}).map(([label,value])=><div key={label}><dt>{label}</dt><dd style={{overflowWrap:"anywhere",marginInlineStart:0}}>{value == null ? "未记录" : typeof value === "object" ? JSON.stringify(value) : value}</dd></div>)}</dl>
@@ -998,8 +1003,12 @@ function ReportResult({ job }: { job: EvaluationJob }) {
       <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
       {runtimeComparison ? <RuntimeGoalResults item={item}/> : <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>}
     </section>)}
+    <details className="question-receipt"><summary>运行结束与回收证据</summary>
+      <p>这是运行结束后的 Launcher 观察，不是操作系统全资源审计。RELEASED 表示管理器已释放句柄；构建退休、案例工作区和临时候选须分别核对。</p>
+      {report.finalization?<pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(report.finalization,null,2)}</pre>:<p>旧记录没有最终回收观察，状态未知；不能从完成或取消推断。</p>}
+    </details>
     {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
-    <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span></footer>
+    <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span><span>执行服务提交：{report.codeRevision?`${report.codeRevision.commit} (${report.codeRevision.workingTree})`:'旧记录未记录'}</span></footer>
   </div>;
 }
 

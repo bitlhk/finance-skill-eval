@@ -17,6 +17,26 @@ const evidence=runtimeExecutionEvidenceSchema.parse({runId:'test',side:'right',c
 const definition=simpleMigrationCases(simpleMigrationSuiteSchema.parse({name:'test',cases:[{id:'fee-001',input:'计算服务费',criteria:['服务费为2.5元','说明尚未扣费']}]}))[0]!;
 function judge(checks:unknown[],capture?:Array<unknown>){return new ModelGoalJudge({adapterId:'fixture',complete:async request=>{capture?.push(request);return {modelId:'test',content:JSON.stringify({checks})}}},model)}
 const input={evalCase:definition,left:{...evidence,side:'left' as const},right:evidence,profile:{} as any};
+it('adds a separately labelled provenance check using the exact Skill contract and digest',async()=>{
+ const requests:any[]=[];
+ const skill={skillId:'arbitrary-name',version:'0.1.0',artifactSha256:'a'.repeat(64),instructions:'仅依据用户输入整理已知事实'};
+ const evaluator=new ModelGoalJudge({adapterId:'fixture',complete:async request=>{
+  requests.push(request);
+  return {modelId:'test',content:JSON.stringify({checks:[
+   {criterionIndex:0,verdict:'PASS',reason:'existing',evidence:''},
+   {criterionIndex:1,verdict:'PASS',reason:'existing',evidence:''},
+   {criterionIndex:2,verdict:'FAIL',reason:'宿主日期不是用户输入',evidence:'已知事实：业务日期为2026-09-20'},
+  ]})};
+ }},model,skill);
+ const result=await evaluator.compare({...input,right:{...evidence,output:'已知事实：业务日期为2026-09-20'}});
+ expect(result.goalAssessment?.verdict).toBe('FAIL');
+ expect(result.goalAssessment?.checks).toHaveLength(3);
+ const sent=JSON.parse(requests[0].messages[1].content);
+ expect(sent.runtimeEvidence.skillContract).toEqual(skill);
+ expect(sent.criteria[2].description).toContain('工具来源');
+ expect(sent.runtimeEvidence.assessmentScope).toContain('量表额外要求');
+ expect(evaluator.judgeId).toContain('fact-provenance-v2');
+});
 it('validates simple suites without placing criteria or credentials in task input',()=>{
  const parsed=simpleMigrationSuiteSchema.parse(simpleMigrationSuiteExample);expect(simpleMigrationCases(parsed)[0]!.prompt).toBe(parsed.cases[0]!.input);
  const merged=simpleMigrationCases(simpleMigrationSuiteSchema.parse({name:'workspace',workspaceFiles:[{path:'shared.json',content:'shared'},{path:'overridden.json',content:'old'}],cases:[{id:'a',input:'x',criteria:['x'],workspaceFiles:[{path:'overridden.json',content:'new'}]}]}))[0]!;

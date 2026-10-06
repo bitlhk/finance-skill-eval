@@ -144,6 +144,8 @@ function forwardObservation(event:RuntimeObservationEvent,request:RuntimeExecuti
 export class RuntimeLauncherAdapter implements RuntimeAdapter{
   readonly adapterId:string;
   private instance:InstanceState|null=null;
+  private cleanupObservation:Record<string,unknown>={status:'NOT_REQUESTED'};
+  finalizationEvidence(){return {...this.cleanupObservation};}
   private executeUrl:URL|null=null;
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   private failedCaseId:string|null=null;
@@ -229,7 +231,20 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   }
   async cleanup():Promise<void>{
     const instance=this.instance;this.instance=null;this.executeUrl=null;if(!instance)return;
-    const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});
-    if(!response.ok&&response.status!==404)throw await responseError(response);
+    this.cleanupObservation={status:'REQUESTED',instanceId:instance.instanceId};
+    for(let attempt=0;attempt<10;attempt++){
+      const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});
+      if(!response.ok&&response.status!==404){this.cleanupObservation={...this.cleanupObservation,status:'REQUEST_FAILED'};throw await responseError(response);}
+      const payload=await response.json().catch(()=>null);
+      const receipt=payload?.cleanup;
+      if(receipt?.schemaVersion==='finance.eval-cleanup-observation.v1'&&receipt.instanceId===instance.instanceId){
+        this.cleanupObservation=Object.fromEntries(['schemaVersion','instanceId','observedAt','status','error',
+          'buildId','hostInstanceId','buildRetirement','caseWorkspace','temporaryCandidate','scope']
+          .filter(key=>receipt[key]===null||typeof receipt[key]==='string'&&receipt[key].length<=500)
+          .map(key=>[key,receipt[key]]));
+        if(receipt.status==='PENDING'&&attempt<9){await new Promise(resolve=>setTimeout(resolve,200));continue;}
+      }else this.cleanupObservation={status:'UNKNOWN',instanceId:instance.instanceId,httpStatus:response.status,reason:'NO_RESOURCE_RECEIPT'};
+      break;
+    }
   }
 }

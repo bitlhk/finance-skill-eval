@@ -149,6 +149,7 @@ export type Evidence = {
     declaredModelParameters?:Record<string,unknown>;modelParametersBasis?:string;modelParametersVerified?:boolean;
     businessDate?:string;businessTimeZone?:string;publicationStatus?:string;isolationRestartMs?:number;
     executionDisposition?:'NOT_EXECUTED';blockedByCaseId?:string;
+    toolEvidenceCollection?:{status?:string;reason?:string};archiveStatus?:string;
   };
   side: "left" | "right";
   caseId: string;
@@ -187,6 +188,8 @@ export type EvaluationJob = {
       headline: string;
       meanElapsedMs: { left: number; right: number };
     };
+    codeRevision?:{commit:string;workingTree:'clean'|'dirty';source:string}|null;
+    finalization?:Record<string,unknown>;
     cases: Array<{
       caseId: string;
       name: string;

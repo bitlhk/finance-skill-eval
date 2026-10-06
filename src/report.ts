@@ -1,4 +1,6 @@
 import { fingerprint, type EvalPack, type JudgeResult, type RuntimeExecutionEvidence, type FrozenQuestionSet } from "./contracts.js";
+import {codeRevision} from './code-revision.js';
+import {evidenceLabels} from './evidence-labels.js';
 
 export type EvaluationCaseReport = {
   caseId: string;
@@ -23,6 +25,8 @@ export type EvaluationReport = {
   schemaVersion: "finance.skill-eval.report.v1";
   reportId: string;
   generatedAt: string;
+  codeRevision?:typeof codeRevision;
+  finalization?:Record<string,unknown>;
   questionSet?: FrozenQuestionSet;
   pack: {
     packId: string;
@@ -47,7 +51,7 @@ export type EvaluationReport = {
     ties: number;
     headline: string;
     meanElapsedMs: { left: number; right: number };
-    totalTokens: { left: number; right: number };
+    totalTokens: { left: number | null; right: number | null };
     runtimeComparison?: Record<'left'|'right', {PASS:number;FAIL:number;INDETERMINATE:number;unavailable:number}>;
   };
   suggestions: SkillOptimizationSuggestion[];
@@ -102,6 +106,7 @@ export function buildReport(input: {
   judgeId: string;
   cases: EvaluationCaseReport[];
   reportId: string;
+  finalization?:Record<string,unknown>;
 }): EvaluationReport {
   const runtimeMode=input.judgeId?.startsWith('model-runtime-goals:')||input.cases.some(item=>item.judge?.runtimeComparison);
   const countSide=(side:'left'|'right')=>{
@@ -121,14 +126,16 @@ export function buildReport(input: {
   const average = (side: "left" | "right") => input.cases.length === 0
     ? 0
     : Math.round(input.cases.reduce((sum, item) => sum + item[side].elapsedMs, 0) / input.cases.length);
-  const tokens = (side: "left" | "right") => input.cases.reduce(
-    (sum, item) => sum + (item[side].usage?.totalTokens ?? 0),
-    0,
-  );
+  const tokens = (side: "left" | "right") => input.cases.length > 0
+    && input.cases.every(item => typeof item[side].usage?.totalTokens === 'number')
+    ? input.cases.reduce((sum, item) => sum + item[side].usage!.totalTokens!, 0)
+    : null;
   const base = {
     schemaVersion: "finance.skill-eval.report.v1" as const,
     reportId: input.reportId,
     generatedAt: new Date().toISOString(),
+    codeRevision,
+    ...(input.finalization?{finalization:input.finalization}:{}),
     pack: {
       packId: input.pack.packId,
       version: input.pack.version,
@@ -214,6 +221,10 @@ export function renderHtmlReport(report: EvaluationReport): string {
   const serviceMode=report.cases.some(item=>item.judge?.serviceComparison||item.left.metadata.baselineService);
   const goalsMode=serviceMode||report.cases.some(item=>item.judge?.goalAssessment);
   const assessment=(item:EvaluationReport['cases'][number])=>item.judge?.serviceComparison??item.judge?.goalAssessment;
+  const evidenceScope=(value:RuntimeExecutionEvidence)=>{
+    const labels=evidenceLabels(value.metadata,value.toolCalls.length);
+    return `<p>${escapeHtml(labels.tools)}</p><p>Token: ${value.usage?.totalTokens??'未知，未取得用量'}</p><p>${escapeHtml(labels.archive)}</p>`;
+  };
   const caseSections = report.cases.map(item => {
     const judge = item.judge;
     const isService=!!judge?.serviceComparison||!!item.left.metadata.baselineService;
@@ -226,8 +237,8 @@ export function renderHtmlReport(report: EvaluationReport): string {
       <p class="goal">${escapeHtml(item.evaluationGoal)}</p>
       <details><summary>本轮题目</summary><pre>${escapeHtml(item.prompt)}</pre></details>
       <div class="columns">
-        <article><h3>${isService?'原服务':'左侧'}</h3><pre>${escapeHtml(formatOutput(item.left.output || item.left.error || '未记录回答'))}</pre></article>
-        <article><h3>${isService?'迁移后 Skill':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output || item.right.error || '未记录回答'))}</pre></article>
+        <article><h3>${isService?'原服务':'左侧'}</h3><pre>${escapeHtml(formatOutput(item.left.output || item.left.error || '未记录回答'))}</pre>${evidenceScope(item.left)}</article>
+        <article><h3>${isService?'迁移后 Skill':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output || item.right.error || '未记录回答'))}</pre>${evidenceScope(item.right)}</article>
       </div>
       <div class="judge">
         <h3>${runtimeMode?'同候选跨 Runtime 目标评估':isService?'原服务对比':judge?.goalAssessment?'业务目标评估':'金融专业评价'}</h3>
@@ -249,5 +260,7 @@ export function renderHtmlReport(report: EvaluationReport): string {
   ${report.questionSet ? `<p class="meta">AI 题集 · ${escapeHtml(report.questionSet.model.modelId)} · ${escapeHtml(report.questionSet.fingerprint)}</p>` : ""}
   ${caseSections}
   <p class="meta">Report fingerprint: ${report.reportFingerprint}</p>
+  <p class="meta">执行服务提交：${escapeHtml(report.codeRevision?`${report.codeRevision.commit} (${report.codeRevision.workingTree})`:'旧记录未记录')}</p>
+  <details><summary>运行结束与回收观察</summary><p>管理器回执不等于操作系统全资源审计；没有证据的资源保持未知。</p><pre>${escapeHtml(JSON.stringify(report.finalization??{status:'UNKNOWN',reason:'未记录最终回收观察'},null,2))}</pre></details>
 </main></body></html>`;
 }

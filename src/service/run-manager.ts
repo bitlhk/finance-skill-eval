@@ -403,16 +403,21 @@ export class EvaluationRunManager {
     return skillRuntimeRequirements(instructions,caseTools,auxiliary);
   }
 
-  private judgeFor(configuration: RunConfiguration, pack: EvalPack): PairwiseJudge {
+  private async judgeFor(configuration: RunConfiguration, pack: EvalPack): Promise<PairwiseJudge> {
     if (configuration.judgeMode === "deterministic") {
       if(pack.cases.some(c=>c.rubric.some(r=>r.allOf.length+r.anyOf.length+r.noneOf.length===0))) throw new Error('当前专业量表需使用模型 Judge，不支持空规则自动评分。');
       return new DeterministicRubricJudge();
     }
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("本服务未配置阅卷模型");
-    if(configuration.evaluationMode==='candidate_runtime_comparison')return new ModelRuntimeComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
+    const skillFor=async(side:'left'|'right')=>{
+      const resolve=await this.skillResolver(configuration.runtimeBindings?.[side].skillAssetId??configuration.skillAssetId);
+      const source=await resolve(pack.variants[side]);
+      return source?{skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256,instructions:source.instructions}:undefined;
+    };
+    if(configuration.evaluationMode==='candidate_runtime_comparison')return new ModelRuntimeComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{left:await skillFor('left'),right:await skillFor('right')});
     if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
-    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
+    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,await skillFor('right'));
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
       :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);
@@ -475,7 +480,7 @@ export class EvaluationRunManager {
       let runtime = await this.runtimeFor(job.configuration, pack);
       if(job.configuration.evaluationMode==='candidate_assessment')runtime=new CandidateAssessmentRuntimeAdapter(runtime,pack.variants.right,pack.models.execution.right);
       controller.signal.throwIfAborted();
-      const judge = this.judgeFor(job.configuration, pack);
+      const judge = await this.judgeFor(job.configuration, pack);
       let lastLivePublishedAt = 0;
       const report = await runEvaluation({
         pack,
