@@ -9,6 +9,16 @@ import { createEvaluationService } from '../src/service/server.js';
 const dirs:string[]=[];
 afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
 async function directory(){const dir=await mkdtemp(path.join(os.tmpdir(),'migration-assets-'));dirs.push(dir);return dir;}
+it('imports the reproducible no-tool fact-check sample without changing its method',async()=>{
+  const {skillRuntimeRequirements}=await import('../src/service/skill-runtime-requirements.js');
+  const source=await readFile(new URL('../examples/fact-check-demo/SKILL.md',import.meta.url),'utf8');
+  const store=new SkillStore(await directory());await store.initialize();
+  const record=await store.uploadZip(Buffer.from(zipSync({'SKILL.md':strToU8(source)})));
+  expect(record.skillId).toBe('fact-check-demo');expect(record.version).toBe('0.1.0');
+  expect(await store.readSource(record.assetId)).toBe(source);
+  expect(skillRuntimeRequirements(source,[])).toEqual([]);
+  expect(()=>skillRuntimeRequirements(source,['account_balance_query'])).toThrow('案例工具');
+});
 it('imports legacy lowercase metadata without changing bytes, and rejects ambiguous roots',async()=>{
   const dir=await directory(),store=new SkillStore(dir);await store.initialize();
   const source='name: legacy-method\ndescription: read only\n---\n# Facts\n';
