@@ -150,6 +150,7 @@ export type Evidence = {
     businessDate?:string;businessTimeZone?:string;publicationStatus?:string;isolationRestartMs?:number;
     executionDisposition?:'NOT_EXECUTED';blockedByCaseId?:string;
     toolEvidenceCollection?:{status?:string;reason?:string};archiveStatus?:string;
+    installedToolInventory?:Record<string,unknown>;toolAttemptEvidence?:Record<string,unknown>;
   };
   side: "left" | "right";
   caseId: string;
@@ -164,6 +165,9 @@ export type Evidence = {
 };
 
 export type EvaluationJob = {
+  cancellation?:{requestedAt:string;workerSettledAt?:string;scope:string};
+  finalization?:Record<string,unknown>;
+  executionSnapshot?:{variants:unknown;models:unknown;cases:Array<{caseId:string;name:string;prompt:string}>;packFingerprint:string};
   questionSet?: { source: "ai_generated"; cases: EvalCaseSummary[]; summary: string; fingerprint: string; model: ModelRef; sourceFiles: string[]; generatedAt: string };
   live?: Record<string, { caseId: string; side: "left" | "right"; output: string; status: string; toolCalls: Array<{ name: string; status: string }> }>;
   jobId: string;

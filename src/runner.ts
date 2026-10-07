@@ -216,6 +216,7 @@ export async function runEvaluation(input: {
   runtime: RuntimeAdapter;
   judge: PairwiseJudge;
   onProgress?: (progress: EvaluationProgress) => void;
+  onFinalization?: (evidence:Record<string,unknown>) => Promise<void>;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<EvaluationReport> {
@@ -303,6 +304,11 @@ export async function runEvaluation(input: {
     });
     return report;
   } finally {
-    if(!cleanupRequested)await input.runtime.cleanup?.();
+    try {
+      if(!cleanupRequested)await input.runtime.cleanup?.();
+    } finally {
+      await input.onFinalization?.({runId,observedAt:new Date().toISOString(),
+        resources:input.runtime.finalizationEvidence?.()??{status:'UNKNOWN',reason:'NO_FINALIZATION_RECEIPT'}});
+    }
   }
 }

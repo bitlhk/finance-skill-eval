@@ -71,6 +71,7 @@ describe("evaluation runner lifecycle", () => {
     pack.cases = pack.cases.slice(0, 1);
     const controller = new AbortController();
     const cleanup = vi.fn(async () => undefined);
+    const onFinalization=vi.fn(async () => undefined);
     const runtime: RuntimeAdapter = {
       adapterId: "cancellation-test",
       async execute(request) {
@@ -82,6 +83,7 @@ describe("evaluation runner lifecycle", () => {
         throw new Error("unreachable");
       },
       cleanup,
+      finalizationEvidence:()=>({left:{status:'RELEASED',instanceId:'cancel-instance',buildId:'cancel-build'}}),
     };
 
     await expect(runEvaluation({
@@ -89,7 +91,10 @@ describe("evaluation runner lifecycle", () => {
       runtime,
       judge: new DeterministicRubricJudge(),
       signal: controller.signal,
+      onFinalization,
     })).rejects.toMatchObject({ name: "EvaluationCancelledError" });
     expect(cleanup).toHaveBeenCalledOnce();
+    expect(onFinalization).toHaveBeenCalledWith(expect.objectContaining({runId:expect.stringContaining('finance-skill-eval-'),
+      resources:{left:{status:'RELEASED',instanceId:'cancel-instance',buildId:'cancel-build'}}}));
   });
 });
