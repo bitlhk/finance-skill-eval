@@ -978,7 +978,7 @@ function RunEvidence({ job }: { job: EvaluationJob }) {
 
 function LiveEvidence({ job }: { job: EvaluationJob }) {
   const byCase = [...new Set([...job.evidence.map(item => item.caseId), ...Object.values(job.live ?? {}).map(item => item.caseId)])];
-  if (!byCase.length) return <div className="live-wait"><RefreshCw className="spin" size={20} />{job.stageLabel}</div>;
+  if (!byCase.length) return <div className="live-wait">{!TERMINAL.has(job.status)?<RefreshCw className="spin" size={20} />:null}{job.stageLabel}</div>;
   return <div className="live-cases">{byCase.map(caseId => <div className="live-case" key={caseId}><h3>{caseId}</h3><div className="answer-grid">{(["left", "right"] as const).map(side => {
     const evidence = job.evidence.find(item => item.caseId === caseId && item.side === side);
     const live = job.live?.[`${caseId}:${side}`];
