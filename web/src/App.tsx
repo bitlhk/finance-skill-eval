@@ -997,6 +997,7 @@ function ExecutionIdentity({evidence}:{evidence:Evidence}) {
     <p>Skill 版本：{evidence.skillVersion??"未记录"} · {data.publicationStatus==="NOT_PUBLISHED"?"临时候选，未发布":data.publicationStatus==="PUBLISHED"?"已发布方法":"发布状态未记录"}</p>
     <p>工具：{labels.tools}</p>
     <details><summary>安装工具与尝试采集范围</summary><p>安装清单、执行尝试和工具正文是三份不同证据；没有完整尝试采集时，空列表不表示零次调用。</p>
+      <p>{data.toolAttemptEvidence?.status === 'COMPLETE' && data.toolAttemptEvidence?.zeroCalls === true ? '本次原生工具选择与分发完整采集：零调用。' : data.toolAttemptEvidence?.status === 'COMPLETE' ? '本次原生工具选择与分发完整采集：存在尝试，详情见记录。' : '工具尝试采集不完整或未采集，是否零调用未知。'}</p>
       <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({installed:data.installedToolInventory??{status:'UNKNOWN',reason:'旧记录未保存安装工具清单'},attempts:data.toolAttemptEvidence??{status:'UNKNOWN',reason:'未记录完整工具尝试'}},null,2)}</pre></details>
     {evidence.toolCalls.length?<p>{evidence.toolCalls.map(item=>`${item.name} (${item.status})`).join("、")}</p>:null}
     <p>Token：{typeof evidence.usage?.totalTokens==='number'?evidence.usage.totalTokens:'未知，未取得用量'}</p>
