@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { EvalPack } from "../../contracts.js";
-import type { RunConfiguration } from "../../shared/contracts/run-configuration.js";
+import type {MigrationRunDeclaration} from './migration-run-declaration.js';
+export type {MigrationRunDeclaration} from './migration-run-declaration.js';
 import type {
   ProjectInspection,
   TechnicalValidation,
@@ -10,6 +11,12 @@ import type { PortableDiff, PortableGeneration } from "./migration-candidate-art
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { StageEnvelope } from "./migration-stage-envelope.js";
 import type {RuntimeLauncherBinding} from "../../shared/contracts/environment.js";
+import type {SolutionRevision} from './migration-solution-revision.js';
+import type {RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
+import type {MigrationImprovementPlan} from './migration-improvement-plan.js';
+import type {MigrationImprovementTask} from './migration-improvement-task.js';
+
+export type RuntimeReuse={environmentId:string;launcherEnvironmentId:string;environmentUpdatedAt:string;requirementsDigest:string;capabilitiesDigest:string;checkedAt:string};
 
 export const migrationProjectIdSchema = z.string().regex(/^migration-[a-f0-9-]+$/u);
 
@@ -58,15 +65,6 @@ export const persistedMigrationProjectSchema = z.object({
   assessment: z.literal("NOT_VALIDATED"),
 }).passthrough();
 
-export type MigrationRunDeclaration = {
-  pair: "AB" | "BC" | "AC" | "SC";
-  configuration: RunConfiguration;
-  dataSnapshot: string;
-  permissionBasis: string;
-  sourceProjectRef: string;
-  dependencyLockRef: string;
-};
-
 export type MigrationProject = {
   schemaVersion: "finance.skill-migration.v2";
   id: string;
@@ -87,6 +85,7 @@ export type MigrationProject = {
     sourceJobId: string;
     baseAssetId: string;
     candidateDigest: string;
+    planId?:string;
   }>;
   runs: Array<{
     jobId: string;
@@ -94,12 +93,32 @@ export type MigrationProject = {
     candidateDigest: string;
     comparisonFingerprint: string;
     packFingerprint: string;
+    solutionRevisions?: {left:SolutionRevision|null;right:SolutionRevision};
     declaredPlan?: MigrationRunDeclaration;
     suiteSnapshot?: EvalPack;
     runtimeConfigurationDigest?: string;
+    reuseProposalId?:string;
+    reuseAcceptanceTaskId?:string;
   }>;
   assessment: "NOT_VALIDATED";
   runtimeDelivery?: RuntimeLauncherBinding;
+  runtimeReuse?:RuntimeReuse;
+  runtimeRebuilds?: Array<{candidateDigest:string;requirements:RuntimeBuildRequirementsV1;createdAt:string}>;
+  improvementPlans?: MigrationImprovementPlan[];
+  improvementTasks?:MigrationImprovementTask[];
+  toolOptimizationAttempts?: Array<{
+    attemptId:string;
+    planId:string;
+    baseAssetId:string;
+    candidate:SkillAssetRecord;
+    toolId:string;
+    summary:string;
+    changedPaths:string[];
+    changes?:Array<{path:string;beforeSha256:string;afterSha256:string;reason:string}>;
+    validations:TechnicalValidation[];
+    status:'TECHNICAL_PASSED'|'TECHNICAL_FAILED'|'ADOPTED';
+    createdAt:string;
+  }>;
   reviews?: Array<{
     candidateDigest: string;
     decision: "ACCEPTED" | "NEEDS_CHANGES";
@@ -109,9 +128,14 @@ export type MigrationProject = {
   }>;
   inspection?: ProjectInspection;
   sourceInspection?: ProjectInspection;
+  reuseProposal?:import('./migration-reuse-design.js').MigrationReuseProposal;
+  candidateReuseProposalId?:string;
+  reuseAcceptancePlan?:import('./migration-reuse-acceptance.js').ReuseAcceptancePlan;
+  reuseAcceptanceResults?:import('./migration-reuse-acceptance.js').ReuseAcceptanceResult[];
   analysis?: StageEnvelope<ProjectInspection>;
   decisions?: ToolDecision[];
   portableGenerations?: PortableGeneration[];
+  generationStats?:{agentAttempts:number;outputCorrectionAttempts:number};
   portableGenerationDiff?: PortableDiff[];
   technicalValidations?: TechnicalValidation[];
 };

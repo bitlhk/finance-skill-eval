@@ -5,6 +5,7 @@ doing it at import time in a shared module breaks as soon as one entry imports a
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import sys
@@ -49,11 +50,59 @@ def build_workspace(files: dict[str, str | bytes], *, normalize_text: bool = Fal
         if isinstance(content, bytes):
             target.write_bytes(content)
         else:
-            target.write_text(content, encoding="utf-8")
+            target.write_text(content, encoding="utf-8", newline="")
     return root
 
 
 MAX_ITERATION_SENTINEL = "Max iterations reached without completion"
+
+
+def is_output_format_failure(result: object) -> bool:
+    """Only an actual model reply can be repaired; execution sentinels are not replies."""
+    if not isinstance(result, dict):
+        return False
+    output = str(result.get("output", ""))
+    return bool(output.strip()) and MAX_ITERATION_SENTINEL not in output and result.get("result_type") not in {"error", "interrupt"}
+
+
+def declared_delivery_paths(payload: dict) -> set[str]:
+    """Explicitly reused source modules are delivery too, not only changed files."""
+    paths = set()
+    tools = payload.get("tools")
+    for tool in tools if isinstance(tools, list) else []:
+        if not isinstance(tool, dict):
+            continue
+        tool_files = tool.get("files")
+        for name in [tool.get("entrypoint"), *(tool_files if isinstance(tool_files, list) else [])]:
+            if isinstance(name, str) and name:
+                paths.add(name.replace("\\", "/").removeprefix("./"))
+    delivery = payload.get("skillDelivery")
+    documents = delivery.get("files") if isinstance(delivery, dict) else None
+    for item in documents if isinstance(documents, list) else []:
+        if isinstance(item, dict) and isinstance(item.get("source"), str):
+            paths.add(item["source"].replace("\\", "/").removeprefix("./"))
+    return paths
+
+
+def collect_delivery_files(workspace: Path, originals: dict[str, bytes], payload: dict) -> dict[str, str]:
+    """Collect actual files, preserving declared reuse but excluding unchanged intake/scaffold."""
+    produced = {}
+    declared = declared_delivery_paths(payload)
+    for path in sorted(workspace.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(workspace).as_posix()
+        if rel.split("/")[0] in {"agents", "coding_memory", "context", "memory", "messages", "skills", "todo"}:
+            continue
+        if rel in {"AGENT.md", "SOUL.md", "IDENTITY.md", "USER.md", "HEARTBEAT.md"}:
+            continue
+        if "__pycache__" in rel.split("/") or path.suffix in {".pyc", ".pyo", ".class"}:
+            continue
+        written = path.read_bytes()
+        if originals.get(rel) == written and rel not in declared:
+            continue
+        produced[rel] = base64.b64encode(written).decode()
+    return produced
 
 
 def not_json_reason(result: object, exc: Exception, budget: int) -> str:

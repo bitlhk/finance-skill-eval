@@ -1,3 +1,5 @@
+import {approveMigrationPlanThroughUi} from './lib/verify-reuse-plan-ui.mjs';
+import {reusePlanFixture} from './lib/reuse-plan-fixture.mjs';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -6,17 +8,21 @@ import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { unzipSync, zipSync } from 'fflate';
 import { createEvaluationService } from '../dist/service/server.js';
+import {writeAcceptanceResult} from './lib/migration-acceptance-results.mjs';
 
 /**
  * Drive the migration UI in a real browser against a real service.
  *
- * The two agents are stood in: A2 (analysis) because reading a package is a judgement no rule can
- * make, and A4 (implementation) because writing the service is the agent's job. Everything else --
- * inspection, decisions, packaging, technical validation, export -- is the platform's own code,
- * which is what this script is here to exercise.
+ * Default mode uses agent, execution Runtime and Judge fixtures for deterministic UI regression.
+ * MIGRATION_TEST_REAL_AGENTS=true calls real analysis, migration, suite and Judge models, but
+ * retains a fixture execution Runtime. That mode checks model integration and UI rendering; it
+ * must never claim migrated business behavior or Builder Launcher acceptance.
+ * Add MIGRATION_TEST_LAUNCHER_INFO=<private connection-info.json> to exercise a real Builder
+ * Launcher as well. This mode requires real agents/Judge and asserts every business case passes.
  */
 const root=process.cwd();
-const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-ui-'));
+const resumeData=process.env.MIGRATION_TEST_RESUME_DATA;
+const data=resumeData?path.resolve(resumeData):await mkdtemp(path.join(os.tmpdir(),'migration-v2-ui-'));
 const downloads=await mkdtemp(path.join(os.tmpdir(),'migration-v2-download-'));
 const token='migration-v2-ui-test';
 // This test owns every executable it uploads and runs it in an isolated temporary workspace.
@@ -67,7 +73,24 @@ const analysis={status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
 analysis.dependencyAnalysis={dependencies:[],chains:analysis.tools.map(tool=>({toolName:tool.name,nodes:[{id:'entry',title:'业务入口',detail:tool.recommendationReason,dependencyKeys:[],evidence:[{path:tool.input.path,snippet:tool.input.snippet}]}],edges:[]}))};
 // Coverage comes from the scanner, not from the agent's own account of itself.
 const scanner={scannerDigest:'a'.repeat(64),coverage:[{path:SKILL_MD,status:'TEXT_INSPECTED'},{path:TOOL_SOURCE,status:'AST_PARSED'}]};
-const migrationAnalyzer=async()=>({status:'PRODUCED',payload:analysis,scanner});
+let observeGenerationStages=false,releaseGenerationStage;
+const holdGenerationStage=()=>new Promise((resolve,reject)=>{
+  const timer=setTimeout(()=>reject(new Error('UI did not observe the running generation stage')),30000);
+  releaseGenerationStage=()=>{clearTimeout(timer);resolve();};
+});
+const migrationAnalyzer=async input=>{
+  const payload=structuredClone(analysis);
+  if(input.runId.endsWith('-verify')){
+    if(observeGenerationStages)await holdGenerationStage();
+    for(const tool of payload.tools){
+      const script=tool.name==='calculate_acceptance_total';
+      const path=Object.keys(input.files).find(path=>script?path.endsWith('/calculate_acceptance_total.py'):path.endsWith('/server.py'));
+      tool.sourcePaths=[path];tool.portability=script?'PORTABLE_SCRIPT':'PORTABLE_MCP';
+      if(script)tool.entrypoint={kind:'PYTHON',path};
+    }
+  }
+  return {status:'PRODUCED',payload,scanner};
+};
 
 const scriptSource='from decimal import Decimal, ROUND_HALF_UP\nimport json, sys\n\ndef calculate_acceptance_total(subtotal: str, tax_rate: str):\n    amount=Decimal(subtotal); rate=Decimal(tax_rate); tax=(amount*rate).quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)\n    return {"status":"ok","subtotal":f"{amount:.2f}","tax_rate":f"{rate:.2f}","tax_amount":f"{tax:.2f}","total":f"{amount+tax:.2f}"}\n\nif __name__ == "__main__":\n    json.dump(calculate_acceptance_total(**json.load(sys.stdin)),sys.stdout)\n';
 const serviceSource='# /// script\n# requires-python = ">=3.11"\n# dependencies = ["mcp", "uvicorn"]\n# ///\nimport json\nimport os\n\nfrom mcp.server.lowlevel import Server\nfrom mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, TextContent, Tool\n\nTOOL_NAME = "get_acceptance_order"\nINPUT_SCHEMA = {"type": "object", "properties": {"order_id": {"type": "string"}}, "required": ["order_id"]}\nORDERS = {"ORDER-001": {"order_id": "ORDER-001", "currency": "CNY", "subtotal": "100.00", "tax_rate": "0.06", "approved": True}}\n\n\ndef execute(name, arguments):\n    return ORDERS.get(arguments.get("order_id")) or {"status": "unavailable"}\n\n\nasync def _list_tools(_context, _params) -> ListToolsResult:\n    return ListToolsResult(tools=[Tool(name=TOOL_NAME, description="Return a fixed order", inputSchema=INPUT_SCHEMA)])\n\n\nasync def _call_tool(_context, params: CallToolRequestParams) -> CallToolResult:\n    output = execute(params.name, dict(params.arguments or {}))\n    return CallToolResult(content=[TextContent(type="text", text=json.dumps(output, ensure_ascii=False))])\n\n\nserver = Server(name="acceptance-orders-mcp", version="0.1.0", on_list_tools=_list_tools, on_call_tool=_call_tool)\n\n\ndef main() -> None:\n    import uvicorn\n    port = int(os.environ.get("PORT", "8080"))\n    uvicorn.run(server.streamable_http_app(streamable_http_path="/mcp"), host="0.0.0.0", port=port)\n\n\nif __name__ == "__main__":\n    main()\n';
@@ -107,15 +130,40 @@ const implementationFixture=async input=>{
  * verify-real-agent-migration.mjs (HTTP, no page) covers. It needs a model, so: not in CI.
  */
 const realAgents=process.env.MIGRATION_TEST_REAL_AGENTS==='true';
+const launcherInfoPath=process.env.MIGRATION_TEST_LAUNCHER_INFO;
+assert(!launcherInfoPath||realAgents,'External Launcher acceptance requires real agents and Judge');
+assert(!resumeData||(realAgents&&launcherInfoPath),'Resume requires retained real-agent data and a real Launcher');
+const launcherInfo=launcherInfoPath?JSON.parse(await readFile(launcherInfoPath,'utf8')):null;
+if(launcherInfo){
+  assert.equal(launcherInfo.status,'READY','Builder Launcher is not ready');
+  assert.equal(typeof launcherInfo.baseUrl,'string');assert.equal(typeof launcherInfo.token,'string');
+  process.env.MIGRATION_UI_LAUNCHER_CREDENTIAL=launcherInfo.token;
+}
 // An agent run is minutes, and the browser is waiting on it.
 const STEP=realAgents?900_000:30_000;
-const stubs=realAgents?{}:{migrationAnalyzer,migrationImplementer:implementationFixture,
+const stubs=realAgents?{}:{migrationAnalyzer,migrationImplementer:implementationFixture,migrationReusePlanner:async input=>{
+  if(observeGenerationStages&&input.mode==='REVIEW')await holdGenerationStage();
+  return reusePlanFixture(input);
+},
+  migrationImprovementPlanner:async input=>({status:'PROPOSED',hypothesis:{layer:'TOOL',issue:'需要检查订单工具的结果映射',
+    expectedBehavior:'工具返回的订单状态和金额进入最终回答',evidenceCaseIds:[input.cases[0].caseId],
+    validation:'先验证工具返回，再用同一开发题复测',risk:'可能改变已有字段映射',confidence:'MEDIUM',
+    toolIds:[input.tools.find(tool=>tool.name==='calculate_acceptance_total').toolId]}}),
+  migrationToolOptimizationProposer:async input=>{
+    const file=Object.keys(input.files).find(path=>path.endsWith('calculate_acceptance_total.py'));
+    const source=file&&input.files[file];
+    assert.ok(source,`Tool 文件：${Object.keys(input.files).join(', ')}`);
+    assert.ok(!JSON.stringify(input).includes('独立订单复核情境'));
+    return {toolId:input.toolIds[0],summary:'修正计算工具的边界处理',changes:[{path:file,
+      content:`${source}\n# Tool optimization experiment\n`,reason:'保留业务算法，验证独立 Tool 候选流程'}]};
+  },
   // The question writer is the platform's, so it is stood in here: what this script checks is that
   // the analysis reaches it and that the result is reachable from the page.
   migrationSuite:async input=>({summary:`从分析生成：${input.tools.join('、')}`,
     cases:[{caseId:'suite-order-1',prompt:'查询订单 ORDER-001 的金额与审批状态',requiredTools:[input.tools[0]],taskMode:'single_turn',rubric:[{criterionId:'order-facts',label:'订单事实',dimension:'business_completeness',description:'返回订单金额与审批状态',weight:1,allOf:[],anyOf:[],noneOf:[]}]}]})};
 
 const instances=new Map();
+let blockJudge=false,blockedJudgeRequests=0;
 const fixtureServer=http.createServer((request,response)=>{void (async()=>{
   const url=new URL(request.url??'/',`http://${request.headers.host}`);
   const json=value=>{response.statusCode=200;response.setHeader('content-type','application/json');response.end(JSON.stringify(value));};
@@ -139,22 +187,56 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
   const instance=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)$/u);
   if(request.method==='DELETE'&&instance){instances.delete(instance[1]);response.statusCode=204;return response.end();}
   if(request.method==='POST'&&url.pathname==='/v1/chat/completions'){
-    await body();return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify({checks:[{criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'}]})}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
+    const requestBody=await body();const userMessage=requestBody.messages?.findLast(message=>message.role==='user');
+    if(blockJudge){blockedJudgeRequests++;return;}
+    let contract;try{contract=JSON.parse(userMessage?.content??'{}').responseContract}catch{contract=null}
+    const judged=contract?.dimensions?{winner:'TIE',confidence:'high',summary:'两个方案在测试用例上表现相当。',dimensions:contract.dimensions.map(dimension=>({id:dimension.id,aScore:3,bScore:3,reason:'两侧均完成任务。'}))}
+      :{checks:[{criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'}]};
+    return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify(judged)}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
   }
   response.statusCode=404;response.end();
 })().catch(error=>{response.statusCode=500;response.end(String(error));});});
 await new Promise(resolve=>fixtureServer.listen(0,'127.0.0.1',resolve));
 const fixtureBase=`http://127.0.0.1:${fixtureServer.address().port}`;
-process.env.FINANCE_EVAL_JUDGE_BASE_URL=`${fixtureBase}/v1`;
-process.env.FINANCE_EVAL_JUDGE_API_KEY='e2e-fixture-key';
-process.env.FINANCE_EVAL_JUDGE_MODEL='fixture-judge';
+if(!realAgents){
+  process.env.FINANCE_EVAL_JUDGE_BASE_URL=`${fixtureBase}/v1`;
+  process.env.FINANCE_EVAL_JUDGE_API_KEY='e2e-fixture-key';
+  process.env.FINANCE_EVAL_JUDGE_MODEL='fixture-judge';
+  // The controller checks this role even when an already-passing baseline needs no edit.
+  process.env.FINANCE_EVAL_OPTIMIZER_PROVIDER='openai_compatible';
+  process.env.FINANCE_EVAL_OPTIMIZER_BASE_URL=`${fixtureBase}/v1`;
+  process.env.FINANCE_EVAL_OPTIMIZER_API_KEY='e2e-fixture-key';
+  process.env.FINANCE_EVAL_OPTIMIZER_MODEL='fixture-optimizer';
+}
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,
   publicDirectory:path.resolve(process.env.MIGRATION_TEST_WEB_DIR||path.join(root,'web-dist')),
   accessToken:token,publicDemo:false,...stubs});
-const environmentResponse=await app.inject({method:'POST',url:'/api/environments',headers:{authorization:`Bearer ${token}`},payload:{name:'E2E Runtime',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:`${fixtureBase}/`}});
-assert.equal(environmentResponse.statusCode,200,environmentResponse.body);
+app.log.level='error';
+const runtimeRegistration={type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:launcherInfo?.baseUrl??`${fixtureBase}/`,
+  ...(launcherInfo?{credentialEnv:'MIGRATION_UI_LAUNCHER_CREDENTIAL'}:{})};
+if(!resumeData){
+  const environmentResponse=await app.inject({method:'POST',url:'/api/environments',headers:{authorization:`Bearer ${token}`},payload:{name:'E2E Runtime',...runtimeRegistration}});
+  assert.equal(environmentResponse.statusCode,200,environmentResponse.body);
+  const previousEnvironmentResponse=await app.inject({method:'POST',url:'/api/environments',headers:{authorization:`Bearer ${token}`},payload:{name:'E2E Previous Runtime',...runtimeRegistration}});
+  assert.equal(previousEnvironmentResponse.statusCode,200,previousEnvironmentResponse.body);
+}else{
+  // Retained runs freeze old endpoints. Rebind only this test's two named
+  // registrations to the newly supplied live Launcher; do not rewrite history.
+  const catalog=await app.inject({method:'GET',url:'/api/catalog',headers:{authorization:`Bearer ${token}`}});
+  assert.equal(catalog.statusCode,200);
+  const environments=catalog.json().environments;
+  for(const name of ['E2E Runtime','E2E Previous Runtime']){
+    const matches=environments.filter(item=>item.name===name&&item.type==='runtime_launcher');
+    assert.equal(matches.length,1,`Retained test registration not unique: ${name}`);
+    const response=await app.inject({method:'PUT',url:`/api/environments/${matches[0].environmentId}`,
+      headers:{authorization:`Bearer ${token}`},payload:{name,...runtimeRegistration}});
+    assert.equal(response.statusCode,200,response.body);
+  }
+}
 pass(realAgents?'agent_mode=REAL':'agent_mode=STUBBED');
 let browser,proxy,page=null,failedAt=null;
+let acceptedCases=[];
+let verifyCancellation;
 try{
   let serviceUrl=await app.listen({host:'127.0.0.1',port:0});
   // The private deployment is served under a subpath behind an SSO gateway that owns the
@@ -194,9 +276,15 @@ try{
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button',{name:'进入工作区',exact:true}).click();
   await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+  if(resumeData){
+    await expect(page.getByRole('button',{name:'继续处理',exact:true})).toHaveCount(1);
+    await page.getByRole('button',{name:'继续处理',exact:true}).click();
+    await page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:/验证实际效果/}).click();
+    pass('resumed_real_model_generated_candidate_and_frozen_suite');
+  }else{
   await page.getByRole('button',{name:'新建迁移',exact:true}).click();
   await page.locator('input[type=file]').first().setInputFiles({name:'legacy-skill.zip',mimeType:'application/zip',buffer:legacyZip});
-  await page.getByRole('heading',{name:'迁移改造方案',exact:true}).waitFor({timeout:STEP});
+  await page.getByRole('heading',{name:'诊断与工具选择',exact:true}).waitFor({timeout:STEP});
   if(realAgents){
     // What A2 reports is A2's judgement, and a real one is entitled to disagree with the stub's.
     // What the page owes is that the Tools it found are on it.
@@ -205,14 +293,26 @@ try{
     for(const name of ['get_acceptance_order','calculate_acceptance_total'])
       await expect(page.getByText(name,{exact:false}).first()).toBeVisible({timeout:STEP});
   }else{
-    await expect(page.locator('.diagnosis-tool')).toHaveCount(2);
+    await expect(page.locator('.diagnosis-tool')).toHaveCount(2,{timeout:STEP});
   }
   pass('legacy_skill_uploaded_and_inspected');
 
-  await page.locator('article').filter({hasText:'calculate_acceptance_total'}).getByLabel('转换形式').selectOption('SCRIPT');
-  await page.locator('article').filter({hasText:'get_acceptance_order'}).getByLabel('转换形式').selectOption('MCP');
-  await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();
+  await page.locator('article.diagnosis-tool').filter({has:page.getByRole('heading',{name:/^\d+\. calculate_acceptance_total$/})}).getByLabel('转换形式').selectOption('SCRIPT');
+  await page.locator('article.diagnosis-tool').filter({has:page.getByRole('heading',{name:/^\d+\. get_acceptance_order$/})}).getByLabel('转换形式').selectOption('MCP');
+  await approveMigrationPlanThroughUi(page);
+await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).click();
+  const generationResponse=page.waitForResponse(response=>response.url().endsWith('/generate')&&response.request().method()==='POST',{timeout:STEP});
+  observeGenerationStages=!realAgents;
   await page.getByRole('button',{name:'开始生成',exact:true}).click();
+  if(!realAgents){
+    await expect(page.getByRole('heading',{name:'分析候选能力与依赖',exact:true})).toBeVisible({timeout:STEP});
+    releaseGenerationStage();
+    await expect(page.getByRole('heading',{name:'审查迁移方案落实情况',exact:true})).toBeVisible({timeout:STEP});
+    releaseGenerationStage();observeGenerationStages=false;
+    pass('ui_generation_analysis_and_review_progress_visible');
+  }
+  const generation=await generationResponse;
+  assert.equal(generation.status(),200,`迁移生成失败：HTTP ${generation.status()} ${(await generation.text()).slice(0,500)}`);
   await expect(page.getByText('迁移代码已生成。',{exact:true})).toHaveCount(2,{timeout:STEP});
   await expect(page.getByText('已生成工具工程，请先完成代码中的待办。',{exact:true})).toHaveCount(0);
   pass('mixed_choices_generated_with_business_code');
@@ -252,10 +352,14 @@ try{
   // The test set is written from the analysis, and a reader has to be able to reach it: generated
   // here, listed with its questions, and offered as the content for the whole-Skill validation.
   await page.locator('.stage-actions').getByRole('button',{name:'验证实际效果',exact:true}).click();
+  }
   await page.getByRole('button',{name:/提供测试集和目标/}).click();
+  if(!resumeData){
   await page.getByLabel('准备方式').selectOption('ai');
   await page.getByRole('button',{name:'AI 生成',exact:true}).click();
+  }
   await expect(page.locator('.assessment-config-grid select').first().locator('option')).toHaveCount(2,{timeout:STEP});
+  if(resumeData)await page.locator('.assessment-config-grid select').first().selectOption({index:1});
   await page.getByText(/查看 \d+ 条用例与验收要求/).click();
   if(!realAgents){
     await expect(page.locator('.assessment-config-grid select').first().locator('option').last()).toContainText('从分析生成：get_acceptance_order、calculate_acceptance_total');
@@ -263,7 +367,32 @@ try{
   }
   pass('generated_test_set_visible_and_selectable');
 
+  await page.locator('.assessment-config-grid select').nth(1).selectOption({label:'E2E Runtime'});
+  const previousResultCount=await page.locator('.assessment-results .migration-result').count();
+  const startedEvaluation=page.waitForResponse(response=>response.url().endsWith('/validate/openjiuwen')&&response.request().method()==='POST',{timeout:STEP});
   await page.getByRole('button',{name:'执行并自动评估',exact:true}).click();
+  const evaluationResponse=await startedEvaluation;
+  assert.equal(evaluationResponse.status(),200,'UI failed to start an evaluation');
+  const evaluationJobId=(await evaluationResponse.json()).job.jobId;
+  await expect(page.locator('.assessment-results .migration-result')).toHaveCount(previousResultCount+1,{timeout:STEP});
+  if(realAgents){
+    const terminal=page.locator('.assessment-results .migration-result').first().locator(':scope > summary .stage-badge');
+    await expect(terminal).toContainText(/已完成|失败|中断|取消/,{timeout:STEP});
+    await expect(terminal).toContainText('已完成');
+    const evaluated=await app.inject({method:'GET',url:`/api/runs/${evaluationJobId}`,headers:{authorization:`Bearer ${token}`}});
+    assert.equal(evaluated.statusCode,200);
+    acceptedCases=evaluated.json().report.cases.map(c=>({caseId:c.caseId,verdict:c.judge?.goalAssessment?.verdict??'UNKNOWN'}));
+    const caseBadges=await page.locator('.assessment-results .migration-result').first().locator('.assessment-case > summary .stage-badge').allTextContents();
+    assert(caseBadges.length>0,'真实模型生成的测试集没有产生用例结果');
+    if(launcherInfo){
+      assert(caseBadges.every(badge=>badge.trim()==='通过'),`Builder 真实执行未全部通过：${caseBadges.join(', ')}`);
+      pass(`real_builder_and_real_judge:${caseBadges.length}_cases_passed`);
+    }else{
+      pass(`real_judge_on_fixture_runtime:${caseBadges.length}_cases`);
+      pass('fixture_runtime_is_not_migration_acceptance');
+    }
+    process.stdout.write(`${JSON.stringify({mode:launcherInfo?'REAL_AGENTS_JUDGE_AND_BUILDER':'REAL_AGENTS_AND_JUDGE_WITH_FIXTURE_RUNTIME',checks,caseBadges},null,2)}\n`);
+  }else{
   await expect(page.getByText('最新 1/1 通过',{exact:true})).toBeVisible({timeout:STEP});
   const assessedCase=page.locator('.assessment-case').filter({hasText:'suite-order-1'});
   await assessedCase.locator(':scope > summary').click();
@@ -271,16 +400,75 @@ try{
   await expect(assessedCase.getByText('订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',{exact:true})).toBeVisible();
   pass('candidate_effect_assessment_passed');
 
+  if(!realAgents){
+    await page.getByRole('button',{name:'分析当前结果',exact:true}).click();
+    await expect(page.getByText('需要检查订单工具的结果映射',{exact:true})).toBeVisible({timeout:STEP});
+    pass('evidence_grounded_improvement_plan_visible');
+    await page.getByLabel('准备方式').selectOption('import');
+    await page.getByLabel('预览或编辑测试集').fill(JSON.stringify({name:'含留出题的复核集',cases:[{id:'dev-order',input:'查询订单 ORDER-001',criteria:['返回订单金额和状态']}],
+      holdoutCases:[{id:'sealed-order',input:'独立订单复核情境',criteria:['返回正确的订单结论']}]}));
+    const importedResponse=page.waitForResponse(response=>response.url().endsWith('/suites/import')&&response.request().method()==='POST');
+    await page.getByRole('button',{name:'确认并导入',exact:true}).click();
+    const imported=await (await importedResponse).json();
+    assert.deepEqual(imported.holdoutCases.map(item=>item.caseId),['sealed-order']);
+    pass('ui_imported_frozen_holdout_set');
+  }
+
+  await page.getByRole('button',{name:/对比旧版与新版 Runtime/}).click();
+  await page.getByLabel('旧版 Runtime').selectOption({label:'E2E Previous Runtime'});
+  await page.getByLabel('旧版执行模型').selectOption('fixture-execution');
+  await page.getByRole('button',{name:'对比两套方案',exact:true}).click();
+  await expect(page.getByText('整套方案对比',{exact:true}).first()).toBeVisible({timeout:STEP});
+  await expect(page.getByText('最新 0/1 新版胜出',{exact:true})).toBeVisible({timeout:STEP});
+  await expect(page.getByText('两侧 Launcher 或模型可能不同；此结果不能单独归因于 Skill 文档。',{exact:true})).toBeVisible({timeout:STEP});
+  if(!realAgents){
+    const toolAttemptResponse=page.waitForResponse(response=>response.url().endsWith('/tool-optimizations')&&response.request().method()==='POST');
+    await page.getByRole('button',{name:'生成并技术验证',exact:true}).click();
+    const toolAttempt=await (await toolAttemptResponse).json();
+    assert.equal(toolAttempt.status,'TECHNICAL_PASSED',JSON.stringify(toolAttempt));
+    await expect(page.getByText('技术验证通过，待采用',{exact:true})).toBeVisible({timeout:STEP});
+    await page.getByRole('button',{name:'采用此候选，随后重新评测',exact:true}).click();
+    await expect(page.getByText('当前改进动作：')).toHaveCount(0);
+    pass('ui_tool_candidate_isolated_validated_and_adopted');
+    await page.getByRole('button',{name:/提供测试集和目标/}).click();
+    await page.getByRole('button',{name:'执行并自动评估',exact:true}).click();
+    await expect(page.getByText('最新 1/1 通过',{exact:true})).toBeVisible({timeout:STEP});
+    pass('ui_tool_candidate_effect_reevaluated');
+  }
+  pass('whole_solution_comparison_visible');
+  verifyCancellation=async()=>{
+  await page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:/验证实际效果/}).click();
+  const currentProject=(await app.inject({method:'GET',url:'/api/migrations',headers:{authorization:`Bearer ${token}`}})).json()[0];
+  blockJudge=true;
+  const workbench=page.getByRole('region',{name:'持续改进任务'});
+  const taskStarted=page.waitForResponse(r=>r.url().endsWith('/improvement-tasks')&&r.request().method()==='POST',{timeout:30_000});void taskStarted.catch(()=>{});
+  await workbench.getByRole('button',{name:'开始持续改进',exact:true}).click();assert.equal((await taskStarted).status(),200);
+  await expect.poll(()=>blockedJudgeRequests,{timeout:STEP}).toBeGreaterThan(0);
+  await workbench.getByRole('button',{name:'停止此任务',exact:true}).click();
+  await expect(workbench.getByText('已停止',{exact:true}).first()).toBeVisible({timeout:STEP});
+  const stopped=(await app.inject({method:'GET',url:`/api/migrations/${currentProject.id}/improvement-tasks`,headers:{authorization:`Bearer ${token}`}})).json().at(-1);
+  assert.equal(stopped.status,'CANCELLED');assert(stopped.finalConsumed);assert.equal(stopped.finalVerified,false);
+  const reuse=page.waitForResponse(r=>r.url().endsWith('/improvement-tasks')&&r.request().method()==='POST',{timeout:30_000});void reuse.catch(()=>{});
+  await workbench.getByRole('button',{name:'开始持续改进',exact:true}).click();assert.equal((await reuse).status(),409);
+  await expect(workbench.getByRole('alert')).toContainText('留出题已经用于最终复核');
+  assert.equal((await app.inject({method:'GET',url:`/api/migrations/${currentProject.id}/report`,headers:{authorization:`Bearer ${token}`}})).json().project.candidate.assetId,currentProject.candidate.assetId);
+  blockJudge=false;
+  pass('ui_cancel_inflight_final_preserves_candidate_and_blocks_holdout_reuse');
+  };
+  }
+
   await page.getByRole('button',{name:'进入下载',exact:true}).click();
   const pending=page.waitForEvent('download');
   await page.getByRole('button',{name:'下载迁移包',exact:true}).click();
   const download=await pending,target=path.join(downloads,'migration.zip');await download.saveAs(target);
-  assert(!download.suggestedFilename().endsWith('-unverified.zip'));
+  const downloadedProject=(await app.inject({method:'GET',url:'/api/migrations',headers:{authorization:`Bearer ${token}`}})).json()[0];
+  const delivery=(await app.inject({method:'GET',url:`/api/migrations/${downloadedProject.id}/report`,headers:{authorization:`Bearer ${token}`}})).json();
+  assert.equal(download.suggestedFilename().endsWith('-unverified.zip'),delivery.verification.delivery.status!=='VERIFIED');
   const exported=unzipSync(await readFile(target));
   // The Skill keeps its layout; the Script goes where the Skill layout says; the MCP service keeps
   // the paths the agent reported, because the platform did not build it.
   assert(exported['skill/SKILL.md']);
-  assert(Buffer.from(exported['skill/SKILL.md']).toString('utf8').includes('If the order is unavailable or unapproved, stop'));
+  if(!realAgents)assert(Buffer.from(exported['skill/SKILL.md']).toString('utf8').includes('If the order is unavailable or unapproved, stop'));
   assert(exported['skill/references/acceptance-policy.md']);
   assert(!exported['migration-manifest.json']);assert(!exported['migration-report.json']);
   if(realAgents){
@@ -297,11 +485,15 @@ try{
   // The runtime-coupled original is replaced, never shipped alongside its migration.
   assert(!Object.keys(exported).some(name=>name.includes('legacy_runtime_tools')));
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
-  pass('verified_candidate_downloaded_with_source_workflow');
+  pass('candidate_downloaded_with_explicit_acceptance_status');
+  await verifyCancellation?.();
   assert.deepEqual(errors,[]);pass('no_browser_errors');
   await page.setViewportSize({width:390,height:900});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));pass('mobile_no_overflow');
-  process.stdout.write(`${JSON.stringify({mode:'REAL_SERVICE_HEADLESS_CHROME',checks},null,2)}\n`);
+  const evaluated=await app.inject({method:'GET',url:`/api/runs/${evaluationJobId}`,headers:{authorization:`Bearer ${token}`}});
+  assert.equal(evaluated.statusCode,200);
+  acceptedCases=evaluated.json().report.cases.map(c=>({caseId:c.caseId,verdict:c.judge?.goalAssessment?.verdict??'UNKNOWN'}));
+  process.stdout.write(`${JSON.stringify({mode:realAgents?(launcherInfo?'REAL_AGENTS_JUDGE_AND_BUILDER':'REAL_AGENTS_AND_JUDGE_WITH_FIXTURE_RUNTIME'):'STUBBED_UI_REGRESSION',checks},null,2)}\n`);
 }catch(error){failedAt=error;throw error;}finally{
   // A browser check that fails in CI without a picture is a check nobody can act on.
   if(browser&&failedAt){
@@ -311,6 +503,19 @@ try{
   }
   if(browser)await browser.close();
   if(proxy){proxy.closeAllConnections();await close(proxy);}
-  await app.close();await Promise.all([rm(data,{recursive:true,force:true}),rm(downloads,{recursive:true,force:true})]);
+  await app.close();
+  if(resumeData||process.env.MIGRATION_TEST_RETAIN_DATA==='true')process.stderr.write(`Retained private test data: ${data}\n`);
+  else await rm(data,{recursive:true,force:true});
+  await rm(downloads,{recursive:true,force:true});
+  if(launcherInfo)delete process.env.MIGRATION_UI_LAUNCHER_CREDENTIAL;
   fixtureServer.closeAllConnections();await close(fixtureServer);
+  await writeAcceptanceResult([{skillId:'openjiuwen-portability-acceptance',passed:!failedAt,
+    provenance:{diagnosis:realAgents?(resumeData?'REUSED_REAL':'REAL'):'STUBBED',generation:realAgents?(resumeData?'REUSED_REAL':'REAL'):'STUBBED',
+      execution:launcherInfo?'REAL':'STUBBED',judge:realAgents?'REAL':'STUBBED'},
+    cases:acceptedCases,checks,phases:[
+      ...(checks.includes('mixed_choices_generated_with_business_code')?['migration']:[]),
+      ...(checks.includes('script_and_mcp_technical_validation')?['technical']:[]),
+      ...(acceptedCases.length?['assessment']:[]),
+      ...(checks.includes('candidate_downloaded_with_explicit_acceptance_status')?['export']:[]),
+    ]}]);
 }

@@ -23,6 +23,9 @@ import { MigrationStore } from '../migration/migration-store.js';
 import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
+import type { ImprovementPlanner } from '../migration/application/migration-improvement-planning-service.js';
+import type {ToolOptimizationProposer} from '../migration/application/migration-tool-optimization-service.js';
+import type {MigrationReusePlanner} from '../migration/application/migration-reuse-planner.js';
 import { runConfigurationSchema } from "./contracts.js";
 
 function markdownReport(report: EvaluationReport): string {
@@ -63,9 +66,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator} = {},
+  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
 ): Promise<FastifyInstance> {
-  const {migrationAnalyzer,migrationImplementer,migrationSuite,...configOverrides}=overrides;
+  const {migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
@@ -99,8 +102,10 @@ export async function createEvaluationService(
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
-    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
+    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
+    toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
+  app.addHook('onClose',()=>migrations.shutdown());
   registerMigrationRoutes(app, {
     migrations,
     skills,
@@ -113,6 +118,7 @@ export async function createEvaluationService(
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
   app.get<{ Params: { id: string } }>("/api/optimizations/:id", async request => optimizations.get(request.params.id));
   app.post<{ Params: { id: string } }>("/api/optimizations/:id/reevaluate", async (request, reply) => reply.code(202).send(await optimizations.reevaluate(request.params.id)));
+  app.post<{ Params: { id: string } }>("/api/optimizations/:id/final-verify", async (request, reply) => reply.code(202).send(await optimizations.finalVerify(request.params.id)));
   app.post<{ Params: { id: string }; Body: { decision: string } }>("/api/optimizations/:id/decision", async request => {
     const decision = request.body?.decision;
     if (decision !== "adopt" && decision !== "retain" && decision !== "cancel") throw Object.assign(new Error("Invalid decision"), { statusCode: 400 });
@@ -174,7 +180,8 @@ export async function createEvaluationService(
       const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
       return {runtimeId:environment.environmentId,launcherEnvironmentId:resolved.launcher.environmentId,name:environment.name,runtimeType:resolved.launcher.runtimeType,endpoint:resolved.launcher.baseUrl,
         mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,
-        transport:'runtime_launcher' as const,defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
+        transport:'runtime_launcher' as const,defaultModelId,supportedSkillModes:inspection.capabilities.supportedSkillModes,
+        models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
     }))).filter(item=>item!==null);
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");

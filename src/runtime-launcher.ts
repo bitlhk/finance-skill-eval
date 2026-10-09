@@ -1,4 +1,5 @@
-import { fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
+import { conversationTurnsSchema,fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
+import {canonicalSha256} from './shared/json-canonicalization.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
@@ -18,6 +19,7 @@ type InstanceState=z.infer<typeof runtimeInstanceStateSchema>;
 export const runtimeCaseRequestSchema=z.strictObject({
   schemaVersion:z.literal('finance.skill-eval.runtime-case.v1'),caseId:z.string().min(1),query:z.string().min(1),
   requiredTools:z.array(z.string().min(1)),workspaceFiles:workspaceFilesSchema,
+  turns:conversationTurnsSchema.optional(),
 });
 
 export type RuntimeInstanceSecrets={mode:'inline';values:Record<string,string>};
@@ -89,10 +91,26 @@ async function* boundedSseFrames(reader:ReadableStreamDefaultReader<Uint8Array>)
   }
   if(pending.some(byte=>![9,10,13,32].includes(byte)))throw new Error('Runtime Launcher SSE stream ended with an unfinished frame');
 }
-async function readExecution(response:Response,request:RuntimeExecutionRequest):Promise<unknown>{
-  if(!response.headers.get('content-type')?.includes('text/event-stream'))return readBoundedJson(response,RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes,'Runtime Launcher evidence');
+export type RuntimeObservationSummary={sequence:number;kind:RuntimeObservationEvent['kind'];nativeEventType?:string;synthesized:boolean;
+  toolCallId?:string;toolName?:string;modelCallId?:string;modelId?:string;inputDigest?:string;outputDigest?:string;durationMs?:number;errorCode?:string};
+/** Keep causal identifiers and digests, never raw prompts, outputs, arguments or native data. */
+export function summarizeRuntimeObservation(event:RuntimeObservationEvent):RuntimeObservationSummary|null{
+  if(event.kind==='output.delta')return null;
+  const payload=event.payload as Record<string,unknown>;
+  const summary:RuntimeObservationSummary={sequence:event.sequence,kind:event.kind,synthesized:event.source.synthesized};
+  if(event.source.nativeEventType)summary.nativeEventType=event.source.nativeEventType;
+  for(const [key,target] of [['toolCallId','toolCallId'],['name','toolName'],['modelCallId','modelCallId'],['modelId','modelId'],['inputDigest','inputDigest'],['outputDigest','outputDigest']] as const){
+    if(typeof payload[key]==='string')(summary as unknown as Record<string,unknown>)[target]=payload[key];
+  }
+  if(typeof payload.durationMs==='number')summary.durationMs=payload.durationMs;
+  const error=payload.error;
+  if(error&&typeof error==='object'&&'code' in error&&typeof error.code==='string')summary.errorCode=error.code;
+  return summary;
+}
+async function readExecution(response:Response,request:RuntimeExecutionRequest):Promise<{payload:unknown;observations:RuntimeObservationSummary[];observationsTruncated:boolean}>{
+  if(!response.headers.get('content-type')?.includes('text/event-stream'))return {payload:await readBoundedJson(response,RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes,'Runtime Launcher evidence'),observations:[],observationsTruncated:false};
   if(!response.body)throw new Error('Runtime instance stream is empty');
-  const reader=response.body.getReader(),decoder=new TextDecoder();let value:unknown;
+  const reader=response.body.getReader(),decoder=new TextDecoder();let value:unknown;const observations:RuntimeObservationSummary[]=[];let observationsTruncated=false;
   try{
     for await(const bytes of boundedSseFrames(reader)){
       const frame=decoder.decode(bytes).replaceAll('\r\n','\n');
@@ -102,12 +120,16 @@ async function readExecution(response:Response,request:RuntimeExecutionRequest):
       if(event.evidence){
         if(serializedBytes(event.evidence)>RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes)throw new Error(`Runtime Launcher evidence exceeds ${RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes} bytes`);
         value=event.evidence;
-      }else if(event.schemaVersion==='finance.runtime-observation.v1')forwardObservation(runtimeObservationEventSchema.parse(event),request);
+      }else if(event.schemaVersion==='finance.runtime-observation.v1'){
+        const parsed=runtimeObservationEventSchema.parse(event),summary=summarizeRuntimeObservation(parsed);
+        if(summary){if(observations.length<64)observations.push(summary);else observationsTruncated=true;}
+        forwardObservation(parsed,request);
+      }
       else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
     }
   }finally{await reader.cancel().catch(()=>undefined);}
   if(!value)throw new Error('Runtime instance stream ended without execution evidence');
-  return value;
+  return {payload:value,observations,observationsTruncated};
 }
 
 function forwardObservation(event:RuntimeObservationEvent,request:RuntimeExecutionRequest):void{
@@ -121,6 +143,9 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   readonly adapterId:string;
   private instance:InstanceState|null=null;
   private executeUrl:URL|null=null;
+  private incarnation=0;
+  private recoveryRequired=false;
+  private executionTail:Promise<void>=Promise.resolve();
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
     skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean}){
@@ -137,7 +162,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       modelId:this.options.model.modelId,variant:this.options.variant,skill:this.options.skill,environment:extracted.environment,
       configuration:this.options.configuration??{},secrets:extracted.secrets,limits:{timeoutMs:this.options.timeoutMs}};
     if(generation)request.generation=generation;
-    const idempotencyKey=fingerprint({runId:context.runId,side:this.options.side,configuration:fingerprint(request)});
+    const idempotencyKey=fingerprint({runId:context.runId,side:this.options.side,configuration:fingerprint(request),...(this.incarnation?{incarnation:this.incarnation}:{})});
     const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
     if(!response.ok)throw await responseError(response);
@@ -161,11 +186,36 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     this.executeUrl=controlledUrl(this.options.baseUrl,this.instance.executeEndpoint);
   }
   async execute(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
+    // A Launcher may retire an instance after failure. Serialize recovery with case
+    // execution; never replay the failed case (it may already have caused side effects).
+    const execution=this.executionTail.then(async()=>{
+      request.signal?.throwIfAborted();
+      try{
+        if(this.recoveryRequired){
+          await this.cleanup();
+          this.incarnation+=1;
+          await this.prepare({runId:request.runId,signal:request.signal});
+          this.recoveryRequired=false;
+        }
+        const evidence=await this.executePrepared(request);
+        if(evidence.status==='failed')this.recoveryRequired=true;
+        return evidence;
+      }catch(error){this.recoveryRequired=true;throw error;}
+    });
+    this.executionTail=execution.then(()=>undefined,()=>undefined);
+    return execution;
+  }
+  private async executePrepared(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
     if(!this.instance||!this.executeUrl)throw new Error('Runtime instance is not ready');
+    if(request.evalCase.turns){
+      const capabilities=await fetch(endpoint(this.options.baseUrl,'v1/runtime-capabilities'),{headers:this.options.headers,redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs)});
+      if(!capabilities.ok||runtimeLauncherCapabilitiesSchema.parse(await capabilities.json()).features.multiTurn!==true)
+        throw new Error('所选 Runtime 尚未声明真实多轮续接能力，复用验收未执行');
+    }
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
-      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[]}))});
+      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[],...(request.evalCase.turns?{turns:request.evalCase.turns}:{})}))});
     if(!response.ok)throw await responseError(response);
-    const payload=await readExecution(response,request);
+    const execution=await readExecution(response,request),payload=execution.payload;
     const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);
     if(evidence.runId!==request.runId||evidence.side!==request.side||evidence.caseId!==request.evalCase.caseId)throw new Error('Runtime instance evidence does not match the requested case');
     if(evidence.modelId!==this.options.model.modelId)throw new Error('Runtime instance used a different model');
@@ -182,11 +232,31 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     if(evidence.metadata.instanceConfigurationDigest!==this.instance.configurationDigest)throw new Error('Runtime instance evidence has a different configuration digest');
     const expectedWorkspaceDigest=request.evalCase.workspaceFiles?.length?workspaceFilesDigest(request.evalCase.workspaceFiles):null;
     if((evidence.metadata.workspaceFilesDigest??null)!==expectedWorkspaceDigest)throw new Error('Runtime instance did not mount the requested test data');
-    return {...evidence,traceFingerprint:evidence.traceFingerprint??fingerprint(evidence),metadata:{...evidence.metadata,executionMode:'runtime-launcher',runtimeEndpoint:new URL(this.options.baseUrl).origin,instanceId:this.instance.instanceId}};
+    if(request.evalCase.turns){
+      const receipt=z.strictObject({sessionId:z.string().min(1),workspaceId:z.string().min(1),
+        turns:z.array(z.strictObject({index:z.number().int().nonnegative(),queryDigest:z.string(),status:z.enum(['completed','failed']),
+          outputDigest:z.string(),output:z.string(),toolNames:z.array(z.string())}))}).parse(evidence.metadata.conversation);
+      if((evidence.status==='completed'?receipt.turns.length!==request.evalCase.turns.length:receipt.turns.length>request.evalCase.turns.length)||receipt.turns.some((turn,index)=>turn.index!==index
+        ||turn.queryDigest!==canonicalSha256(request.evalCase.turns![index]!.query)||turn.status!=='completed'
+        ||turn.outputDigest!==canonicalSha256(turn.output)
+        ||request.evalCase.turns![index]!.requiredTools.some(name=>!turn.toolNames.includes(name))))
+        throw new Error('Runtime conversation evidence does not match the real requested turns');
+      if(evidence.status==='completed'&&evidence.output!==receipt.turns.map((t,i)=>`Turn ${i+1}:\n${t.output}`).join('\n\n'))throw new Error('Runtime conversation output evidence does not match');
+      // A completed conversation must account for every successful call exactly
+      // once, including repeated calls. A failed turn may have an unreceipted tail.
+      if(evidence.status==='completed'){
+        const recorded=receipt.turns.flatMap(turn=>turn.toolNames).sort();
+        const executed=evidence.toolCalls.filter(call=>call.status==='completed').map(call=>call.name).sort();
+        if(fingerprint(recorded)!==fingerprint(executed))throw new Error('Runtime conversation tool receipts do not match execution evidence');
+      }
+    }
+    return {...evidence,traceFingerprint:evidence.traceFingerprint??fingerprint(evidence),metadata:{...evidence.metadata,executionMode:'runtime-launcher',runtimeEndpoint:new URL(this.options.baseUrl).origin,instanceId:this.instance.instanceId,
+      observationSummary:execution.observations,observationSummaryTruncated:execution.observationsTruncated}};
   }
   async cleanup():Promise<void>{
-    const instance=this.instance;this.instance=null;this.executeUrl=null;if(!instance)return;
+    const instance=this.instance;if(!instance)return;
     const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});
     if(!response.ok&&response.status!==404)throw await responseError(response);
+    this.instance=null;this.executeUrl=null;
   }
 }

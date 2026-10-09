@@ -215,7 +215,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   }
   // Rewrite documentation in one pass, so replacements cannot rewrite each other.
   const replacements=[...relocations].filter(([,targets])=>targets.size===1);
-  if(replacements.length){
+  if(replacements.length&&!input.skillDelivery){
     const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
     const pattern=new RegExp(`(?<![\\w./-])(?:${replacements.map(([from])=>escape(from)).sort((a,b)=>b.length-a.length).join('|')})(?![\\w./-])`,'gu');
     const targets=new Map(replacements.map(([from,to])=>[from,[...to][0]!]));
@@ -232,13 +232,19 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`);
   const mcpTools=generations.filter(g=>g.form==='MCP').map(g=>`\`${g.toolName.replaceAll('`','')}\``);
   const guide=[...scriptGuide,...(mcpTools.length?[`- MCP 工具：${mcpTools.join('、')}。按照本 Skill 上文定义的业务流程、调用顺序和输出规则使用这些工具。服务地址、身份、凭证及 Runtime Header 均由平台配置，不是业务参数，不要向用户索取；部署配置见 \`runtime-tool-config.template.json\`。`]:[])].join('\n');
+  // A4's confirmed document delivery is authoritative. Do not rewrite metadata, append
+  // deployment instructions or relocate its citations after the agent has checked it.
+  if(!input.skillDelivery){
   const originalInstructions=standardSkillFrontmatter(Buffer.from(files[skillTarget]!).toString('utf8'));
   // Regeneration may start from the previous immutable candidate.  Remove the guide we own
   // before appending its replacement; otherwise every regeneration duplicates the section and
   // gradually drowns out the business instructions.
   const cleanInstructions=originalInstructions.replace(/\n## 迁移后的执行方式\n[\s\S]*?(?=\n## |\s*$)/u,'').trimEnd();
-  files[skillTarget]=strToU8(cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
-    '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n');
+  files[skillTarget]=strToU8(input.decisions.length
+    ?cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
+      '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n'
+    :originalInstructions.trimEnd()+'\n');
+  }
   if(hasMcp){
     const templatePath='runtime-tool-config.template.json';
     const template=JSON.stringify(runtimeToolConfigTemplate(input.inspection,input.decisions),null,2)+'\n';

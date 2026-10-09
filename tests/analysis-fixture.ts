@@ -49,15 +49,27 @@ export function analyzedTool(input: {
 
 /** A stand-in A2: it returns an analysis payload, which still goes through the citation checks. */
 export function analysisFixture(tools: Array<Record<string, unknown>>, scanner?: Record<string, unknown> | null): MigrationAnalyzer {
-  return async input => ({
+  return async input => {
+    const candidate=input.runId.endsWith('-verify')||(!input.files[SKILL_FILE]&&!!input.files['SKILL.md']);
+    const actualTools=candidate?tools.map(tool=>{
+      const paths=Object.keys(input.files).filter(path=>/\.(?:py|java|js|mjs|ts)$/u.test(path));
+      const script=paths.find(path=>pathStartsScripts(path)&&path.endsWith(`/${tool.name}.py`)),form=script?'SCRIPT':'MCP';
+      const evidencePath=script??paths[0]??'SKILL.md';
+      const remap=(claim:any)=>claim?{...claim,path:claim.path===SKILL_FILE?(input.files[SKILL_FILE]?SKILL_FILE:'SKILL.md'):claim.path}:claim;
+      return {...tool,sourcePaths:[evidencePath],portability:form==='SCRIPT'?'PORTABLE_SCRIPT':'PORTABLE_MCP',recommendedForm:form,
+        input:remap(tool.input),output:remap(tool.output),samples:((tool.samples??[]) as unknown[]).map(remap),
+        ...(form==='SCRIPT'?{entrypoint:{kind:'PYTHON',path:evidencePath}}:{entrypoint:undefined})};
+    }):tools;
+    return ({
     status: 'PRODUCED' as const,
-    payload: { status: 'PRODUCED', skill: { status: 'COMPLIANT', findings: [] }, tools,
-      dependencyAnalysis:{dependencies:[],chains:tools.map(tool=>{const source=(tool.sourcePaths as string[]|undefined)?.find(p=>input.files[p]);const path=source??SKILL_FILE;const text=Buffer.from(input.files[path]??[]).toString('utf8');return {toolName:tool.name,nodes:[{id:'fixture-entry',title:'Fixture business operation',detail:'Recorded test contract',dependencyKeys:[],evidence:[{path,snippet:text.slice(0,200)}]}],edges:[]}})} },
+    payload: { status: 'PRODUCED', skill: { status: 'COMPLIANT', findings: [] }, tools:actualTools,
+      dependencyAnalysis:{dependencies:[],chains:actualTools.map(tool=>{const source=(tool.sourcePaths as string[]|undefined)?.find(p=>input.files[p]);const path=source??(candidate?'SKILL.md':SKILL_FILE);const text=Buffer.from(input.files[path]??[]).toString('utf8');return {toolName:tool.name,nodes:[{id:'fixture-entry',title:'Fixture business operation',detail:'Recorded test contract',dependencyKeys:[],evidence:[{path,snippet:text.slice(0,200)}]}],edges:[]}})} },
     // Generation is gated on the scanner having run, so a fixture that expects to generate
     // reports a clean coverage by default.
     scanner: scanner === undefined ? { scannerDigest: 'a'.repeat(64), coverage: [] } : scanner,
-  });
+  });};
 }
+function pathStartsScripts(path:string){return /^(?:skill\/)?scripts\//u.test(path)}
 
 /**
  * A stand-in A4: the agent that writes the code. It returns the files it "wrote" plus how to

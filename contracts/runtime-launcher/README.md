@@ -2,6 +2,15 @@
 
 This directory is the portable contract for Runtime Launchers returned by an external Runtime Builder. A Launcher implementation is framework-neutral at this boundary: it translates framework-native lifecycle callbacks into stable Finance Runtime events and may attach a sanitized native extension.
 
+An instance's optional `skill.skillFile` names the document relative to the full
+archive; omission means `SKILL.md`. A compound Skill/MCP bundle may use
+`skill/SKILL.md` without moving sibling projects. Validate the safe entrypoint and
+its equality with `instructions`; supplied `files` must use actual archive paths
+and matching content, not document-relative aliases. Resolve document references
+from its directory, but executable launch paths from the archive root. Existing
+root packages omit this additive v1 field. Nested-entrypoint senders and receivers
+must be deployed together; unsupported receivers must reject rather than guess.
+
 ## Builder delivery descriptor
 
 After deployment, the Builder returns a `finance.runtime-launcher-descriptor.v1` document. It identifies one deployed Launcher by `deploymentId` and `artifactSha256`, provides its `baseUrl`, declares the supported protocol versions and states whether the caller must supply a bearer credential. The descriptor never contains a token, API key, model credential or MCP secret.
@@ -21,6 +30,25 @@ Authentication material is provisioned outside this JSON. `authentication.type=b
 - `DELETE /v1/runtime-instances/{instanceId}` releases the instance. The Launcher must also enforce its advertised expiry.
 
 Remote Launchers must use HTTPS. Returned execution endpoints must remain under the registered Launcher's origin and base path. Responses, events and evidence must never expose credentials or secret configuration values.
+
+## Existing native capability reuse
+
+`nativeToolNames` is discovery only. The optional v1 `nativeCapabilities` array advertises
+`capabilityId`, callable `name`, `contract` (input/output/error JSON Schemas and semantics), and
+`constraints` (permissions, side effects, isolation). IDs and names must be unique; each name must
+also appear in `nativeToolNames`. Advertise implemented behavior only, not planned support.
+Descriptions must not contain secrets, host paths, or imply OS sandboxing where none exists.
+
+Eval gives this online inventory to diagnosis when the user selects an existing Runtime. Source
+requirements remain recorded. Exact contract and constraint matching can authorize reuse for
+testing without fabricating a Builder Result. Names alone, unknown contracts, different semantics,
+or an explicit rebuild are insufficient. A matching declaration is not a contract-test or business
+verdict; actual execution and frozen business evaluation still follow. Eval pins the discovery
+digest and rechecks it before a new evaluation or candidate adoption; changes require a new check.
+
+This is an additive field in the current v1 contract. Older Launchers without it still work but
+cannot prove reuse from names alone. Strict older clients can reject the new field: deploy the Eval
+schema update before enabling the updated Launcher. No registration v2 is introduced.
 
 ## Observability boundary
 
@@ -45,6 +73,29 @@ Acceptance may depend only on final execution evidence and the `core` guarantee.
 Framework-specific consumers must use `native` data explicitly. Portable consumers must ignore it and use only normalized fields.
 
 ## Files
+
+### Native multi-turn execution (additive v1)
+
+`features.multiTurn: true` advertises distinct native Agent calls with preserved session,
+workspace and MCP lifecycle **inside one case**. Omission/false means unsupported.
+`runtime-case.turns` contains 2–8 `{query, requiredTools}` entries. The root `query` is
+the evaluation objective, not a concatenated conversation; root `requiredTools`
+includes every per-turn requirement. Independent cases remain isolated.
+
+Terminal `metadata.caseScopeId` identifies a native case scope. Multi-turn evidence
+includes `metadata.conversation = {sessionId, workspaceId, turns}`. Each completed
+turn records zero-based `index`, canonical SHA-256 `queryDigest` and `outputDigest`,
+redacted `output`, `status: completed`, and completed `toolNames`. Completed case
+output is the turn outputs joined as `Turn N:\n<output>`, separated by blank lines.
+Failure may retain a verified completed prefix; it cannot count as acceptance passed.
+For a completed case, flattened per-turn `toolNames` must match all completed
+`toolCalls` by name and count, including repetitions; missing or extra calls invalidate
+the receipt. Failed cases may have an unreceipted tail from the failed turn.
+Receipts and IDs are Launcher assertions, not independent OS isolation attestation.
+
+New Runtime instances are not new Launcher deployments. Preserving an opaque handle
+inside one session does not establish cross-session, cross-instance or deployment reuse.
+Upgrade strict receiver schemas before enabling these optional v1 fields.
 
 - `finance.runtime-launcher-descriptor.v1.schema.json`: Builder-to-platform deployed Launcher handoff.
 - `finance.skill-eval.runtime-capabilities.v1.schema.json`: capabilities discovered from the delivered Launcher.

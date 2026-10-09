@@ -3,6 +3,7 @@
   "type": "object", "additionalProperties": false,
   "required": ["schemaVersion", "caseId", "query", "requiredTools", "workspaceFiles"],
   "properties": {
+    "turns": {"type":"array","minItems":2,"maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["query","requiredTools"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4000},"requiredTools":{"type":"array","maxItems":32,"items":{"type":"string","minLength":1}}}}},
     "schemaVersion": { "const": "finance.skill-eval.runtime-case.v1" }, "caseId": { "type": "string", "minLength": 1 }, "query": { "type": "string", "minLength": 1 },
     "requiredTools": { "type": "array", "items": { "type": "string", "minLength": 1 } },
     "workspaceFiles": { "type": "array", "maxItems": 32, "x-totalContentBytesMaximum": 1048576, "items": { "type": "object", "additionalProperties": false, "required": ["path", "content"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" }, "content": { "type": "string", "maxLength": 262144 } } } }

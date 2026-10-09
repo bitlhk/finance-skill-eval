@@ -30,6 +30,8 @@ Tool 的实现边界遵循 [企业级 Runtime 无关 Skill 规范第 6 节](../.
 
 迁移模型负责决定最终文档结构，平台不会在交付后机械合并或拆分文档。优先让用户在一个 `SKILL.md` 中读懂主要流程；只有内容独立、低频且适合按需加载时才放进 `references/`。不要因为源目录存在、Tool 数量或固定行数就创建参考文件。500 行可以帮助判断可读性，但不是硬阈值。
 
+交付前解析最终 `SKILL.md` 的 YAML frontmatter，确认 `name` 与 `description` 是非空字符串；描述中的冒号、引号和换行要用合法的引号或块标量表达，不要留下无法解析的 YAML。
+
 最终 `SKILL.md` 是供模型执行任务的业务工作流，不是工具部署清单。必须保留并澄清源 Skill 中影响决策的内容：
 
 - `description` 说明 Skill 做什么、何时触发，以及容易误用时的边界。
@@ -40,6 +42,8 @@ Tool 的实现边界遵循 [企业级 Runtime 无关 Skill 规范第 6 节](../.
 MCP/Script 的入口、Header、环境变量和配置模板只能放在简短的执行说明中，不能替代上述业务流程。不要为每个工具重复“通过 MCP 调用同名工具”之类没有业务含义的句子。若源 Skill 对业务流程描述不足，应依据已读取的源业务实现补足有证据的步骤；不能确认的内容明确标为待确认，不得猜测。
 
 最终文档写入隔离的 `migration-skill/` 目录，并在结果的 `skillDelivery` 中逐项声明源文件和它在 Skill 根目录中的目标路径。清单必须包含目标 `SKILL.md`，并完整列出要交付的文档；未列出的旧文档不会由平台猜测保留。`workspace/` 是运行期数据，不得进入 Skill 文档交付。
+
+文档清单的目标为 `SKILL.md` 或 `references/` 下的 `.md`、`.mdx`、`.txt`；源路径均在 `migration-skill/` 内。工具部署 `README.md` 属于工程文件，放在 `tools[].files`，不再放入 Skill 文档清单。明确复用但没有修改的源码模块、包内资源也必须列入 `tools[].files`；平台按实际字节交付，不要求为了收集文件而改写原实现。
 
 接口与基线的差异只进报告，不参与通过与否。判通过与否的是**起得来、工具有、调得通**。
 
@@ -55,9 +59,9 @@ MCP 通过每次请求 Header 消费上下文和最终 Credential，业务 Schem
 
 ## Runtime Harness 边界
 
-本交付步骤只处理 Skill 文档、业务 MCP 和独立 Script。若诊断结果含 `runtimeCapabilities`，说明迁移依赖目标 Runtime 尚未提供的能力；当前流程必须在诊断阶段停止，并交付 `finance.runtime-build-requirements.v1` YAML，不能生成候选 Harness 插件、伪造能力或进入测试。
+本交付步骤只处理 Skill 文档、业务 MCP 和独立 Script。诊断中的 `runtimeCapabilities` 是待核验的原生能力需求，不等于目标 Runtime 一定缺少。业务部分可以先生成，但不能在本步骤生成 Harness 插件或伪造原生能力已经可用；Runtime 适配阶段先核对已登记 Launcher 的完整合同，满足则复用。不满足时补齐 `finance.runtime-build-requirements.v1` YAML，等待 Builder 交付和准入。两种路径都需要实际运行和业务验证，不能仅凭同名工具通过。
 
-未来 Runtime Builder 将消费该 YAML，构建并返回可登记的 Runtime 接口。当前仅预留协议边界，不调用不存在的 Builder。ToolBase、ToolResponse、Toolkit、register_tool 等框架注册与返回包装属于迁移适配胶水，应由业务 MCP/Script 的目标框架实现替代，不得误报为 Runtime Harness 改造需求。
+外部 Builder 消费该 YAML，构建并返回 Launcher；Eval 负责准入与实际业务验证。ToolBase、ToolResponse、Toolkit、register_tool 等框架注册与返回包装属于迁移适配胶水，应由业务 MCP/Script 的目标框架实现替代，不得误报为 Harness 改造需求。普通包内参考文档阅读也不自动形成新的 Harness 接口。
 
 ## 库依赖分类
 

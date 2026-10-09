@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { runtimeBuildRequirements } from "../domain/migration-harness.js";
+import {currentRuntimeRequirements} from '../domain/migration-runtime-requirements.js';
+import {currentRuntimeReuse} from '../domain/migration-runtime-reuse.js';
 import { supportsImplicitScriptContext, type TechnicalValidation, type ToolInspection } from "../domain/migration-model.js";
 import {
   runtimeInjection,
@@ -12,6 +13,7 @@ import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 import type { MigrationValidationRunner } from './migration-technical-validator.js';
+import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -76,19 +78,41 @@ export class MigrationTechnicalValidationWorkflow {
       const project = await this.projects.get(id);
       const asset = project.candidate ?? project.source;
       if (parsed.baseAssetId !== asset.assetId) return conflict("资产已变化，请刷新后重新验证");
+      const result=await this.execute(id,project,asset,parsed,signal);
+      const sample=parsed.arguments??parsed.request;
+      if(sample!==undefined)await this.runtimeConfigs.saveValidationInput?.(id,parsed.toolId,sample);
+      (project.technicalValidations ??= []).push(result);
+      await this.projects.save(project);
+      return result;
+    });
+  }
+
+  /** Validate an immutable experiment asset without changing the active candidate or its validation history. */
+  async validateIsolated(id:string,asset:SkillAssetRecord,toolId:string,signal?:AbortSignal):Promise<TechnicalValidation>{
+    const project=await this.projects.get(id);
+    return this.execute(id,project,asset,{toolId,baseAssetId:asset.assetId},signal,true);
+  }
+
+  private async execute(id:string,project:MigrationProject,asset:SkillAssetRecord,
+    parsed:{toolId:string;baseAssetId:string;request?:unknown;endpoint?:string;arguments?:Record<string,unknown>},
+    signal?:AbortSignal,isolated=false):Promise<TechnicalValidation>{
       const inspection = project.inspection;
       if (!inspection) return conflict("请先完成 Tool 检查");
-      if (runtimeBuildRequirements(project.sourceInspection ?? inspection)) {
-        return conflict("检测到 Runtime 能力缺口；请将能力需求 YAML 交给外部 Runtime Builder。本服务不负责构建 Runtime，接入支持该能力的 Runtime 后才能继续验证");
+      const requirements=currentRuntimeRequirements(project);
+      if (requirements&&!currentRuntimeReuse(project)&&(!('requirementsDigest' in requirements)||project.runtimeDelivery?.requirementsDigest!==requirements.requirementsDigest)) {
+        return conflict("Runtime 能力尚未确认：请先核对并复用已有 Runtime；不满足时再将能力需求交给 Builder 适配");
       }
       const tool = inspection.tools.find(item => item.toolId === parsed.toolId);
       if (!tool) return conflict("当前检查结果中不存在这个 Tool");
-      const testInput = automaticTestInput(tool, tool.kind === "MCP" ? parsed.arguments : parsed.request);
+      if(requirements&&'requiredCapabilities' in requirements&&requirements.requiredCapabilities.some(item=>item.consumerTools.includes(tool.toolId)||item.consumerTools.includes(tool.name)))
+        return conflict('此工具依赖原生 Runtime 能力，不能用本地工具试运行冒充能力合同验证；需提供支持该能力的验证器');
+      const runtimeConfig = await this.runtimeConfigs.get(id);
+      const provided=tool.kind === 'MCP'?parsed.arguments:parsed.request;
+      const testInput = automaticTestInput(tool, provided??runtimeConfig.validationInputs?.[tool.toolId]);
       const generated = project.portableGenerations?.find(item => item.toolId === tool.toolId);
       if (generated && !generated.readyForValidation) return conflict("生成候选仍有待办，不能标记技术验证通过");
 
       const archive = await this.skills.readArchive(asset.assetId);
-      const runtimeConfig = await this.runtimeConfigs.get(id);
       const runtimeDependencies = project.sourceInspection?.dependencyAnalysis?.dependencies
         .filter(dependency => dependency.toolIds.includes(tool.toolId)) ?? [];
       if (tool.kind === "SCRIPT" && runtimeDependencies.some(dependency =>
@@ -124,7 +148,7 @@ export class MigrationTechnicalValidationWorkflow {
           result.error = result.status === "PASSED" ? null : "工具试运行未通过，请检查测试配置、接口权限和实现。原始错误未保存，以避免泄露运行依赖。";
           result.stages = result.stages.map(stage => stage.passed ? stage : { ...stage, message: "此步骤未通过，原始错误未保存以保护运行依赖。" });
         }
-        await this.runtimeConfigs.appendCheck(id, {
+        if(!isolated)await this.runtimeConfigs.appendCheck(id, {
           toolId: tool.toolId,
           kind: project.candidate ? "GENERATED_TOOL" : "SOURCE_TOOL",
           status: result.status,
@@ -134,10 +158,7 @@ export class MigrationTechnicalValidationWorkflow {
           message: result.status === "PASSED" ? "实际工具调用通过；尚未完成业务效果评估。" : "实际工具调用未通过。",
         });
       }
-      (project.technicalValidations ??= []).push(result);
-      await this.projects.save(project);
       return result;
-    });
   }
 
   async list(id: string) {

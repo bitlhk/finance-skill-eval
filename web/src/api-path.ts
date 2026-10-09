@@ -15,5 +15,6 @@ export async function downloadApi(url:string,filename:string) {
   const response=await fetch(apiPath(url),{headers:authHeaders()});
   if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.message??'下载失败');}
   const object=URL.createObjectURL(await response.blob()),link=document.createElement('a');
-  link.href=object;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);
+  const serverFilename=response.headers.get('content-disposition')?.match(/filename="([^"\\/]+)"/i)?.[1];
+  link.href=object;link.download=serverFilename??filename;link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);
 }

@@ -16,6 +16,7 @@ import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
+import {MigrationOpenJiuwenService} from '../src/migration/application/migration-openjiuwen-service.js';
 
 function fixture(name='BUSINESS_SERVICE_URL'){
  const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);
@@ -50,6 +51,23 @@ it('rejects reserved environment names, non-scalar values and conflicting shared
  expect(()=>serviceEnvironment(deps,{[dep.id]:{url:'x'}})).toThrow('格式不合法');
  expect(()=>serviceEnvironment([...deps,{...dep,id:'another'}],{[dep.id]:'first',another:'second'})).toThrow('冲突');
  expect(serviceEnvironment([{...dep,schema:{type:'integer'},binding:{kind:'SERVICE_ENV',name:'BUSINESS_TIMEOUT_MS'}}],{[dep.id]:3000})).toEqual({BUSINESS_TIMEOUT_MS:'3000'});
+});
+
+it('does not request a Runtime context extension for MCP startup configuration, including retries',async()=>{
+ const {inspection,dep,tool}=fixture(),asset={assetId:'asset',artifactSha256:'a'.repeat(64)};
+ const project={id:'migration-1',candidate:asset,inspection,sourceInspection:inspection,portableGenerations:[{toolId:tool.toolId,toolName:tool.name,form:'MCP',start:['node','mcp/server.mjs'],files:['mcp/server.mjs']}]};
+ const validate=vi.fn(async(_id,input)=>input);
+ const service=new MigrationOpenJiuwenService({get:async()=>project} as any,{readArchive:async()=>({'mcp/server.mjs':strToU8('server')})} as any,
+  {currentState:async()=>({ready:true,reasons:[]})} as any,{validate} as any,{} as any,{} as any,
+  {get:async()=>({environmentId:'runtime',type:'runtime_launcher',runtimeType:'openjiuwen'})} as any,
+  {get:async()=>({revision:1,values:{[dep.id]:'https://fixture.invalid'},checks:[]})} as any);
+ const result:any=await service.validate(project.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'},runtimeToolConfig:{context:{},providers:{},tools:{lookup:{contextBindings:{}}}}}});
+ expect(result.configuration.runtimeToolConfig).toBeUndefined();
+ expect(result.configuration.runtimeMcpBindings.right[0].environmentReference).toMatchObject({migrationId:project.id,revision:1});
+ // Actual header injection still requires the extension; it is not silently dropped.
+ dep.binding={kind:'HTTP_HEADER',name:'X-Test-Identity'};
+ const injected:any=await service.validate(project.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'}}});
+ expect(injected.configuration.runtimeToolConfig.tools.lookup.contextBindings).toEqual({'X-Test-Identity':`context.${dep.id}`});
 });
 
 it('resolves a revision-bound reference for selected tools and rejects changed configuration',async()=>{

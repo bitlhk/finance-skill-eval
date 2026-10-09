@@ -9,6 +9,36 @@ const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
+  it.each([false,true])('recreates only for the next case, including queued executions; cleanup failure fails closed: %s',async(cleanupFails)=>{
+    let created=0;const keys:string[]=[],executed:string[]=[],deleted:string[]=[];
+    vi.stubGlobal('fetch',vi.fn(async(input:URL|string|Request,init?:RequestInit)=>{
+      const url=String(input);
+      if(init?.method==='POST'&&url.endsWith('/v1/runtime-instances')){
+        created+=1;keys.push((init.headers as Record<string,string>)['idempotency-key']!);
+        return Response.json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:`instance-${created}`,status:'ready',executeEndpoint:`/v1/runtime-instances/instance-${created}/execute`,expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest});
+      }
+      if(init?.method==='DELETE'){
+        deleted.push(url);return cleanupFails?Response.json({error:'cleanup_failed'},{status:503}):new Response(null,{status:404});
+      }
+      executed.push(`${url}:${JSON.parse(String(init?.body)).caseId}`);
+      return Response.json({error:'EVAL_PACKAGE_ITERATION_LIMIT'},{status:502});
+    }));
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters:{}},variant,skill:null,environment:{environmentId:'test'},timeoutMs:1000});
+    await runtime.prepare({runId:'run-1'});
+    const execute=(caseId:string)=>runtime.execute({runId:'run-1',side:'right',evalCase:{...evalCase,caseId},model:{providerId:'managed',modelId:'execution',parameters:{}},variant});
+    const results=await Promise.allSettled([execute('first'),execute('second')]);
+    expect(results.map(result=>result.status)).toEqual(['rejected','rejected']);
+    expect(String((results[0] as PromiseRejectedResult).reason)).toContain('EVAL_PACKAGE_ITERATION_LIMIT');
+    expect(executed[0]).toContain('instance-1/execute:first');
+    expect(created).toBe(cleanupFails?1:2);
+    expect(executed).toHaveLength(cleanupFails?1:2);
+    if(!cleanupFails){expect(keys[0]).not.toBe(keys[1]);expect(executed[1]).toContain('instance-2/execute:second');}
+    else{
+      expect(String((results[1] as PromiseRejectedResult).reason)).toContain('cleanup_failed');
+      await expect(runtime.cleanup()).rejects.toThrow('cleanup_failed');
+      expect(deleted).toHaveLength(2); // Retain the handle so shutdown can retry deletion.
+    }
+  });
   it('validates a complete generation contract without accepting unsupported options',()=>{
     const valid={schemaVersion:'finance.eval-generation.v1',temperature:0.25,top_p:0.8,max_tokens:1234};
     expect(launcherGenerationSchema.parse(valid)).toEqual(valid);

@@ -21,6 +21,7 @@
         { "type": "null" },
         { "type": "object", "additionalProperties": false, "required": ["skillId", "version", "artifactSha256", "instructions"], "properties": {
           "skillId": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "artifactSha256": { "$ref": "#/$defs/sha256" }, "instructions": { "type": "string" },
+          "skillFile": { "type": "string", "minLength": 1, "description": "Archive-relative Skill document path; omission means SKILL.md. Must name a safe existing UTF-8 file whose content equals instructions." },
           "files": { "type": "object", "additionalProperties": { "type": "string" } }, "canonicalArchive": { "type": "string" }, "archiveBase64": { "type": "string", "contentEncoding": "base64" }, "archiveSha256": { "$ref": "#/$defs/sha256" }
         } }
       ]

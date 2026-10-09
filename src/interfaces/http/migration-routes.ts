@@ -46,9 +46,28 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{ Params: { id: string } }>("/api/migrations/:id/diagnose", request => migrations.diagnose(request.params.id, true));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/diagnosis", request => migrations.diagnose(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/inspect", request => migrations.inspect(request.params.id));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/inspect/source", request => migrations.inspect(request.params.id, true));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/inspect/source", request => {
+    const body=z.strictObject({environmentId:z.string().min(1).optional()}).parse(request.body??{});
+    return migrations.inspect(request.params.id,true,body.environmentId);
+  });
+  app.post<{Params:{id:string}}>('/api/migrations/:id/runtime-reuse',request=>migrations.reuseRuntime(request.params.id,request.body));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/reuse-acceptance',request=>migrations.reuseAcceptance(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/reuse-acceptance/plan',request=>migrations.proposeReuseAcceptance(request.params.id,request.body,requestSignal(request)));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/reuse-acceptance/approve',request=>migrations.approveReuseAcceptance(request.params.id,request.body));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/reuse-acceptance/start',request=>migrations.startReuseAcceptance(request.params.id,request.body));
+  app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/reuse-acceptance/:taskId/cancel',request=>migrations.cancelReuseAcceptance(request.params.id,request.params.taskId));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-configuration", request => migrations.runtimeConfiguration(request.params.id));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => migrations.runtimeRequirements(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-rebuilds", request => migrations.proposeRuntimeRebuild(request.params.id,request.body));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/improvement-plans", request => migrations.proposeImprovement(request.params.id,request.body));
+  app.get<{Params:{id:string}}>('/api/migrations/:id/improvement-tasks',request=>migrations.improvementTasks(request.params.id));
+  app.post<{Params:{id:string}}>('/api/migrations/:id/improvement-tasks',request=>migrations.startImprovementTask(request.params.id,request.body));
+  app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/cancel',request=>migrations.cancelImprovementTask(request.params.id,request.params.taskId));
+  app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/adopt',request=>migrations.adoptImprovementTask(request.params.id,request.params.taskId));
+  app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/resume',request=>migrations.resumeImprovementTask(request.params.id,request.params.taskId,request.body));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/tool-optimizations", request => migrations.proposeToolOptimization(request.params.id,request.body));
+  app.post<{ Params: { id: string; attemptId:string } }>("/api/migrations/:id/tool-optimizations/:attemptId/adopt", request =>
+    migrations.adoptToolOptimization(request.params.id,{attemptId:request.params.attemptId}));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-deliveries", async request => {
     const body=z.strictObject({result:z.unknown(),trustReference:z.string().regex(/^[a-z0-9-]+$/u),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
     return runtimeDeliveries.acceptAndBind(request.params.id,{result:body.result,trustReference:body.trustReference,name:body.name});
@@ -75,7 +94,10 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.put<{ Params: { id: string; toolId: string } }>("/api/migrations/:id/tools/:toolId/decision", request =>
     migrations.decide(request.params.id, request.params.toolId, request.body));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/plan", request => migrations.plan(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/plan/proposal", request => migrations.proposeMigrationPlan(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/plan/approval", request => migrations.approveMigrationPlan(request.params.id,request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/generate", request => migrations.generate(request.params.id, request.body));
+  app.get<{ Params: { id: string } }>("/api/migrations/:id/generation-progress", request => migrations.generationProgress(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/candidates", request => migrations.candidate(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/drafts", request => migrations.draft(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/validate", request => migrations.validate(request.params.id, request.body));
@@ -97,8 +119,20 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
     const model = capabilities.models.find(item => item.modelId === requested);
     if (!model) throw Object.assign(new Error("所选执行模型不属于这个 Runtime Launcher。"), { statusCode: 400 });
     const executionModel = { providerId: `runtime-launcher:${environment.environmentId}`, modelId: model.modelId, label: model.label ?? model.upstreamModelId, parameters: {} };
+    let leftExecutionModel=executionModel;
+    if((configuration as Record<string,unknown>).evaluationMode==='solution_comparison'){
+      const leftId=(configuration as {runtimeBindings?:{left?:{environmentId?:string}}}).runtimeBindings?.left?.environmentId;
+      const leftEnvironment=leftId?await environments.get(leftId):null;
+      if(!leftEnvironment||!['runtime_launcher','execution_environment'].includes(leftEnvironment.type))throw Object.assign(new Error('旧版 Runtime Launcher 不可用。'),{statusCode:400});
+      const leftInspection=await environments.inspect(leftEnvironment),leftCapabilities=leftInspection.capabilities;
+      if(leftInspection.status!=='ready'||!leftCapabilities)throw Object.assign(new Error(leftInspection.error??'旧版 Runtime Launcher 预检失败。'),{statusCode:400});
+      const leftRequested=(configuration as {leftExecutionModel?:ModelRef}).leftExecutionModel?.modelId??leftCapabilities.defaultModelId;
+      const leftModel=leftCapabilities.models.find(item=>item.modelId===leftRequested);
+      if(!leftModel)throw Object.assign(new Error('旧版执行模型不属于所选 Launcher。'),{statusCode:400});
+      leftExecutionModel={providerId:`runtime-launcher:${leftEnvironment.environmentId}`,modelId:leftModel.modelId,label:leftModel.label??leftModel.upstreamModelId,parameters:{}};
+    }
     return migrations.validateOpenJiuwen(request.params.id, { ...(request.body as Record<string, unknown>), configuration: {
-      ...configuration, executionModel, leftExecutionModel: executionModel, rightExecutionModel: executionModel,
+      ...configuration, executionModel, leftExecutionModel, rightExecutionModel: executionModel,
     } });
   });
   app.get<{ Params: { id: string } }>("/api/migrations/:id/validations/openjiuwen", request => migrations.openJiuwenValidations(request.params.id));
@@ -112,11 +146,14 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.get<{ Params: { id: string } }>("/api/migrations/:id/report", request => migrations.report(request.params.id));
   app.post("/api/migrations/:id/releases", () => migrations.release());
   app.get<{ Params: { id: string } }>("/api/migrations/:id/export", async (request, reply) => {
-    const report = await migrations.report(request.params.id), project = report.project;
-    const name = (project.candidate ?? project.source).skillId.replace(/[^a-z0-9-]+/giu, "-");
-    const verified = report.verification.targetExecution === "PASSED";
-    return reply.type("application/zip").header("x-migration-acceptance", report.verification.targetExecution)
+    const packaged=await migrations.exportPackage(request.params.id),report=await migrations.report(request.params.id);
+    const name = packaged.skillId.replace(/[^a-z0-9-]+/giu, "-");
+    const current=report.project.candidate?.artifactSha256===packaged.candidateDigest;
+    const verified = current&&report.verification.delivery.status === "VERIFIED";
+    return reply.type("application/zip").header("x-migration-acceptance", verified?'VERIFIED':'UNVERIFIED')
+      .header("x-migration-business-acceptance", current?report.verification.targetExecution:'STALE')
+      .header("x-migration-reuse-acceptance", current?report.verification.reuseAcceptance:'STALE')
       .header("content-disposition", `attachment; filename="${name}${verified ? "" : "-unverified"}.zip"`)
-      .send(await migrations.exportCandidate(request.params.id));
+      .send(packaged.archive);
   });
 }

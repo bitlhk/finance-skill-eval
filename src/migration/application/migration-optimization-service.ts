@@ -8,6 +8,7 @@ import type { MigrationProjectStore } from './migration-project-store.js';
 import type { MigrationTechnicalValidationWorkflow } from './migration-technical-validation-service.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
+import type {MigrationCandidateInspectionService} from './migration-candidate-inspection-service.js';
 
 export class MigrationOptimizationService {
   constructor(
@@ -18,11 +19,15 @@ export class MigrationOptimizationService {
     private readonly optimizers?:MigrationOptimizationPort,
     private readonly environments?:MigrationEnvironmentRepository,
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,
+    private readonly candidateInspection?:MigrationCandidateInspectionService,
   ) {}
 
   async optimize(id:string,input:unknown) {
     return this.projects.runExclusive(id,async()=>{
-      const parsed=z.strictObject({jobId:z.string().min(1)}).parse(input),value=await this.projects.get(id);
+      const parsed=z.strictObject({jobId:z.string().min(1),planId:z.string().min(1).optional()}).parse(input),value=await this.projects.get(id);
+      const plan=parsed.planId?value.improvementPlans?.find(item=>item.planId===parsed.planId):null;
+      if(parsed.planId&&(!plan||plan.sourceJobId!==parsed.jobId||plan.candidateDigest!==value.candidate?.artifactSha256||plan.hypothesis?.layer!=='SKILL'))
+        return conflict('Skill 优化规划与当前候选或运行记录不匹配');
       if (!this.optimizers || !value.candidate) return conflict('优化器或候选不可用');
       const experiment=value.runs.find(run=>run.jobId===parsed.jobId);
       if (!experiment || experiment.candidateDigest!==value.candidate.artifactSha256) return conflict('请为当前候选选择一次运行记录');
@@ -38,8 +43,8 @@ export class MigrationOptimizationService {
       }
       const job=this.jobs.get(parsed.jobId),variant=job?.report?.variants.right;
       if (variant?.mode!=='skill_version' || variant.artifactSha256!==value.candidate.artifactSha256) return conflict('缺少已完成的右侧候选运行证据');
-      const item=await this.optimizers.create(parsed.jobId);
-      (value.optimizations??=[]).push({optimizationId:item.optimizationId,sourceJobId:parsed.jobId,baseAssetId:value.candidate.assetId,candidateDigest:value.candidate.artifactSha256});
+      const item=await this.optimizers.create(parsed.jobId,false,value.reuseProposal?.approvedAt?JSON.stringify(value.reuseProposal.design):undefined);
+      (value.optimizations??=[]).push({optimizationId:item.optimizationId,sourceJobId:parsed.jobId,baseAssetId:value.candidate.assetId,candidateDigest:value.candidate.artifactSha256,...(plan?{planId:plan.planId}:{})});
       await this.projects.save(value);
       return item;
     });
@@ -51,8 +56,13 @@ export class MigrationOptimizationService {
       const link=value.optimizations?.find(optimization=>optimization.optimizationId===parsed.optimizationId);
       if (!link || !this.optimizers || value.candidate?.assetId!==link.baseAssetId) return conflict('这次优化与当前候选无关，或它的基线候选已变化');
       const item=await this.optimizers.get(parsed.optimizationId);
-      if (!item.candidate || !['review','adopted'].includes(item.status)) return conflict('优化候选必须先跑完复测才能采用');
+      if (!item.candidate || !['review','adopted'].includes(item.status) || !item.holdoutVerified) return conflict('优化候选必须完成开发集复测和最终留出集复核才能采用');
       await this.skills.readArchive(item.candidate.assetId);
+      if(value.reuseProposal){
+        if(!this.candidateInspection)return conflict('迁移方案审查服务不可用');
+        value.inspection=await this.candidateInspection.inspectRevision(value,item.candidate);
+        value.decisions=(value.decisions??[]).map(decision=>decision.baseAssetId===link.baseAssetId?{...decision,baseAssetId:item.candidate!.assetId}:decision);
+      }
       value.candidate=item.candidate;
       value.candidateNotes=`Optimization ${item.optimizationId}: ${item.summary}`;
       (value.candidateHistory??=[]).push({asset:item.candidate,notes:value.candidateNotes,recordedAt:new Date().toISOString(),kind:'optimization'});

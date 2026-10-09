@@ -10,6 +10,8 @@ export type ResolvedSkillSource = {
   version: string;
   artifactSha256: string;
   instructions: string;
+  /** Archive-relative Skill document entrypoint; omitted means SKILL.md. */
+  skillFile?: string;
   files?: Record<string, string>;
   canonicalArchive?: string;
   archiveBase64?:string;

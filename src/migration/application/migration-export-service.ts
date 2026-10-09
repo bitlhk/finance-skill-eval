@@ -10,6 +10,10 @@ export class MigrationExportService {
   ) {}
 
   async exportCandidate(id:string) {
+    return (await this.exportPackage(id)).archive;
+  }
+
+  async exportPackage(id:string) {
     const value=await this.projects.get(id);
     if (!value.candidate) return conflict('请先生成候选');
     const archivedFiles=await this.skills.readArchive(value.candidate.assetId);
@@ -26,6 +30,6 @@ export class MigrationExportService {
       }
     }
     // The delivery archive contains only the Skill and its tools. Evidence remains in the report API.
-    return Buffer.from(zipSync(files));
+    return {archive:Buffer.from(zipSync(files)),candidateDigest:value.candidate.artifactSha256,skillId:value.candidate.skillId};
   }
 }

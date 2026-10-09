@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { evalCaseSchema, fingerprint } from "../contracts.js";
 import type { RuntimeAdapter } from "../adapters.js";
@@ -23,7 +23,7 @@ import {ModelGoalJudge} from '../goal-judge.js';
 import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
 import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 import {RuntimeLauncherAdapter} from '../runtime-launcher.js';
-import {zipSync} from 'fflate';
+import {runtimeSkillPackage} from '../runtime-skill-package.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -203,15 +203,15 @@ export class EvaluationRunManager {
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
       const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
-      let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined,archiveBase64:string|undefined,archiveSha256:string|undefined;
+      let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined;
+      if(completeArchive)return runtimeSkillPackage({...asset,archive:await this.options.skills.readArchive(asset.assetId)});
       const files=await this.options.skills.readFiles(asset.assetId);
       if (strict) {
         archive=await this.options.skills.readArchive(asset.assetId);
-        if(completeArchive){const bytes=Buffer.from(zipSync(archive));archiveBase64=bytes.toString('base64');archiveSha256=createHash('sha256').update(bytes).digest('hex');}
         if(neutral&&archive['migration-generated/neutral-contract.json'])canonicalArchive=canonicalNeutralArchive(archive,asset.artifactSha256);
         else for(const [name,bytes] of Object.entries(archive)){
           try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
-          catch{if(!completeArchive)throw new Error(`Migration dependency mapping required for non-text file: ${name}`);}
+          catch{throw new Error(`Migration dependency mapping required for non-text file: ${name}`);}
         }
       }
       if(executablePaths.length){archive??=await this.options.skills.readArchive(asset.assetId);for(const name of executablePaths){
@@ -225,13 +225,12 @@ export class EvaluationRunManager {
         instructions: await this.options.skills.readSource(asset.assetId),
         files,
         ...(canonicalArchive?{canonicalArchive}:{}),
-        ...(archiveBase64?{archiveBase64}:{}),
-        ...(archiveSha256?{archiveSha256}:{}),
       };
     };
   }
 
   private async runtimeFor(configuration: RunConfiguration, pack: EvalPack): Promise<RuntimeAdapter> {
+    if(pack.cases.some(c=>c.turns)&&configuration.runtime.type!=='runtime_launcher')throw new Error('真实多轮案例必须通过支持多轮的 Runtime Launcher 执行');
     if (configuration.runtimeBindings) {
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
@@ -371,7 +370,7 @@ export class EvaluationRunManager {
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("本服务未配置阅卷模型");
     if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
-    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
+    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{tools:configuration.runtimeCommandBindings?.right});
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
       :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);

@@ -20,27 +20,31 @@ export type ToolInspection={
   scriptInjectionEvidence?:InspectionEvidence[];
 };
 export type ProjectInspection={assetId:string;assetDigest:string;inspectedAt:string;skill:SkillInspection;tools:ToolInspection[];scriptsExecuted:false;
+  reuseConformance?:import('./migration-reuse-design.js').ReuseConformance;
   runtimeCapabilities?:RuntimeHarnessCapability[];
   dependencyAnalysis?:import('./migration-dependency.js').DependencyAnalysis;
   staticAnalysis?:{status:'COMPLETE'|'PARTIAL'|'UNAVAILABLE';dependencyStatus:'EXPLICIT_BINDING'|'NO_BINDING_IN_CHECKED_SCOPE'|'UNKNOWN';scannerDigest:string|null;
     incompleteFiles:Array<{path:string;status:string}>;toolIncompleteFiles?:Array<{path:string;status:string}>};
-  runtimeAnalysis?:{status:'RUNNING'|'COMPLETE'|'NOT_CONFIGURED'|'FAILED';model?:string;acceptedBindings:number;rejectedBindings:number;inputTruncated?:boolean}};
+  runtimeAnalysis?:{status:'RUNNING'|'COMPLETE'|'NOT_REQUESTED'|'NOT_CONFIGURED'|'FAILED';model?:string;acceptedBindings:number;rejectedBindings:number;inputTruncated?:boolean}};
 export type ToolDecision={toolId:string;form:ToolForm;language?:string;reason:string;baseAssetId:string;decidedAt:string};
-/** A source-Runtime capability that must be fulfilled by an external Runtime Builder. */
+/** A source Runtime requirement. Existing Launcher contracts may satisfy it; the historical
+ * migrationAction value is not proof that a new Builder construction is necessary. */
 export type RuntimeHarnessCapability={name:string;owner:'RUNTIME_HARNESS';migrationAction:'REQUIRES_RUNTIME_BUILDER';blocking:true;
   reason:string;usageContract:string;targetCapability:string|null;testAvailability:'UNCHECKED';
   contract?:{inputSchema:Record<string,unknown>;outputSchema:Record<string,unknown>;errorSchema:Record<string,unknown>;semantics:string};
   constraints?:{permissions:string[];sideEffects:'none'|'read'|'write';isolation:string};
   consumerTools:string[];evidence:InspectionEvidence[]};
 export type MigrationPlanItem={toolId:string;toolName:string;form:ToolForm;language:string;generator:string;blockingReasons:string[];warnings:string[]};
-export type MigrationPlan={baseAssetId:string;items:MigrationPlanItem[];skillMigrationItems:string[];skillBlockingReasons:string[];generationAllowed:boolean;technicalValidationAllowed:boolean};
+export type MigrationPlan={baseAssetId:string;items:MigrationPlanItem[];skillMigrationItems:string[];skillBlockingReasons:string[];generationAllowed:boolean;technicalValidationAllowed:boolean;
+  reuseProposal?:import('./migration-reuse-design.js').MigrationReuseProposal|null};
 export type TechnicalValidation={
   runtimeConfigurationDigest?:string;
   inputSource?:'USER'|'SOURCE_SAMPLE'|'SCHEMA_DEFAULT'|'EMPTY';
   inputFields?:string[];
   validationId:string;toolId:string;assetId:string;assetDigest:string;implementationDigest:string;
   casesDigest:string;
-  mode:'LOCAL_TRUSTED'|'MCP_HTTP';status:'PASSED'|'FAILED';startedAt:string;finishedAt:string;
+  mode:'LOCAL_TRUSTED'|'MCP_HTTP'|'RUNTIME_INTEGRATED';status:'PASSED'|'FAILED';startedAt:string;finishedAt:string;
+  reuseAcceptanceTaskId?:string;jobIds?:string[];
   stages:Array<{name:string;passed:boolean;message:string}>;error:string|null;
 };
 

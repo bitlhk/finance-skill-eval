@@ -3,7 +3,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {strToU8,zipSync} from 'fflate';
-import {simpleMigrationSuiteSchema,simpleMigrationCases,simpleMigrationSuiteExample} from '../src/migration/domain/simple-migration-suite.js';
+import {simpleMigrationSuiteSchema,simpleMigrationCases,simpleMigrationHoldoutCases,simpleMigrationSuiteExample} from '../src/migration/domain/simple-migration-suite.js';
 import {ModelGoalJudge} from '../src/goal-judge.js';
 import {runtimeExecutionEvidenceSchema} from '../src/contracts.js';
 import {assessMigrationAcceptance} from '../src/migration/domain/migration-acceptance.js';
@@ -17,6 +17,12 @@ const evidence=runtimeExecutionEvidenceSchema.parse({runId:'test',side:'right',c
 const definition=simpleMigrationCases(simpleMigrationSuiteSchema.parse({name:'test',cases:[{id:'fee-001',input:'计算服务费',criteria:['服务费为2.5元','说明尚未扣费']}]}))[0]!;
 function judge(checks:unknown[],capture?:Array<unknown>){return new ModelGoalJudge({adapterId:'fixture',complete:async request=>{capture?.push(request);return {modelId:'test',content:JSON.stringify({checks})}}},model)}
 const input={evalCase:definition,left:{...evidence,side:'left' as const},right:evidence,profile:{} as any};
+it('sends actual native turn queries and receipts, not just the evaluation objective',async()=>{
+ const captures:any[]=[];await judge([{criterionIndex:0,verdict:'PASS',reason:'Observed',evidence:''},{criterionIndex:1,verdict:'PASS',reason:'Observed',evidence:''}],captures).compare({...input,
+  evalCase:{...definition,turns:[{query:'Read and wait',requiredTools:['read_file']},{query:'Continue without rereading',requiredTools:['calculate_total']}]},
+  right:{...evidence,metadata:{conversation:{sessionId:'PRIVATE_ID',workspaceId:'PRIVATE_PATH',turns:[{index:0,status:'completed',queryDigest:'q',outputDigest:'o',output:'wait',toolNames:['read_file']},{index:1,status:'completed',queryDigest:'q2',outputDigest:'o2',output:evidence.output,toolNames:['calculate_total']}]}}}});
+ const user=JSON.parse(captures[0].messages[1].content);expect(user.conversationQueries[1]).toEqual({index:1,query:'Continue without rereading'});expect(user.runtimeEvidence.conversation.turns[1].toolNames).toEqual(['calculate_total']);expect(JSON.stringify(user)).not.toContain('PRIVATE');
+});
 it('validates simple suites without placing criteria or credentials in task input',()=>{
  const parsed=simpleMigrationSuiteSchema.parse(simpleMigrationSuiteExample);expect(simpleMigrationCases(parsed)[0]!.prompt).toBe(parsed.cases[0]!.input);
  const merged=simpleMigrationCases(simpleMigrationSuiteSchema.parse({name:'workspace',workspaceFiles:[{path:'shared.json',content:'shared'},{path:'overridden.json',content:'old'}],cases:[{id:'a',input:'x',criteria:['x'],workspaceFiles:[{path:'overridden.json',content:'new'}]}]}))[0]!;
@@ -26,6 +32,10 @@ it('validates simple suites without placing criteria or credentials in task inpu
  expect(()=>simpleMigrationSuiteSchema.parse({name:'test',workspaceFiles:[{path:'../secret',content:'x'}],cases:[{id:'a',input:'x',criteria:['x']}]})).toThrow();
  expect(()=>simpleMigrationSuiteSchema.parse({name:'test',workspaceFiles:[{path:'same',content:'x'},{path:'same',content:'y'}],cases:[{id:'a',input:'x',criteria:['x']}]})).toThrow();
  expect(()=>simpleMigrationSuiteSchema.parse({...simpleMigrationSuiteExample,credential:'secret'})).toThrow();
+ const withHoldout=simpleMigrationSuiteSchema.parse({name:'frozen',cases:[{id:'dev',input:'开发题',criteria:['已回答']}],holdoutCases:[{id:'sealed',input:'留出题',criteria:['已回答']}]});
+ expect(simpleMigrationCases(withHoldout).map(item=>item.caseId)).toEqual(['dev']);
+ expect(simpleMigrationHoldoutCases(withHoldout).map(item=>item.caseId)).toEqual(['sealed']);
+ expect(()=>simpleMigrationSuiteSchema.parse({...withHoldout,holdoutCases:[{id:'dev',input:'重复',criteria:['已回答']}]})).toThrow();
 });
 it('returns model goal checks with grounded evidence and no dimension scores',async()=>{
  const requests:unknown[]=[];
@@ -33,7 +43,7 @@ it('returns model goal checks with grounded evidence and no dimension scores',as
  expect(result.dimensions).toEqual([]);expect(result.goalAssessment?.verdict).toBe('PASS');expect(result.goalAssessment?.checks[0]!.criterion).toBe('服务费为2.5元');
  const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual([{criterionIndex:0,description:'服务费为2.5元'},{criterionIndex:1,description:'说明尚未扣费'}]);expect(payload.requiredCriterionIndices).toEqual([0,1]);
  expect(JSON.stringify(requests[0])).not.toContain('JUDGE_MUST_NOT_SEE_THIS');
- expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],sourceFacts:[]});
+ expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[]});
  expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe('PASSED');
 });
 it('gives the goal judge authoritative Runtime tool evidence instead of requiring tool narration in the answer',async()=>{
@@ -43,12 +53,21 @@ it('gives the goal judge authoritative Runtime tool evidence instead of requirin
  const result=await judge([{criterionIndex:0,verdict:'PASS',reason:'Runtime 记录 get_balance 已完成',evidence:''},{criterionIndex:1,verdict:'PASS',reason:'回答说明尚未扣费',evidence:'尚未扣费'}],requests).compare({...input,right});
  const payload=JSON.parse((requests[0] as any).messages[1].content);
  expect(payload.runtimeEvidence.toolCalls).toEqual([businessCall]);
+ expect(payload.runtimeEvidence.runtimeSupportToolCalls).toEqual([{name:'skill_tool',status:'completed'},{name:'workspace_info',status:'completed'}]);
  expect(payload.runtimeEvidence.sourceFacts).toEqual([{tool:'get_balance',resultDigest:'c'.repeat(64)}]);
  expect(result.goalAssessment?.verdict).toBe('PASS');
 });
 it('distinguishes failed criteria and indeterminate outcomes from execution failure',async()=>{
  for(const verdict of ['FAIL','INDETERMINATE'] as const){const result=await judge([{criterionIndex:0,verdict,reason:'不满足或缺证据',evidence:''},{criterionIndex:1,verdict:'PASS',reason:'未扣费',evidence:'尚未扣费'}]).compare(input);expect(result.goalAssessment?.verdict).toBe(verdict);expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe(verdict==='FAIL'?'FAILED':'NOT_VALIDATED')}
  await expect(judge([]).compare({...input,right:{...evidence,status:'failed'}})).rejects.toThrow('执行失败');
+});
+it('instructs the model to distinguish missing required answer fields from missing external evidence',async()=>{
+ const requests:any[]=[];
+ await judge([{criterionIndex:0,verdict:'FAIL',reason:'完整回答缺少币种',evidence:''},{criterionIndex:1,verdict:'INDETERMINATE',reason:'无外部结果',evidence:''}],requests).compare(input);
+ const system=requests[0].messages[0].content;
+ expect(system).toContain('完整实际回答');expect(system).toContain('应判 FAIL');
+ expect(system).toContain('调用记录或结果证据缺失时判 INDETERMINATE');
+ expect(system).toContain('空调用列表本身不证明没有调用');
 });
 it('rejects missing criteria, duplicates, and fabricated quotes instead of returning a pass',async()=>{
  for(const checks of [[{criterionIndex:0,verdict:'PASS',reason:'x',evidence:''}],[{criterionIndex:0,verdict:'PASS',reason:'x',evidence:''},{criterionIndex:0,verdict:'PASS',reason:'x',evidence:''}],[{criterionIndex:0,verdict:'PASS',reason:'x',evidence:'伪造的回答'},{criterionIndex:1,verdict:'PASS',reason:'x',evidence:''}]])await expect(judge(checks).compare(input)).rejects.toThrow();

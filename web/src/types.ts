@@ -100,7 +100,7 @@ export type EnvironmentInspection = {
     toolNames: string[];
     error: string | null;
   }>;
-  capabilities?:{runtime:{type:string;version:string};models:Array<{modelId:string;upstreamModelId:string;label?:string}>;defaultModelId:string;features:Record<string,boolean>;limits:Record<string,number>};
+  capabilities?:{runtime:{type:string;version:string};models:Array<{modelId:string;upstreamModelId:string;label?:string}>;defaultModelId:string;supportedSkillModes?:Array<"skill_version"|"without_target_skill">;features:Record<string,boolean>;limits:Record<string,number>};
 };
 
 export type MigrationRuntime = {
@@ -113,6 +113,7 @@ export type MigrationRuntime = {
   mcpEnvironmentIds:string[];
   toolCount:number;
   models: ModelRef[];
+  supportedSkillModes?:Array<"skill_version"|"without_target_skill">;
   transport:'runtime_launcher';
 };
 

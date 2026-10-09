@@ -66,6 +66,11 @@ export const workspaceFilesSchema = z.array(workspaceFileSchema).max(32).superRe
   if (bytes > 1024 * 1024) context.addIssue({ code: z.ZodIssueCode.custom, message: "单条测试用例的工作区文件总大小不能超过 1 MB" });
 });
 
+export const conversationTurnsSchema=z.array(z.strictObject({
+  query:z.string().trim().min(1).max(4000),
+  requiredTools:z.array(z.string().min(1)).max(32).default([]),
+})).min(2).max(8);
+
 export const evalCaseSchema = z.strictObject({
   caseId: z.string().min(1),
   name: z.string().min(1),
@@ -75,6 +80,8 @@ export const evalCaseSchema = z.strictObject({
   requiredTools: z.array(z.string().min(1)).default([]),
   /** Business fixtures mounted into an isolated workspace for this case only. */
   workspaceFiles: workspaceFilesSchema.optional(),
+  /** Executed as distinct native Agent turns in one isolated case, never simulated in a prompt. */
+  turns:conversationTurnsSchema.optional(),
   /** Availability and invocation are different: stop-early cases may forbid later tools. */
   toolExpectations:z.strictObject({mustSucceed:z.array(z.string().min(1)),mustNotCall:z.array(z.string().min(1)).default([])}).optional(),
   rubric: z.array(rubricCriterionSchema).min(1),

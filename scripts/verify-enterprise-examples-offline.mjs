@@ -23,4 +23,5 @@ function run(program,args){
 
 run(process.execPath,['--import','tsx','acceptance/enterprise-migration-examples/verify_formats.mjs']);
 run(python,['-B','acceptance/enterprise-migration-examples/verify_examples.py']);
+run(python,['-B','acceptance/enterprise-migration-examples/test_improvement_cases.py']);
 run(python,['-B','acceptance/enterprise-migration-examples/verify_mcp_examples.py']);

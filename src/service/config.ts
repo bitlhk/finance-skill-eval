@@ -98,7 +98,7 @@ export function configuredModelRole(
     model: {
       providerId: `service-${role.toLowerCase()}`,
       modelId: environment.modelId,
-      label: `${role === "ANALYZER" ? "出题" : role === "EXECUTION" ? "执行" : role === "MIGRATION" ? "代码迁移" : "阅卷"}模型`,
+      label: `${role === "ANALYZER" ? "出题" : role === "EXECUTION" ? "执行" : role === "MIGRATION" ? "代码迁移" : role === 'OPTIMIZER' ? '优化' : "阅卷"}模型`,
       parameters: {},
     },
     adapter: configured

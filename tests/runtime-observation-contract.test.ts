@@ -70,9 +70,10 @@ it("advertises observation support without breaking legacy Launcher capabilities
     limits: { maxArchiveBytes: 1, maxFiles: 1, maxTimeoutMs: 1, maxConcurrentInstances: 1 },
   };
   expect(runtimeLauncherCapabilitiesSchema.parse(legacy).observability).toBeUndefined();
+  expect(runtimeLauncherCapabilitiesSchema.parse(legacy).supportedSkillModes).toBeUndefined();
+  expect(runtimeLauncherCapabilitiesSchema.parse({ ...legacy, supportedSkillModes: ["skill_version"] }).supportedSkillModes).toEqual(["skill_version"]);
   expect(runtimeLauncherCapabilitiesSchema.parse({ ...legacy, observability: {
     schemaVersion: "finance.runtime-observation-capabilities.v1", profile: "core", nativeEvents: false, replayable: false,
     supportedKinds: ["execution.started", "execution.completed", "execution.failed"],
   } }).observability?.profile).toBe("core");
 });
-

@@ -7,6 +7,7 @@ import {validServiceEnvironmentName} from '../../shared/contracts/service-enviro
 import type {ProjectInspection} from '../domain/migration-model.js';
 import type {Dependency,DependencyAnalysis,DependencyEvidence,Supplement,ToolChain} from '../domain/migration-dependency.js';
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
+import {canonicalSha256} from '../../shared/json-canonicalization.js';
 import type {MigrationDependencyAnalyzer} from '../application/migration-dependency-analyzer.js';
 export {validateDependencyData} from '../domain/migration-dependency-schema.js';
 
@@ -82,9 +83,19 @@ export function analyzeDependencies(payload:unknown,inspection:ProjectInspection
   dependencies.push({...(library?{library}:{}),id,key:item.key,name:item.name,kind:item.kind,owner:item.owner,action:item.action,contractStatus,sensitive:item.sensitive,binding:item.binding,purpose:item.purpose,toolIds:[...new Set(refs.map(r=>r.toolId))],blocking:item.blocking,availability,provided:status,evidence:[...refs.map(r=>r.e),...schemaEvidence,...resolutions],resolvedPaths,schema,schemaCompleteness:completeness,...(issue?{issue}:{})});
  }
  const chains:ToolChain[]=[];
- for(const chain of parsed.data.chains){if(runtimeCapabilityNames.has(chain.toolName))continue;const tool=inspection.tools.find(t=>t.name===chain.toolName);if(!tool){rejected++;continue}if(chains.some(c=>c.toolId===tool.toolId)){rejected++;continue}
+ for(const chain of parsed.data.chains){if(runtimeCapabilityNames.has(chain.toolName))continue;const tool=inspection.tools.find(t=>t.name===chain.toolName);if(!tool){rejected++;continue}
   const nodeIds=new Set<string>();const nodes=chain.nodes.flatMap(n=>{const evidence=n.evidence.flatMap(c=>{const e=locate(c,files,workspaceRoot,validator);return e?[e]:[]});rejected+=n.evidence.length-evidence.length;const deps=n.dependencyKeys.map(k=>dependencies.find(d=>d.key===k&&d.toolIds.includes(tool.toolId))?.id);if(!evidence.length||nodeIds.has(n.id)||deps.some(d=>!d)){rejected++;return []}nodeIds.add(n.id);return [{id:n.id,title:n.title,detail:n.detail,dependencyIds:deps as string[],evidence}]});
-  const edges=chain.edges.filter(e=>{const valid=nodeIds.has(e.from)&&nodeIds.has(e.to);if(!valid)rejected++;return valid}).map(({from,to,condition})=>({from,to,...(condition===undefined?{}:{condition})}));chains.push({toolId:tool.toolId,nodes,edges});
+  const edges=chain.edges.filter(e=>{const valid=nodeIds.has(e.from)&&nodeIds.has(e.to);if(!valid)rejected++;return valid}).map(({from,to,condition})=>({from,to,...(condition===undefined?{}:{condition})}));
+  const existing=chains.find(c=>c.toolId===tool.toolId);
+  if(!existing){chains.push({toolId:tool.toolId,nodes,edges});continue;}
+  // One tool may expose several entrypoints/branches. Merge equivalent graph
+  // representations, not facts: never invent edges or let a conflicting node win.
+  if(nodes.some(node=>{const prior=existing.nodes.find(n=>n.id===node.id);return prior&&canonicalSha256(prior)!==canonicalSha256(node)})){
+   rejected++;continue;
+  }
+  existing.nodes.push(...nodes.filter(node=>!existing.nodes.some(prior=>prior.id===node.id)));
+  const edgeDigests=new Set(existing.edges.map(edge=>canonicalSha256(edge)));
+  for(const edge of edges){const key=canonicalSha256(edge);if(!edgeDigests.has(key)){existing.edges.push(edge);edgeDigests.add(key);}}
  }
  const partial=rejected>0||inspection.tools.some(t=>!chains.some(c=>c.toolId===t.toolId&&c.nodes.length))||dependencies.some(d=>d.blocking&&(d.owner==='UNKNOWN'||d.contractStatus!=='KNOWN'||(d.owner==='TOOL'&&(d.availability!=='AVAILABLE'||d.provided==='INVALID'))));
  return {status:partial?'PARTIAL':'COMPLETE',revision,materialsDigest,dependencies,chains,rejectedClaims:rejected,...(raw.reason?{reason:raw.reason}:{})};

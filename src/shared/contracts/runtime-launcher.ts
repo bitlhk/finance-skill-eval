@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canonicalSha256 } from "../json-canonicalization.js";
 import { runtimeObservationCapabilitiesSchema } from "./runtime-observation.js";
+import {nativeCapabilitySchema} from './runtime-capability.js';
 import {
   RUNTIME_CAPABILITIES_SCHEMA_VERSION,
   RUNTIME_EXECUTION_SCHEMA_VERSION,
@@ -34,17 +35,25 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   runtime: z.strictObject({ type: z.string().min(1), version: z.string().min(1) }),
   models: z.array(publicModelSchema).min(1),
   defaultModelId: z.string().min(1),
+  supportedSkillModes: z.array(z.enum(["skill_version", "without_target_skill"])).min(1).optional(),
   nativeToolNames: z.array(z.string().min(1)).optional(),
+  nativeCapabilities:z.array(nativeCapabilitySchema).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
   features: z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),
+    multiTurn:z.boolean().optional(),
   }),
   limits: z.strictObject({
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),
     maxTimeoutMs: z.number().int().positive(), maxConcurrentInstances: z.number().int().positive(),
   }),
 }).superRefine((value, context) => {
+  for(const field of ['capabilityId','name'] as const){
+    const values=(value.nativeCapabilities??[]).map(item=>item[field]);
+    if(new Set(values).size!==values.length)context.addIssue({code:'custom',path:['nativeCapabilities'],message:`Duplicate native capability ${field}`});
+  }
+  if(value.nativeCapabilities?.some(item=>!value.nativeToolNames?.includes(item.name)))context.addIssue({code:'custom',path:['nativeCapabilities'],message:'Native capability must be an advertised native tool'});
   if (!value.models.some(model => model.modelId === value.defaultModelId)) {
     context.addIssue({ code: "custom", message: "Default model is not advertised" });
   }
@@ -86,4 +95,3 @@ export function validateRuntimeLauncherDelivery(descriptorInput: unknown, capabi
   if (!capabilities.observability) issues.push("OBSERVABILITY_NOT_DECLARED");
   return issues;
 }
-

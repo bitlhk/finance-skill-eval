@@ -138,7 +138,7 @@ export class EnvironmentStore {
         environmentId:`env-${randomUUID().slice(0,12)}`,name:input.name?.trim()||`${result.builder.name} · ${launcher.runtime.type}`,
         type:'runtime_launcher',runtimeType,baseUrl:launcher.baseUrl,credentialEnv,createdAt:now,updatedAt:now,
         delivery:{schemaVersion:'finance.runtime-launcher-delivery-record.v1',
-          buildId:result.buildId,requestId:result.requestId,deploymentId:launcher.deploymentId,
+          buildId:result.buildId,requestId:result.requestId,requirementsDigest:result.requirementsDigest,deploymentId:launcher.deploymentId,
           artifactSha256:launcher.artifactSha256,capabilitiesDigest:launcher.capabilitiesDigest,resultDigest:result.resultDigest,
           builder:result.builder,acceptedAt:now,expiresAt:launcher.expiresAt,
           evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']}},
@@ -269,7 +269,11 @@ export class EnvironmentStore {
   }> {
     const startedAt = Date.now();
     const primary = await this.preflight(record);
-    if(record.type==='runtime_launcher')return {status:primary.status,elapsedMs:Date.now()-startedAt,error:primary.error,toolCount:0,tools:[],mcpServers:[],...('capabilities' in primary&&primary.capabilities?{capabilities:primary.capabilities}:{})};
+    if(record.type==='runtime_launcher'){
+      const tools='capabilities' in primary&&primary.capabilities
+        ? [...new Set(primary.capabilities.nativeToolNames??[])].map(name=>({name})) : [];
+      return {status:primary.status,elapsedMs:Date.now()-startedAt,error:primary.error,toolCount:tools.length,tools,mcpServers:[],...('capabilities' in primary&&primary.capabilities?{capabilities:primary.capabilities}:{})};
+    }
     if (record.type === "mcp_streamable_http") {
       const tools = primary.status === "ready" && "tools" in primary ? primary.tools : [];
       return {
@@ -283,7 +287,8 @@ export class EnvironmentStore {
     }
 
     const mcpServers = [];
-    const allTools: Array<{ name: string }> = [];
+    const allTools: Array<{ name: string }> = 'capabilities' in primary&&primary.capabilities
+      ? [...new Set(primary.capabilities.nativeToolNames??[])].map(name=>({name})) : [];
     const mcpEnvironmentIds='mcpEnvironmentIds' in record?record.mcpEnvironmentIds:[];
     for (const environmentId of mcpEnvironmentIds) {
       const environment = await this.get(environmentId);
@@ -313,8 +318,8 @@ export class EnvironmentStore {
       status: primary.status === "ready" && !failedMcp ? "ready" : "failed",
       elapsedMs: Date.now() - startedAt,
       error: primary.error ?? failedMcp?.error ?? null,
-      toolCount: allTools.length,
-      tools: allTools,
+      toolCount: new Set(allTools.map(tool=>tool.name)).size,
+      tools: [...new Map(allTools.map(tool=>[tool.name,tool])).values()],
       mcpServers,
       ...('capabilities' in primary&&primary.capabilities?{capabilities:primary.capabilities}:{}),
     };

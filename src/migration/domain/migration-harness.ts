@@ -1,6 +1,7 @@
 import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
 import {withRequirementsDigest,type RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
 import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../../shared/contracts/runtime-protocol-versions.js';
+import {capabilityContractSchema,capabilityConstraintsSchema} from '../../shared/contracts/runtime-capability.js';
 
 const callableHarnessName=/^[\p{L}_][\p{L}\p{N}_.:-]*$/u;
 const frameworkPlumbing=/\b(?:ToolBase|BaseTool|ToolResponse|Toolkit|TextBlock|register_tool|register_tool_function)\b/iu;
@@ -28,7 +29,10 @@ export function runtimeBuildRequirements(inspection:ProjectInspection, target:{r
   const capabilities=adaptableHarnessCapabilities(inspection);
   if(!capabilities.length)return null;
   const missing=capabilities.flatMap(capability=>{
-    const fields=[...(!capability.contract?['contract']:[]),...(!capability.constraints?['constraints']:[])];
+    // Persisted diagnoses can predate the mapper's strict validation. Never let
+    // a malformed model object break report rendering or masquerade as complete.
+    const fields=[...(!capabilityContractSchema.safeParse(capability.contract).success?['contract']:[]),
+      ...(!capabilityConstraintsSchema.safeParse(capability.constraints).success?['constraints']:[])];
     return fields.length?[{name:capability.name,fields}]:[];
   });
   if(missing.length)return {schemaVersion:'finance.runtime-build-requirements.v1',status:'INCOMPLETE_REQUIREMENTS',missing};

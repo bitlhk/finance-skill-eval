@@ -20,6 +20,8 @@ type WireResult<T>={
   modelId?:string;
   error?:string;
   rawOutput?:string;
+  rawOutputTruncated?:boolean;
+  outputParseFailed?:boolean;
 };
 
 export type AgentPayload<T>={
@@ -28,6 +30,9 @@ export type AgentPayload<T>={
   libraryInventory?:import('../domain/migration-dependency.js').RuntimeLibraryInventory;
   files?:Record<string,string>;
   scanner?:Record<string,unknown>|null;
+  rawOutput?:string;
+  rawOutputTruncated?:boolean;
+  outputParseFailed?:boolean;
 };
 
 export type AgentResult<T=Record<string,unknown>>=StageEnvelope<AgentPayload<T>>;
@@ -177,6 +182,8 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
             ...(typeof wire.workspaceRoot==='string'?{workspaceRoot:wire.workspaceRoot}:{}),
             ...(wire.files?{files:wire.files}:{}),
             ...(wire.scanner?{scanner:wire.scanner}:{}),
+            ...(wire.outputParseFailed?{outputParseFailed:true,rawOutput:String(wire.rawOutput??''),
+              rawOutputTruncated:wire.rawOutputTruncated===true}:{}),
           },
           ...(wire.trace?{trace:wire.trace}:{}),
           run:{

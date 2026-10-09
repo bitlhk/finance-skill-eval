@@ -325,6 +325,20 @@ export function App() {
   };
 
   const selectedRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===runtimeEnvironmentId);
+  const declaredSkillModes=selectedRuntimeOption?.supportedSkillModes;
+  const supportsWithoutTargetSkill=runtime!=="runtime_launcher"||declaredSkillModes===undefined||declaredSkillModes.includes("without_target_skill");
+  const fallbackSkillSelection=`version:${versionOptions[0]?.version??""}`;
+  useEffect(()=>{
+    if(supportsWithoutTargetSkill||!versionOptions.length)return;
+    if(leftVariantSelection==="without_target_skill"){
+      const alternative=versionOptions.find(item=>`version:${item.version}`!==rightVariantSelection)??versionOptions[0];
+      setLeftVariantSelection(`version:${alternative.version}`);
+    }
+    if(rightVariantSelection==="without_target_skill"){
+      const alternative=versionOptions.find(item=>`version:${item.version}`!==leftVariantSelection)??versionOptions[0];
+      setRightVariantSelection(`version:${alternative.version}`);
+    }
+  },[supportsWithoutTargetSkill,fallbackSkillSelection,leftVariantSelection,rightVariantSelection]);
   const leftRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.left);
   const rightRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.right);
   const pairedRuntimeModels=(leftRuntimeOption?.models??[]).filter(left=>rightRuntimeOption?.models.some(right=>
@@ -495,6 +509,7 @@ export function App() {
     && (runtime !== "replay" || Boolean(selectedPack?.replayReady))
     && (runtime === "replay" || [selectedLeftModel, selectedRightModel].every(m => m && (!m.availability || m.availability === "ready")))
     && (runtime !== 'runtime_launcher' || selectedVariantsHaveArtifacts)
+    && (supportsWithoutTargetSkill || (leftVariantSelection !== "without_target_skill" && rightVariantSelection !== "without_target_skill"))
     && (runtime !== 'runtime_launcher' || runtimeEnvironmentId)
     && (runtime !== 'runtime_launcher' || environmentInspection?.status === "ready")
     && (runtime!=="dual_runtime" || launcherReady && !dynamicQuestions && leftModelKey===rightModelKey
@@ -580,6 +595,7 @@ export function App() {
             versionOptions={versionOptions}
             sameConfiguration={sameConfiguration}
             mixedVariables={mixedVariables}
+            supportsWithoutTargetSkill={supportsWithoutTargetSkill}
             job={currentResult}
             onStart={startRun}
             onCancel={cancelRun}
@@ -696,6 +712,7 @@ function EvaluationView(props: {
   versionOptions: Array<{ version: string; artifactSha256: string | null; packId: string | null }>;
   sameConfiguration: boolean;
   mixedVariables: boolean;
+  supportsWithoutTargetSkill: boolean;
   job: EvaluationJob | null;
   onStart(): void;
   onCancel(): void;
@@ -780,11 +797,12 @@ function EvaluationView(props: {
       </section>
 
       <div className="comparison-grid">
-        <ComparisonConfigurator side="A" title="对照组" selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
+        <ComparisonConfigurator side="A" title="对照组" selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} withoutTargetSkillDisabled={!props.supportsWithoutTargetSkill} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
         <div className="comparison-arrow"><ArrowRight size={20} /></div>
-        <ComparisonConfigurator side="B" title="目标组" selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
+        <ComparisonConfigurator side="B" title="目标组" selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} withoutTargetSkillDisabled={!props.supportsWithoutTargetSkill} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
       </div>
 
+      {!props.supportsWithoutTargetSkill ? <div className="comparison-warning info">当前 Runtime 仅支持装配 Skill，不支持“不加载当前 Skill”基线。请选择两个 Skill 版本进行对比；若只有一个版本，请先上传另一版本。</div> : null}
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
       {(props.runtime === 'runtime_launcher'||props.runtime==='dual_runtime') && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
 
@@ -821,6 +839,7 @@ function ComparisonConfigurator(props: {
   versions: Array<{ version: string; artifactSha256: string | null }>;
   models: ModelRef[];
   locked: boolean;
+  withoutTargetSkillDisabled?: boolean;
   target?: boolean;
   onSelectionChange(value: string): void;
   onModelChange(value: string): void;
@@ -830,7 +849,7 @@ function ComparisonConfigurator(props: {
     <div className="comparison-panel-head"><div className="side-badge">{props.side}</div><div><span>{props.title}</span><strong>对比配置</strong></div>{props.locked ? <small><Archive size={12} />配置已锁定</small> : null}</div>
     <div className="comparison-fields">
       <label className="field"><span>Skill</span><select value={props.selection} disabled={props.locked} onChange={event => props.onSelectionChange(event.target.value)}>
-        <option value="without_target_skill">不加载当前 Skill</option>
+        <option value="without_target_skill" disabled={props.withoutTargetSkillDisabled}>不加载当前 Skill{props.withoutTargetSkillDisabled ? "（当前 Runtime 不支持）" : ""}</option>
         {props.versions.map(item => <option key={item.version} value={`version:${item.version}`}>v{item.version}</option>)}
       </select></label>
       <label className="field"><span>模型</span><select value={props.modelKeyValue} disabled={props.locked} onChange={event => props.onModelChange(event.target.value)}>

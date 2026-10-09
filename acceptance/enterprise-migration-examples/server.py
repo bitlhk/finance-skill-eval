@@ -1,4 +1,4 @@
-"""Local business API and deterministic original-service oracle. No LLM or writes."""
+"""Synthetic business API/oracle; optional private audit, no business mutations."""
 import argparse
 import asyncio
 import importlib.util
@@ -122,7 +122,11 @@ class Handler(BaseHTTPRequestHandler):
                 result = api(self.path.split('/')[-1], payload, {'id': match[2], 'tenantId': match[1]})
                 # Store only payload and verified identity, never auth headers.
                 with self.server.calls_lock:
-                    self.server.calls.append({'operation': self.path.split('/')[-1], 'payload': payload, 'userId': match[2], 'result': result})
+                    record = {'operation': self.path.split('/')[-1], 'payload': payload, 'userId': match[2], 'result': result}
+                    self.server.calls.append(record)
+                    if self.server.audit_file:
+                        with self.server.audit_file.open('a', encoding='utf-8') as audit:
+                            audit.write(json.dumps(record, ensure_ascii=False) + '\n')
                 return self.respond(result)
             if self.path.startswith('/original/'):
                 case_name = self.path.split('/')[-1]
@@ -135,18 +139,23 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError): return self.respond({'error': 'INVALID_REQUEST'}, 400)
 
 
-def make_server(port=0):
+def make_server(port=0, audit_file=None):
     from threading import Lock
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     server.calls, server.calls_lock, server.original_lock = [], Lock(), Lock()
+    server.audit_file = Path(audit_file) if audit_file else None
+    if server.audit_file:
+        # Explicit test-owned destination. Never overwrite existing evidence or log credentials.
+        server.audit_file.open('x', encoding='utf-8').close()
     return server
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', type=int, default=4327)
+    parser.add_argument('--audit-file')
     args = parser.parse_args()
-    server = make_server(args.port)
+    server = make_server(args.port, args.audit_file)
     print(f'Fixture APIs: http://127.0.0.1:{server.server_port}', flush=True)
     try: server.serve_forever()
     except KeyboardInterrupt: pass

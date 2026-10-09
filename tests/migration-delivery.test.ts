@@ -1,6 +1,6 @@
 import {afterEach,it,expect,vi} from 'vitest';
 import {strToU8,unzipSync} from 'fflate';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
+import {agentDocumentDeliveryIssues,runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {generatePortableCandidate} from '../src/migration/infrastructure/migration-candidate-packager.js';
@@ -84,6 +84,21 @@ it('does not let the generated document manifest restore workspace fixtures',()=
  expect(Object.keys(result.files).some(name=>name.startsWith('workspace/')||name.startsWith('references/workspace/'))).toBe(false);
 });
 
+it('packages a native-capability-only Skill without inventing a tool migration guide',()=>{
+ const source=SKILL_MD+'\n\n操作前请读取 `references/native-files.md`，再使用 Runtime 提供的文件能力。\n';
+ const archive={'SKILL.md':strToU8(source),'references/native-files.md':strToU8('# 原生文件流程\n先列出，再读取。\n')};
+ const result=generatePortableCandidate({archive,base:{skillFile:'SKILL.md',skillId:'native-only'} as any,
+  inspection:inspectionFixture([]),decisions:[],version:'2.0.0'});
+ expect(result.generations).toEqual([]);
+ expect(Object.keys(result.files).sort()).toEqual(['SKILL.md','references/native-files.md']);
+ expect(Buffer.from(result.files['references/native-files.md']!).toString()).toBe('# 原生文件流程\n先列出，再读取。\n');
+ const delivered=Buffer.from(result.files['SKILL.md']!).toString();
+ expect(delivered).toContain('references/native-files.md');
+ expect(delivered).toContain('Runtime 提供的文件能力');
+ expect(delivered).not.toContain('迁移后的执行方式');
+ expect(delivered).not.toContain('最终答案须包含一个 JSON 对象');
+});
+
 it('filters workspace fixtures when exporting an already-persisted v2 candidate',async()=>{
  const service=new MigrationExportService(
   {get:async()=>({schemaVersion:'finance.skill-migration.v2',candidate:{assetId:'candidate'}})} as any,
@@ -131,6 +146,19 @@ it('uses the A4 document manifest without post-processing its references',()=>{
  expect(Buffer.from(result.files['SKILL.md']!).toString()).toContain('references/policy.md');
 });
 
+it('explains a malformed supporting document without claiming SKILL.md is missing',()=>{
+ const payload={skillDelivery:{skillFile:'SKILL.md',files:[
+  {source:'migration-skill/SKILL.md',path:'SKILL.md'}, {source:'README.md',path:'README.md'},
+ ]}};
+ const files={'migration-skill/SKILL.md':Buffer.from(SKILL_MD).toString('base64'),'README.md':Buffer.from('deployment').toString('base64')};
+ const issues=agentDocumentDeliveryIssues(payload,files);
+ expect(issues.join('；')).toContain('README.md');
+ expect(issues.join('；')).toContain('tools[].files');
+ expect(issues.join('；')).not.toContain('未声明目标 SKILL.md');
+ expect(toSkillDocumentDelivery(payload,files)).toBeNull();
+ expect(agentDocumentDeliveryIssues({skillDelivery:{...payload.skillDelivery,files:[payload.skillDelivery.files[0]]}},files)).toEqual([]);
+});
+
 it('resolves a Java service directory entrypoint only from its declared main class',()=>{
  const encoded=(value:string)=>Buffer.from(value).toString('base64');
  const files={'mcp-java/src/com/acme/Main.java':encoded('package com.acme; class Main {}'),'mcp-java/src/com/acme/Helper.java':encoded('package com.acme; class Helper {}')};
@@ -148,6 +176,19 @@ it('packages matching Skill execution instructions and MCP configuration',()=>{
  expect(instructions).not.toMatch(/^version:/mu);
  const config=JSON.parse(Buffer.from(generated.files['runtime-tool-config.template.json']!).toString());expect(config.runtimeToolConfig.tools.balance).toBeDefined();expect(config.requiredEnvironment).toHaveLength(1);
  expect(generated.files['mcp/runtime-tool-config.template.json']).toBeUndefined();
+});
+
+it('preserves model-delivered Skill documentation byte-for-byte instead of post-processing the approved workflow',()=>{
+ const {inspection,decisions,tool}=fixture();
+ const instructions=SKILL_MD.replace('---\nname:','---\nversion: 1.0.0\nname:').replaceAll('\n','\r\n');
+ const reference='Model-reviewed path: `balance.mjs`\r\n';
+ const generated=generatePortableCandidate({archive:{'SKILL.md':strToU8(instructions),'balance.mjs':strToU8('old')},
+  base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,decisions,version:'2.0.0',
+  skillDelivery:{skillFile:'SKILL.md',files:{'SKILL.md':instructions,'references/workflow.md':reference}},
+  implementations:{[tool.toolId]:{language:'node',sourcePath:'mcp/server.mjs',source:'// server',additionalFiles:[],dependencies:[],smokeInput:{},generatedBy:'A4',explanation:'',attempts:1,checks:[],start:['node','mcp/server.mjs']}}});
+ expect(Buffer.from(generated.files['skill/SKILL.md']!)).toEqual(Buffer.from(instructions));
+ expect(Buffer.from(generated.files['skill/references/workflow.md']!)).toEqual(Buffer.from(reference));
+ expect(generated.files['runtime-tool-config.template.json']).toBeDefined();
 });
 
 it('does not retain an empty scripts tree after a tool is replaced by MCP',()=>{

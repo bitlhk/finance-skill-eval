@@ -30,9 +30,31 @@
       }
     },
     "defaultModelId": { "type": "string", "minLength": 1 },
+    "supportedSkillModes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["skill_version", "without_target_skill"] }
+    },
     "nativeToolNames": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
+    },
+    "nativeCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["capabilityId", "name", "contract", "constraints"],
+        "properties": {
+          "capabilityId": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "contract": {"type": "object", "additionalProperties": false, "required": ["inputSchema", "outputSchema", "errorSchema", "semantics"], "properties": {
+            "inputSchema": {"type": "object"}, "outputSchema": {"type": "object"}, "errorSchema": {"type": "object"}, "semantics": {"type": "string", "minLength": 1}
+          }},
+          "constraints": {"type": "object", "additionalProperties": false, "required": ["permissions", "sideEffects", "isolation"], "properties": {
+            "permissions": {"type": "array", "items": {"type": "string", "minLength": 1}}, "sideEffects": {"enum": ["none", "read", "write"]}, "isolation": {"type": "string", "minLength": 1}
+          }}
+        }
+      }
     },
     "observability": { "$ref": "finance.runtime-observation-capabilities.v1" },
     "features": {
@@ -44,7 +66,8 @@
         "asyncLaunch": { "type": "boolean" },
         "packagedMcp": { "type": "boolean" },
         "externalMcp": { "type": "boolean" },
-        "inlineSecrets": { "type": "boolean" }
+        "inlineSecrets": { "type": "boolean" },
+        "multiTurn": { "type": "boolean", "description": "Distinct native Agent invocations in one isolated case, retaining session, workspace and MCP lifecycle; omitted means unsupported." }
       }
     },
     "limits": {

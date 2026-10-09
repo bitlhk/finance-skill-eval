@@ -28,7 +28,7 @@ def request(secret='token-value'):
         'runId': 'run', 'side': 'right', 'modelId': 'execution',
         'variant': {'mode': 'skill_version', 'skillId': 'demo', 'version': '1', 'artifactSha256': digest},
         'skill': {'skillId': 'demo', 'version': '1', 'artifactSha256': digest,
-                  'instructions': 'Use the tool.', 'files': {},
+                  'instructions': '# Demo', 'files': {},
                   'archiveBase64': archive_base64, 'archiveSha256': archive_digest},
         'environment': {
             'environmentId': 'launcher',
@@ -44,6 +44,26 @@ def request(secret='token-value'):
 
 
 class InstanceManagerTests(unittest.TestCase):
+    def test_nested_document_preserves_archive_paths(self):
+        value = request()
+        contents = {'skill/SKILL.md': '# Nested', 'skill/references/rules.md': 'Rules', 'mcp/server.py': 'pass'}
+        encoded = archive(contents)
+        value['skill'].update(skillFile='skill/SKILL.md', instructions='# Nested', files=contents,
+                              archiveBase64=encoded, archiveSha256=hashlib.sha256(base64.b64decode(encoded)).hexdigest())
+        hydrated = InstanceManager().create(value, 'nested')['_request']['skill']
+        self.assertEqual(hydrated['files'], contents)
+        self.assertNotIn('SKILL.md', hydrated['files'])
+        value['skill']['files'] = {'SKILL.md': '# Nested'}
+        with self.assertRaisesRegex(ValueError, 'files do not match'):
+            InstanceManager().create(value, 'bad-alias')
+
+    def test_rejects_entrypoint_or_instruction_mismatch(self):
+        for change in ({'skillFile': '../SKILL.md'}, {'instructions': 'different'}):
+            value = request()
+            value['skill'].update(change)
+            with self.assertRaisesRegex(ValueError, 'entrypoint'):
+                InstanceManager().create(value, 'mismatch')
+
     def test_capacity_idempotency_and_expiry(self):
         manager = InstanceManager()
         first = manager.create(request(), 'first')

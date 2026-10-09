@@ -59,3 +59,19 @@ it('rejects digest, duplicate, missing, contract and Launcher capability mismatc
   const drifted = withResultDigest({ ...base, launcher: { ...base.launcher, capabilitiesDigest: '0'.repeat(64) } });
   expect(validateRuntimeBuildResult(requirements, drifted, capabilities)).toContain('LAUNCHER_CAPABILITIES_DIGEST_MISMATCH');
 });
+
+it('binds an iterative rebuild to its previous solution and rejects the old deployment',()=>{
+  const {requirements,result,capabilities}=fixtures();
+  const {requirementsDigest:_digest,...body}=requirements;
+  const rebuild=withRequirementsDigest({...body,requestId:'migration-1:rebuild-1',rebuild:{
+    baseline:{deploymentId:'deployment-1',artifactSha256:'e'.repeat(64),solutionRevisionId:'f'.repeat(64)},
+    hypothesis:{id:'finding-1',issue:'The prior Launcher loses the required state boundary.',expectedBehavior:'Preserve isolated state across two tool calls in one case.'},
+    evidence:[{jobId:'job-1',caseId:'case-1',summary:'Tool trace showed a missing state handoff.'}],
+  }});
+  const {resultDigest:_resultDigest,...resultBody}=result;
+  const unchanged=withResultDigest({...resultBody,requestId:rebuild.requestId,requirementsDigest:rebuild.requirementsDigest});
+  expect(validateRuntimeBuildResult(rebuild,unchanged,capabilities)).toEqual(expect.arrayContaining(['REBUILD_DEPLOYMENT_UNCHANGED','REBUILD_ARTIFACT_UNCHANGED']));
+  const revised=withResultDigest({...resultBody,requestId:rebuild.requestId,requirementsDigest:rebuild.requirementsDigest,
+    launcher:{...result.launcher!,deploymentId:'deployment-2',artifactSha256:'0'.repeat(64)}});
+  expect(validateRuntimeBuildResult(rebuild,revised,capabilities)).toEqual([]);
+});

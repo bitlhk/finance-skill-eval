@@ -23,6 +23,39 @@ it('does not report runtime coupling for a method-only package',async()=>{
   const {asset,diagnostics}=await setup();const d=await diagnostics.diagnose(asset);
   expect(d.dependencyStatus).toBe('NO_BINDING_IN_CHECKED_SCOPE');expect(d.findings).toEqual([]);expect(d.ai.status).toBe('NOT_CONFIGURED');
 });
+it('scans a candidate without starting AI and can explicitly explain the same cached scan later',async()=>{
+  let calls=0;
+  const {asset,diagnostics}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'},()=>({configured:true,
+    model:{providerId:'fixture',modelId:'fixture',parameters:{}},adapter:{adapterId:'fixture',async complete(){calls++;
+      return {modelId:'fixture',content:JSON.stringify({summary:'test',suggestions:[]})};}}}));
+  const staticOnly=await diagnostics.diagnose(asset,false,{explain:false});
+  expect(calls).toBe(0);expect(staticOnly.ai.status).toBe('NOT_REQUESTED');
+  expect(staticOnly.findings.some(f=>f.dependencyType==='SDK_IMPORT')).toBe(true);
+  const explained=await diagnostics.diagnose(asset);
+  expect(calls).toBe(1);expect(explained.ai.status).toBe('COMPLETE');
+  expect(explained.scannerDigest).toBe(staticOnly.scannerDigest);
+});
+it('does not wait on a concurrent AI explanation for a static-only candidate scan',async()=>{
+  let started!:()=>void,finish!:()=>void;
+  const entered=new Promise<void>(resolve=>{started=resolve}),gate=new Promise<void>(resolve=>{finish=resolve});
+  const {asset,diagnostics}=await setup({},()=>({configured:true,model:{providerId:'fixture',modelId:'fixture',parameters:{}},
+    adapter:{adapterId:'fixture',async complete(){started();await gate;return {modelId:'fixture',content:JSON.stringify({summary:'test',suggestions:[]})};}}}));
+  const explaining=diagnostics.diagnose(asset);await entered;
+  try{const staticOnly=await diagnostics.diagnose(asset,false,{explain:false});expect(staticOnly.ai.status).toBe('RUNNING');}
+  finally{finish();await explaining;}
+});
+it('reads only existing diagnosis state without invoking a model or recovering an interrupted analysis',async()=>{
+  let calls=0;
+  const {asset,diagnostics,dir}=await setup({},()=>{calls++;return {configured:false,adapter:null,model:{providerId:'none',modelId:'none',parameters:{}}};});
+  expect(await diagnostics.peek(asset)).toBeNull();expect(calls).toBe(0);
+  const diagnosis=await diagnostics.diagnose(asset);expect(calls).toBe(1);
+  diagnosis.ai={status:'RUNNING',retryable:false};
+  const file=path.join(dir,'migration-diagnostics',asset.artifactSha256+'.json');
+  await writeFile(file,JSON.stringify(diagnosis));
+  expect((await diagnostics.peek(asset))?.ai.status).toBe('RUNNING');expect(calls).toBe(1);
+  diagnosis.scannerDigest='outdated';await writeFile(file,JSON.stringify(diagnosis));
+  expect(await diagnostics.peek(asset)).toBeNull();expect(calls).toBe(1);
+});
 it('ignores SDK names in comments and docstrings, resolves aliases in actual calls',async()=>{
   const {asset,diagnostics}=await setup({'helper.py':'# from agentscope.tool import ToolResponse\n"""ToolResponse()"""\nfrom agentscope.tool import ToolResponse as Reply\ndef f():\n    return Reply(content=[])\n'});
   const d=await diagnostics.diagnose(asset);expect(d.findings.filter(f=>f.dependencyType==='SDK_IMPORT').map(f=>f.line)).toEqual([3]);

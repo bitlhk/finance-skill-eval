@@ -12,7 +12,7 @@
       ],
       "workspaceFiles": [
         {
-          "path": "EXP-001.json",
+          "path": "workspace/EXP-001.json",
           "content": "[{\"id\":\"E1\",\"category\":\"meal\",\"amount\":\"120.00\"},{\"id\":\"E2\",\"category\":\"taxi\",\"amount\":\"80.00\"}]"
         }
       ],
@@ -41,7 +41,7 @@
       ],
       "workspaceFiles": [
         {
-          "path": "EXP-002.json",
+          "path": "workspace/EXP-002.json",
           "content": "[{\"id\":\"E3\",\"category\":\"meal\",\"amount\":\"180.00\"},{\"id\":\"E4\",\"category\":\"gift\",\"amount\":\"50.00\"}]"
         }
       ],

@@ -1,9 +1,21 @@
 import type {SkillAssetRecord} from '../../shared/contracts/skill-asset.js';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../domain/migration-delivery-contract.js';
+import {parse as parseYaml} from 'yaml';
+import {agentDocumentDeliveryIssues,portableDeliveryContract,validateAgentRuntimeDelivery} from '../domain/migration-delivery-contract.js';
 import {recommendLanguage,type MigrationPlan,type ProjectInspection,type ToolDecision} from '../domain/migration-model.js';
 import type {MigrationAgentResultMapper} from './migration-agent-result-mapper.js';
 import type {MigrationImplementer} from './migration-agent-port.js';
 import {migrationConflict as conflict} from './migration-errors.js';
+
+export function validSkillFrontmatter(source:string|undefined):boolean{
+  const match=source?.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u);
+  if(!match)return false;
+  try{
+    const metadata=parseYaml(match[1]!);
+    return !!metadata&&typeof metadata==='object'&&!Array.isArray(metadata)
+      &&typeof metadata.name==='string'&&metadata.name.trim().length>0
+      &&typeof metadata.description==='string'&&metadata.description.trim().length>0;
+  }catch{return false;}
+}
 
 export class MigrationImplementationService {
   constructor(
@@ -12,6 +24,9 @@ export class MigrationImplementationService {
   ) {}
 
   async generate(archive:Record<string,Uint8Array>,inspection:ProjectInspection,decisions:ToolDecision[],asset:SkillAssetRecord,plan:MigrationPlan){
+    // An approved design can require document work even without business tools.
+    if(!inspection.tools.length&&!decisions.length&&!plan.reuseProposal)return {implementations:{},
+      generationStats:{agentAttempts:0,outputCorrectionAttempts:0}};
     const contract:Record<string,unknown>={};
     for(const decision of decisions){
       const tool=inspection.tools.find(item=>item.toolId===decision.toolId);
@@ -26,7 +41,8 @@ export class MigrationImplementationService {
       };
     }
 
-    const attempts=Math.max(1,Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??1));
+    const configuredAttempts=Number(process.env.FINANCE_EVAL_AGENT_ATTEMPTS??2);
+    const attempts=Number.isSafeInteger(configuredAttempts)&&configuredAttempts>0?configuredAttempts:2;
     let agentFailure:string|null=null;
     for(let attempt=1;attempt<=attempts;attempt+=1){
       const result=await this.implementer({
@@ -36,11 +52,9 @@ export class MigrationImplementationService {
           inputSchema:tool.inputSchema,outputSchema:tool.outputSchema,samples:tool.samples,migrationContract:contract[tool.toolId]})),
         contract,
         deliveryContract:{
-          skillDocumentation:{sourceSkillFile:asset.skillFile,manifestPathsRelativeToSkillRoot:true},
-          script:{execution:'COMMAND',cwd:'WORKSPACE',entrypoint:'RUNTIME_PROVIDED_ABSOLUTE_PATH',packageResources:'RELATIVE_TO_SCRIPT',runtimeInjection:false},
-          mcp:{contextTransport:'HTTP_HEADER',serviceConfigurationTransport:'SERVICE_ENV',businessArguments:'SEPARATE',
-            pythonFramework:{package:'fastmcp',version:'2.14.7',import:'from fastmcp import FastMCP'}},
-          runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions),
+          ...portableDeliveryContract(inspection,decisions,asset.skillFile),
+          approvedReuseProposal:plan.reuseProposal,
+          ...(agentFailure?{retryFeedback:agentFailure}:{}),
         },
       });
       if(result?.status==='PRODUCED'||result?.status==='ABSTAINED'){
@@ -52,17 +66,25 @@ export class MigrationImplementationService {
         }
         if(result.status==='ABSTAINED')return conflict(`迁移模型无法完成本次迁移，已退回授权环节重新决策。${String((result.payload as {reason?:string}).reason??'').trim()}`);
       }
-      if(result?.status==='FAILED'){agentFailure=result.reason;continue}
+      if(result?.status==='FAILED'){
+        if(result.failureKind==='OUTPUT_FORMAT')return conflict(`A4 的模型输出经过格式纠错仍无法解析：${result.reason}。请查看 agent 日志；不重复执行代码生成与工具测试。`);
+        agentFailure=result.reason;continue;
+      }
       if(result?.status==='PRODUCED'){
         const deliveryIssues=validateAgentRuntimeDelivery(result.payload as Record<string,unknown>,inspection,decisions);
         if(deliveryIssues.length){agentFailure=deliveryIssues.join('；');continue}
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const implementations=this.agentResults.generatedImplementations(result.payload,result.files,nameById);
         const skillDelivery=this.agentResults.skillDocumentDelivery(result.payload,result.files);
+        if(skillDelivery&&!validSkillFrontmatter(skillDelivery.files['SKILL.md'])){
+          agentFailure='最终 SKILL.md 的 YAML frontmatter 无法解析，或缺少字符串 name/description；请修正并重新交付';
+          continue;
+        }
         const missing=decisions.filter(decision=>!implementations[decision.toolId]
           ||implementations[decision.toolId]!.language!==plan.items.find(item=>item.toolId===decision.toolId)?.language);
-        if(!missing.length&&skillDelivery)return {implementations,skillDelivery};
-        if(!skillDelivery){agentFailure='A4 没有按文档清单交付最终 SKILL.md；平台不会在模型完成后替它机械合并或拆分 references';continue}
+        if(!missing.length&&skillDelivery)return {implementations,skillDelivery,
+          generationStats:{agentAttempts:attempt,outputCorrectionAttempts:result.outputCorrectionAttempts??0}};
+        if(!skillDelivery){agentFailure=agentDocumentDeliveryIssues(result.payload as Record<string,unknown>,result.files).join('；')||'文档内容不是合法的 UTF-8/base64，或 SKILL.md 为空；请修正实际文件并重新交付';continue}
         agentFailure=`A4 交付不完整或语言与授权不符：${missing.map(decision=>nameById[decision.toolId]??decision.toolId).join('、')}`;
       }
     }

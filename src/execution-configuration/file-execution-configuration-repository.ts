@@ -32,4 +32,10 @@ export class FileExecutionConfigurationRepository<TCheck extends ExecutionConfig
     await writeJsonAtomic(this.file(scopeId),config);
     return check;
   }
+
+  async saveValidationInput(scopeId:string,toolId:string,input:unknown){
+    if(Buffer.byteLength(JSON.stringify(input))>128000)throw new Error('工具测试参数超过 128 KB');
+    const config=await this.get(scopeId);(config.validationInputs??={})[toolId]=input;
+    await writeJsonAtomic(this.file(scopeId),config);
+  }
 }

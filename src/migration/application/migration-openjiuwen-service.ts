@@ -1,5 +1,4 @@
 import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
-import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import {
   migrationExecutionConfig,
   serviceEnvironment,
@@ -13,6 +12,9 @@ import type { MigrationTechnicalValidationWorkflow } from './migration-technical
 import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 import type { MigrationCommandResolver } from './migration-command-resolver.js';
+import type {MigrationProject} from '../domain/migration-project.js';
+import type {MigrationExperimentContext} from './migration-evaluation-service.js';
+import type {TechnicalValidation} from '../domain/migration-model.js';
 
 /** Builds the OpenJiuwen launcher bindings from the inspected and generated candidate. */
 export class MigrationOpenJiuwenService {
@@ -28,9 +30,28 @@ export class MigrationOpenJiuwenService {
   ) {}
 
   async validate(id:string,input:unknown) {
-    const value=await this.projects.get(id),state=await this.technicalValidation.currentState(value);
+    return this.validateProject(id,input,await this.projects.get(id));
+  }
+
+  /** Internal only: coupled tools can be validated by the frozen integrated acceptance,
+   * rather than demanding a standalone call with a nonexistent opaque handle. */
+  async validateReuseAcceptance(id:string,input:unknown,taskId:string,planDigest:string){
+    const project=await this.projects.get(id),plan=project.reuseAcceptancePlan;
+    if(!plan?.approvedAt||plan.inputDigest!==planDigest||plan.coverage.status!=='COVERED'
+      ||!project.reuseAcceptanceResults?.some(task=>task.taskId===taskId&&task.planDigest===planDigest&&task.status==='RUNNING'))return conflict('缺少已确认且正在执行的复用验收');
+    return this.validateProject(id,input,project,undefined,true);
+  }
+
+  async validateExperiment(id:string,input:unknown,experiment:MigrationExperimentContext,validations:TechnicalValidation[]){
+    const project=await this.projects.get(id);
+    return this.validateProject(id,input,{...project,candidate:experiment.candidate,
+      technicalValidations:[...(project.technicalValidations??[]),...validations]},experiment);
+  }
+
+  private async validateProject(id:string,input:unknown,value:MigrationProject,experiment?:MigrationExperimentContext,integratedAcceptance=false){
+    const state=await this.technicalValidation.currentState(value);
     if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
-    if(!state.ready)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
+    if(!state.ready&&!integratedAcceptance)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
     const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string}}};
     const selectedRuntime=body?.configuration?.runtime;
     if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('OpenJiuwen 验证必须选择 Runtime Launcher');
@@ -62,9 +83,15 @@ export class MigrationOpenJiuwenService {
       if(serviceDeps.length)service.environmentReference={migrationId:id,revision:config.revision,assetDigest:asset.artifactSha256,configurationDigest:configurationDigest(config,deps)};
     }
     const comparison=(body.configuration as Record<string,unknown>).evaluationMode==='service_comparison';
-    if(runtimeBuildRequirements(value.sourceInspection??inspection))return conflict('检测到 Runtime 能力缺口；请先由外部 Runtime Builder 构建并接入支持该能力的 Runtime，再执行对比评测');
-    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},...(deps.some(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
-    return this.evaluation.validate(id,normalized);
+    const toolConfig=migrationExecutionConfig(deps,config.values,inspection.tools);
+    const configuration:Record<string,unknown>={...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services}};
+    // Startup environment values already travel with the packaged MCP service.
+    // Empty binding entries do not require a Runtime context/provider extension.
+    // Derive this field again on retries too; do not retain the old empty config.
+    if(Object.values(toolConfig.tools).some(tool=>Object.keys(tool.contextBindings).length||tool.authProvider))configuration.runtimeToolConfig=toolConfig;
+    else delete configuration.runtimeToolConfig;
+    const normalized={...(input as Record<string,unknown>),configuration};
+    return this.evaluation.validate(id,normalized,experiment);
   }
 
   async validations(id:string) {

@@ -1,16 +1,31 @@
 import { z } from 'zod';
-import { runtimeBuildRequirements } from '../domain/migration-harness.js';
 import { buildMigrationPlan,recommendLanguage,type ToolDecision } from '../domain/migration-model.js';
 import type { MigrationHarnessSerializer } from './migration-harness-serializer.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
 import {runtimeLauncherBindingSchema} from '../../shared/contracts/environment.js';
+import { currentRuntimeRequirements } from '../domain/migration-runtime-requirements.js';
+import { stringify } from 'yaml';
+import {migrationRuntimeCapabilities,type MigrationEnvironmentRepository} from './migration-environment-repository.js';
+import {runtimeReuseIssues} from '../domain/migration-runtime-reuse.js';
+import {canonicalSha256} from '../../shared/json-canonicalization.js';
+import {randomUUID} from 'node:crypto';
+import {currentReuseProposal,projectMigrationPlan,reuseDesignSchema,reuseDesignIssues,reuseInputDigest} from '../domain/migration-reuse-design.js';
+import type {MigrationReusePlanner} from './migration-reuse-planner.js';
+import type {MigrationSkillRepository} from './migration-skill-repository.js';
+import type {MigrationSupplementRepository} from './migration-supplement-repository.js';
+import {portableDeliveryContract} from '../domain/migration-delivery-contract.js';
+import type {ReusePlannerTelemetry} from '../domain/migration-reuse-telemetry.js';
 
 /** Records migration choices and derives the plan and Runtime requirements from inspection evidence. */
 export class MigrationPlanningService {
   constructor(
     private readonly projects:MigrationProjectStore,
     private readonly harnessSerializer:MigrationHarnessSerializer,
+    private readonly environments?:MigrationEnvironmentRepository,
+    private readonly reusePlanner?:MigrationReusePlanner,
+    private readonly skills?:MigrationSkillRepository,
+    private readonly supplements?:MigrationSupplementRepository,
   ) {}
 
   async decide(id:string,toolId:string,input:unknown) {
@@ -45,19 +60,71 @@ export class MigrationPlanningService {
     const value=await this.projects.get(id);
     const asset=value.candidate??value.source;
     if(!value.inspection||value.inspection.assetId!==asset.assetId)return conflict('请先检查当前资产');
-    return buildMigrationPlan(value.inspection,value.decisions??[],asset.assetId);
+    return projectMigrationPlan(value);
+  }
+
+  async propose(id:string){
+    return this.projects.runExclusive(id,async()=>{
+      const project=await this.projects.get(id);
+      if(project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，不能替换已确认方案');
+      const inspection=project.sourceInspection??project.inspection;
+      if(!inspection||inspection.assetDigest!==project.source.artifactSha256)return conflict('请先分析源工程');
+      const decisions=(project.decisions??[]).filter(item=>item.baseAssetId===(project.candidate??project.source).assetId)
+        .map(item=>({...item,baseAssetId:inspection.assetId}));
+      const toolPlan=buildMigrationPlan(inspection,decisions,inspection.assetId);
+      if(!toolPlan.generationAllowed)return conflict('请先完善诊断契约并保存工具选择');
+      if(!this.reusePlanner||!this.skills)return conflict('迁移方案模型不可用');
+      const archive=await this.skills.readArchive(project.source.assetId);
+      const supplementRecord=await this.supplements?.get(id);
+      if(supplementRecord&&inspection.dependencyAnalysis?.materialsDigest!==this.supplements!.digest(supplementRecord))return conflict('补充材料已变化，请重新分析源工程');
+      for(const item of supplementRecord?.items??[])
+        for(const [name,bytes] of Object.entries(item.files??{}))archive[name]=Buffer.from(bytes,'base64');
+      const sourceFiles:Record<string,string>={};
+      for(const [name,bytes] of Object.entries(archive)){try{sourceFiles[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{}}
+      const output=await this.reusePlanner({mode:'PROPOSE',sourceFiles,inspection,toolPlan,
+        deliveryContract:portableDeliveryContract(inspection,decisions,project.source.skillFile)}) as {status?:string;design?:unknown;reason?:string;telemetry?:ReusePlannerTelemetry};
+      if(output?.status!=='PROPOSED')return conflict(`迁移方案无法确认：${output?.reason??'模型未提供方案'}`);
+      const parsed=reuseDesignSchema.safeParse(output.design);
+      if(!parsed.success)return conflict('迁移方案结构不完整，请重新生成');
+      const issues=reuseDesignIssues(parsed.data,inspection,sourceFiles);
+      if(issues.length)return conflict(issues.join('；'));
+      project.reuseProposal={proposalId:`reuse-${randomUUID()}`,sourceDigest:project.source.artifactSha256,
+        inputDigest:reuseInputDigest(inspection,decisions,project.source.artifactSha256),createdAt:new Date().toISOString(),design:parsed.data,
+        ...(output.telemetry?{telemetry:output.telemetry}:{})};
+      await this.projects.save(project);
+      return project.reuseProposal;
+    });
+  }
+
+  async approve(id:string,input:unknown){
+    const parsed=z.strictObject({proposalId:z.string().min(1),inputDigest:z.string().min(1)}).parse(input);
+    return this.projects.runExclusive(id,async()=>{
+      const project=await this.projects.get(id),proposal=currentReuseProposal(project);
+      if(project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，不能替换已确认方案');
+      if(!proposal||proposal.proposalId!==parsed.proposalId||proposal.inputDigest!==parsed.inputDigest)return conflict('源码、诊断或工具选择已变化，请重新生成迁移方案');
+      const supplements=await this.supplements?.get(id);
+      if(supplements&&(project.sourceInspection??project.inspection)?.dependencyAnalysis?.materialsDigest!==this.supplements!.digest(supplements))return conflict('补充材料已变化，请重新分析源工程');
+      if(proposal.design.unresolvedQuestions.length)return conflict(`方案仍有待确认事项：${proposal.design.unresolvedQuestions.join('；')}`);
+      proposal.approvedAt=new Date().toISOString();
+      project.reuseProposal=proposal;
+      await this.projects.save(project);
+      return proposal;
+    });
   }
 
   async runtimeRequirements(id:string) {
     const value=await this.projects.get(id);
-    const inspection=value.sourceInspection??value.inspection;
-    if(!inspection)return conflict('请先完成源码诊断');
-    return runtimeBuildRequirements(inspection)
+    if(!value.sourceInspection&&!value.inspection)return conflict('请先完成源码诊断');
+    return currentRuntimeRequirements(value)
       ??{schemaVersion:'finance.runtime-build-requirements.v1',status:'NOT_REQUIRED',requiredCapabilities:[]};
   }
 
   async runtimeRequirementsYaml(id:string) {
     const value=await this.projects.get(id);
+    const activeRequirements=currentRuntimeRequirements(value);
+    if(activeRequirements&&'requirementsDigest' in activeRequirements)return stringify(activeRequirements);
+    const current=value.runtimeRebuilds?.filter(item=>item.candidateDigest===value.candidate?.artifactSha256).at(-1);
+    if(current)return stringify(current.requirements);
     const inspection=value.sourceInspection??value.inspection;
     if(!inspection)return conflict('请先完成源码诊断');
     const yaml=this.harnessSerializer.serialize(inspection);
@@ -70,8 +137,27 @@ export class MigrationPlanningService {
       const value=await this.projects.get(id);
       const delivery=runtimeLauncherBindingSchema.parse(input);
       value.runtimeDelivery=delivery;
+      delete value.runtimeReuse;
       await this.projects.save(value);
       return delivery;
+    });
+  }
+
+  async reuseRuntime(id:string,input:unknown){
+    const {environmentId}=z.strictObject({environmentId:z.string().min(1)}).parse(input);
+    return this.projects.runExclusive(id,async()=>{
+      const project=await this.projects.get(id);
+      if(project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，请在任务内继续处理 Runtime');
+      const requirements=currentRuntimeRequirements(project);
+      if(!requirements||!('requirementsDigest' in requirements))return conflict('请先结合所选 Runtime 完善能力诊断');
+      const {launcher,capabilities}=await migrationRuntimeCapabilities(this.environments,environmentId);
+      const issues=runtimeReuseIssues(requirements,capabilities);
+      if(issues.length)return conflict(`现有 Runtime 尚不能确认满足需求：${issues.join('；')}。请补充诊断或交由 Builder 适配`);
+      project.runtimeReuse={environmentId,launcherEnvironmentId:launcher.environmentId,environmentUpdatedAt:launcher.updatedAt,
+        requirementsDigest:requirements.requirementsDigest,capabilitiesDigest:canonicalSha256(capabilities),checkedAt:new Date().toISOString()};
+      delete project.runtimeDelivery;
+      await this.projects.save(project);
+      return project.runtimeReuse;
     });
   }
 }

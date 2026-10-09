@@ -10,6 +10,7 @@ export const runtimeLauncherEvalConformanceSchema=z.strictObject({
 export const runtimeLauncherDeliverySchema=z.strictObject({
   schemaVersion:z.literal('finance.runtime-launcher-delivery-record.v1'),
   buildId:z.string().min(1),requestId:z.string().min(1),
+  requirementsDigest:z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   deploymentId:z.string().min(1),artifactSha256:z.string().regex(/^[a-f0-9]{64}$/u),
   capabilitiesDigest:z.string().regex(/^[a-f0-9]{64}$/u),resultDigest:z.string().regex(/^[a-f0-9]{64}$/u),
   builder:z.strictObject({name:z.string().min(1),version:z.string().min(1)}),

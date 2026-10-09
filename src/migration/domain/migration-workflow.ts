@@ -28,7 +28,7 @@ export type MigrationWorkflow = {
 
 type WorkflowEvidence = {
   migrationPlan: MigrationPlan | null;
-  runtimeBuilderRequired: boolean;
+  runtimeRequirementsPending: boolean;
   technicalReady: boolean;
   evaluationCompleted: boolean;
 };
@@ -44,11 +44,12 @@ export function migrationWorkflow(project: MigrationProject, evidence: WorkflowE
   if (!evidence.migrationPlan?.generationAllowed) {
     return { stage: 'DIAGNOSE', furthestStage: 1, allowedActions: ['INSPECT', 'SAVE_DECISIONS'], blockers: evidence.migrationPlan?.skillBlockingReasons ?? ['迁移方案尚未完成'] };
   }
-  if (!project.candidate || project.portableGenerations?.some(item => !item.readyForValidation)) {
+  if (!project.candidate || (evidence.migrationPlan.reuseProposal&&project.candidateReuseProposalId!==evidence.migrationPlan.reuseProposal.proposalId)
+    || project.portableGenerations?.some(item => !item.readyForValidation)) {
     return { stage: 'GENERATE', furthestStage: 2, allowedActions: ['INSPECT', 'SAVE_DECISIONS', 'GENERATE'], blockers: project.candidate ? ['候选仍有待实现的 Tool'] : [] };
   }
-  if (evidence.runtimeBuilderRequired) {
-    return { stage: 'ADAPT_RUNTIME', furthestStage: 3, allowedActions: ['GENERATE', 'DOWNLOAD_RUNTIME_REQUIREMENTS', 'EXPORT'], blockers: ['需要在外部 Runtime Builder 完成适配并重新导入可运行候选'] };
+  if (evidence.runtimeRequirementsPending) {
+    return { stage: 'ADAPT_RUNTIME', furthestStage: 3, allowedActions: ['GENERATE', 'DOWNLOAD_RUNTIME_REQUIREMENTS', 'EXPORT'], blockers: ['请核对已有 Runtime 能力；不满足时由 Builder 适配后接入'] };
   }
   if (!evidence.technicalReady) {
     return { stage: 'VALIDATE_TECHNICAL', furthestStage: 4, allowedActions: ['GENERATE', 'VALIDATE_TECHNICAL', 'EXPORT'], blockers: ['当前候选尚未通过全部 Tool 技术验证'] };

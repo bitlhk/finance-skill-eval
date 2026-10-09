@@ -3,6 +3,7 @@ import { SCAN_COMPLETE_STATUSES } from "../domain/migration-diagnosis.js";
 import { languageOfSourcePaths, recommendLanguage,stableToolId } from "../domain/migration-model.js";
 import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
 import type {MigrationAgentResultMapper} from '../application/migration-agent-result-mapper.js';
+import {capabilityContractSchema,capabilityConstraintsSchema,normalizeCapabilityConstraints} from '../../shared/contracts/runtime-capability.js';
 
 /** A claim about the source. Whatever it says is only accepted once it lands on a real file and
  * a real line, exactly like a finding. */
@@ -162,15 +163,12 @@ export function toProjectInspection(
     });
     // An unsupported claim must not remove a tool from migration.
     if(!evidence.length||evidence.length!==claim.evidence.length||runtimeCapabilities.some(c=>c.name===claim.name.trim()))continue;
+    const contract=capabilityContractSchema.safeParse(claim.contract),constraints=capabilityConstraintsSchema.safeParse(normalizeCapabilityConstraints(claim.constraints));
     const capability={name:claim.name.trim(),owner:'RUNTIME_HARNESS' as const,migrationAction:'REQUIRES_RUNTIME_BUILDER' as const,blocking:true as const,
-      reason:claim.reason,usageContract:claim.usageContract,targetCapability:typeof claim.targetCapability==='string'?claim.targetCapability:null,
-      ...((claim.contract&&typeof claim.contract.inputSchema==='object'&&claim.contract.inputSchema&&typeof claim.contract.outputSchema==='object'&&claim.contract.outputSchema
-        &&typeof claim.contract.errorSchema==='object'&&claim.contract.errorSchema&&typeof claim.contract.semantics==='string'&&claim.contract.semantics.trim())?{contract:{
-          inputSchema:claim.contract.inputSchema as Record<string,unknown>,outputSchema:claim.contract.outputSchema as Record<string,unknown>,errorSchema:claim.contract.errorSchema as Record<string,unknown>,semantics:claim.contract.semantics}}:{}),
-      ...((claim.constraints&&Array.isArray(claim.constraints.permissions)&&claim.constraints.permissions.every(item=>typeof item==='string')
-        &&['none','read','write'].includes(String(claim.constraints.sideEffects))&&typeof claim.constraints.isolation==='string'&&claim.constraints.isolation.trim())?{constraints:{
-          permissions:claim.constraints.permissions as string[],sideEffects:claim.constraints.sideEffects as 'none'|'read'|'write',isolation:claim.constraints.isolation}}:{}),
-      testAvailability:'UNCHECKED' as const,consumerTools:Array.isArray(claim.consumerTools)?claim.consumerTools.filter((name):name is string=>typeof name==='string'):[],evidence};
+      reason:claim.reason,usageContract:claim.usageContract,targetCapability:typeof claim.targetCapability==='string'?claim.targetCapability.trim()||null:null,
+      ...(contract.success&&contract.data.semantics.trim()?{contract:contract.data}:{}),
+      ...(constraints.success&&constraints.data.isolation.trim()?{constraints:constraints.data}:{}),
+      testAvailability:'UNCHECKED' as const,consumerTools:Array.isArray(claim.consumerTools)?claim.consumerTools.filter((name):name is string=>typeof name==='string'&&!!name.trim()):[],evidence};
     if(isAdaptableHarnessCapability(capability))runtimeCapabilities.push(capability);
   }
   const tools = (payload.tools ?? []).flatMap(tool => {

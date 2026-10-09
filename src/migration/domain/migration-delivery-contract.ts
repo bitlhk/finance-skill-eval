@@ -2,6 +2,46 @@ import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool
 import {fingerprint} from '../../contracts.js';
 import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} from './migration-model.js';
 
+/** The same delivery constraints guide planning and implementation; values remain deployment-local. */
+export function portableDeliveryContract(inspection:ProjectInspection,decisions:ToolDecision[],sourceSkillFile?:string){
+ return {
+  skillDocumentation:{sourceSkillFile,manifestPathsRelativeToSkillRoot:true,
+   manifestSourceDirectory:'migration-skill/',manifestTargets:['SKILL.md','references/<name>.md|mdx|txt'],
+   serviceReadme:'Declare deployment README in tools[].files, not skillDelivery.files',
+   purpose:'SKILL.md remains the model-executed business workflow, including scope, inputs, tool order, branches, stop conditions and outputs; deployment notes cannot replace it'},
+  script:{execution:'COMMAND',cwd:'WORKSPACE',entrypoint:'RUNTIME_PROVIDED_ABSOLUTE_PATH',packageResources:'RELATIVE_TO_SCRIPT',runtimeInjection:false},
+  mcp:{transport:'STREAMABLE_HTTP',contextTransport:'HTTP_HEADER',serviceConfigurationTransport:'SERVICE_ENV',businessArguments:'SEPARATE',
+   launcher:{portEnvironment:'PORT',defaultPort:8080,host:'0.0.0.0',path:'/mcp',
+    configurationOwner:'EVAL_SERVICE_LAUNCHER',requiresBusinessDependencyDeclaration:false},
+   workspaceContext:{header:'X-Workspace-Root',scope:'PER_REQUEST_WORKSPACE',rootMeaning:'ORIGINAL_EXECUTION_CWD',
+    relativeBusinessPaths:'PRESERVE_SOURCE_RELATIVE_PATHS_UNDER_WORKSPACE_ROOT',
+    suppliedBy:'TARGET_RUNTIME',requiresDependencyDeclaration:false,missing:'FAIL_CLOSED'},
+   pythonFramework:{package:'fastmcp',version:'2.14.7',import:'from fastmcp import FastMCP',
+    supportedResultImports:['fastmcp.tools.tool.ToolResult','mcp.types.TextContent']}},
+  runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions),
+ };
+}
+
+/** Diagnose the manifest before retrying; a wrong supporting entry is not a missing SKILL.md. */
+export function agentDocumentDeliveryIssues(payload:Record<string,unknown>,files:Record<string,string>):string[]{
+ const delivery=payload.skillDelivery as {skillFile?:unknown;files?:unknown}|undefined;
+ if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)
+  return ['skillDelivery 必须包含 skillFile=SKILL.md 和非空 files 清单（最多 100 项）'];
+ const issues:string[]=[],targets=new Set<string>();
+ for(const entry of delivery.files){
+  const item=entry as {source?:unknown;path?:unknown}|null;
+  const source=typeof item?.source==='string'?item.source.replaceAll('\\','/').replace(/^\.\//u,''):'';
+  const target=typeof item?.path==='string'?item.path.replaceAll('\\','/').replace(/^\.\//u,''):'';
+  if(!source.startsWith('migration-skill/')||source.split('/').includes('..'))issues.push(`文档源 ${source||'(空)'} 必须在 migration-skill/ 内；服务 README 放 tools[].files，不放文档清单`);
+  if(target!=='SKILL.md'&&!/^references\/.+\.(?:md|mdx|txt)$/iu.test(target)||target.split('/').includes('..'))issues.push(`文档目标 ${target||'(空)'} 必须为 SKILL.md 或 references/ 下的 md/mdx/txt 文件`);
+  if(targets.has(target.toLowerCase()))issues.push(`文档目标重复：${target}`);
+  targets.add(target.toLowerCase());
+  if(typeof files[source]!=='string')issues.push(`文档清单声明的源文件未交付：${source}`);
+ }
+ if(!targets.has('skill.md'))issues.push('文档清单未声明目标 SKILL.md');
+ return issues;
+}
+
 export function runtimeToolConfigTemplate(inspection:ProjectInspection,decisions:ToolDecision[]){
  const runtimeToolConfig:RuntimeToolConfig={context:{},providers:{},tools:{}};
  const serviceEnvironment:Array<{name:string;dependencyKey:string;toolNames:string[];type:string;purpose:string;required:boolean;sensitive:boolean}>=[];

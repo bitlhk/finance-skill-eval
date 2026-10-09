@@ -42,7 +42,8 @@ class InstanceManager:
                     raise ValueError('Skill archive contains too many files')
                 if sum(member.file_size for member in members) > self.max_uncompressed_bytes:
                     raise ValueError('Uncompressed Skill archive exceeds the Runtime limit')
-                files = skill.setdefault('files', {})
+                supplied = skill.get('files', {})
+                files = {}
                 seen = set()
                 for member in members:
                     path = PurePosixPath(member.filename.replace('\\', '/'))
@@ -59,6 +60,14 @@ class InstanceManager:
                         # The current worker materializes text assets. Binary assets remain
                         # represented by the verified archive but are not passed to the agent.
                         continue
+                if any(name not in files or files[name] != content for name, content in supplied.items()):
+                    raise ValueError('Skill files do not match the transferred archive')
+                entrypoint = skill.get('skillFile', 'SKILL.md')
+                if not isinstance(entrypoint, str) or entrypoint not in files or PurePosixPath(entrypoint).name != 'SKILL.md':
+                    raise ValueError('Skill document entrypoint is missing or invalid')
+                if files[entrypoint] != skill.get('instructions'):
+                    raise ValueError('Skill instructions do not match the document entrypoint')
+                skill['files'] = files
         except zipfile.BadZipFile:
             raise ValueError('Skill archive is not a valid zip file') from None
 
