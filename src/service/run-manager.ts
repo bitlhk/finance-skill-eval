@@ -136,7 +136,8 @@ export class EvaluationRunManager {
     this.active.get(jobId)?.abort();
     if (["completed", "failed", "cancelled", "interrupted"].includes(job.status)) return job;
     job.status = "cancelled";
-    job.stageLabel = "已取消";
+    job.stageLabel = "取消已请求；执行停止与回收分别核对";
+    job.cancellation = {requestedAt:new Date().toISOString(),scope:'EVAL_WORKER_NOT_REMOTE_PROCESS_PROOF'};
     job.error = null;
     job.completedAt = new Date().toISOString();
     await this.options.jobs.save(job);
@@ -476,6 +477,8 @@ export class EvaluationRunManager {
         caseCount: pack.cases.length,
       };
       job.progress.totalRuns = pack.cases.length * 2;
+      job.executionSnapshot = {variants:structuredClone(pack.variants),models:structuredClone(pack.models),
+        cases:pack.cases.map(({caseId,name,prompt})=>({caseId,name,prompt})),packFingerprint:pack.packFingerprint};
       await this.options.jobs.save(job);
       let runtime = await this.runtimeFor(job.configuration, pack);
       if(job.configuration.evaluationMode==='candidate_assessment')runtime=new CandidateAssessmentRuntimeAdapter(runtime,pack.variants.right,pack.models.execution.right);
@@ -488,6 +491,15 @@ export class EvaluationRunManager {
         judge,
         timeoutMs: job.configuration.timeoutMs,
         signal: controller.signal,
+        onFinalization: async receipt => {
+          const latest=this.options.jobs.get(job.jobId)??job;
+          latest.finalization = {jobId:job.jobId,...receipt};
+          if(latest.cancellation)latest.cancellation.workerSettledAt=new Date().toISOString();
+          job.finalization=latest.finalization;
+          if(latest.status==='cancelled')Object.assign(job,latest);
+          await this.options.jobs.save(latest);
+          this.emit(latest);
+        },
         onProgress: progress => {
           if (job.status === "cancelled" || controller.signal.aborted) return;
           if (progress.event) {
@@ -532,11 +544,13 @@ export class EvaluationRunManager {
       job.status = "completed";
       job.stageLabel = "评测完成";
       job.report = report;
+      report.executionBindings={basis:'MODEL_PROVIDER_IS_CONFIGURATION_REFERENCE_NOT_RUNTIME_IDENTITY',
+        runtime:structuredClone(job.configuration.runtime),sides:structuredClone(job.configuration.runtimeBindings??null)};
       if (job.questionSet) {
         report.questionSet = job.questionSet;
-        const { reportFingerprint: _previous, ...content } = report;
-        report.reportFingerprint = fingerprint(content);
       }
+      const { reportFingerprint: _previous, ...content } = report;
+      report.reportFingerprint = fingerprint(content);
       job.completedAt = new Date().toISOString();
       await this.options.jobs.save(job);
       this.emit(job);

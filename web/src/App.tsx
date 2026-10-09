@@ -142,6 +142,7 @@ export function App() {
   const inspectionSequence = useRef(0);
   const [judgeMode, setJudgeMode] = useState<"deterministic" | "model">("deterministic");
   const [activeJob, setActiveJob] = useState<EvaluationJob | null>(null);
+  const [retrySnapshot, setRetrySnapshot] = useState(false);
   const [history, setHistory] = useState<EvaluationJob[]>([]);
   const [selectedHistory, setSelectedHistory] = useState<EvaluationJob | null>(null);
   const [error, setError] = useState("");
@@ -345,6 +346,7 @@ export function App() {
   },[runtime,launcherPair.left,launcherPair.right,catalog]);
 
   const openSkillEvaluation = (skill: FeaturedSkill) => {
+    setRetrySnapshot(false);
     const version = skill.versions[0];
     if (!version) return;
     const pack = catalog?.evalPacks.find(p=>p.packId===version.packId);
@@ -525,6 +527,7 @@ export function App() {
       }
       const retried = await api<EvaluationJob>(`/api/runs/${job.jobId}/retry`, { method: "POST" });
       setActiveJob(retried);
+      setRetrySnapshot(true);
       setView("evaluation");
       connectStream(retried.jobId);
     } catch (cause) {
@@ -601,7 +604,16 @@ export function App() {
           <SkillCatalogView catalog={catalog} onEvaluate={openSkillEvaluation} />
         ) : null}
         {view === "evaluation" && catalog ? (
-          <EvaluationView
+          retrySnapshot && activeJob ? <div className="workspace">
+            <section className="workspace-header"><div><h1>{activeJob.pack?.targetSkillId ?? "历史运行"} · 冻结配置重试</h1><p>本轮使用历史运行配置，不使用默认选择器。</p></div>
+              {!TERMINAL.has(activeJob.status)?<button className="button secondary" onClick={cancelRun}>取消本轮</button>:null}
+              <button className="button secondary" onClick={()=>{setRetrySnapshot(false);setView('history');}}>返回运行记录</button></section>
+            <section className="question-receipt"><h2>本轮配置</h2>
+              <p>Skill：{activeJob.pack?.targetSkillId??'准备中'} · {activeJob.pack?.targetSkillVersion??'版本待读取'}</p>
+              <details><summary>两端 Runtime、Skill 摘要、模型与生成参数</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(activeJob.configuration,null,2)}</pre></details>
+              {activeJob.executionSnapshot?<><details><summary>实际解析的版本与模型</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({variants:activeJob.executionSnapshot.variants,models:activeJob.executionSnapshot.models},null,2)}</pre></details><h3>本轮冻结案例</h3>
+                {activeJob.executionSnapshot.cases.map(item=><div key={item.caseId}><strong>{item.name}</strong><MarkdownContent content={item.prompt}/></div>)}</>:<p>正在解析冻结配置；不显示默认题目。</p>}
+            </section><RunEvidence job={activeJob}/></div> : <EvaluationView
             catalog={catalog}
             featuredSkill={selectedFeaturedSkill}
             selection={selection}
@@ -651,6 +663,7 @@ export function App() {
         ) : null}
         {view === "migration" && catalog?.publicDemo===false ? <MigrationWorkspace catalog={catalog} source={migrationSource} onChanged={refresh} onUseAsset={async asset=>{await refresh();setFocusedAsset(asset.assetId);setView('skills');}}/> : null}
         {view === "skills" && catalog ? <SkillAssetsView catalog={catalog} focusedAsset={focusedAsset} onChanged={refresh} onMigrate={asset=>{setMigrationSource(asset);setView('migration');}} onSelectPreparation={id => {
+          setRetrySnapshot(false);
           const preparation = catalog.preparations.find(item => item.preparationId === id);
           if (preparation) setSelectedSkillId(preparation.skillId);
           setSelection(`prep:${id}`);
@@ -952,20 +965,27 @@ function RunEvidence({ job }: { job: EvaluationJob }) {
     </div>
     {job.configuration.runtime.type === "replay" ? <div className="evidence-notice"><Archive size={16} /><span><strong>冻结证据回放</strong>：本轮复核已固化输出和评分，不代表刚刚重新调用了 Agent。</span></div> : <div className="evidence-notice live"><Activity size={16} /><span><strong>在线评测</strong>：各题执行结果分别核对；评测结束不代表所有案例执行或质量验收通过。</span></div>}
     {job.error ? <div className="run-error"><CircleAlert size={17} /><div><strong>{job.error.code}</strong><p>{job.error.message}</p></div></div> : null}
+    <details className="question-receipt"><summary>冻结配置与执行环境</summary><p>providerId 是模型配置引用；实际执行环境由左右 Runtime 绑定选择，执行版本以各案例证据为准。</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(job.configuration,null,2)}</pre></details>
     {job.questionSet ? <details className="question-receipt"><summary>本轮 AI 题集 · {job.questionSet.cases.length} 题 · {job.questionSet.fingerprint.slice(0, 12)}</summary><p>出题模型：{job.questionSet.model.modelId} · 已读取：{job.questionSet.sourceFiles.join("、")}</p>{job.questionSet.cases.map(item => <div key={item.caseId}><strong>{item.name}</strong><MarkdownContent content={item.prompt} /></div>)}</details> : null}
     {job.report ? <ReportResult job={job} /> : <LiveEvidence job={job} />}
+    {!job.report && (job.status==='cancelled'||job.finalization) ? <details className="question-receipt" open><summary>取消与回收证据</summary>
+      <p>{job.cancellation?.workerSettledAt?'评测执行控制已返回；不单独证明远端模型请求或操作系统进程已停止。':job.cancellation?'取消已请求，执行停止尚未取得确认。':'旧记录标记已取消；执行停止状态未记录。'}</p>
+      <p>资源释放按本轮回执分别核对；没有回执保持未知，不能使用其他运行的回执。</p>
+      <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(job.finalization??{status:'UNKNOWN',jobId:job.jobId,reason:'未记录本轮回收回执'},null,2)}</pre>
+    </details>:null}
   </section>;
 }
 
 function LiveEvidence({ job }: { job: EvaluationJob }) {
   const byCase = [...new Set([...job.evidence.map(item => item.caseId), ...Object.values(job.live ?? {}).map(item => item.caseId)])];
-  if (!byCase.length) return <div className="live-wait"><RefreshCw className="spin" size={20} />{job.stageLabel}</div>;
+  if (!byCase.length) return <div className="live-wait">{!TERMINAL.has(job.status)?<RefreshCw className="spin" size={20} />:null}{job.stageLabel}</div>;
   return <div className="live-cases">{byCase.map(caseId => <div className="live-case" key={caseId}><h3>{caseId}</h3><div className="answer-grid">{(["left", "right"] as const).map(side => {
     const evidence = job.evidence.find(item => item.caseId === caseId && item.side === side);
     const live = job.live?.[`${caseId}:${side}`];
-    return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.metadata?.executionDisposition === 'NOT_EXECUTED' ? '未执行' : evidence.status === "completed" ? "执行完成" : "执行失败" : live?.status ?? "等待执行"}</small>
+    const stopped = TERMINAL.has(job.status) && !evidence;
+    return <article key={side}><span>{side === "left" ? "A · 对照组" : "B · 目标组"}</span><small className="live-state">{evidence ? evidence.metadata?.executionDisposition === 'NOT_EXECUTED' ? '未执行' : evidence.status === "completed" ? "执行完成" : "执行失败" : stopped ? '未取得最终执行结果；以下为最后快照' : live?.status ?? "等待执行"}</small>
       <div className="tool-events">{(evidence?.toolCalls ?? live?.toolCalls ?? []).map((tool,i) => <span key={`${tool.name}-${i}`} className={tool.status}>{tool.status === "running" ? <RefreshCw className="spin" size={12} /> : null}{tool.name} · {tool.status}</span>)}</div>
-      <MarkdownContent streaming={!evidence && !TERMINAL.has(job.status)} content={evidence?.output || evidence?.error || live?.output || "等待模型输出"} />{evidence?<ExecutionIdentity evidence={evidence}/>:null}</article>;
+      <MarkdownContent streaming={!evidence && !TERMINAL.has(job.status)} content={evidence?.output || evidence?.error || live?.output || (stopped?'本侧未记录最终正文，不能推断仍在执行。':"等待模型输出")} />{evidence?<ExecutionIdentity evidence={evidence}/>:null}</article>;
   })}</div></div>)}</div>;
 }
 
@@ -976,6 +996,9 @@ function ExecutionIdentity({evidence}:{evidence:Evidence}) {
   return <details className="question-receipt"><summary>{data.runtime.type} {data.runtime.version} · {Math.round(evidence.elapsedMs)} ms · {evidence.status==="completed"?"执行返回":"执行失败"}</summary>
     <p>Skill 版本：{evidence.skillVersion??"未记录"} · {data.publicationStatus==="NOT_PUBLISHED"?"临时候选，未发布":data.publicationStatus==="PUBLISHED"?"已发布方法":"发布状态未记录"}</p>
     <p>工具：{labels.tools}</p>
+    <details><summary>安装工具与尝试采集范围</summary><p>安装清单、执行尝试和工具正文是三份不同证据；没有完整尝试采集时，空列表不表示零次调用。</p>
+      <p>{data.toolAttemptEvidence?.status === 'COMPLETE' && data.toolAttemptEvidence?.zeroCalls === true ? '本次原生工具选择与分发完整采集：零调用。' : data.toolAttemptEvidence?.status === 'COMPLETE' ? '本次原生工具选择与分发完整采集：存在尝试，详情见记录。' : '工具尝试采集不完整或未采集，是否零调用未知。'}</p>
+      <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({installed:data.installedToolInventory??{status:'UNKNOWN',reason:'旧记录未保存安装工具清单'},attempts:data.toolAttemptEvidence??{status:'UNKNOWN',reason:'未记录完整工具尝试'}},null,2)}</pre></details>
     {evidence.toolCalls.length?<p>{evidence.toolCalls.map(item=>`${item.name} (${item.status})`).join("、")}</p>:null}
     <p>Token：{typeof evidence.usage?.totalTokens==='number'?evidence.usage.totalTokens:'未知，未取得用量'}</p>
     <p>{labels.archive}</p><p>{labels.cleanup}</p>

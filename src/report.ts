@@ -27,6 +27,7 @@ export type EvaluationReport = {
   generatedAt: string;
   codeRevision?:typeof codeRevision;
   finalization?:Record<string,unknown>;
+  executionBindings?:{basis:string;runtime:unknown;sides:unknown};
   questionSet?: FrozenQuestionSet;
   pack: {
     packId: string;
