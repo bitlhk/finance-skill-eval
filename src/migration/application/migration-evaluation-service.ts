@@ -13,7 +13,7 @@ import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 
 const planSchema = z.strictObject({
-  pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
+  pair:z.enum(['AB','BC','AC','SC','CC']), configuration:runConfigurationSchema,
   dataSnapshot:z.string().min(1).max(300), permissionBasis:z.string().min(1).max(1000),
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
@@ -35,7 +35,9 @@ export class MigrationEvaluationService {
       if (!c || !p.configuration.runtimeBindings) return conflict('缺少候选或左右两侧的绑定');
       if(p.configuration.runtime.type!=='runtime_launcher')return conflict('Skill 迁移评测必须使用 Runtime Launcher');
       const launcherEnvironmentId=p.configuration.runtime.environmentId;
-      if((['left','right'] as const).some(side=>p.configuration.runtimeBindings![side].environmentId!==launcherEnvironmentId))return conflict('左右执行绑定必须属于所选 Runtime Launcher');
+      const runtimeComparison=p.pair==='CC';
+      if(runtimeComparison!==(p.configuration.evaluationMode==='candidate_runtime_comparison'))return conflict('CC 必须使用同候选跨 Runtime 评估模式');
+      if(!runtimeComparison&&(['left','right'] as const).some(side=>p.configuration.runtimeBindings![side].environmentId!==launcherEnvironmentId))return conflict('左右执行绑定必须属于所选 Runtime Launcher');
       let pack=p.configuration.packId ? this.catalog.get(p.configuration.packId):null;
       if (p.configuration.preparationId) {
         if (!value.suiteIds?.includes(p.configuration.preparationId)) return conflict('请选择属于本次迁移的冻结测试集');
@@ -46,10 +48,10 @@ export class MigrationEvaluationService {
       if (!pack || p.configuration.includeHoldout) return conflict('请选择一个冻结的开发题集；留出题留给独立复评');
       const serviceComparison=p.pair==='SC'&&p.configuration.evaluationMode==='service_comparison';
       if((p.pair==='SC')!==(p.configuration.evaluationMode==='service_comparison'))return conflict('原服务对比必须使用 SC 对比计划');
-      if(pack.metadata.assessmentMode==='natural_language'&&(!(serviceComparison||(p.pair==='BC'&&p.configuration.evaluationMode==='candidate_assessment'))||p.configuration.judgeMode!=='model'))return conflict('自然语言测试集仅用于目标评估或原服务对比');
+      if(pack.metadata.assessmentMode==='natural_language'&&(!(runtimeComparison||serviceComparison||(p.pair==='BC'&&p.configuration.evaluationMode==='candidate_assessment'))||p.configuration.judgeMode!=='model'))return conflict('自然语言测试集仅用于目标评估或原服务对比');
       if(serviceComparison&&pack.metadata.assessmentMode!=='natural_language')return conflict('原服务对比请选择包含任务输入和验收要求的测试集');
       if(pack.metadata.comparisonOnly==='true'&&!serviceComparison)return conflict('这份测试集以原服务为基线，请选择原服务对比；目标评估需另外提供独立验收要求');
-      const expected=p.pair==='AB' ? [value.source,c] : p.pair==='BC' ? [c,c] : [value.source,c];
+      const expected=p.pair==='BC'||runtimeComparison ? [c,c] : [value.source,c];
       for (const [index,side] of (['left','right'] as const).entries()) {
         const binding=p.configuration.runtimeBindings[side], variant=p.configuration[side==='left'?'leftVariant':'rightVariant'];
         const asset=expected[index]!;
@@ -62,6 +64,9 @@ export class MigrationEvaluationService {
       const comparisonFingerprint=fingerprint({runtimeConfigurationDigest,pack:pack.packFingerprint, model:p.configuration.executionModel,
         cases:p.configuration.selectedCaseIds, data:p.dataSnapshot, permissions:p.permissionBasis,
         sourceProject:p.sourceProjectRef, lock:p.dependencyLockRef,evaluationMode:p.configuration.evaluationMode,
+        ...(runtimeComparison?{pair:p.pair,candidate:c,bindings:p.configuration.runtimeBindings,
+          models:{left:p.configuration.leftExecutionModel,right:p.configuration.rightExecutionModel},
+          variants:{left:p.configuration.leftVariant,right:p.configuration.rightVariant}}:{}),
         ...(p.configuration.originalService?{originalService:originalServiceFingerprint(p.configuration.originalService)}:{})});
       const job=await this.runs.create(p.configuration);
       value.runs.push({jobId:job.jobId,pair:p.pair,candidateDigest:c.artifactSha256,comparisonFingerprint,packFingerprint:pack.packFingerprint,declaredPlan:p,suiteSnapshot:pack,runtimeConfigurationDigest});

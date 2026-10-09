@@ -1,0 +1,22 @@
+caseId: NATIVE-ACCOUNTS-20261002
+name: 全部账户与案例文件核验
+taskMode: single_turn
+prompt: 请查询我当前获授权范围内的全部账户可用余额，并读取 case.txt 中的标记。只输出一个 JSON 对象，包含 sourceSystem、asOf、accounts 数组（每项 accountId、currency、availableBalance 十进制字符串）和 fileMarker。以本次工具返回为准，缺数明确说明，不执行业务写操作。
+evaluationGoal: >-
+  对照独立授权读取的合成账户快照：acct-001 为 128650.32 CNY；acct-002 为 50000.00 CNY；
+  acct-class-ii-001 为 8650.00 CNY；acct-class-iii-001 为 920.00 CNY；acct-usd-001 为 0.00 USD。
+  金额必须绑定账户和币种，不能相加为跨币种总额；来源为 account-core-simulator。
+  原样报告文件标记 NATIVE_ACCOUNTS_20261002，并使用本次工具结果的时间。
+  快照不替代运行时来源证据；缺少工具事实时须保留不能核验的结论。来源数据改变时需刷新独立快照及案例版本。
+requiredTools: [account_balance_query, read_case_file]
+workspaceFiles:
+  - path: case.txt
+    content: NATIVE_ACCOUNTS_20261002
+rubric:
+  - criterionId: bound-facts
+    label: 账户绑定的合成事实与文件
+    description: 核对账户、币种、可用余额与文件标记；文本匹配不能替代来源证据或人工专业确认。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    allOf: [acct-001, acct-002, acct-class-ii-001, acct-class-iii-001, acct-usd-001, account-core-simulator, NATIVE_ACCOUNTS_20261002]

@@ -1,13 +1,14 @@
 import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, it, expect } from 'vitest';
+import { afterEach, it, expect, vi } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
 import { MigrationDiagnostics } from '../src/migration/infrastructure/migration-diagnostics.js';
 import { inspectProject } from '../src/migration/domain/migration-project-inspector.js';
 import { createEvaluationService } from '../src/service/server.js';
 import type { ConfiguredModelRole } from '../src/service/config.js';
+import { MigrationReportService } from '../src/migration/application/migration-report-service.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
@@ -22,6 +23,50 @@ async function setup(extra:Record<string,string>={},role?:()=>ConfiguredModelRol
 it('does not report runtime coupling for a method-only package',async()=>{
   const {asset,diagnostics}=await setup();const d=await diagnostics.diagnose(asset);
   expect(d.dependencyStatus).toBe('NO_BINDING_IN_CHECKED_SCOPE');expect(d.findings).toEqual([]);expect(d.ai.status).toBe('NOT_CONFIGURED');
+});
+it('reads saved diagnostics without starting or waiting for the model',async()=>{
+  let release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const complete=vi.fn(async()=>{await gate;return {modelId:'fixture',content:JSON.stringify({summary:'done',suggestions:[]})};});
+  const {asset,diagnostics}=await setup({},()=>({configured:true,
+    model:{providerId:'fixture',modelId:'fixture',parameters:{}},adapter:{adapterId:'fixture',complete}}));
+  expect(await diagnostics.readCurrent(asset)).toBeNull();
+  expect(complete).not.toHaveBeenCalled();
+  const job=diagnostics.diagnose(asset);
+  try{
+    await expect.poll(()=>complete.mock.calls.length).toBe(1);
+    expect((await diagnostics.readCurrent(asset))?.ai.status).toBe('RUNNING');
+    expect(complete).toHaveBeenCalledOnce();
+  }finally{release();await job;await diagnostics.close();}
+  expect((await diagnostics.readCurrent(asset))?.ai.status).toBe('COMPLETE');
+});
+it('report retrieval does not execute diagnosis as a side effect',async()=>{
+  const {asset}=await setup();
+  const diagnostics={readCurrent:vi.fn(async()=>null),diagnose:vi.fn(async()=>{throw Error('must not call model');})};
+  const project={id:'synthetic',source:asset,candidate:null,runs:[]};
+  const reports=new MigrationReportService({get:async()=>project} as never,{get:()=>null} as never,
+    undefined,undefined,diagnostics,undefined,{get:async()=>({revision:0,values:{},checks:[]})} as never);
+  const report=await reports.report('synthetic');
+  expect(report.diagnosis).toBeNull();
+  expect(diagnostics.readCurrent).toHaveBeenCalledWith(asset);
+  expect(diagnostics.diagnose).not.toHaveBeenCalled();
+});
+it('drains background diagnostics before close and rejects new work during shutdown',async()=>{
+  const {asset,diagnostics,skills,dir}=await setup();
+  let release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const readArchive=skills.readArchive.bind(skills);
+  const read=vi.spyOn(skills,'readArchive').mockImplementation(async id=>{await gate;return readArchive(id);});
+  const job=diagnostics.diagnose(asset);
+  await expect.poll(()=>read.mock.calls.length).toBe(1);
+  let closed=false;
+  const closing=diagnostics.close().then(()=>{closed=true;});
+  try{
+    await expect(diagnostics.diagnose(asset)).rejects.toThrow('DIAGNOSTICS_CLOSING');
+    expect(closed).toBe(false);
+  }finally{release();await job;await closing;}
+  expect(closed).toBe(true);
+  expect(JSON.parse(await readFile(path.join(dir,'migration-diagnostics',asset.artifactSha256+'.json'),'utf8')).ai.status).toBe('NOT_CONFIGURED');
 });
 it('ignores SDK names in comments and docstrings, resolves aliases in actual calls',async()=>{
   const {asset,diagnostics}=await setup({'helper.py':'# from agentscope.tool import ToolResponse\n"""ToolResponse()"""\nfrom agentscope.tool import ToolResponse as Reply\ndef f():\n    return Reply(content=[])\n'});

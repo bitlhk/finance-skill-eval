@@ -24,4 +24,18 @@ describe('Launcher native tool dependency resolution',()=>{
     await expect(create({status:'failed',error:'unreachable',capabilities:{nativeToolNames:['query_a']}})
       .descriptor(['query_a'])).rejects.toThrow('preflight failed');
   });
+  it('passes full explicit method dependencies to both runtimes while retaining per-case requirements',async()=>{
+    const manager=new EvaluationRunManager({resolveMigrationRuntime:async()=>environment,
+      environments:{resolveLauncher:async()=>({launcher:{baseUrl:environment.baseUrl}}),headers:()=>({})}} as never);
+    const internal=manager as any;
+    internal.skillResolver=vi.fn(async()=>async()=>({skillId:'method',version:'1',artifactSha256:'a'.repeat(64),
+      instructions:'---\nallowed-tools: [query_a, query_b]\n---\nUse appropriate tools.'}));
+    internal.environmentDescriptor=vi.fn(async(_environment,names)=>({environmentId:'launcher',requiredToolNames:names}));
+    const cases=[{requiredTools:['query_a']}];
+    await internal.runtimeFor({runtimeBindings:{left:{environmentId:'oj',skillAssetId:'asset'},right:{environmentId:'as',skillAssetId:'asset'}}},
+      {cases,metadata:{},models:{execution:{left:{modelId:'m'},right:{modelId:'m'}}},
+        variants:{left:{mode:'skill_version'},right:{mode:'skill_version'}}});
+    expect(internal.environmentDescriptor.mock.calls.map((c:any[])=>c[1])).toEqual([['query_a','query_b'],['query_a','query_b']]);
+    expect(cases).toEqual([{requiredTools:['query_a']}]);
+  });
 });

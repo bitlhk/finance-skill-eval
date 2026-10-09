@@ -41,11 +41,26 @@ export type RuntimeEvent = {
 
 export type RuntimePrepareContext={runId:string;signal?:AbortSignal};
 
+export class RuntimeExecutionFailure extends Error {
+  constructor(message: string, readonly metadata: Record<string, unknown>) {
+    super(message);
+    this.name = 'RuntimeExecutionFailure';
+  }
+}
+
+export class RuntimeCaseNotExecutedError extends Error {
+  constructor(readonly failedCaseId: string) {
+    super(`本题未执行：该端在案例 ${failedCaseId} 后执行状态不再可信，已停止后续案例；请查看首个失败。`);
+    this.name = 'RuntimeCaseNotExecutedError';
+  }
+}
+
 export interface RuntimeAdapter {
   readonly adapterId: string;
   prepare?(context:RuntimePrepareContext): Promise<void>;
   execute(request: RuntimeExecutionRequest): Promise<RuntimeExecutionEvidence>;
   cleanup?(): Promise<void>;
+  finalizationEvidence?(): Record<string, unknown>;
 }
 
 export type ModelMessage = {

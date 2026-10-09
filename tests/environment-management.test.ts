@@ -23,15 +23,16 @@ const mcpInput = { name: "业务 MCP", type: "mcp_streamable_http", endpoint: "h
 const launcherInput = { name: "Runtime", type: "runtime_launcher", runtimeType: "openjiuwen", baseUrl: "http://localhost:5001/" };
 
 describe("environment registry", () => {
-  it('removes obsolete fixed-endpoint Runtime records during initialization',async()=>{
+  it('preserves obsolete fixed-endpoint Runtime records without offering them for new execution',async()=>{
     const directory=await mkdtemp(path.join(tmpdir(),'environment-legacy-'));directories.push(directory);
     const environments=path.join(directory,'environments');
     await mkdir(environments,{recursive:true});
     const legacy=path.join(environments,'env-legacy.json');
     await writeFile(legacy,JSON.stringify({environmentId:'env-legacy',type:'runtime_http',endpoint:'http://localhost/execute'}));
     const store=new EnvironmentStore(directory);await store.initialize();
-    await expect(readFile(legacy)).rejects.toMatchObject({code:'ENOENT'});
+    expect(JSON.parse(await readFile(legacy,'utf8'))).toMatchObject({type:'runtime_http'});
     expect(await store.list()).toEqual([]);
+    expect(await store.get('env-legacy')).toBeNull();
   });
 
   it("updates resources in place and protects execution-environment dependencies", async () => {
@@ -71,6 +72,17 @@ describe("environment registry", () => {
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
     expect(await store.inspect(launcher)).toMatchObject({status:'ready',capabilities});
     expect(createEnvironmentSchema.safeParse({name:'remote',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://runtime.example.com'}).success).toBe(false);
+  });
+
+  it('registers AgentScope explicitly and rejects a mismatching native runtime',async()=>{
+    const {store}=await fixture();
+    const launcher=await store.create({...launcherInput,runtimeType:'agentscope'});
+    expect(launcher.runtimeType).toBe('agentscope');
+    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'agentscope',version:'2.0.3'},models:[{modelId:'execution',upstreamModelId:'synthetic-model'}],defaultModelId:'execution',features:{streaming:false,asyncLaunch:true,packagedMcp:false,externalMcp:false,inlineSecrets:false},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
+    expect(await store.inspect(launcher)).toMatchObject({status:'ready',capabilities});
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({...capabilities,runtime:{type:'openjiuwen',version:'0.1.15'}})));
+    expect(await store.inspect(launcher)).toMatchObject({status:'failed',error:expect.stringContaining('Runtime type')});
   });
 
   it('combines a launcher, MCP bindings and a default model into an execution environment',async()=>{

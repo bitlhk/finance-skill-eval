@@ -31,7 +31,11 @@ jobs:
       - run: python -m pip install uv==0.12.13
       - run: pnpm check
       - run: pnpm test
+      - run: node scripts/native-fixture-profile.test.mjs
       - run: python -m unittest integrations.openjiuwen.test_script_process integrations.openjiuwen.test_instance_manager
+      - run: python -m unittest tests.test_candidate_proxy_budget tests.test_account_candidate_deploy tests.test_formal_entry_deploy
+      - run: python -m unittest discover -s scripts -p test_retained_launcher_evidence.py
+      - run: python -m unittest discover -s scripts -p test_managed_release_capacity.py
       - run: pnpm build
       - name: Run the MCP skeletons the skill package hands the agent
         env:
@@ -39,11 +43,16 @@ jobs:
         run: |
           uv sync --project integrations/openjiuwen --frozen
           pnpm test:skeleton:mcp
+      - name: Bounded synthetic MCP source (isolated TCP and pinned identity)
+        run: integrations/openjiuwen/.venv/bin/python -m unittest integrations.openjiuwen.test_bounded_reference_mcp integrations.openjiuwen.test_reference_mcp
+      - name: Analysis file tools cannot read another workspace
+        run: integrations/openjiuwen/.venv/bin/python -m unittest tests.test_analysis_file_boundary tests.test_analysis_workspace_text tests.test_analysis_model_wire
       - name: Verify all four enterprise migration fixtures offline
         run: pnpm test:migration:enterprise:offline
       - name: Compile native target (no live credentials or model calls)
         run: mvn -B -f examples/migration-native-host/pom.xml package
       - run: pnpm exec playwright install --with-deps chromium
+      - run: node scripts/verify-environment-matching-ui.mjs /tmp/eval-matching-ui
       - name: Private subpath build
         run: VITE_PRIVATE_WORKSPACE=true pnpm exec vite build --base=/migration/ --outDir=../web-dist-private
       - name: Authenticated browser regression, on the private subpath

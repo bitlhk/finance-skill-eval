@@ -67,11 +67,16 @@ describe("per-run AI questions", () => {
     const pack = structuredClone(await packPromise);
     pack.holdoutCases?.forEach(item => Object.assign(item as object, { requiredTools: [] }));
     const asset = { assetId: "asset", skillId: pack.targetSkillId, version: pack.targetSkillVersion, artifactSha256: pack.variants.right.mode === "skill_version" ? pack.variants.right.artifactSha256 : skill.artifactSha256 };
+    const environment = { environmentId: "env", name:'Launcher', type: "runtime_launcher", runtimeType:'openjiuwen', baseUrl: "http://127.0.0.1:9000/", credentialEnv:null, archived:false, createdAt:new Date().toISOString(),updatedAt:new Date().toISOString() };
+    const requireAvailable = vi.fn(async (id:string) => { expect(id).toBe(environment.environmentId); return environment; });
+    const resolveLauncher = vi.fn(async (record:unknown) => { expect(record).toEqual(environment); return {launcher:environment,mcpEnvironmentIds:[],defaultModelId:null}; });
     const manager = new EvaluationRunManager({ jobs, maxConcurrentRuns: 1,
       catalog: { get: () => structuredClone(pack) } as never, preparations: {} as never,
       skills: { list: async () => [asset], readSource: async () => skill.instructions, readFiles: async () => skill.files } as never,
       environments: {
-        get: async () => ({ environmentId: "env", name:'Launcher', type: "runtime_launcher", runtimeType:'openjiuwen', baseUrl: "http://127.0.0.1:9000/", credentialEnv:null, createdAt:new Date().toISOString(),updatedAt:new Date().toISOString() }),
+        get: async (id:string) => { expect(id).toBe(environment.environmentId); return environment; },
+        requireAvailable,
+        resolveLauncher,
         headers: () => ({}),
         inspect:async()=>({status:'ready',elapsedMs:1,error:null,toolCount:0,tools:[],mcpServers:[],capabilities:{models:[{modelId:model.modelId}],defaultModelId:model.modelId}}),
       } as never,
@@ -99,5 +104,7 @@ describe("per-run AI questions", () => {
     expect(mocks.complete).toHaveBeenCalledTimes(2);
     expect(mocks.run.mock.calls.at(-1)![0].pack.cases).toHaveLength(frozen.cases.length + (pack.holdoutCases?.length ?? 0));
     expect(mocks.run.mock.calls.at(-1)![0].pack.cases[0]).toEqual(frozen.cases[0]);
+    expect(requireAvailable).toHaveBeenCalledTimes(8);
+    expect(resolveLauncher).toHaveBeenCalledTimes(4);
   });
 });

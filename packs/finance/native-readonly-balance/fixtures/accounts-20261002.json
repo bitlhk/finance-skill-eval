@@ -1,0 +1,17 @@
+{
+  "fixtureId": "synthetic-accounts-20261002-v1",
+  "syntheticOnly": true,
+  "basis": "INDEPENDENT_AUTHORIZED_READ_NOT_MODEL_OUTPUT",
+  "capturedAt": "2026-10-02T00:34:13.544477+00:00",
+  "rawResponseSha256": "e5d4a067cab9b5552304bc3c69f1ac01c0d9eaccec86f9d29e9068e3623d34dd",
+  "sourceSystem": "account-core-simulator",
+  "subjectRef": "customer-demo-001",
+  "comparisonScope": "accountId,currency,availableBalance; fresh response time must come from the current tool",
+  "accounts": [
+    {"accountId": "acct-001", "currency": "CNY", "availableBalance": "128650.32"},
+    {"accountId": "acct-002", "currency": "CNY", "availableBalance": "50000.00"},
+    {"accountId": "acct-class-ii-001", "currency": "CNY", "availableBalance": "8650.00"},
+    {"accountId": "acct-class-iii-001", "currency": "CNY", "availableBalance": "920.00"},
+    {"accountId": "acct-usd-001", "currency": "USD", "availableBalance": "0.00"}
+  ]
+}

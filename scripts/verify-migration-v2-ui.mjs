@@ -123,6 +123,7 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
   if(request.method==='GET'&&url.pathname==='/v1/runtime-capabilities')return json({schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'e2e-fixture'},models:[{modelId:'fixture-execution',upstreamModelId:'fixture-execution',label:'E2E 执行模型'}],defaultModelId:'fixture-execution',features:{streaming:false,asyncLaunch:false,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxArchiveBytes:8_000_000,maxFiles:500,maxTimeoutMs:310_000,maxConcurrentInstances:4}});
   if(request.method==='POST'&&url.pathname==='/v1/runtime-instances'){
     const input=await body(),instanceId=`fixture-${instances.size+1}`,configurationDigest=`fixture-configuration-${instances.size+1}`;
+    if(input.generation)assert.deepEqual(input.generation,{schemaVersion:'finance.eval-generation.v1',temperature:0,top_p:1,max_tokens:2048});
     instances.set(instanceId,{input,configurationDigest});
     return json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId,status:'ready',executeEndpoint:`/v1/runtime-instances/${instanceId}/execute`,expiresAt:new Date(Date.now()+300_000).toISOString(),error:null,configurationDigest});
   }
@@ -134,12 +135,20 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
       output:'订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',elapsedMs:5,toolCalls:(input.requiredTools??[]).map(name=>({name,status:'completed'})),
       loadedSkills:skill?[{skillId:skill.skillId,version:skill.version}]:[],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,
       metadata:{skillArtifactSha256:skill?.artifactSha256,instanceConfigurationDigest:stored.configurationDigest,workspaceFilesDigest:null,
+        ...(stored.input.generation?{declaredModelParameters:{temperature:stored.input.generation.temperature,top_p:stored.input.generation.top_p,max_tokens:stored.input.generation.max_tokens},modelGenerationHostVerified:true,modelParametersBasis:'CONTROLLED_FIXTURE_NOT_MODEL_WIRE'}:{}),
         toolEvidence:(input.requiredTools??[]).map(tool=>({tool,resultDigest:'a'.repeat(64)}))}});
   }
   const instance=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)$/u);
   if(request.method==='DELETE'&&instance){instances.delete(instance[1]);response.statusCode=204;return response.end();}
   if(request.method==='POST'&&url.pathname==='/v1/chat/completions'){
-    await body();return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify({checks:[{criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'}]})}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
+    const input=await body();
+    const assessment=JSON.parse(input.messages.find(message=>message.role==='user').content);
+    assert.deepEqual(assessment.requiredCriterionIndices,[0,1]);
+    assert.match(assessment.criteria[1].description,/事实/u);
+    return json({model:'fixture-judge',choices:[{message:{content:JSON.stringify({checks:[
+      {criterionIndex:0,verdict:'PASS',reason:'回答包含订单金额和审批状态。',evidence:'小计 100.00，税率 0.06，已审批'},
+      {criterionIndex:1,verdict:'PASS',reason:'受控工具结果支持订单事实，回答没有混入宿主日期或工具环境。',evidence:'订单 ORDER-001：币种 CNY'},
+    ]})}}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
   }
   response.statusCode=404;response.end();
 })().catch(error=>{response.statusCode=500;response.end(String(error));});});
@@ -227,6 +236,16 @@ try{
   }
 
   await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();
+  await expect(page.getByLabel('Builder Result JSON')).toBeVisible();
+  for(const [target,label] of [['agentscope','AgentScope Java'],['openjiuwen','OpenJiuwen Java']]){
+    await page.getByLabel('交付目标',{exact:true}).selectOption(target);
+    const requested=page.waitForRequest(request=>request.url().includes('/runtime-requirements.yaml?'));
+    await page.getByRole('button',{name:`下载 ${label} 需求 YAML`,exact:true}).click();
+    assert.equal(new URL((await requested).url()).searchParams.get('runtimeType'),target);
+  }
+  // This fixture has no Runtime extension requirements: exports may be rejected.
+  // This check proves browser target selection, not a successful Builder delivery.
+  pass('runtime_import_remains_visible_and_download_targets_are_explicit');
   await page.locator('.stage-actions').getByRole('button',{name:'验证能否运行',exact:true}).click();
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
   await scriptCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
@@ -267,7 +286,7 @@ try{
   await expect(page.getByText('最新 1/1 通过',{exact:true})).toBeVisible({timeout:STEP});
   const assessedCase=page.locator('.assessment-case').filter({hasText:'suite-order-1'});
   await assessedCase.locator(':scope > summary').click();
-  await assessedCase.getByText('迁移后回答',{exact:true}).click();
+  await assessedCase.getByText('迁移候选回答',{exact:true}).click();
   await expect(assessedCase.getByText('订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',{exact:true})).toBeVisible();
   pass('candidate_effect_assessment_passed');
 
@@ -297,9 +316,62 @@ try{
   // The runtime-coupled original is replaced, never shipped alongside its migration.
   assert(!Object.keys(exported).some(name=>name.includes('legacy_runtime_tools')));
   await page.getByRole('status').filter({hasText:'下载已开始'}).waitFor();
+  const projectList=(await app.inject({method:'GET',url:'/api/migrations',headers:{authorization:`Bearer ${token}`}})).json();
+  const currentCandidate=projectList[0].candidate;
+  assert(currentCandidate?.assetId);
+  await page.getByRole('button',{name:'在 Skill 资产中继续测试',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Skill 资产',exact:true})).toBeVisible();
+  const focused=page.locator(`[id="asset-${currentCandidate.assetId}"]`);
+  await expect(focused).toBeFocused();
+  await expect(focused).toContainText(currentCandidate.artifactSha256.slice(0,16));
+  await expect(focused).toContainText('本次迁移候选');
+  pass('migration_candidate_handoff_keeps_exact_asset_and_digest');
+  const suitePicker=page.getByRole('region',{name:'历史测试集与导入副本'});
+  await suitePicker.getByRole('combobox').nth(0).selectOption(currentCandidate.assetId);
+  const frozenSuite={name:'Original user cases',cases:[{id:'original-1',input:'Only summarize my stated facts.',criteria:['Do not add environmental facts.']}]};
+  const importCopy=async()=>{
+    const chooser=page.waitForEvent('filechooser');
+    await suitePicker.getByRole('button',{name:'导入测试集副本',exact:true}).click();
+    const response=page.waitForResponse(r=>r.url().endsWith(`/api/skills/${currentCandidate.assetId}/prepare/import`)&&r.request().method()==='POST');
+    await (await chooser).setFiles({name:'original-cases.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(frozenSuite))});
+    const result=await response;assert.equal(result.status(),200);
+    const preparation=await result.json();
+    await expect(suitePicker.getByRole('combobox').nth(1)).toHaveValue(preparation.preparationId);
+    assert.equal(preparation.cases[0].prompt,frozenSuite.cases[0].input);
+    return preparation;
+  };
+  const firstCopy=await importCopy(),secondCopy=await importCopy();
+  assert.notEqual(firstCopy.preparationId,secondCopy.preparationId);
+  await suitePicker.getByRole('combobox').nth(1).selectOption(firstCopy.preparationId);
+  await expect(suitePicker.getByRole('combobox').nth(1)).toHaveValue(firstCopy.preparationId);
+  const unchanged=(await app.inject({method:'GET',url:'/api/migrations',headers:{authorization:`Bearer ${token}`}})).json();
+  assert.deepEqual(unchanged,projectList);
+  pass('source_suite_import_creates_copies_history_selectable_migration_unchanged');
+  await mkdir(path.resolve('reports/migration-v2-ui'),{recursive:true});
+  await page.screenshot({path:'reports/migration-v2-ui/history-desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:900});
+  const pickerWidth=await suitePicker.boundingBox(),selectWidth=await suitePicker.getByRole('combobox').nth(1).boundingBox();
+  assert(selectWidth.width>=pickerWidth.width-4,'Suite selector must fill the mobile panel');
+  await page.screenshot({path:'reports/migration-v2-ui/history-mobile.png',fullPage:true});
+  await page.setViewportSize({width:1366,height:900});
+  await suitePicker.getByRole('button',{name:'使用所选测试集',exact:true}).click();
+  await expect(page.getByText(frozenSuite.cases[0].input,{exact:true}).first()).toBeVisible();
+  pass('historical_suite_opens_original_questions');
+  await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+  await page.getByRole('button',{name:'继续处理',exact:true}).first().click();
+  const revisionResponse=page.waitForResponse(r=>r.url().endsWith('/api/migrations')&&r.request().method()==='POST');
+  await page.getByRole('button',{name:'创建新修订',exact:true}).click();
+  const revision=await (await revisionResponse).json();
+  assert.notEqual(revision.id,projectList[0].id);
+  assert.equal(revision.revisionOf,projectList[0].id);
+  assert.equal(revision.candidate,null);
+  const afterRevision=(await app.inject({method:'GET',url:'/api/migrations',headers:{authorization:`Bearer ${token}`}})).json();
+  assert.deepEqual(afterRevision.find(p=>p.id===projectList[0].id),projectList[0]);
+  pass('browser_revision_preserves_frozen_candidate_and_scores');
   pass('verified_candidate_downloaded_with_source_workflow');
   assert.deepEqual(errors,[]);pass('no_browser_errors');
   await page.setViewportSize({width:390,height:900});
+  await page.screenshot({path:'reports/migration-v2-ui/revision-mobile.png',fullPage:true});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));pass('mobile_no_overflow');
   process.stdout.write(`${JSON.stringify({mode:'REAL_SERVICE_HEADLESS_CHROME',checks},null,2)}\n`);
 }catch(error){failedAt=error;throw error;}finally{

@@ -1,0 +1,17 @@
+caseId: NATIVE-BALANCE-001
+name: 余额与案例文件核验
+taskMode: single_turn
+prompt: 请核对我的账户余额，并报告 case.txt 中的标记。
+evaluationGoal: 从合成银行取得 12345.67 CNY，并读取本案例文件标记；不执行写操作。
+requiredTools: [account_balance_query, read_case_file]
+workspaceFiles:
+  - path: case.txt
+    content: NATIVE_SAMPLE_CASE_001
+rubric:
+  - criterionId: facts
+    label: 合成事实与文件
+    description: 核对指定数据，不代表人工专业质量结论。
+    dimension: business_completeness
+    weight: 1
+    required: true
+    allOf: ['12,?345\.67', 'CNY|人民币', NATIVE_SAMPLE_CASE_001]

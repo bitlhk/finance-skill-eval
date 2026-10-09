@@ -174,7 +174,7 @@
 .plan-summary-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px; }
 .plan-summary-grid article { display:grid;gap:4px;padding:12px;border:1px solid #e3e5e8;border-radius:6px;background:#fff; }
 .plan-summary-grid span,.plan-summary-grid small { color:#68717b;font-size:12px;line-height:1.5; }
-.assessment-mode-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px; }
+.assessment-mode-grid { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px; }
 .assessment-mode-grid button { display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:16px;border:1px solid #dfe3e6;border-radius:8px;background:#fff;color:#343940;text-align:left;cursor:pointer; }
 .assessment-mode-grid button:hover { border-color:#c9a0a6; }
 .assessment-mode-grid button.selected { border-color:#c52233;background:#fff7f8;box-shadow:inset 0 0 0 1px #c52233; }
@@ -197,6 +197,12 @@
 .file-input-label { margin-top:12px; }
 .assessment-config-grid { display:grid;grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr));gap:12px; }
 .assessment-config-grid label { margin:0; }
+.assessment-config-grid.runtime-comparison-config { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.runtime-generation { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0 0;padding:12px 14px;border:1px solid #e1e4e7;border-radius:7px; }
+.runtime-generation legend { padding:0 6px;font-weight:650; }
+.runtime-generation label { margin:0; }
+.runtime-side-result { margin:12px 0;padding:12px 14px;border:1px solid #e1e4e7;border-radius:7px;background:#fafbfb; }
+.runtime-side-result h5 { margin:0 0 8px;font-size:13px; }
 .suite-preview { margin-top:14px; }
 .assessment-case-preview { padding:12px 0;border-bottom:1px solid #e5e7e9; }
 .assessment-case-preview:last-of-type { border-bottom:0; }
@@ -230,5 +236,5 @@
 @media(max-width:700px) { .diagnostic-summary { grid-template-columns:minmax(0,1fr); } }
 @media(max-width:1000px) { .diagnosis-plan-grid { grid-template-columns:minmax(0,1fr); } }
 @media(max-width:700px) { .migration-panel .migration-fields { grid-template-columns: minmax(0,1fr); } }
-@media(max-width:900px) { .stage-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.assessment-config-grid,.download-content-grid { grid-template-columns:minmax(0,1fr); }.suite-import-grid { grid-template-columns:minmax(0,1fr); } }
-@media(max-width:640px) { .migration-stage-heading,.stage-primary-card,.stage-actions,.stage-inline-action { align-items:stretch;flex-direction:column; }.assessment-mode-grid { grid-template-columns:minmax(0,1fr); }.stage-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.compact-select label { align-items:stretch;flex-direction:column; }.assessment-result > summary { align-items:flex-start;flex-direction:column; } }
+@media(max-width:900px) { .stage-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.assessment-mode-grid { grid-template-columns:minmax(0,1fr); }.assessment-config-grid,.assessment-config-grid.runtime-comparison-config,.download-content-grid { grid-template-columns:minmax(0,1fr); }.suite-import-grid { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:640px) { .migration-stage-heading,.stage-primary-card,.stage-actions,.stage-inline-action { align-items:stretch;flex-direction:column; }.assessment-mode-grid,.runtime-generation { grid-template-columns:minmax(0,1fr); }.stage-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.compact-select label { align-items:stretch;flex-direction:column; }.assessment-result > summary { align-items:flex-start;flex-direction:column; } }
