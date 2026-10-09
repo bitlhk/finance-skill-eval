@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import {describeSkillRuntimeRequirements} from '../shared/skill-runtime-requirements.js';
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fastifyStatic from "@fastify/static";
@@ -9,6 +10,7 @@ import { renderHtmlReport, type EvaluationReport } from "../report.js";
 import { EvalPackCatalog } from "./catalog.js";
 import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./config.js";
 import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
+import {simpleMigrationSuiteSchema,simpleMigrationCases} from '../migration/domain/simple-migration-suite.js';
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { registerMigrationRoutes } from "../interfaces/http/migration-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
@@ -27,6 +29,9 @@ import type { ImprovementPlanner } from '../migration/application/migration-impr
 import type {ToolOptimizationProposer} from '../migration/application/migration-tool-optimization-service.js';
 import type {MigrationReusePlanner} from '../migration/application/migration-reuse-planner.js';
 import { runConfigurationSchema } from "./contracts.js";
+import {createAccountWorkspaces} from './account-workspaces.js';
+import {managedWorkspaceOperation} from './managed-workspace-policy.js';
+import {EvaluationRunBudget} from './evaluation-run-budget.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -66,11 +71,20 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
+  overrides: Partial<ServiceConfig> & {runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
 ): Promise<FastifyInstance> {
-  const {migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
+  const {runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
+  if(config.workspaceMode==='account'){
+    const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
+    const app=await createAccountWorkspaces(config,child=>createEvaluationService({...overrides,...child,runBudget:sharedBudget}));
+    await registerWeb(app,config);
+    return app;
+  }
   if(config.publicDemo && !config.accessToken) throw new Error("Public demo requires an ingress access token");
+  if(config.workspaceSubject && (!config.accessToken || config.publicDemo || !/^studio_[a-zA-Z0-9_-]+$/.test(config.workspaceSubject)
+      || !config.workspaceOrigin || new URL(config.workspaceOrigin).origin!==config.workspaceOrigin
+      || !config.workspaceOrigin.startsWith('https://')))throw new Error('Single-owner workspace requires a trusted ingress credential, subject and HTTPS origin');
   const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
   app.addHook('onSend',async(request,reply,payload)=>{
     if(request.url.startsWith('/api/')) reply.header('cache-control','no-store');
@@ -95,12 +109,15 @@ export async function createEvaluationService(
     environments,
     jobs,
     maxConcurrentRuns: config.maxConcurrentRuns,
+    managedWorkspace:config.managedWorkspace,
+    runBudget,
     resolveMigrationRuntime:async runtimeId=>await environments.get(runtimeId),
     resolveServiceEnvironment:(reference,toolNames)=>migrations.resolveServiceEnvironment(reference,toolNames),
   });
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
+  app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
     toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
@@ -135,8 +152,15 @@ export async function createEvaluationService(
     if (bearerToken(request.headers.authorization) !== config.accessToken) {
       return reply.code(401).send({ error: "UNAUTHORIZED", message: "访问令牌无效" });
     }
+    if(config.workspaceSubject){
+      if(request.headers['x-demo-user']!==config.workspaceSubject)return reply.code(403).send({error:'WORKSPACE_OWNER_REQUIRED',message:'当前登录账号无权访问此工作区，请使用自己的工作区。'});
+      if(!['GET','HEAD','OPTIONS'].includes(request.method) && request.headers.origin!==config.workspaceOrigin)
+        return reply.code(403).send({error:'WORKSPACE_ORIGIN_REQUIRED',message:'请从工作区页面发起操作。'});
+    }
   });
   app.addHook("preValidation", async (request, reply) => {
+    if(config.managedWorkspace&&!managedWorkspaceOperation(request.method,request.routeOptions.url??request.url))
+      return reply.code(403).send({error:'MANAGED_CONFIGURATION_REQUIRED',message:'此入口使用平台已配置的执行环境；新增接口或代码需由维护者审核接入。'});
     if(!config.publicDemo || !request.url.startsWith('/api/') || request.method==='GET') return;
     demo.identity(request.headers['x-demo-user']);
     const origin = request.headers.origin;
@@ -168,20 +192,23 @@ export async function createEvaluationService(
   app.get("/api/catalog", async () => {
     const [uploadedSkills, savedEnvironments, savedPreparations] = await Promise.all([
       skills.list(),
-      environments.list(),
+      environments.list({includeArchived:true}),
       preparations.list(),
     ]);
-    const executionResources=savedEnvironments.filter(environment=>environment.type==='execution_environment');
+    const activeEnvironments=savedEnvironments.filter(environment=>!environment.archived);
+    const executionResources=activeEnvironments.filter(environment=>environment.type==='execution_environment');
     const referencedLaunchers=new Set(executionResources.map(environment=>environment.launcherEnvironmentId));
-    const selectableRuntimes=[...executionResources,...savedEnvironments.filter(environment=>environment.type==='runtime_launcher'&&!referencedLaunchers.has(environment.environmentId))];
+    const selectableRuntimes=[...executionResources,...activeEnvironments.filter(environment=>environment.type==='runtime_launcher'&&!referencedLaunchers.has(environment.environmentId))];
     const executionRuntimes=(await Promise.all(selectableRuntimes.map(async environment=>{
+      try {
       const resolved=await environments.resolveLauncher(environment);
       const inspection=await environments.inspect(environment);if(inspection.status!=='ready'||!inspection.capabilities)return null;
       const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
       return {runtimeId:environment.environmentId,launcherEnvironmentId:resolved.launcher.environmentId,name:environment.name,runtimeType:resolved.launcher.runtimeType,endpoint:resolved.launcher.baseUrl,
-        mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,
+        mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,inspection,
         transport:'runtime_launcher' as const,defaultModelId,supportedSkillModes:inspection.capabilities.supportedSkillModes,
         models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
+      } catch { return null; }
     }))).filter(item=>item!==null);
     const analyzer = configuredModelRole("ANALYZER");
     const execution = configuredModelRole("EXECUTION");
@@ -193,11 +220,18 @@ export async function createEvaluationService(
       schemaVersion: "finance.skill-eval.catalog.v1",
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
       publicDemo: Boolean(config.publicDemo),
+      managedWorkspace:Boolean(config.managedWorkspace),
       featuredSkills: catalog.listFeaturedSkills(onlineRuntimeReady).map(skill => ({ ...skill,
         evaluationStatus: skill.evaluationStatus === "pack_required" ? "pack_required" :
           onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),
       evalPacks,
-      uploadedSkills,
+      uploadedSkills:await Promise.all(uploadedSkills.map(async asset=>{
+        try{
+          const archive=await skills.readArchive(asset.assetId);
+          return {...asset,runtimeRequirements:describeSkillRuntimeRequirements(Buffer.from(archive[asset.skillFile]!).toString('utf8'))};
+        }
+        catch{return {...asset,runtimeRequirements:{status:'invalid',tools:[],error:'无法读取该版本 Skill 声明'}};}
+      })),
       preparations: savedPreparations.map(preparation => ({...preparation,
         deterministicReady: preparation.cases.length > 0 && preparation.cases.every(item =>
           item.rubric.length > 0 && item.rubric.every(rule => rule.allOf.length + rule.anyOf.length + rule.noneOf.length > 0)),
@@ -267,6 +301,13 @@ export async function createEvaluationService(
       source: "ai_generated",
       evaluationContext: generated.evaluationContext,
     });
+  });
+
+  app.post<{ Params: { assetId: string } }>("/api/skills/:assetId/prepare/import", async request => {
+    const suite = simpleMigrationSuiteSchema.parse(request.body);
+    const skill = await skills.get(request.params.assetId);
+    if (!skill) throw Object.assign(new Error('Skill asset not found'), {statusCode:404});
+    return preparations.create({skill,summary:suite.name,cases:simpleMigrationCases(suite),source:'manual'});
   });
 
   app.post<{ Params: { assetId: string } }>("/api/skills/:assetId/prepare/manual", async request => {
@@ -351,6 +392,11 @@ export async function createEvaluationService(
     return reply.type("application/json").send(job.report);
   });
 
+  await registerWeb(app,config);
+  return app;
+}
+
+async function registerWeb(app:FastifyInstance,config:ServiceConfig){
   try {
     await readFile(path.join(config.publicDirectory, "index.html"));
     await app.register(fastifyStatic, {
@@ -370,7 +416,6 @@ export async function createEvaluationService(
       "Finance Skill Eval service is ready. Build the web console with pnpm build:web.",
     ));
   }
-  return app;
 }
 
 async function main(): Promise<void> {

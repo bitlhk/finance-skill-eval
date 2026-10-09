@@ -3,6 +3,11 @@ import {CheckCircle2, FlaskConical, History, Play, ServerCog} from 'lucide-react
 import type {EvaluationJob,MigrationRuntime} from './types';
 import {MigrationImprovementWorkbench} from './MigrationImprovementWorkbench';
 import {MigrationReuseAcceptance} from './MigrationReuseAcceptance';
+import {RuntimeGoalResults} from './RuntimeGoalResults';
+
+const bothRuntimeSidesPass=(item:NonNullable<EvaluationJob['report']>['cases'][number])=>(['left','right'] as const).every(side=>{
+ const result=item.judge?.runtimeComparison?.[side];return item[side].status==='completed'&&result?.status==='assessed'&&result.assessment.verdict==='PASS';
+});
 
 type WorkspaceFile={path:string;content:string};
 type Suite={preparationId:string;summary:string;assessmentMode?:string;comparisonOnly?:boolean;cases:Array<{caseId:string;prompt:string;workspaceFiles?:WorkspaceFile[];rubric?:Array<{description:string}>}>;holdoutCases?:Array<{caseId:string;prompt:string;workspaceFiles?:WorkspaceFile[];rubric?:Array<{description:string}>}>};
@@ -30,10 +35,10 @@ export function MigrationAssessmentStep(p:{api:Api;projectId:string;candidateDig
  const leftRuntime=p.runtimes.find(item=>item.runtimeId===leftRuntimeId),leftModels=leftRuntime?.models??[];
  const running=p.experiments.some(e=>['queued','preparing','running','judging'].includes(e.execution));
  const ready=!!mode&&!!selected&&!!p.runtimeId&&!!p.modelKey&&!!p.candidateDigest&&(mode!=='service'||!!endpoint)&&(mode!=='solution'||(!!leftRuntimeId&&!!leftModelId&&leftRuntimeId!==p.runtimeId));
- const latestCases=experiments[0]?.report?.cases??[],latestIsSolution=experiments[0]?.declaredPlan?.configuration?.evaluationMode==='solution_comparison',latestPassed=latestCases.filter(c=>latestIsSolution?c.judge?.winner==='right':(c.judge?.serviceComparison??c.judge?.goalAssessment)?.verdict==='PASS').length;
+ const latestCases=experiments[0]?.report?.cases??[],latestIsSolution=experiments[0]?.declaredPlan?.configuration?.evaluationMode==='solution_comparison',latestIsRuntime=experiments[0]?.pair==='CC',latestPassed=latestCases.filter(c=>latestIsRuntime?bothRuntimeSidesPass(c):latestIsSolution?c.judge?.winner==='right':(c.judge?.serviceComparison??c.judge?.goalAssessment)?.verdict==='PASS').length;
  const latestTone=!experiments.length?'pending':experiments[0].execution==='failed'?'danger':experiments[0].execution==='completed'&&latestCases.length&&latestPassed===latestCases.length?'success':'attention';
- const latestLabel=!experiments.length?'尚未执行':experiments[0].execution==='completed'&&latestCases.length?`最新 ${latestPassed}/${latestCases.length} ${latestIsSolution?'新版胜出':'通过'}`:executionLabels[experiments[0].execution]??experiments[0].execution;
- const planSource=experiments.find(e=>!e.reuseAcceptanceTaskId&&e.execution==='completed'&&e.current!==false&&e.solutionRevisions?.right&&!(e.declaredPlan?.configuration as {includeHoldout?:boolean})?.includeHoldout);
+ const latestLabel=!experiments.length?'尚未执行':experiments[0].execution==='completed'&&latestCases.length?`最新 ${latestPassed}/${latestCases.length} ${latestIsRuntime?'两端通过':latestIsSolution?'新版胜出':'通过'}`:executionLabels[experiments[0].execution]??experiments[0].execution;
+ const planSource=experiments.find(e=>e.pair!=='CC'&&!e.reuseAcceptanceTaskId&&e.execution==='completed'&&e.current!==false&&e.solutionRevisions?.right&&!(e.declaredPlan?.configuration as {includeHoldout?:boolean})?.includeHoldout);
  const currentPlans=(p.improvementPlans??[]).filter(plan=>plan.candidateDigest===p.candidateDigest&&plan.current!==false
    &&experiments.some(experiment=>experiment.jobId===plan.sourceJobId&&experiment.current!==false)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
  const toolPlan=currentPlans.find(plan=>plan.hypothesis?.layer==='TOOL');
@@ -57,6 +62,10 @@ export function MigrationAssessmentStep(p:{api:Api;projectId:string;candidateDig
  function renderExperiment(e:Experiment,open=false){
   const cases=e.report?.cases??[],passed=cases.filter(c=>(c.judge?.serviceComparison??c.judge?.goalAssessment)?.verdict==='PASS').length,kind=e.reuseAcceptanceTaskId?'复用验收运行':e.declaredPlan?.configuration?.evaluationMode==='service_comparison'?'原服务对比':'目标评估',time=e.createdAt?new Date(e.createdAt).toLocaleString('zh-CN',{hour12:false}):'';
   const tone=e.execution==='completed'?(passed===cases.length&&cases.length?'success':'attention'):e.execution==='failed'?'danger':'pending';
+  if(e.pair==='CC'||e.declaredPlan?.configuration?.evaluationMode==='candidate_runtime_comparison'){
+    const passed=cases.filter(bothRuntimeSidesPass).length;
+    return <div className="assessment-result attention" key={e.jobId}><details className="migration-result" open={open}><summary><span><strong>同候选跨 Runtime 验收</strong><small>{time}</small></span><span className="stage-badge attention">{executionLabels[e.execution]??e.execution} · {passed}/{cases.length} 两端通过</span></summary><p>两端分别核对同一份 Skill；此结果不替代迁移业务验收。</p>{cases.map(item=><details className="assessment-case" key={item.caseId}><summary>{item.name||item.caseId}</summary><p>{item.prompt}</p><RuntimeGoalResults item={item}/>{(['left','right'] as const).map(side=><details className="stage-detail" key={side}><summary>{side==='left'?'A':'B'} 回答</summary><pre>{item[side].output||item[side].error||'没有返回内容'}</pre></details>)}</details>)}</details></div>;
+  }
   if(e.declaredPlan?.configuration?.evaluationMode==='solution_comparison'){
    const wins=cases.filter(c=>c.judge?.winner==='right').length;
    return <div className="assessment-result attention" key={e.jobId}><details className="migration-result" open={open}><summary><span><strong>整套方案对比{e.current===false?' · 配置已变化':''}</strong><small>{time}</small></span><span className="stage-badge attention">{executionLabels[e.execution]??e.execution}{cases.length?` · 新版胜出 ${wins}/${cases.length}`:''}</span></summary><p>两侧 Launcher 或模型可能不同；此结果不能单独归因于 Skill 文档。</p>{e.solutionRevisions&&<p className="stage-inline-note">方案版本：旧版 {e.solutionRevisions.left?.revisionId.slice(0,12)??'原服务'} · 新版 {e.solutionRevisions.right.revisionId.slice(0,12)}。{e.current===false?'当前配置已变化，请重新运行后再作结论。':''}</p>}{cases.map(c=><details className="assessment-case" key={c.caseId}><summary><span>{c.name||c.caseId}</span><span className="stage-badge attention">{c.judge?.winner==='right'?'新版较优':c.judge?.winner==='left'?'旧版较优':c.judge?.winner==='tie'?'相当':'未完成评估'}</span></summary><p><strong>任务：</strong>{c.prompt}</p><details className="stage-detail"><summary>旧版输出</summary><pre>{c.left.output||c.left.error||'没有返回内容'}</pre></details><details className="stage-detail"><summary>新版输出</summary><pre>{c.right.output||c.right.error||'没有返回内容'}</pre></details>{c.judge&&<p><strong>评估理由：</strong>{c.judge.summary}</p>}{c.judgeError&&<p role="alert">评估失败：{c.judgeError}</p>}</details>)}{e.execution==='failed'&&<p role="alert">运行未完成：{e.error?.message??'请检查两侧 Runtime 配置。'}</p>}</details></div>;

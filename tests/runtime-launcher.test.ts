@@ -9,6 +9,28 @@ const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
+  it('retains failure and skips subsequent cases only in the controlled comparison mode',async()=>{
+    let executions=0,deletions=0;
+    vi.stubGlobal('fetch',vi.fn(async(_input:unknown,init?:RequestInit)=>{
+      if(init?.method==='DELETE'){
+        deletions++;
+        return Response.json({cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',instanceId:'instance-1',
+          status:deletions===1?'PENDING':'RELEASED',buildId:'owned-build',scope:'THIS_INSTANCE',error:'PRIVATE_CLEANUP_DETAIL'}});
+      }
+      if(String(_input).endsWith('/v1/runtime-instances'))return Response.json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00Z',error:null,configurationDigest});
+      executions++;return Response.json({error:'FIRST_CASE_FAILURE'},{status:502});
+    }));
+    const model={providerId:'managed',modelId:'execution',parameters:{}};
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:1000,stopAfterFailure:true});
+    await runtime.prepare({runId:'run-1'});
+    const request=(caseId:string)=>({runId:'run-1',side:'right' as const,evalCase:{...evalCase,caseId},model,variant});
+    await expect(runtime.execute(request('first'))).rejects.toThrow('FIRST_CASE_FAILURE');
+    await expect(runtime.execute(request('next'))).rejects.toThrow('本题未执行');
+    expect(executions).toBe(1);
+    await runtime.cleanup();expect(deletions).toBe(2);
+    expect(runtime.finalizationEvidence()).toMatchObject({status:'RELEASED',instanceId:'instance-1',buildId:'owned-build'});
+    expect(JSON.stringify(runtime.finalizationEvidence())).not.toContain('PRIVATE_CLEANUP_DETAIL');
+  });
   it.each([false,true])('recreates only for the next case, including queued executions; cleanup failure fails closed: %s',async(cleanupFails)=>{
     let created=0;const keys:string[]=[],executed:string[]=[],deleted:string[]=[];
     vi.stubGlobal('fetch',vi.fn(async(input:URL|string|Request,init?:RequestInit)=>{

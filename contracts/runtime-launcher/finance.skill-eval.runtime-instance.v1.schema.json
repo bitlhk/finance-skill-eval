@@ -30,7 +30,7 @@
     "configuration": { "type": "object", "additionalProperties": { "type": "string" } },
     "secrets": { "type": "object", "additionalProperties": false, "required": ["mode", "values"], "properties": { "mode": { "const": "inline" }, "values": { "type": "object", "additionalProperties": { "type": "string" } } } },
     "limits": { "type": "object", "additionalProperties": false, "required": ["timeoutMs"], "properties": { "timeoutMs": { "type": "integer", "minimum": 1 } } },
-    "generation": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "temperature", "top_p", "max_tokens"], "properties": { "schemaVersion": { "const": "finance.eval-generation.v1" }, "temperature": { "type": "number", "minimum": 0, "maximum": 2 }, "top_p": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }, "max_tokens": { "type": "integer", "minimum": 1, "maximum": 32768 } } }
+    "generation": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "temperature", "top_p", "max_tokens"], "properties": { "schemaVersion": { "const": "finance.eval-generation.v1" }, "temperature": { "type": "number", "minimum": 0, "maximum": 2 }, "top_p": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }, "max_tokens": { "type": "integer", "minimum": 1, "maximum": 32768 }, "thinking": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "disabled" } } } } }
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },

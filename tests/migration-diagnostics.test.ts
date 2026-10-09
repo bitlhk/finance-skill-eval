@@ -1,13 +1,14 @@
 import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, it, expect } from 'vitest';
+import { afterEach, it, expect, vi } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
 import { MigrationDiagnostics } from '../src/migration/infrastructure/migration-diagnostics.js';
 import { inspectProject } from '../src/migration/domain/migration-project-inspector.js';
 import { createEvaluationService } from '../src/service/server.js';
 import type { ConfiguredModelRole } from '../src/service/config.js';
+import { MigrationReportService } from '../src/migration/application/migration-report-service.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});

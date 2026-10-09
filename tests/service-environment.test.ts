@@ -96,13 +96,15 @@ it('resolves environment values only in the trusted Runtime transport, keeping t
  const variant={mode:'skill_version',skillId:'fixture',version:'1.0.0',artifactSha256:assetDigest};
  const configuration=runConfigurationSchema.parse({packId:'fixture',executionModel:{providerId:'test',modelId:'test'},runtime:{type:'runtime_launcher',environmentId:'runtime'},evaluationMode:'candidate_assessment',leftVariant:variant,rightVariant:variant,runtimeBindings:{left:{environmentId:'runtime',skillAssetId:'asset'},right:{environmentId:'runtime',skillAssetId:'asset'}},runtimeMcpBindings:{left:[],right:[launch]}});
  let resolved=0;
- const manager=new EvaluationRunManager({environments:{headers:()=>({})},resolveMigrationRuntime:async()=>({type:'runtime_launcher',baseUrl:'http://127.0.0.1:9000/',runtimeType:'openjiuwen'}),resolveServiceEnvironment:async(ref,names)=>{expect(ref).toEqual(reference);expect(names).toEqual(['lookup']);resolved++;return {configuration:{BUSINESS_SERVICE_URL:'https://private-business.example'},secrets:{}}}} as never);
+ const environment={environmentId:'runtime',type:'runtime_launcher',baseUrl:'http://127.0.0.1:9000/',runtimeType:'openjiuwen',archived:false};
+ const resolveLauncher=vi.fn(async(record:unknown)=>{expect(record).toEqual(environment);return {launcher:environment,mcpEnvironmentIds:[],defaultModelId:null};});
+ const manager=new EvaluationRunManager({environments:{headers:()=>({}),resolveLauncher},resolveMigrationRuntime:async(id:string)=>{expect(id).toBe('runtime');return environment;},resolveServiceEnvironment:async(ref,names)=>{expect(ref).toEqual(reference);expect(names).toEqual(['lookup']);resolved++;return {configuration:{BUSINESS_SERVICE_URL:'https://private-business.example'},secrets:{}}}} as never);
  (manager as any).skillResolver=async()=>async()=>({});
  const model={providerId:'test',modelId:'test',parameters:{}};
  const pack={variants:{left:variant,right:variant},models:{execution:{left:model,right:model}},cases:[{requiredTools:['lookup']}],metadata:{}};
  const runtime=await (manager as any).runtimeFor(configuration,pack);
  expect((runtime as any).options.environment.candidateMcpServices[0].environment).toEqual({BUSINESS_SERVICE_URL:'https://private-business.example'});
- expect(JSON.stringify(configuration)).not.toContain('private-business');expect(resolved).toBe(1);
+ expect(JSON.stringify(configuration)).not.toContain('private-business');expect(resolved).toBe(1);expect(resolveLauncher).toHaveBeenCalledOnce();
 });
 
 it('starts MCP with process-scoped service configuration and invokes the real business endpoint',async()=>{

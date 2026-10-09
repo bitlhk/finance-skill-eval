@@ -20,10 +20,14 @@ import type { SkillStore } from "./skill-store.js";
 import { canonicalNeutralArchive } from './neutral-archive.js';
 import { CandidateAssessmentRuntimeAdapter } from '../candidate-assessment-runtime.js';
 import {ModelGoalJudge} from '../goal-judge.js';
+import {ModelRuntimeComparisonJudge} from '../runtime-comparison-judge.js';
 import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
 import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 import {RuntimeLauncherAdapter} from '../runtime-launcher.js';
 import {runtimeSkillPackage} from '../runtime-skill-package.js';
+import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from '../shared/skill-runtime-requirements.js';
+import {requireManagedRun} from './managed-workspace-policy.js';
+import type {EvaluationRunBudget} from './evaluation-run-budget.js';
 
 type RunManagerOptions = {
   catalog: EvalPackCatalog;
@@ -32,6 +36,8 @@ type RunManagerOptions = {
   environments: EnvironmentStore;
   jobs: EvaluationJobStore;
   maxConcurrentRuns: number;
+  managedWorkspace?:boolean;
+  runBudget?:EvaluationRunBudget;
   resolveMigrationRuntime?:(runtimeId:string)=>Promise<EnvironmentRecord|null>;
   resolveServiceEnvironment?:(reference:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string},toolNames:string[])=>Promise<{configuration:Record<string,string>;secrets:Record<string,string>}>;
 };
@@ -65,6 +71,8 @@ export class EvaluationRunManager {
   private readonly queue: string[] = [];
   private readonly active = new Map<string, AbortController>();
   private readonly events = new EventEmitter();
+  private readonly pending=new Set<Promise<void>>();
+  private closing=false;
 
   constructor(private readonly options: RunManagerOptions) {
     this.events.setMaxListeners(200);
@@ -77,7 +85,15 @@ export class EvaluationRunManager {
   }
 
   async create(input: unknown, frozenQuestions?: FrozenQuestionSet): Promise<EvaluationJob> {
+    if(this.closing)throw Object.assign(new Error('Evaluation service is closing'),{statusCode:503});
     const configuration = runConfigurationSchema.parse(input);
+    if(this.options.managedWorkspace)requireManagedRun(configuration);
+    const bindings=configuration.runtimeBindings;
+    const environmentIds=bindings
+      ? [...new Set((configuration.evaluationMode==='candidate_assessment'||configuration.evaluationMode==='service_comparison'
+          ? [bindings.right]:Object.values(bindings)).map(binding=>binding.environmentId))]
+      : configuration.runtime.type==='runtime_launcher'?[configuration.runtime.environmentId]:[];
+    for(const environmentId of environmentIds)await this.options.environments.requireAvailable(environmentId);
     const now = new Date().toISOString();
     const job: EvaluationJob = {
       schemaVersion: "finance.skill-eval.job.v1",
@@ -105,7 +121,7 @@ export class EvaluationRunManager {
 
   async retry(jobId: string): Promise<EvaluationJob> {
     const existing = this.options.jobs.get(jobId);
-    if (!existing) throw new Error(`Unknown evaluation run: ${jobId}`);
+    if (!existing) throw Object.assign(new Error('Evaluation run not found'),{statusCode:404});
     if (!["failed", "cancelled", "interrupted"].includes(existing.status)) {
       throw new Error("只有失败、已取消或已中断的运行可以重试");
     }
@@ -114,13 +130,14 @@ export class EvaluationRunManager {
 
   async cancel(jobId: string): Promise<EvaluationJob> {
     const job = this.options.jobs.get(jobId);
-    if (!job) throw new Error(`Unknown evaluation run: ${jobId}`);
+    if (!job) throw Object.assign(new Error('Evaluation run not found'),{statusCode:404});
     const queuedIndex = this.queue.indexOf(jobId);
     if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
     this.active.get(jobId)?.abort();
     if (["completed", "failed", "cancelled", "interrupted"].includes(job.status)) return job;
     job.status = "cancelled";
-    job.stageLabel = "已取消";
+    job.stageLabel = "取消已请求；执行停止与回收分别核对";
+    job.cancellation = {requestedAt:new Date().toISOString(),scope:'EVAL_WORKER_NOT_REMOTE_PROCESS_PROOF'};
     job.error = null;
     job.completedAt = new Date().toISOString();
     await this.options.jobs.save(job);
@@ -133,19 +150,28 @@ export class EvaluationRunManager {
   }
 
   private async pump(): Promise<void> {
-    while (this.active.size < this.options.maxConcurrentRuns && this.queue.length > 0) {
+    while (!this.closing && this.active.size < this.options.maxConcurrentRuns && this.queue.length > 0) {
       const jobId = this.queue.shift();
       if (!jobId) return;
       const job = this.options.jobs.get(jobId);
       if (!job || job.status !== "queued") continue;
       const controller = new AbortController();
       this.active.set(jobId, controller);
-      void this.execute(job, controller)
+      const execute=()=>this.execute(job,controller);
+      const operation=(this.options.runBudget?this.options.runBudget.schedule(execute,controller.signal):execute())
         .finally(() => {
           this.active.delete(jobId);
+          this.pending.delete(operation);
           void this.pump();
         });
+      this.pending.add(operation);
     }
+  }
+
+  async close():Promise<void>{
+    this.closing=true;
+    await Promise.all([...this.queue,...this.active.keys()].map(id=>this.cancel(id)));
+    await Promise.allSettled([...this.pending]);
   }
 
   private async resolvePack(configuration: RunConfiguration): Promise<EvalPack> {
@@ -174,6 +200,8 @@ export class EvaluationRunManager {
       if (!Array.isArray(holdout) || !holdout.length) throw new Error("这个评测题集没有冻结的留出题");
       selected.push(...holdout.map(item => evalCaseSchema.parse(item)));
     }
+    if (new Set(selected.map(item => item.caseId)).size !== selected.length)
+      throw new Error("固定题与留出题 caseId 冲突，请核对题集版本");
     const executionModel = configuration.executionModel
       ?? (configuration.runtime.type === "direct_model" ? configuredModelRole("EXECUTION").model : null);
     return {
@@ -232,11 +260,23 @@ export class EvaluationRunManager {
   private async runtimeFor(configuration: RunConfiguration, pack: EvalPack): Promise<RuntimeAdapter> {
     if(pack.cases.some(c=>c.turns)&&configuration.runtime.type!=='runtime_launcher')throw new Error('真实多轮案例必须通过支持多轮的 Runtime Launcher 执行');
     if (configuration.runtimeBindings) {
+      if(configuration.evaluationMode==='candidate_runtime_comparison'){
+        const identities=await Promise.all((['left','right'] as const).map(async side=>{
+          const selected=await this.options.resolveMigrationRuntime?.(configuration.runtimeBindings![side].environmentId);
+          if(!selected)throw Error('对比执行环境不可用');
+          const inspection=await this.options.environments.inspect(selected);
+          if(inspection.status!=='ready'||!inspection.capabilities)throw Error('Runtime Launcher 预检失败');
+          const model=inspection.capabilities.models.find(item=>item.modelId===pack.models.execution[side].modelId);
+          if(!model?.upstreamModelId)throw Error('所选模型不属于此 Runtime 或缺少真实模型标识');
+          return model.upstreamModelId;
+        }));
+        if(identities[0]!==identities[1])throw Error('跨 Runtime 对照必须使用相同的真实执行模型');
+      }
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
         const selectedEnvironment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
         if (!selectedEnvironment) throw new Error('迁移执行环境不可用');
-        const environment=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
+        const environment=(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
         const services=await Promise.all((configuration.runtimeMcpBindings?.[side]??[]).map(async service=>{
           const {environmentReference,...launch}=service;
           if(!environmentReference)return launch;
@@ -249,12 +289,13 @@ export class EvaluationRunManager {
         const executablePaths=[...new Set([...(configuration.runtimeCommandBindings?.[side]??[]).flatMap(tool=>[tool.path,...tool.filePaths]),...services.flatMap(service=>service.filePaths)])];
         const resolveSkill = await this.skillResolver(binding.skillAssetId,true,true,executablePaths,true);
         const skill=await resolveSkill(pack.variants[side]);
-        const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(c=>c.requiredTools))],configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,true);
+        const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
+        const descriptor=await this.environmentDescriptor(selectedEnvironment,required,configuration.runtimeCommandBindings?.[side]??[],services,pack.metadata.assessmentMode==='natural_language',configuration.runtimeHarnessTools,true);
         if(configuration.runtimeToolConfig){
           descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
         }
         return new RuntimeLauncherAdapter({baseUrl:environment.baseUrl,headers:this.options.environments.headers(environment),side,
-          model:pack.models.execution[side],variant:pack.variants[side],skill,environment:descriptor,timeoutMs:configuration.timeoutMs});
+          model:pack.models.execution[side],variant:pack.variants[side],skill,environment:descriptor,timeoutMs:configuration.timeoutMs,stopAfterFailure:configuration.evaluationMode==='candidate_runtime_comparison'});
       };
       if(configuration.evaluationMode==='candidate_assessment')return makeSide('right');
       if(configuration.evaluationMode==='service_comparison'){
@@ -283,20 +324,23 @@ export class EvaluationRunManager {
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
     if(configuration.runtime.type==='runtime_launcher'){
-      const selectedEnvironment=await this.options.environments.get(configuration.runtime.environmentId);
+      const selectedEnvironment=await this.options.environments.requireAvailable(configuration.runtime.environmentId);
       if(!selectedEnvironment)throw new Error('所选执行环境不可用');
-      const launcher=selectedEnvironment.type==='runtime_launcher'?selectedEnvironment:(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
+      const launcher=(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
       const inspection=await this.options.environments.inspect(selectedEnvironment);
       if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
       const available=new Set(inspection.capabilities.models.map(model=>model.modelId));
       for(const side of ['left','right'] as const)if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
-      const descriptor=await this.environmentDescriptor(selectedEnvironment,[...new Set(pack.cases.flatMap(evalCase=>evalCase.requiredTools))],[],[],false,configuration.runtimeHarnessTools,true);
-      if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
-      const makeSide=async(side:'left'|'right')=>new RuntimeLauncherAdapter({
+      const makeSide=async(side:'left'|'right')=>{
+        const skill=await resolveSkill(pack.variants[side]);
+        const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
+        const descriptor=await this.environmentDescriptor(selectedEnvironment,required,[],[],false,configuration.runtimeHarnessTools,true);
+        if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
+        return new RuntimeLauncherAdapter({
         baseUrl:launcher.baseUrl,headers:this.options.environments.headers(launcher),side,
-        model:pack.models.execution[side],variant:pack.variants[side],skill:await resolveSkill(pack.variants[side]),
+        model:pack.models.execution[side],variant:pack.variants[side],skill,
         environment:structuredClone(descriptor),timeoutMs:configuration.timeoutMs,
-      });
+      })};
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
     throw new Error(`Unsupported runtime type: ${configuration.runtime satisfies never}`);
@@ -362,13 +406,28 @@ export class EvaluationRunManager {
     };
   }
 
-  private judgeFor(configuration: RunConfiguration, pack: EvalPack): PairwiseJudge {
+  private async launcherToolRequirements(environment:EnvironmentRecord,instructions:string|undefined,caseTools:string[]){
+    try{return skillRuntimeRequirements(instructions,caseTools)}
+    catch(error){if(!(error instanceof CaseToolOutsideDeclaration))throw error}
+    const inspected=await this.options.environments.preflight(environment);
+    if(inspected.status!=='ready')throw Error('Runtime Launcher preflight failed');
+    const auxiliary='capabilities' in inspected?inspected.capabilities?.auxiliaryToolNames??[]:[];
+    return skillRuntimeRequirements(instructions,caseTools,auxiliary);
+  }
+
+  private async judgeFor(configuration: RunConfiguration, pack: EvalPack): Promise<PairwiseJudge> {
     if (configuration.judgeMode === "deterministic") {
       if(pack.cases.some(c=>c.rubric.some(r=>r.allOf.length+r.anyOf.length+r.noneOf.length===0))) throw new Error('当前专业量表需使用模型 Judge，不支持空规则自动评分。');
       return new DeterministicRubricJudge();
     }
     const judge = configuredModelRole("JUDGE");
     if (!judge.adapter) throw new Error("本服务未配置阅卷模型");
+    const skillFor=async(side:'left'|'right')=>{
+      const resolve=await this.skillResolver(configuration.runtimeBindings?.[side].skillAssetId??configuration.skillAssetId);
+      const source=await resolve(pack.variants[side]);
+      return source?{skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256,instructions:source.instructions}:undefined;
+    };
+    if(configuration.evaluationMode==='candidate_runtime_comparison')return new ModelRuntimeComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{left:await skillFor('left'),right:await skillFor('right')});
     if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
     if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{tools:configuration.runtimeCommandBindings?.right});
     return configuration.evaluationMode==='candidate_assessment'
@@ -429,11 +488,13 @@ export class EvaluationRunManager {
         caseCount: pack.cases.length,
       };
       job.progress.totalRuns = pack.cases.length * 2;
+      job.executionSnapshot = {variants:structuredClone(pack.variants),models:structuredClone(pack.models),
+        cases:pack.cases.map(({caseId,name,prompt})=>({caseId,name,prompt})),packFingerprint:pack.packFingerprint};
       await this.options.jobs.save(job);
       let runtime = await this.runtimeFor(job.configuration, pack);
       if(job.configuration.evaluationMode==='candidate_assessment')runtime=new CandidateAssessmentRuntimeAdapter(runtime,pack.variants.right,pack.models.execution.right);
       controller.signal.throwIfAborted();
-      const judge = this.judgeFor(job.configuration, pack);
+      const judge = await this.judgeFor(job.configuration, pack);
       let lastLivePublishedAt = 0;
       const report = await runEvaluation({
         pack,
@@ -441,6 +502,15 @@ export class EvaluationRunManager {
         judge,
         timeoutMs: job.configuration.timeoutMs,
         signal: controller.signal,
+        onFinalization: async receipt => {
+          const latest=this.options.jobs.get(job.jobId)??job;
+          latest.finalization = {jobId:job.jobId,...receipt};
+          if(latest.cancellation)latest.cancellation.workerSettledAt=new Date().toISOString();
+          job.finalization=latest.finalization;
+          if(latest.status==='cancelled')Object.assign(job,latest);
+          await this.options.jobs.save(latest);
+          this.emit(latest);
+        },
         onProgress: progress => {
           if (job.status === "cancelled" || controller.signal.aborted) return;
           if (progress.event) {
@@ -485,11 +555,13 @@ export class EvaluationRunManager {
       job.status = "completed";
       job.stageLabel = "评测完成";
       job.report = report;
+      report.executionBindings={basis:'MODEL_PROVIDER_IS_CONFIGURATION_REFERENCE_NOT_RUNTIME_IDENTITY',
+        runtime:structuredClone(job.configuration.runtime),sides:structuredClone(job.configuration.runtimeBindings??null)};
       if (job.questionSet) {
         report.questionSet = job.questionSet;
-        const { reportFingerprint: _previous, ...content } = report;
-        report.reportFingerprint = fingerprint(content);
       }
+      const { reportFingerprint: _previous, ...content } = report;
+      report.reportFingerprint = fingerprint(content);
       job.completedAt = new Date().toISOString();
       await this.options.jobs.save(job);
       this.emit(job);

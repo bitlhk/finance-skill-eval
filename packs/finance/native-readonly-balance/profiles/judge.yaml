@@ -1,0 +1,18 @@
+schemaVersion: finance.skill-eval.judge-profile.v1
+profileId: native-readonly-balance
+version: 1.0.0
+reviewerLabel: 合成余额事实核验
+domainInstructions: 仅核对合成数据事实，不由自动评分推断专业质量或真实业务可用性。
+dimensions:
+  - id: professional_fit
+    label: 使用范围
+    description: 只核对余额，不扩展成投资建议或办理。
+  - id: business_completeness
+    label: 事实完整性
+    description: 金额、币种、案例文件标记是否来自实际工具。
+  - id: clarity
+    label: 表达清晰度
+    description: 清楚区分事实、缺项和失败。
+  - id: actionability
+    label: 下一步说明
+    description: 缺数或失败时指出未完成项，不编造结果。

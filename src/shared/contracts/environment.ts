@@ -19,17 +19,19 @@ export const runtimeLauncherDeliverySchema=z.strictObject({
 });
 export const runtimeLauncherBindingSchema=runtimeLauncherDeliverySchema.extend({environmentId:z.string().min(1)});
 const legacyMcp=z.strictObject({...common,type:z.literal('mcp_streamable_http'),runtimeType:z.null().optional(),endpoint:endpointSchema,mcpEnvironmentIds:z.array(z.string().min(1)).max(0).default([])});
-const launcher=z.strictObject({...common,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','ea','generic_http']),baseUrl:baseUrlSchema});
+const launcher=z.strictObject({...common,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','agentscope','ea','generic_http']),baseUrl:baseUrlSchema});
 const executionEnvironment=z.strictObject({name:z.string().trim().min(1).max(80),type:z.literal('execution_environment'),launcherEnvironmentId:z.string().min(1),mcpEnvironmentIds:z.array(z.string().min(1)).max(12).default([]),defaultModelId:z.string().min(1).nullable().optional()});
 export const createEnvironmentSchema=z.union([legacyMcp,launcher,executionEnvironment]).superRefine((value,context)=>{
   if('mcpEnvironmentIds' in value&&new Set(value.mcpEnvironmentIds).size!==value.mcpEnvironmentIds.length)context.addIssue({code:'custom',message:'Duplicate MCP bindings'});
 });
 
-const recordCommon={environmentId:z.string().min(1),name:z.string().min(1),credentialEnv:z.string().min(1).nullable().default(null),createdAt:z.string().datetime(),updatedAt:z.string().datetime()};
+export const environmentArchiveSchema=z.strictObject({archived:z.boolean()});
+export const environmentListQuerySchema=z.strictObject({includeArchived:z.enum(['true','false']).optional().transform(value=>value==='true')});
+const recordCommon={environmentId:z.string().min(1),name:z.string().min(1),archived:z.boolean().default(false),credentialEnv:z.string().min(1).nullable().default(null),createdAt:z.string().datetime(),updatedAt:z.string().datetime()};
 export const environmentRecordSchema=z.union([
   z.strictObject({...recordCommon,type:z.literal('mcp_streamable_http'),runtimeType:z.null().default(null),endpoint:z.string().url(),mcpEnvironmentIds:z.array(z.string().min(1)).default([])}),
-  z.strictObject({...recordCommon,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','ea','generic_http']),baseUrl:z.string().url(),delivery:runtimeLauncherDeliverySchema.optional()}),
-  z.strictObject({environmentId:z.string().min(1),name:z.string().min(1),type:z.literal('execution_environment'),runtimeType:z.null().default(null),launcherEnvironmentId:z.string().min(1),mcpEnvironmentIds:z.array(z.string().min(1)).default([]),defaultModelId:z.string().min(1).nullable().default(null),createdAt:z.string().datetime(),updatedAt:z.string().datetime()}),
+  z.strictObject({...recordCommon,type:z.literal('runtime_launcher'),runtimeType:z.enum(['openjiuwen','agentscope','ea','generic_http']),baseUrl:z.string().url(),delivery:runtimeLauncherDeliverySchema.optional()}),
+  z.strictObject({environmentId:z.string().min(1),name:z.string().min(1),archived:z.boolean().default(false),type:z.literal('execution_environment'),runtimeType:z.null().default(null),launcherEnvironmentId:z.string().min(1),mcpEnvironmentIds:z.array(z.string().min(1)).default([]),defaultModelId:z.string().min(1).nullable().default(null),createdAt:z.string().datetime(),updatedAt:z.string().datetime()}),
 ]);
 export type EnvironmentRecord=z.infer<typeof environmentRecordSchema>;
 export type RuntimeLauncherDelivery=z.infer<typeof runtimeLauncherDeliverySchema>;

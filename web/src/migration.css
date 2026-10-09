@@ -197,6 +197,12 @@
 .file-input-label { margin-top:12px; }
 .assessment-config-grid { display:grid;grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr));gap:12px; }
 .assessment-config-grid label { margin:0; }
+.assessment-config-grid.runtime-comparison-config { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.runtime-generation { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0 0;padding:12px 14px;border:1px solid #e1e4e7;border-radius:7px; }
+.runtime-generation legend { padding:0 6px;font-weight:650; }
+.runtime-generation label { margin:0; }
+.runtime-side-result { margin:12px 0;padding:12px 14px;border:1px solid #e1e4e7;border-radius:7px;background:#fafbfb; }
+.runtime-side-result h5 { margin:0 0 8px;font-size:13px; }
 .suite-preview { margin-top:14px; }
 .assessment-case-preview { padding:12px 0;border-bottom:1px solid #e5e7e9; }
 .assessment-case-preview:last-of-type { border-bottom:0; }

@@ -37,6 +37,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   defaultModelId: z.string().min(1),
   supportedSkillModes: z.array(z.enum(["skill_version", "without_target_skill"])).min(1).optional(),
   nativeToolNames: z.array(z.string().min(1)).optional(),
+  auxiliaryToolNames: z.array(z.string().min(1)).optional(),
   nativeCapabilities:z.array(nativeCapabilitySchema).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
   features: z.strictObject({
@@ -47,6 +48,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   limits: z.strictObject({
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),
     maxTimeoutMs: z.number().int().positive(), maxConcurrentInstances: z.number().int().positive(),
+    minPrimaryTools:z.number().int().nonnegative().optional(),
   }),
 }).superRefine((value, context) => {
   for(const field of ['capabilityId','name'] as const){

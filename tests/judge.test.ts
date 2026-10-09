@@ -31,6 +31,24 @@ function evidence(side: "left" | "right", caseId: string): RuntimeExecutionEvide
 }
 
 describe("model pairwise judge", () => {
+  it.each([
+    ['无余额信息', '未提供金额', '均未满足'],
+    ['余额 12,345.67 CNY', '余额 12345.67 CNY', '均满足'],
+    ['余额 12345.67', '余额 12,345.67', '未全部满足'],
+  ])('reports actual rule coverage for tied answers: %s / %s', async (leftOutput, rightOutput, summary) => {
+    const pack = await loadEvalPack(path.resolve('packs/finance/investment-research/eval.yaml'));
+    const evalCase = { ...pack.cases[0]!, rubric: [
+      { criterionId: 'amount', label: 'Amount', description: 'Synthetic amount', dimension: 'business_completeness' as const,
+        weight: 1, allOf: [], anyOf: ['(?<![\\d,])12,?345\\.67(?!\\d)'], noneOf: [] },
+      { criterionId: 'currency', label: 'Currency', description: 'Currency present', dimension: 'business_completeness' as const,
+        weight: 1, allOf: ['CNY'], anyOf: [], noneOf: [] },
+    ] };
+    const result = await new DeterministicRubricJudge().compare({ evalCase,
+      left: { ...evidence('left', evalCase.caseId), output: leftOutput },
+      right: { ...evidence('right', evalCase.caseId), output: rightOutput }, profile: pack.judgeProfile });
+    expect(result.winner).toBe('tie');
+    expect(result.summary).toContain(summary);
+  });
   it('does not turn an empty rule into a perfect professional score',async()=>{
     const pack=await loadEvalPack(path.resolve('packs/finance/auto-insurance-advisor-online/eval.yaml'));
     const evalCase=pack.cases[0];

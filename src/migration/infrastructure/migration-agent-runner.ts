@@ -94,6 +94,13 @@ function interpreter(projectRoot:string):string{
     :path.join(projectRoot,'.venv-openjiuwen','bin','python');
 }
 
+/** Deployment code location is operator-owned, never taken from an uploaded asset. */
+export function migrationProjectRoot():string{
+  const configured=process.env.FINANCE_EVAL_MIGRATION_PROJECT_ROOT?.trim();
+  if(configured&&!path.isAbsolute(configured))throw new Error('MIGRATION_PROJECT_ROOT_MUST_BE_ABSOLUTE');
+  return configured||process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd();
+}
+
 export function encodeArchive(archive:Record<string,Uint8Array>):Record<string,string>{
   return Object.fromEntries(Object.entries(archive).map(([name,bytes])=>[name,Buffer.from(bytes).toString('base64')]));
 }
@@ -112,6 +119,7 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
     assetDigest,stageId:stage,producer:'AGENT',status:'FAILED',
     payload:{judgement:{} as T},run:{elapsedMs,error},
   });
+  if(!existsSync(entry))return failed('MIGRATION_AGENT_ENTRY_MISSING: check the installed migration code directory');
   if(!existsSync(program)||!existsSync(runtimeConfig))return failed('migration agent runtime is not available');
 
   const requestedDecisions=stage==='A4'&&Array.isArray((request as {decisions?:unknown[]}).decisions)

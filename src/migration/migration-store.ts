@@ -35,7 +35,7 @@ export class MigrationStore {
   async plan(id:string){return this.services.planningService.plan(id);}
   async proposeMigrationPlan(id:string){return this.services.planningService.propose(id);}
   async approveMigrationPlan(id:string,input:unknown){return this.services.planningService.approve(id,input);}
-  async runtimeRequirements(id:string){return this.services.planningService.runtimeRequirements(id);}
+  async runtimeRequirements(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirements(id,runtimeType);}
   async proposeRuntimeRebuild(id:string,input:unknown){return this.services.runtimeRebuildService.propose(id,input);}
   async proposeImprovement(id:string,input:unknown){return this.services.improvementPlanningService.propose(id,input);}
   async startImprovementTask(id:string,input:unknown){return this.services.improvementTasks.start(id,input);}
@@ -51,7 +51,8 @@ export class MigrationStore {
   async shutdown(){await Promise.all([this.services.improvementTasks.shutdown(),this.services.reuseAcceptance.shutdown()]);}
   async proposeToolOptimization(id:string,input:unknown){return this.services.toolOptimizationService.propose(id,input);}
   async adoptToolOptimization(id:string,input:unknown){return this.services.toolOptimizationService.adopt(id,input);}
-  async runtimeRequirementsYaml(id:string){return this.services.planningService.runtimeRequirementsYaml(id);}
+  async runtimeRequirementsYaml(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirementsYaml(id,runtimeType);}
+  async conformanceCandidate(id:string){return this.services.exportService.conformanceCandidate(id);}
   async bindRuntimeDelivery(id:string,input:unknown){return this.services.planningService.bindRuntimeDelivery(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.services.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.services.technicalValidation.list(id);}
@@ -60,6 +61,7 @@ export class MigrationStore {
   async generate(id:string,input:unknown){return this.services.generationService.generate(id,input);}
   async generationProgress(id:string){return this.services.generationService.executionProgress(id);}
   async candidate(id:string,input:unknown) {return this.services.candidateService.import(id,input);}
+  async nativeCandidate(id:string,input:unknown,targets:import('../shared/contracts/native-tool-catalog.js').NativeBindingTarget[]){return this.services.nativeBindingService.bind(id,input,targets);}
   async draft(id:string,input:unknown) {return this.services.candidateService.saveDraft(id,input);}
   async analyze(id:string) {return this.services.candidateService.analyze(id);}
   async review(id:string,input:unknown){return this.services.candidateService.review(id,input);}

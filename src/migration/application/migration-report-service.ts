@@ -11,10 +11,10 @@ import { projectMigrationPlan } from '../domain/migration-reuse-design.js';
 import { executionConfigurationDigest as configurationDigest } from '../../execution-configuration/execution-configuration.js';
 import { migrationWorkflow } from '../domain/migration-workflow.js';
 import { solutionRevision } from '../domain/migration-solution-revision.js';
-import { currentRuntimeRequirements } from '../domain/migration-runtime-requirements.js';
 import {currentRuntimeReuse,reusedCapabilitiesDigest} from '../domain/migration-runtime-reuse.js';
 import type {ReuseAcceptanceSummary} from '../domain/migration-reuse-acceptance.js';
 import {migrationDeliveryStatus} from '../domain/migration-delivery-status.js';
+import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 
 /** Builds the read model consumed by migration reporting, export and target validation views. */
 export class MigrationReportService {
@@ -31,10 +31,9 @@ export class MigrationReportService {
 
   async report(id:string) {
     const value=await this.projects.get(id);
-    const detectedRuntimeRequirements=currentRuntimeRequirements(value);
     const reuse=currentRuntimeReuse(value),reusedEnvironment=reuse?await resolveMigrationEnvironment(this.environments,reuse.environmentId):null;
     const runtimeReuse=reuse&&reusedEnvironment?.launcher.environmentId===reuse.launcherEnvironmentId&&reusedEnvironment.launcher.updatedAt===reuse.environmentUpdatedAt?reuse:null;
-    const runtimeRequirements=runtimeReuse||(detectedRuntimeRequirements&&'requestId' in detectedRuntimeRequirements&&value.runtimeDelivery?.requirementsDigest===detectedRuntimeRequirements.requirementsDigest)?null:detectedRuntimeRequirements;
+    const runtimeRequirements=await unresolvedMigrationRuntimeRequirements(value,this.environments);
     const diagnosis=this.diagnostics?.peek?await this.diagnostics.peek(value.source):this.diagnostics?await this.diagnostics.diagnose(value.source):null;
     const currentAsset=value.candidate??value.source;
     const runtimeDigest=configurationDigest(await this.runtimeConfigs!.get(id),value.sourceInspection?.dependencyAnalysis?.dependencies);
@@ -74,7 +73,7 @@ export class MigrationReportService {
           }
         }
       }
-return {...r,current:r.candidateDigest===currentAsset.artifactSha256&&(!value.sourceInspection?.dependencyAnalysis?.dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')||r.runtimeConfigurationDigest===runtimeDigest)&&solutionCurrent&&(!r.reuseProposalId||r.reuseProposalId===migrationPlan?.reuseProposal?.proposalId),comparisonKind:r.pair==='AC'?'WHOLE_SOLUTION':r.pair==='SC'?'ORIGINAL_SERVICE':r.pair==='BC'?'TARGET_ASSESSMENT':'CONTROLLED_SKILL',execution:job?.status??'MISSING',createdAt:job?.createdAt,updatedAt:job?.updatedAt,report:job?.report??null,error:job?.error??null,evidence:complete?(r.pair==='SC'?'SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED':'HTTP_LOADED_DIGEST_CHECKED'):'NOT_COMPLETE',acceptance,
+return {...r,current:r.candidateDigest===currentAsset.artifactSha256&&(!value.sourceInspection?.dependencyAnalysis?.dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT')||r.runtimeConfigurationDigest===runtimeDigest)&&solutionCurrent&&(!r.reuseProposalId||r.reuseProposalId===migrationPlan?.reuseProposal?.proposalId),comparisonKind:r.pair==='CC'?'SAME_SKILL_RUNTIME_ASSESSMENT':r.pair==='AC'?'WHOLE_SOLUTION':r.pair==='SC'?'ORIGINAL_SERVICE':r.pair==='BC'?'TARGET_ASSESSMENT':'CONTROLLED_SKILL',execution:job?.status??'MISSING',createdAt:job?.createdAt,updatedAt:job?.updatedAt,report:job?.report??null,error:job?.error??null,evidence:complete?(r.pair==='SC'?'SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED':'HTTP_LOADED_DIGEST_CHECKED'):'NOT_COMPLETE',acceptance,
         taskSuccess:'NOT_INDEPENDENTLY_VERIFIED',professionalAcceptance:'NOT_REVIEWED',migrationAcceptance:'NOT_VALIDATED'};
     }));
     const optimizations=await Promise.all((value.optimizations??[]).map(async link=>({...link,item:await this.optimizers?.get(link.optimizationId)})));
@@ -96,7 +95,7 @@ return {...r,current:r.candidateDigest===currentAsset.artifactSha256&&(!value.so
     const openJiuwenValidations=(await Promise.all(experiments.map(async experiment=>{
       const runtime=experiment.declaredPlan?.configuration.runtime;
       const resolved=runtime?.type==='runtime_launcher'?await resolveMigrationEnvironment(this.environments,runtime.environmentId):null;
-      if(!resolved||resolved.launcher.runtimeType!=='openjiuwen')return null;
+      if(!resolved)return null;
       return {jobId:experiment.jobId,pair:experiment.pair,candidateDigest:experiment.candidateDigest,environmentId:resolved.selected.environmentId,
         execution:experiment.execution,evidence:experiment.evidence,current:experiment.current,
         executionCheck:['HTTP_LOADED_DIGEST_CHECKED','SERVICE_BASELINE_AND_CANDIDATE_DIGEST_CHECKED'].includes(experiment.evidence)?'ARTIFACT_VERIFIED':experiment.execution==='completed'?'EXECUTION_COMPLETED':'NOT_COMPLETE',
@@ -110,7 +109,7 @@ return {...r,current:r.candidateDigest===currentAsset.artifactSha256&&(!value.so
     const reuseConformance=value.inspection?.reuseConformance;
     const originalBaseline=experiments.filter(r=>r.pair==='SC'&&r.current).at(-1);
     const technicalReady=!!value.candidate&&!runtimeRequirements&&(value.inspection?.tools??[]).every(tool=>technicalValidations.some(result=>result.current&&result.toolId===tool.toolId&&result.status==='PASSED'));
-    const evaluationCompleted=experiments.some(experiment=>experiment.current&&experiment.pair!=='AC'&&!['queued','preparing','running','judging','MISSING'].includes(experiment.execution));
+    const evaluationCompleted=experiments.some(experiment=>experiment.current&&['BC','SC'].includes(experiment.pair)&&!experiment.reuseAcceptanceTaskId&&!['queued','preparing','running','judging','MISSING'].includes(experiment.execution));
     const workflow=migrationWorkflow(value,{migrationPlan,runtimeRequirementsPending:!!runtimeRequirements,technicalReady,evaluationCompleted});
     const reuseAcceptance=this.readReuseAcceptance?await this.readReuseAcceptance(id):null;
     const proposal=migrationPlan?.reuseProposal;

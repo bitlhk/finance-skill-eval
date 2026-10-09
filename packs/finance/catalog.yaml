@@ -1,5 +1,13 @@
 schemaVersion: finance.skill-catalog.v1
 skills:
+  - skillId: native-readonly-balance
+    displayName: 账户余额核验
+    roleName: 只读核验助手
+    category: 受管 Runtime 样例
+    iconKey: wealth
+    featuredOrder: 5
+    summary: 用合成余额和逐题案例文件核对工具、事实与运行版本；支持已准入的两个 Java Runtime。
+    capabilities: [余额事实核验, 案例文件读取, 双 Runtime 对照]
   - skillId: goldencoach-stage-evaluation
     displayName: 金牌教练
     author: 赵印伟

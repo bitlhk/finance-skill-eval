@@ -21,8 +21,26 @@ runtime, a trading route, a public upload endpoint, or a new evaluation engine.
 
 ## Contract additions
 
+- Failure observations are correlated to the requested run, case, side and
+  instance before being forwarded. Recognized Builder native diagnostics retain
+  only bounded build/Host/run/trace identifiers, with the basis
+  `LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION`. The runner keeps these lookup
+  keys on failed evidence without asserting installed Skills, identity, tools or
+  model parameters; failed cases are not quality-scored or automatically retried.
+  Old failures without these identifiers remain unchanged.
+- The isolated native browser probe checks a preset Pack's fixture identity
+  before executing it. Its one-account controlled bank is not interchangeable
+  with the candidate site's five-account snapshot. A fixture mismatch is a test
+  setup failure, not a Runtime quality result.
+
 - `RuntimeInstanceRequest.generation` is optional for older clients. When present,
   all three parameters are required with `schemaVersion=finance.eval-generation.v1`.
+  An optional `thinking: {type: "disabled"}` is supported only when the managed
+  Builder model binding explicitly declares `generationExtensions: ["thinking.disabled"]`.
+  Omission preserves the endpoint default. Unknown modes/options reject; no proxy
+  silently adds this field. Both sides must use the same parameters, with their
+  frozen configuration and actual request checks reported separately. An older
+  Launcher may reject the extension; Eval does not silently retry without it.
   Unknown keys, incomplete settings, invalid numbers and unsupported values are
   rejected, not silently discarded. Empty legacy model parameters omit this field.
 - `capabilities.nativeToolNames` optionally advertises preset-scoped native tools.

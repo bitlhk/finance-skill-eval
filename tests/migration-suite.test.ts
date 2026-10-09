@@ -13,6 +13,15 @@ it('separates development/holdout, forbids foreign project suites and unrelated 
   const upload=async(version:string)=>(await app.inject({url:'/api/skills/upload',method:'POST',headers:{...headers,'content-type':'application/zip'},
    payload:Buffer.from(zipSync({'SKILL.md':strToU8(`---\nname: test\nversion: ${version}\n---\nRead only`)}))})).json();
   const a=await upload('1.0.0'),b=await upload('1.0.1');
+  const sourceSuite={name:'Frozen original cases',cases:[{id:'original',input:'我有两个账户，但没有提供余额。',criteria:['不把未提供余额当作零','保持原量表']} ]};
+  const first=(await post(`/api/skills/${a.assetId}/prepare/import`,sourceSuite)).json();
+  const second=(await post(`/api/skills/${a.assetId}/prepare/import`,sourceSuite)).json();
+  expect(first.preparationId).not.toBe(second.preparationId);
+  expect(second.cases[0].prompt).toBe(sourceSuite.cases[0]!.input);
+  expect(second.cases[0].rubric.map((r:{description:string})=>r.description)).toEqual(sourceSuite.cases[0]!.criteria);
+  const saved=(await app.inject({url:'/api/catalog',headers})).json().preparations;
+  expect(saved.find((p:{preparationId:string})=>p.preparationId===first.preparationId).cases).toEqual(first.cases);
+  expect((await post(`/api/skills/${a.assetId}/prepare/import`,{...sourceSuite,cases:[sourceSuite.cases[0],sourceSuite.cases[0]]})).statusCode).toBe(400);
   const p1=(await post('/api/migrations',{sourceAssetId:a.assetId,name:'one'})).json();
   const p2=(await post('/api/migrations',{sourceAssetId:a.assetId,name:'two'})).json();
   await post(`/api/migrations/${p2.id}/candidates`,{assetId:b.assetId,notes:'Synthetic'});

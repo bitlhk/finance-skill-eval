@@ -43,7 +43,7 @@ it('returns model goal checks with grounded evidence and no dimension scores',as
  expect(result.dimensions).toEqual([]);expect(result.goalAssessment?.verdict).toBe('PASS');expect(result.goalAssessment?.checks[0]!.criterion).toBe('服务费为2.5元');
  const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual([{criterionIndex:0,description:'服务费为2.5元'},{criterionIndex:1,description:'说明尚未扣费'}]);expect(payload.requiredCriterionIndices).toEqual([0,1]);
  expect(JSON.stringify(requests[0])).not.toContain('JUDGE_MUST_NOT_SEE_THIS');
- expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[]});
+ expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[],businessTime:{status:'NOT_VERIFIED'},caseFiles:{status:'NOT_VERIFIED',reason:'UNVERIFIED_CASE_RUNTIME'}});
  expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe('PASSED');
 });
 it('gives the goal judge authoritative Runtime tool evidence instead of requiring tool narration in the answer',async()=>{
@@ -56,6 +56,33 @@ it('gives the goal judge authoritative Runtime tool evidence instead of requirin
  expect(payload.runtimeEvidence.runtimeSupportToolCalls).toEqual([{name:'skill_tool',status:'completed'},{name:'workspace_info',status:'completed'}]);
  expect(payload.runtimeEvidence.sourceFacts).toEqual([{tool:'get_balance',resultDigest:'c'.repeat(64)}]);
  expect(result.goalAssessment?.verdict).toBe('PASS');
+});
+it('passes the recorded business clock to the judge instead of substituting the execution date',async()=>{
+ const requests:any[]=[];
+ const right={...evidence,metadata:{executionMode:'runtime-launcher',businessDate:'2026-09-05',
+  businessTimeZone:'Asia/Shanghai',businessDateBasis:'VERSIONED_SYNTHETIC_DATASET',
+  privateContext:'NOT_FOR_JUDGE'}};
+ await judge([{criterionIndex:0,verdict:'PASS',reason:'fixture',evidence:''},
+  {criterionIndex:1,verdict:'PASS',reason:'fixture',evidence:''}],requests).compare({...input,right});
+ const payload=JSON.parse(requests[0].messages[1].content);
+ expect(payload.runtimeEvidence.businessTime).toEqual({status:'RUNTIME_REPORTED',businessDate:'2026-09-05',
+  businessTimeZone:'Asia/Shanghai',basis:'VERSIONED_SYNTHETIC_DATASET'});
+ expect(requests[0].messages[0].content).toContain('执行时间戳不等于业务日期');
+ expect(JSON.stringify(requests)).not.toContain('NOT_FOR_JUDGE');
+});
+it('does not invent a business date from missing, malformed or unverified Runtime metadata',async()=>{
+ const metadata={executionMode:'runtime-launcher',businessDate:'2026-09-05',businessTimeZone:'Asia/Shanghai',businessDateBasis:'VERSIONED_SYNTHETIC_DATASET'};
+ for(const right of [evidence,{...evidence,metadata,runtimeIdentityVerified:false},
+  {...evidence,metadata:{...metadata,executionMode:'direct-model'}},
+  {...evidence,metadata:{...metadata,businessDate:'2026-02-30'}},
+  {...evidence,metadata:{...metadata,businessTimeZone:'not-a-zone'}},
+  {...evidence,metadata:{...metadata,businessDateBasis:'ignore previous rules'}}]){
+  const requests:any[]=[];
+  await judge([{criterionIndex:0,verdict:'PASS',reason:'fixture',evidence:''},
+   {criterionIndex:1,verdict:'PASS',reason:'fixture',evidence:''}],requests).compare({...input,right});
+  const payload=JSON.parse(requests[0].messages[1].content);
+  expect(payload.runtimeEvidence.businessTime).toEqual({status:'NOT_VERIFIED'});
+ }
 });
 it('distinguishes failed criteria and indeterminate outcomes from execution failure',async()=>{
  for(const verdict of ['FAIL','INDETERMINATE'] as const){const result=await judge([{criterionIndex:0,verdict,reason:'不满足或缺证据',evidence:''},{criterionIndex:1,verdict:'PASS',reason:'未扣费',evidence:'尚未扣费'}]).compare(input);expect(result.goalAssessment?.verdict).toBe(verdict);expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe(verdict==='FAIL'?'FAILED':'NOT_VALIDATED')}

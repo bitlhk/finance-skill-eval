@@ -5,12 +5,17 @@ import { KeyedQueue } from "../shared/keyed-queue.js";
 import { preflightMcpServer, type McpPreflightResult } from "../mcp-preflight.js";
 import {
   createEnvironmentSchema,
+  environmentArchiveSchema,
   environmentRecordSchema,
   type EnvironmentRecord,
 } from "../shared/contracts/environment.js";
 import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./file-store.js";
 import { RuntimeLauncherAdapter, runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
 import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult } from '../shared/contracts/runtime-builder.js';
+import {nativeToolCatalogSchema} from '../shared/contracts/native-tool-catalog.js';
+import {readBoundedJson} from '../runtime-launcher.js';
+import type {ResolvedSkillSource} from '../direct-model-runtime.js';
+import type {SkillVariant} from '../contracts.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if(record.type==='execution_environment')return {};
@@ -18,6 +23,9 @@ function headersFor(record: EnvironmentRecord): Record<string, string> {
   const credential = process.env[record.credentialEnv];
   if (!credential) throw new Error(`Credential environment variable is unavailable: ${record.credentialEnv}`);
   return { authorization: credential.startsWith("Bearer ") ? credential : `Bearer ${credential}` };
+}
+function requireNotArchived(record: EnvironmentRecord): void {
+  if(record.archived)throw Object.assign(new Error('Environment is archived'),{statusCode:409,code:'ENVIRONMENT_ARCHIVED'});
 }
 export class EnvironmentStore {
   private readonly directory: string;
@@ -29,30 +37,62 @@ export class EnvironmentStore {
 
   async initialize(): Promise<void> {
     await ensureDirectory(this.directory);
-    for(const file of await listJsonFiles(this.directory)){
-      const value=await readJson<{type?:unknown}>(file);
-      if(value.type==='runtime_http')await unlink(file);
-    }
   }
 
-  async list(): Promise<EnvironmentRecord[]> {
+  async nativeToolCatalog(environmentId:string){
+    const record=await this.requireAvailable(environmentId);
+    if(record?.type!=='runtime_launcher')throw Object.assign(new Error('请选择已登记的原生 Runtime Launcher'),{statusCode:409});
+    const response=await fetch(new URL('v1/native-tool-catalog',record.baseUrl),{
+      headers:headersFor(record),redirect:'error',signal:AbortSignal.timeout(10000),
+    });
+    if(!response.ok)throw Object.assign(new Error('此环境尚未配置已准入工具合同目录'),{statusCode:409});
+    const catalog=nativeToolCatalogSchema.parse(await readBoundedJson(response,1_048_576,'Native tool catalog'));
+    if(catalog.runtime.type!==record.runtimeType)throw Object.assign(new Error('工具目录与登记的 Runtime 不一致'),{statusCode:409});
+    return {environmentId,catalog};
+  }
+
+  async list(options: {includeArchived?: boolean} = {}): Promise<EnvironmentRecord[]> {
     const records = await Promise.all(
       (await listJsonFiles(this.directory)).map(file => readJson<EnvironmentRecord>(file)),
     );
-    return records.map(record => environmentRecordSchema.parse(record))
+    // Unsupported legacy registrations remain on disk for historical references.
+    return records.filter(record => (record as {type:string}).type !== 'runtime_http')
+      .map(record => environmentRecordSchema.parse(record))
+      .filter(record => options.includeArchived === true || !record.archived)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   async get(environmentId: string): Promise<EnvironmentRecord | null> {
     if (!/^[a-z0-9-]+$/u.test(environmentId)) return null;
     try {
-      return environmentRecordSchema.parse(
-        await readJson(path.join(this.directory, `${environmentId}.json`)),
-      );
+      const record = await readJson<{type?:string}>(path.join(this.directory, `${environmentId}.json`));
+      if(record.type==='runtime_http')return null;
+      return environmentRecordSchema.parse(record);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
+  }
+
+  async setArchived(environmentId: string, input: unknown): Promise<EnvironmentRecord> {
+    const {archived} = environmentArchiveSchema.parse(input);
+    return this.writes.run('registry', async () => {
+      const previous = await this.get(environmentId);
+      if(!previous)throw Object.assign(new Error('Environment not found'),{statusCode:404});
+      if(previous.archived === archived)return previous;
+      const record = environmentRecordSchema.parse({...previous,archived,updatedAt:new Date().toISOString()});
+      await writeJsonAtomic(path.join(this.directory,`${environmentId}.json`),record);
+      return record;
+    });
+  }
+
+  /** Fresh admission lookup. get() deliberately remains usable for historical references. */
+  async requireAvailable(environmentId: string): Promise<EnvironmentRecord> {
+    const record = await this.get(environmentId);
+    if(!record)throw Object.assign(new Error('Environment not found'),{statusCode:404});
+    requireNotArchived(record);
+    if(record.type==='execution_environment')await this.validateExecutionEnvironment(record.launcherEnvironmentId,record.mcpEnvironmentIds);
+    return record;
   }
 
   async create(input: unknown): Promise<EnvironmentRecord> {
@@ -74,13 +114,16 @@ export class EnvironmentStore {
     });
   }
 
-  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string}):Promise<{
+  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string;
+    conformance?:{skill:ResolvedSkillSource;requiredTools:string[]}}):Promise<{
     environment:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;capabilities:RuntimeLauncherCapabilities;created:boolean;
   }>{
     const requirements=runtimeBuildRequirementsSchema.parse(input.requirements);
     const result=runtimeBuildResultSchema.parse(input.result);
     const launcher=result.launcher;
     if(!launcher)throw Object.assign(new Error('Builder 没有返回可用的 Runtime Launcher。'),{statusCode:400});
+    const registered=(await this.list({includeArchived:true})).find(record=>record.type==='runtime_launcher'&&record.delivery?.deploymentId===launcher.deploymentId);
+    if(registered)requireNotArchived(registered);
     if(launcher.expiresAt&&Date.parse(launcher.expiresAt)<=Date.now())throw Object.assign(new Error('Builder 返回的 Runtime Launcher 已过期。'),{statusCode:400});
     const trust=this.launcherTrust.find(item=>item.reference===input.trustReference);
     if(!trust)throw Object.assign(new Error('Launcher 信任引用不存在或未由服务端配置。'),{statusCode:400});
@@ -114,26 +157,40 @@ export class EnvironmentStore {
     if(issues.length)throw Object.assign(new Error(`Builder 交付未通过验收: ${issues.join(', ')}`),{statusCode:400,issues});
     const headers:Record<string,string>=authorization?{authorization}:{};
     const model=capabilities.models.find(item=>item.modelId===capabilities.defaultModelId)!;
+    const skill=input.conformance?.skill??null;
+    const variant:SkillVariant=skill?{mode:'skill_version',skillId:skill.skillId,version:skill.version,artifactSha256:skill.artifactSha256}
+      :{mode:'without_target_skill',skillId:'finance-eval-conformance'};
+    const requiredTools=input.conformance?.requiredTools??[];
+    const probeFiles=!skill||requiredTools.includes('read_case_file');
     const adapter=new RuntimeLauncherAdapter({baseUrl:launcher.baseUrl,headers,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},
-      variant:{mode:'without_target_skill',skillId:'finance-eval-conformance'},skill:null,environment:{environmentId:`conformance-${launcher.deploymentId}`},configuration:{conformance:'finance.runtime-launcher.v1'},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,60_000),requireStatusPoll:true});
+      variant,skill,environment:{environmentId:`conformance-${launcher.deploymentId}`,requiredToolNames:requiredTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
     const probeId=`conformance-${randomUUID()}`;
     try{
       await adapter.prepare({runId:probeId});
-      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant:{mode:'without_target_skill',skillId:'finance-eval-conformance'},evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:'Read the mounted probe file and return CONFORMANCE_OK.',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools:[],workspaceFiles:[{path:'conformance/probe.txt',content:'CONFORMANCE_OK'}],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:'Launcher completed the isolated lifecycle.',dimension:'business_completeness',weight:1,required:true,allOf:['CONFORMANCE_OK'],anyOf:[],noneOf:[]}]}});
+      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant,evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:probeFiles?'仅核验案例文件：读取 conformance/probe.txt 并返回其内容。不要办理业务。':'这是生命周期连通检查，请只回复 CONFORMANCE_OK，不调用业务工具。',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools,workspaceFiles:probeFiles?[{path:'conformance/probe.txt',content:'CONFORMANCE_OK'}]:[],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:'Launcher completed the isolated lifecycle.',dimension:'business_completeness',weight:1,required:true,allOf:['CONFORMANCE_OK'],anyOf:[],noneOf:[]}]}});
       if(evidence.status!=='completed'||!evidence.runtimeIdentityVerified||!evidence.streamCompleted||!evidence.output.includes('CONFORMANCE_OK'))throw new Error(evidence.error??'Launcher conformance execution did not complete with the mounted probe data');
+      if(skill&&probeFiles&&!evidence.toolCalls.some(call=>call.name==='read_case_file'&&call.status==='completed'))throw new Error('Lifecycle probe did not execute the declared file tool');
     }catch(error){conformanceError=error instanceof Error?error:new Error(String(error));}
     try{await adapter.cleanup();}catch(error){conformanceError=new Error(`${conformanceError?`${conformanceError.message}; `:''}实例清理失败: ${error instanceof Error?error.message:String(error)}`);}
     if(conformanceError)throw Object.assign(new Error(`Launcher 生命周期验收失败: ${conformanceError.message}`),{statusCode:400});
     return this.writes.run('registry',async()=>{
-      const existing=(await this.list()).find((record):record is Extract<EnvironmentRecord,{type:'runtime_launcher'}>=>record.type==='runtime_launcher'&&record.delivery?.deploymentId===launcher.deploymentId);
+      const existing=(await this.list({includeArchived:true})).find((record):record is Extract<EnvironmentRecord,{type:'runtime_launcher'}>=>record.type==='runtime_launcher'&&record.delivery?.deploymentId===launcher.deploymentId);
       if(existing){
+        requireNotArchived(existing);
         if(existing.delivery?.resultDigest!==result.resultDigest||existing.baseUrl!==launcher.baseUrl){
           throw Object.assign(new Error('相同 deploymentId 已登记，但交付摘要或地址不同。'),{statusCode:409});
+        }
+        // Re-admission has rechecked the contract and lifecycle, including cleanup.
+        // Upgrade legacy records only through that same trusted acceptance path.
+        if(existing.delivery.requirementsDigest!==requirements.requirementsDigest){
+          existing.delivery.requirementsDigest=requirements.requirementsDigest;
+          existing.updatedAt=new Date().toISOString();
+          await writeJsonAtomic(path.join(this.directory,`${existing.environmentId}.json`),existing);
         }
         return {environment:existing,capabilities,created:false};
       }
       const now=new Date().toISOString();
-      const runtimeType=['openjiuwen','ea'].includes(launcher.runtime.type)?launcher.runtime.type:'generic_http';
+      const runtimeType=['openjiuwen','agentscope','ea'].includes(launcher.runtime.type)?launcher.runtime.type:'generic_http';
       const environment=environmentRecordSchema.parse({
         environmentId:`env-${randomUUID().slice(0,12)}`,name:input.name?.trim()||`${result.builder.name} · ${launcher.runtime.type}`,
         type:'runtime_launcher',runtimeType,baseUrl:launcher.baseUrl,credentialEnv,createdAt:now,updatedAt:now,
@@ -161,19 +218,22 @@ export class EnvironmentStore {
       if (!record || record.type !== "mcp_streamable_http") {
         throw Object.assign(new Error(`MCP binding is unavailable: ${id}`), { statusCode: 400 });
       }
+      requireNotArchived(record);
     }
   }
 
   private async validateExecutionEnvironment(launcherId:string,mcpIds:string[]):Promise<void>{
     const launcher=await this.get(launcherId);
     if(!launcher||launcher.type!=='runtime_launcher')throw Object.assign(new Error('Runtime Launcher is unavailable'),{statusCode:400});
+    requireNotArchived(launcher);
     await this.validateBindings(mcpIds);
   }
 
   async resolveLauncher(record:EnvironmentRecord):Promise<{launcher:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;mcpEnvironmentIds:string[];defaultModelId:string|null}>{
+    record=await this.requireAvailable(record.environmentId);
     if(record.type==='runtime_launcher')return {launcher:record,mcpEnvironmentIds:[],defaultModelId:null};
     if(record.type!=='execution_environment')throw Object.assign(new Error('Execution environment is unavailable'),{statusCode:400});
-    const launcher=await this.get(record.launcherEnvironmentId);
+    const launcher=await this.requireAvailable(record.launcherEnvironmentId);
     if(!launcher||launcher.type!=='runtime_launcher')throw Object.assign(new Error('Runtime Launcher is unavailable'),{statusCode:400});
     return {launcher,mcpEnvironmentIds:record.mcpEnvironmentIds,defaultModelId:record.defaultModelId};
   }
@@ -211,7 +271,7 @@ export class EnvironmentStore {
   async remove(id: string): Promise<void> {
     await this.writes.run("registry", async () => {
       if (!await this.get(id)) throw Object.assign(new Error("Environment not found"), { statusCode: 404 });
-      const dependent = (await this.list()).find(record => ('mcpEnvironmentIds' in record&&record.mcpEnvironmentIds.includes(id))||
+      const dependent = (await this.list({includeArchived:true})).find(record => ('mcpEnvironmentIds' in record&&record.mcpEnvironmentIds.includes(id))||
         (record.type==='execution_environment'&&record.launcherEnvironmentId===id));
       if (dependent) throw Object.assign(new Error(`Environment is still bound by ${dependent.name}`), { statusCode: 409 });
       await unlink(path.join(this.directory, `${id}.json`));
@@ -219,6 +279,7 @@ export class EnvironmentStore {
   }
 
   headers(record: EnvironmentRecord): Record<string, string> {
+    requireNotArchived(record);
     return headersFor(record);
   }
 
@@ -228,6 +289,7 @@ export class EnvironmentStore {
     error: string | null;
     capabilities?:RuntimeLauncherCapabilities;
   }> {
+    record=await this.requireAvailable(record.environmentId);
     if(record.type==='execution_environment'){
       const {launcher,defaultModelId,mcpEnvironmentIds}=await this.resolveLauncher(record);
       const result=await this.preflight(launcher);

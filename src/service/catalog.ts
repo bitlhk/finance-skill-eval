@@ -35,6 +35,8 @@ export type EvalPackSummary = {
   targetSkillVersion: string;
   description: string;
   caseCount: number;
+  holdoutCaseCount: number;
+  holdoutRequiredTools: string[];
   cases: Array<{
     caseId: string;
     name: string;
@@ -94,6 +96,8 @@ export class EvalPackCatalog {
       targetSkillVersion: pack.targetSkillVersion,
       description: pack.description,
       caseCount: pack.cases.length,
+      holdoutCaseCount: pack.holdoutCases?.length ?? 0,
+      holdoutRequiredTools: [...new Set((pack.holdoutCases ?? []).flatMap(item => item.requiredTools))].sort(),
       cases: pack.cases.map(evalCase => ({
         caseId: evalCase.caseId,
         name: evalCase.name,

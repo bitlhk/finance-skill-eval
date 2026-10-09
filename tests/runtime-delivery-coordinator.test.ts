@@ -17,7 +17,7 @@ it('serializes one deployment so a failed binding cannot delete another request 
   const environments={acceptBuilderDelivery:async()=>{const created=!environmentExists;environmentExists=true;order.push(`accept:${created}`);return {created,environment:{environmentId:'env-shared',type:'runtime_launcher' as const,delivery},capabilities:{}};},
     rollbackBuilderDelivery:async()=>{rollbackCount+=1;environmentExists=false;order.push('rollback');}};
   const projects=new Map<string,{runtimeDelivery?:{environmentId:string}}>([['fail',{}],['ok',{}]]);
-  const migrations={runtimeRequirements:async()=>({requestId:'request'}),list:async()=>[...projects.values()],bindRuntimeDelivery:async(id:string,input:{environmentId:string})=>{
+  const migrations={conformanceCandidate:async()=>({skill:{},requiredTools:[]}),runtimeRequirements:async()=>({requestId:'request'}),list:async()=>[...projects.values()],bindRuntimeDelivery:async(id:string,input:{environmentId:string})=>{
     order.push(`bind:${id}`);if(id==='fail')throw new Error('save failed');projects.get(id)!.runtimeDelivery=input;
   }};
   const coordinator=new RuntimeDeliveryCoordinator(migrations as never,environments as never);

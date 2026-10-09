@@ -41,7 +41,7 @@ export class MigrationProjectRepository implements MigrationProjectStore {
   }
 
   async get(id: string): Promise<MigrationProject> {
-    const raw = await readJson<unknown>(this.file(id));
+    const raw = await this.read(id);
     if ((raw as { schemaVersion?: string })?.schemaVersion !== "finance.skill-migration.v2") {
       throw Object.assign(new Error("旧版迁移记录不再升级，请使用原始 Skill 新建迁移"), { statusCode: 410 });
     }
@@ -63,9 +63,18 @@ export class MigrationProjectRepository implements MigrationProjectStore {
   }
 
   async readLegacy(id:string):Promise<unknown>{
-    const raw=await readJson<unknown>(this.file(id));
+    const raw=await this.read(id);
     if((raw as {schemaVersion?:unknown})?.schemaVersion==="finance.skill-migration.v2")throw Object.assign(new Error("这不是旧版迁移记录"),{statusCode:409});
     return raw;
+  }
+
+  private async read(id:string):Promise<unknown>{
+    try{return await readJson<unknown>(this.file(id));}
+    catch(error){
+      if((error as NodeJS.ErrnoException).code==='ENOENT')
+        throw Object.assign(new Error('迁移记录不存在'),{statusCode:404});
+      throw error;
+    }
   }
 
   async save(project: MigrationProject): Promise<void> {

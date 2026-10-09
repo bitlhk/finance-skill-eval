@@ -1,4 +1,5 @@
-import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import { resolveMigrationEnvironment,resolveManagedMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 import {
   migrationExecutionConfig,
   serviceEnvironment,
@@ -16,7 +17,7 @@ import type {MigrationProject} from '../domain/migration-project.js';
 import type {MigrationExperimentContext} from './migration-evaluation-service.js';
 import type {TechnicalValidation} from '../domain/migration-model.js';
 
-/** Builds the OpenJiuwen launcher bindings from the inspected and generated candidate. */
+/** Builds managed launcher bindings; the legacy class name remains API-compatible. */
 export class MigrationOpenJiuwenService {
   constructor(
     private readonly projects:MigrationProjectStore,
@@ -50,14 +51,28 @@ export class MigrationOpenJiuwenService {
 
   private async validateProject(id:string,input:unknown,value:MigrationProject,experiment?:MigrationExperimentContext,integratedAcceptance=false){
     const state=await this.technicalValidation.currentState(value);
-    if(value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
-    if(!state.ready&&!integratedAcceptance)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
-    const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string}}};
+    const native=value.nativeBindings?.candidateDigest===value.candidate?.artifactSha256?value.nativeBindings:undefined;
+    if(!native&&value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
+    if(!native&&!state.ready&&!integratedAcceptance)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
+    const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string};runtimeBindings?:{left?:{environmentId?:string};right?:{environmentId?:string}}}};
     const selectedRuntime=body?.configuration?.runtime;
-    if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('OpenJiuwen 验证必须选择 Runtime Launcher');
+    if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('Runtime 验证必须选择 Runtime Launcher');
     const environmentId=selectedRuntime.environmentId;
-    const environment=environmentId?(await resolveMigrationEnvironment(this.environments,environmentId))?.launcher:null;
-    if(!environment||environment.runtimeType!=='openjiuwen')return conflict('目标必须是使用 OpenJiuwen Runtime Launcher 的执行环境');
+    const ids=new Set([environmentId,body.configuration?.runtimeBindings?.left?.environmentId,body.configuration?.runtimeBindings?.right?.environmentId].filter((id):id is string=>typeof id==='string'&&!!id));
+    if(!environmentId)return conflict('目标必须是使用 OpenJiuwen 或 AgentScope Runtime Launcher 的执行环境');
+    for(const id of ids){
+      const resolved=await resolveManagedMigrationEnvironment(this.environments,id);
+      if(!resolved)return conflict('目标必须是使用 OpenJiuwen 或 AgentScope Runtime Launcher 的执行环境');
+      if(native){
+        const frozen=native.bindings.targets.find(t=>t.environmentId===id);
+        if(!frozen||!this.environments?.nativeToolCatalog)return conflict('此候选未绑定所选原生 Runtime');
+        const current=await this.environments.nativeToolCatalog(id);
+        if(current.catalog.catalogDigest!==frozen.catalogDigest)return conflict('已准入工具目录已变化，请重新绑定候选');
+      }
+      // Native binding has checked every declared Runtime tool against the operator-admitted catalog.
+      // Other candidates still require the separate Builder delivery acceptance path.
+      if(!native&&await unresolvedMigrationRuntimeRequirements(value,this.environments,resolved))return conflict('检测到 Runtime 能力缺口；请先核对现有 Runtime 或接入 Builder 交付，再执行评测');
+    }
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
       .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;

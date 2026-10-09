@@ -30,6 +30,7 @@ from pathlib import Path as _Path  # noqa: E402
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump, is_output_format_failure  # noqa: E402
 from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_JUDGEMENT,
                            ToolTraceRail, skill_rail)  # noqa: E402
+from analysis_file_tools import WorkspaceReadFileTool, WorkspaceGlobTool, WorkspaceListDirTool  # noqa: E402
 from migration_tools import build_grep_tool, build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
@@ -123,9 +124,11 @@ SDK 依赖必须填写 library：标准库 STANDARD_LIBRARY 不需要用户上�
 依赖 references.toolName 必须是 tools 列出的业务工具名，即使引用 helper 文件，也填写实际消费此 helper 的业务工具，不把 request_json 等内部 helper 当业务工具。多个业务工具共用时列出每个消费者的引用。
 library 仅用于 SDK 类型依赖；DATA/CONFIG/RESOURCE 没有库元数据时省略 library 或填 null，不要输出 language/module 为 null 的占位对象。
 TOOL + KEEP 是保留的代码/配置/资源依赖；代码依赖 AVAILABLE 必须有实际读取过的 resolvedPaths 和对应的 resolutionEvidence 原文依据。缺实现且影响理解/转换时要求代码或接口说明。
-RUNTIME + INJECT 是 Tool 实际消费的注入值。沿 user → auth_sdk → 凭证 → 业务接口追踪，若 Tool 只消费凭证就只声明凭证，不把获取凭证用的 user 一起声明。
+先确定迁移边界：源包提供 Tool 实现时，才沿该实现分析内部依赖并设计迁移注入。源包只有方法文档、声明调用目标环境已注册工具时，保留工具名、原文给出的输入输出和缺失实现说明；不能把受管工具内部的鉴权、身份建立或接口通信推断为这个方法包新增的依赖。此时由后续显式原生绑定核验目标工具合同与执行约束，不代表静态分析已经证明目标可用。
+“宿主绑定身份、每次授权核验、不提供凭证参数”这类边界描述，不等于 Tool 消费某个请求头或环境变量的证据。没有实现代码或明确消费合同，不得据此新增 INJECT、MOVE_TO_RUNTIME、Authorization 或身份 SDK 依赖；在工具 evidence/reason 中保留已知范围与未知实现。若文档明确要求由上传者配置或注入某值，仍须如实列为依赖，不能因为无源码而忽略。
+RUNTIME + INJECT 是 Tool 实际消费的注入值。沿实际源码或明确消费合同中的 user → auth_sdk → 凭证 → 业务接口追踪，若 Tool 只消费凭证就只声明凭证，不把获取凭证用的 user 一起声明。
 RUNTIME + MOVE_TO_RUNTIME 标记应移出的身份建立逻辑，不要求用户上传此 SDK 或填写其数据，也不是 Tool 需要注入 SDK 的声明。
-身份 SDK 与它产出的凭证是两项不同依赖，不能因为 SDK 已标记 MOVE_TO_RUNTIME 就省略凭证：只要迁移后的 Tool 仍需携带该凭证调用业务接口，必须同时声明一项 RUNTIME + INJECT 的动态凭证依赖，沿用业务接口实际消费的标准 Header（通常为 Authorization），schema.type=string、sensitive=true、blocking=true。SDK 的 MOVE_TO_RUNTIME 描述凭证由谁建立，凭证的 INJECT 描述建立后如何传入 Tool；二者必须同时存在，不能让生成代码读取一个诊断契约中不存在的 Header。
+有源码或明确消费合同证明时，身份 SDK 与它产出的凭证是两项不同依赖，不能因为 SDK 已标记 MOVE_TO_RUNTIME 就省略凭证：只要迁移后的 Tool 仍需携带该凭证调用业务接口，必须同时声明一项 RUNTIME + INJECT 的动态凭证依赖，沿用业务接口实际消费的标准 Header，schema.type=string、sensitive=true、blocking=true。SDK 的 MOVE_TO_RUNTIME 描述凭证由谁建立，凭证的 INJECT 描述建立后如何传入 Tool；二者必须同时存在，不能让生成代码读取一个诊断契约中不存在的 Header。此规则不适用于只有已注册工具引用、没有身份 SDK 或凭证消费契约的方法包。
 Runtime 依赖的实际值即使 MISSING 也不阻塞迁移或生成；只有工具运行时不需要该值时 blocking=false。工具缺少该值就无法正确运行时 blocking=true，这只用于试运行前检查，不能因为实际测试值尚未提供而弃权。
 先区分已有显式业务参数、工作区读写约定和原 Runtime 的隐式依赖。函数签名中的参数及合法默认值（例如 workspace: str = 'workspace'）属于已有输入契约，不得为它新增 SERVICE_ENV/HTTP_HEADER 注入依赖，不能凭“运行时要用到”就认定原 Runtime 提供。脚本相对 cwd 读写工作区是执行约定，保留它；不凭空新增 CLAIM_WORKSPACE_PATH 等变量，不因此强迫原独立 Script 改为 MCP。
 服务地址、固定超时等部署配置与按请求传递的用户上下文必须分开。部署配置声明 kind=CONFIG、owner=RUNTIME、action=INJECT、binding.kind=SERVICE_ENV；name 是你设计的明确环境变量名（如 BUSINESS_SERVICE_URL），schema 按源码实际消费的 string/number/integer/boolean 类型填写，用源码引用证明用途和类型。环境变量名是迁移接收契约，不要求原代码已使用环境变量；不能借此编造原配置值。不要映射到 X-Service-Url 或业务 arguments，不把鉴权凭证当静态服务配置。实际值缺失不阻塞诊断。
@@ -151,7 +154,6 @@ async def run(body: dict) -> None:
     from openjiuwen.core.sys_operation.base import OperationMode
     from openjiuwen.core.sys_operation.sys_operation import SysOperationCard
     from openjiuwen.harness.subagents.explore_agent import create_explore_agent
-    from openjiuwen.harness.tools import GlobTool, ListDirTool
 
     from model_config import resolve_model, request_settings
 
@@ -178,11 +180,11 @@ async def run(body: dict) -> None:
         # (below) is what keeps a shell out: without it the harness registers one at skill-refresh
         # time, and `bash` can write, which would make "read-only" a claim rather than a boundary.
         tools = [
-            AbsoluteLineReadFileTool(sys_op, lang, agent_id),
+            WorkspaceReadFileTool(workspace, sys_op, lang, agent_id, enable_image_multimodal=False),
             # Ours, not the harness's: that one shells out, and on Windows it cannot start.
             build_grep_tool(workspace, tool_trace),
-            GlobTool(sys_op, lang, agent_id),
-            ListDirTool(sys_op, lang, agent_id),
+            WorkspaceGlobTool(workspace, sys_op, lang, agent_id),
+            WorkspaceListDirTool(workspace, sys_op, lang, agent_id),
             build_run_scanner(workspace, scanner_results),
         ]
 
@@ -224,6 +226,9 @@ async def run(body: dict) -> None:
             # but it does not have to be built at all.
             auto_create_workspace=False,
             enable_task_loop=False,
+            # Source diagnosis is text/code only. The SDK's default auto mode
+            # otherwise sends unrelated background image-probing model requests.
+            enable_read_image_multimodal=False,
         )
 
         result = await agent.invoke({

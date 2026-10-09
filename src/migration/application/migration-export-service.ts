@@ -2,12 +2,21 @@ import { zipSync } from 'fflate';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
+import {runtimeSkillPackage} from '../../runtime-skill-package.js';
+import {skillRuntimeRequirements} from '../../shared/skill-runtime-requirements.js';
 
 export class MigrationExportService {
   constructor(
     private readonly projects:MigrationProjectStore,
     private readonly skills:MigrationSkillRepository,
   ) {}
+
+  async conformanceCandidate(id:string) {
+    const project=await this.projects.get(id),asset=project.candidate??project.source;
+    const archive=await this.skills.readArchive(asset.assetId);
+    const skill=runtimeSkillPackage({...asset,archive});
+    return {requiredTools:skillRuntimeRequirements(skill.instructions,[]),skill};
+  }
 
   async exportCandidate(id:string) {
     return (await this.exportPackage(id)).archive;

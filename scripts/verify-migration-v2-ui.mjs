@@ -171,6 +171,7 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
   if(request.method==='GET'&&url.pathname==='/v1/runtime-capabilities')return json({schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'e2e-fixture'},models:[{modelId:'fixture-execution',upstreamModelId:'fixture-execution',label:'E2E 执行模型'}],defaultModelId:'fixture-execution',features:{streaming:false,asyncLaunch:false,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxArchiveBytes:8_000_000,maxFiles:500,maxTimeoutMs:310_000,maxConcurrentInstances:4}});
   if(request.method==='POST'&&url.pathname==='/v1/runtime-instances'){
     const input=await body(),instanceId=`fixture-${instances.size+1}`,configurationDigest=`fixture-configuration-${instances.size+1}`;
+    if(input.generation)assert.deepEqual(input.generation,{schemaVersion:'finance.eval-generation.v1',temperature:0,top_p:1,max_tokens:2048});
     instances.set(instanceId,{input,configurationDigest});
     return json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId,status:'ready',executeEndpoint:`/v1/runtime-instances/${instanceId}/execute`,expiresAt:new Date(Date.now()+300_000).toISOString(),error:null,configurationDigest});
   }
@@ -182,6 +183,7 @@ const fixtureServer=http.createServer((request,response)=>{void (async()=>{
       output:'订单 ORDER-001：币种 CNY，小计 100.00，税率 0.06，已审批。',elapsedMs:5,toolCalls:(input.requiredTools??[]).map(name=>({name,status:'completed'})),
       loadedSkills:skill?[{skillId:skill.skillId,version:skill.version}]:[],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,
       metadata:{skillArtifactSha256:skill?.artifactSha256,instanceConfigurationDigest:stored.configurationDigest,workspaceFilesDigest:null,
+        ...(stored.input.generation?{declaredModelParameters:{temperature:stored.input.generation.temperature,top_p:stored.input.generation.top_p,max_tokens:stored.input.generation.max_tokens},modelGenerationHostVerified:true,modelParametersBasis:'CONTROLLED_FIXTURE_NOT_MODEL_WIRE'}:{}),
         toolEvidence:(input.requiredTools??[]).map(tool=>({tool,resultDigest:'a'.repeat(64)}))}});
   }
   const instance=url.pathname.match(/^\/v1\/runtime-instances\/([^/]+)$/u);
@@ -327,6 +329,15 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
   }
 
   await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();
+  await expect(page.getByLabel('Builder Result JSON')).toBeVisible();
+  for(const target of ['agentscope','openjiuwen']){
+    await page.getByLabel('交付目标',{exact:true}).selectOption(target);
+    await expect(page.getByLabel('交付目标',{exact:true})).toHaveValue(target);
+    await expect(page.getByRole('button',{name:'下载能力需求 YAML',exact:true})).toBeDisabled();
+  }
+  // No Harness gap means no Builder requirement to download. A second explicit
+  // delivery may still be imported; the server checks its contract independently.
+  pass('runtime_import_remains_visible_without_inventing_builder_requirements');
   await page.locator('.stage-actions').getByRole('button',{name:'验证能否运行',exact:true}).click();
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
   await scriptCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();
@@ -489,6 +500,7 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
   await verifyCancellation?.();
   assert.deepEqual(errors,[]);pass('no_browser_errors');
   await page.setViewportSize({width:390,height:900});
+  await page.screenshot({path:'reports/migration-v2-ui/revision-mobile.png',fullPage:true});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));pass('mobile_no_overflow');
   const evaluated=await app.inject({method:'GET',url:`/api/runs/${evaluationJobId}`,headers:{authorization:`Bearer ${token}`}});
   assert.equal(evaluated.statusCode,200);

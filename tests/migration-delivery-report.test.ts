@@ -12,10 +12,12 @@ function fixture(){
   review:{changes:[{changeId:'keep',status:'CONFORMING',evidence:[{path:'SKILL.md',snippet:'source'}]}],unexpectedDependencies:[],semanticIssues:[]}}},decisions:[],runs:[],suiteIds:[],
   reuseProposal:{proposalId:'proposal',inputDigest:reuseInputDigest(inspection,[],source.artifactSha256),sourceDigest:source.artifactSha256,approvedAt:'now',design}};
  const jobs=new Map<string,any>();let status='PASSED';
- function add(jobId:string,reuse=false){const definition={caseId:jobId,requiredTools:[],rubric:[]};const variant={mode:'skill_version',artifactSha256:candidate.artifactSha256};
+ function add(jobId:string,reuse=false,pair:'BC'|'CC'='BC'){const definition={caseId:jobId,requiredTools:[],rubric:[]};const variant={mode:'skill_version',artifactSha256:candidate.artifactSha256};
   const evidence={status:'completed',runtimeIdentityVerified:true,streamCompleted:true,toolCalls:[],metadata:{skillArtifactSha256:candidate.artifactSha256}};
-  project.runs.push({jobId,pair:'BC',candidateDigest:candidate.artifactSha256,suiteSnapshot:{cases:[definition]},...(reuse?{reuseAcceptanceTaskId:'reuse-task'}:{})});
-  jobs.set(jobId,{status:'completed',configuration:{leftVariant:variant,rightVariant:variant},report:{cases:[{caseId:jobId,left:evidence,right:evidence,judge:{goalAssessment:{verdict:'PASS',reason:'ok'}}}]}});
+  project.runs.push({jobId,pair,candidateDigest:candidate.artifactSha256,suiteSnapshot:{cases:[definition]},...(reuse?{reuseAcceptanceTaskId:'reuse-task'}:{})});
+  const assessment={verdict:'PASS',reason:'ok'};
+  const sideAssessment={status:'assessed',assessment};
+  jobs.set(jobId,{status:'completed',configuration:{leftVariant:variant,rightVariant:variant},report:{cases:[{caseId:jobId,left:evidence,right:evidence,judge:pair==='CC'?{runtimeComparison:{left:sideAssessment,right:sideAssessment}}:{goalAssessment:assessment}}]}});
  }
  const service=new MigrationReportService({get:async()=>project} as never,{get:id=>jobs.get(id)},undefined,undefined,undefined,undefined,
   {get:async()=>({revision:0,values:{},checks:[]})} as never,async()=>({status,current:status!=='STALE',plan:null,result:null}) as never);
@@ -25,6 +27,16 @@ it('does not count integrated reuse runs as ordinary business assessment',async(
  const f=fixture();f.add('reuse',true);expect((await f.service.report('test')).verification).toMatchObject({targetExecution:'NOT_RUN',reuseAcceptance:'PASSED',delivery:{status:'UNVERIFIED'}});
  f.add('business');expect((await f.service.report('test')).verification.delivery.status).toBe('VERIFIED');
  f.setStatus('STALE');expect((await f.service.report('test')).verification.delivery.status).toBe('UNVERIFIED');
+});
+it('keeps passing cross-runtime assessments separate from migration business acceptance and workflow',async()=>{
+ const f=fixture();f.project.nativeBindings={candidateDigest:f.project.candidate.artifactSha256};
+ f.add('cross-runtime',false,'CC');
+ const report=await f.service.report('test');
+ expect(report.experiments[0]).toMatchObject({comparisonKind:'SAME_SKILL_RUNTIME_ASSESSMENT',acceptance:{status:'PASSED'}});
+ expect(report.verification).toMatchObject({targetExecution:'NOT_RUN',delivery:{status:'UNVERIFIED'}});
+ expect(report.workflow.stage).toBe('EVALUATE');
+ f.add('business');
+ expect((await f.service.report('test')).workflow.stage).toBe('EXPORT');
 });
 it('requires actual complete conforming review, not just matching proposal IDs',async()=>{
  const f=fixture();f.add('business');f.project.inspection.reuseConformance.review.changes[0].status='NEEDS_CHANGES';

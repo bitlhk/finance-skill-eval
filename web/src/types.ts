@@ -14,6 +14,8 @@ export type EvalPackSummary = {
   targetSkillVersion: string;
   description: string;
   caseCount: number;
+  holdoutCaseCount?: number;
+  holdoutRequiredTools?: string[];
   cases: EvalCaseSummary[];
   replayReady: boolean;
   deterministicReady?: boolean;
@@ -32,7 +34,7 @@ export type ModelRef = {
   providerLabel?: string;
   availability?: "ready" | "unverified" | "unavailable";
   statusNote?: string;
-  parameters?: Record<string, string | number | boolean | null>;
+  parameters?: Record<string, string | number | boolean | null | {type:'disabled'}>;
 };
 
 export type SkillVariant =
@@ -62,6 +64,7 @@ export type FeaturedSkill = {
 };
 
 export type SkillAsset = {
+  runtimeRequirements?: {status:'declared'|'unspecified'|'invalid';tools:string[];error?:string};
   assetId: string;
   skillId: string;
   version: string;
@@ -100,14 +103,15 @@ export type EnvironmentInspection = {
     toolNames: string[];
     error: string | null;
   }>;
-  capabilities?:{runtime:{type:string;version:string};models:Array<{modelId:string;upstreamModelId:string;label?:string}>;defaultModelId:string;supportedSkillModes?:Array<"skill_version"|"without_target_skill">;features:Record<string,boolean>;limits:Record<string,number>};
+  capabilities?:import('../../src/shared/contracts/runtime-launcher').RuntimeLauncherCapabilities;
 };
 
 export type MigrationRuntime = {
+  inspection?:EnvironmentInspection;
   runtimeId: string;
   launcherEnvironmentId: string;
   name: string;
-  runtimeType: "openjiuwen"|"ea"|"generic_http";
+  runtimeType: "openjiuwen"|"agentscope"|"ea"|"generic_http";
   endpoint: string;
   defaultModelId: string;
   mcpEnvironmentIds:string[];
@@ -119,6 +123,7 @@ export type MigrationRuntime = {
 
 export type Catalog = {
   publicDemo?: boolean;
+  managedWorkspace?: boolean;
   serviceVersion: string;
   featuredSkills: FeaturedSkill[];
   evalPacks: EvalPackSummary[];
@@ -144,6 +149,9 @@ export type Evidence = {
     artifactLockSha256?:string;runtimeLockSha256?:string;executionHistoryRequestId?:string;retainedEvidenceRef?:string|Record<string,string>;
     declaredModelParameters?:Record<string,unknown>;modelParametersBasis?:string;modelParametersVerified?:boolean;
     businessDate?:string;businessTimeZone?:string;publicationStatus?:string;isolationRestartMs?:number;
+    executionDisposition?:'NOT_EXECUTED';blockedByCaseId?:string;
+    toolEvidenceCollection?:{status?:string;reason?:string};archiveStatus?:string;
+    installedToolInventory?:Record<string,unknown>;toolAttemptEvidence?:Record<string,unknown>;
   };
   side: "left" | "right";
   caseId: string;
@@ -158,6 +166,9 @@ export type Evidence = {
 };
 
 export type EvaluationJob = {
+  cancellation?:{requestedAt:string;workerSettledAt?:string;scope:string};
+  finalization?:Record<string,unknown>;
+  executionSnapshot?:{variants:unknown;models:unknown;cases:Array<{caseId:string;name:string;prompt:string}>;packFingerprint:string};
   questionSet?: { source: "ai_generated"; cases: EvalCaseSummary[]; summary: string; fingerprint: string; model: ModelRef; sourceFiles: string[]; generatedAt: string };
   live?: Record<string, { caseId: string; side: "left" | "right"; output: string; status: string; toolCalls: Array<{ name: string; status: string }> }>;
   jobId: string;
@@ -168,6 +179,7 @@ export type EvaluationJob = {
     preparationId?: string;
     runtime: { type: string; environmentId?: string };
     judgeMode: string;
+    evaluationMode?: 'pairwise' | 'candidate_assessment' | 'service_comparison' | 'candidate_runtime_comparison';
     caseSource?: "fixed" | "ai_generated";
   };
   pack: { targetSkillId: string; targetSkillVersion: string; caseCount: number } | null;
@@ -181,6 +193,8 @@ export type EvaluationJob = {
       headline: string;
       meanElapsedMs: { left: number; right: number };
     };
+    codeRevision?:{commit:string;workingTree:'clean'|'dirty';source:string}|null;
+    finalization?:Record<string,unknown>;
     cases: Array<{
       caseId: string;
       name: string;
@@ -190,7 +204,8 @@ export type EvaluationJob = {
       judge: null | {
         goalAssessment?:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>};
         serviceComparison?:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;originalEvidence:string;candidateEvidence:string}>};
-        winner: "left" | "right" | "tie";
+        runtimeComparison?:{left:{status:'assessed';assessment:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>}}|{status:'unavailable';error:string};right:{status:'assessed';assessment:{verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;checks:Array<{criterion:string;verdict:'PASS'|'FAIL'|'INDETERMINATE';reason:string;evidence:string}>}}|{status:'unavailable';error:string}};
+        winner?: "left" | "right" | "tie";
         confidence: string;
         summary: string;
         dimensions: Array<{

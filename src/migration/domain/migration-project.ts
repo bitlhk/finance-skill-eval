@@ -37,6 +37,7 @@ const skillAssetReferenceSchema = z.object({
 export const persistedMigrationProjectSchema = z.object({
   schemaVersion: z.literal("finance.skill-migration.v2"),
   id: migrationProjectIdSchema,
+  revisionOf: migrationProjectIdSchema.optional(),
   name: z.string().min(1),
   createdAt: z.string().min(1),
   source: skillAssetReferenceSchema,
@@ -57,7 +58,7 @@ export const persistedMigrationProjectSchema = z.object({
   }).passthrough()).optional(),
   runs: z.array(z.object({
     jobId: z.string().min(1),
-    pair: z.enum(["AB", "BC", "AC", "SC"]),
+    pair: z.enum(["AB", "BC", "AC", "SC", "CC"]),
     candidateDigest: z.string().min(1),
     comparisonFingerprint: z.string().min(1),
     packFingerprint: z.string().min(1),
@@ -70,6 +71,7 @@ export type MigrationProject = {
   id: string;
   name: string;
   createdAt: string;
+  revisionOf?: string;
   source: SkillAssetRecord;
   candidate: SkillAssetRecord | null;
   candidateNotes: string;
@@ -89,7 +91,7 @@ export type MigrationProject = {
   }>;
   runs: Array<{
     jobId: string;
-    pair: "AB" | "BC" | "AC" | "SC";
+    pair: "AB" | "BC" | "AC" | "SC" | "CC";
     candidateDigest: string;
     comparisonFingerprint: string;
     packFingerprint: string;
@@ -101,7 +103,9 @@ export type MigrationProject = {
     reuseAcceptanceTaskId?:string;
   }>;
   assessment: "NOT_VALIDATED";
+  nativeBindings?:{candidateDigest:string;bindings:import('../../shared/contracts/native-tool-catalog.js').NativeSkillBindings;recordedAt:string};
   runtimeDelivery?: RuntimeLauncherBinding;
+  runtimeDeliveries?: Record<string,RuntimeLauncherBinding>;
   runtimeReuse?:RuntimeReuse;
   runtimeRebuilds?: Array<{candidateDigest:string;requirements:RuntimeBuildRequirementsV1;createdAt:string}>;
   improvementPlans?: MigrationImprovementPlan[];

@@ -82,16 +82,16 @@ it('keeps evidence and contracts in the YAML without requiring real runtime valu
 
 it('serves the YAML while keeping the migration plan generatable',async()=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'runtime-builder-requirement-'));
-  const launcherServer=Fastify();let instanceRunId='',migrationFile='',removeMigrationDuringProbe=false;let removedMigration:Buffer|null=null;
+  const launcherServer=Fastify();let instanceRunId='',migrationFile='',removeMigrationDuringProbe=false;let removedMigration:Buffer|null=null;let loaded:{skillId:string;version:string;artifactSha256:string}|null=null;
   const capabilities={schemaVersion:RUNTIME_CAPABILITIES_SCHEMA_VERSION,runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'glm-4-plus'}],defaultModelId:'execution',
     observability:{schemaVersion:'finance.runtime-observation-capabilities.v1',profile:'core' as const,supportedKinds:['execution.started','execution.completed','execution.failed'] as const,nativeEvents:false,replayable:false},
     features:{streaming:true,asyncLaunch:true,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1,maxFiles:5,maxTimeoutMs:300000,maxConcurrentInstances:1}};
   launcherServer.get('/v1/runtime-capabilities',()=>capabilities);
-  launcherServer.post('/v1/runtime-instances',request=>{instanceRunId=(request.body as {runId:string}).runId;return {schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'probe',status:'ready',executeEndpoint:'/v1/runtime-instances/probe/execute',expiresAt:new Date(Date.now()+60_000).toISOString(),error:null,configurationDigest:'probe-config'};});
+  launcherServer.post('/v1/runtime-instances',request=>{const body=request.body as {runId:string;skill:typeof loaded};instanceRunId=body.runId;loaded=body.skill;return {schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'probe',status:'ready',executeEndpoint:'/v1/runtime-instances/probe/execute',expiresAt:new Date(Date.now()+60_000).toISOString(),error:null,configurationDigest:'probe-config'};});
   launcherServer.get('/v1/runtime-instances/probe',()=>({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'probe',status:'ready',executeEndpoint:'/v1/runtime-instances/probe/execute',expiresAt:new Date(Date.now()+60_000).toISOString(),error:null,configurationDigest:'probe-config'}));
   launcherServer.post('/v1/runtime-instances/probe/execute',async request=>{const body=request.body as {caseId:string;workspaceFiles:Array<{path:string;content:string}>};
     if(removeMigrationDuringProbe){removedMigration=await readFile(migrationFile);await rm(migrationFile);removeMigrationDuringProbe=false;}
-    return {runId:instanceRunId,caseId:body.caseId,side:'right',modelId:'execution',skillVersion:null,status:'completed',output:'CONFORMANCE_OK',elapsedMs:1,toolCalls:[],loadedSkills:[],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,metadata:{instanceConfigurationDigest:'probe-config',workspaceFilesDigest:workspaceFilesDigest(body.workspaceFiles)}};});
+    return {runId:instanceRunId,caseId:body.caseId,side:'right',modelId:'execution',skillVersion:null,status:'completed',output:'CONFORMANCE_OK',elapsedMs:1,toolCalls:[],loadedSkills:loaded?[{skillId:loaded.skillId,version:loaded.version}]:[],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,metadata:{...(loaded?{skillArtifactSha256:loaded.artifactSha256}:{}),instanceConfigurationDigest:'probe-config',workspaceFilesDigest:body.workspaceFiles.length?workspaceFilesDigest(body.workspaceFiles):null}};});
   launcherServer.delete('/v1/runtime-instances/probe',(_request,reply)=>reply.code(204).send());
   await launcherServer.listen({host:'127.0.0.1',port:0});const launcherAddress=launcherServer.server.address();if(!launcherAddress||typeof launcherAddress==='string')throw new Error('missing launcher address');
   const baseAnalyzer=analysisFixture([]),analyzer:typeof baseAnalyzer=async input=>{
@@ -113,6 +113,13 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
     expect((await app.inject({method:'POST',url:`/api/migrations/${id}/inspect`,headers})).statusCode).toBe(200);
     const yaml=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml`,headers});
     expect(yaml.statusCode).toBe(200);expect(yaml.headers['content-type']).toContain('application/yaml');expect(yaml.body).toContain('requirementsDigest:');
+    const scopedYaml=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml?runtimeType=agentscope`,headers});
+    const scopedJson=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements?runtimeType=agentscope`,headers});
+    expect(scopedYaml.statusCode).toBe(200);
+    expect(scopedJson.statusCode).toBe(200);
+    expect(scopedYaml.body).toContain('agentscope');
+    expect(scopedYaml.body).toContain(scopedJson.json().requirementsDigest);
+    expect((await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml?runtimeType=unknown`,headers})).statusCode).toBe(400);
     const plan=await app.inject({method:'GET',url:`/api/migrations/${id}/plan`,headers});
     expect(plan.statusCode).toBe(200);expect(plan.json()).toMatchObject({generationAllowed:false,technicalValidationAllowed:false});
     expect(plan.json().skillBlockingReasons).toContain('请生成并确认可复用迁移方案');

@@ -1,10 +1,12 @@
 import path from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
 import { z } from "zod";
 import type { ModelAdapter } from "../adapters.js";
 import { CodexCliModelAdapter } from "../codex-cli-model.js";
 import type { ModelRef } from "../contracts.js";
 import { OpenAiCompatibleModelAdapter } from "../openai-compatible-model.js";
 import { runtimeLauncherBaseUrlSchema } from "../shared/contracts/runtime-launcher.js";
+import type {WorkspaceRequestLimits} from './workspace-request-budget.js';
 
 export type ServiceConfig = {
   rootDirectory: string;
@@ -15,6 +17,16 @@ export type ServiceConfig = {
   accessToken: string | null;
   maxConcurrentRuns: number;
   publicDemo?: boolean;
+  workspaceSubject?: string;
+  workspaceOrigin?: string;
+  workspaceMode?: 'single' | 'account';
+  workspaceSeedDirectory?: string;
+  workspaceSeedSha256?: string;
+  workspaceMaxAccounts?: number;
+  workspaceRequestLimits?: WorkspaceRequestLimits;
+  workspacePreflightLimits?: WorkspaceRequestLimits;
+  /** Internal account-service policy; not a browser-selected option. */
+  managedWorkspace?: boolean;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
 };
 
@@ -37,6 +49,7 @@ export type ConfiguredModelRole = {
 
 export function loadServiceConfig(): ServiceConfig {
   const rootDirectory = path.resolve(process.env.FINANCE_EVAL_ROOT ?? process.cwd());
+  const workspaceMode=z.enum(['single','account']).parse(process.env.FINANCE_EVAL_WORKSPACE_MODE??'single');
   return {
     rootDirectory,
     dataDirectory: path.resolve(process.env.FINANCE_EVAL_DATA_DIR ?? path.join(rootDirectory, "data")),
@@ -45,6 +58,22 @@ export function loadServiceConfig(): ServiceConfig {
     port: Number.parseInt(process.env.FINANCE_EVAL_PORT ?? "56361", 10),
     accessToken: process.env.FINANCE_EVAL_ACCESS_TOKEN?.trim() || null,
     publicDemo: process.env.FINANCE_EVAL_PUBLIC_DEMO === "true",
+    workspaceSubject: process.env.FINANCE_EVAL_WORKSPACE_SUBJECT?.trim() || undefined,
+    workspaceOrigin: process.env.FINANCE_EVAL_WORKSPACE_ORIGIN?.trim() || undefined,
+    workspaceMode,
+    workspaceSeedDirectory:process.env.FINANCE_EVAL_WORKSPACE_SEED_DIRECTORY?.trim()||undefined,
+    workspaceSeedSha256:process.env.FINANCE_EVAL_WORKSPACE_SEED_SHA256?.trim()||undefined,
+    workspaceMaxAccounts:Number(process.env.FINANCE_EVAL_WORKSPACE_MAX_ACCOUNTS??64),
+    workspaceRequestLimits:{
+      perAccount:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUESTS_PER_ACCOUNT??20),
+      global:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUESTS_GLOBAL??80),
+      windowSeconds:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS??60),
+    },
+    workspacePreflightLimits:{
+      perAccount:Number(process.env.FINANCE_EVAL_WORKSPACE_PREFLIGHTS_PER_ACCOUNT??60),
+      global:Number(process.env.FINANCE_EVAL_WORKSPACE_PREFLIGHTS_GLOBAL??240),
+      windowSeconds:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS??60),
+    },
     launcherTrust:launcherTrustConfiguration(),
     maxConcurrentRuns: Math.max(
       1,
@@ -78,18 +107,27 @@ export function configuredModelRole(
   const environment = roleEnvironment(role, fallbackModel);
   const provider = process.env[`FINANCE_EVAL_${role}_PROVIDER`]?.trim().toLowerCase();
   if ((role === "JUDGE" || role === "OPTIMIZER" || role === "MIGRATION") && provider === "codex_cli") {
+    const command = process.env.FINANCE_EVAL_CODEX_BIN?.trim() || "codex";
+    const candidates = path.isAbsolute(command) || command.includes("/") || command.includes("\\")
+      ? [path.resolve(command)]
+      : (process.env.PATH ?? "").split(path.delimiter).filter(Boolean).map(dir => path.resolve(dir, command));
+    const executable = candidates.find(candidate => {
+      try { accessSync(candidate, constants.X_OK); return statSync(candidate).isFile(); }
+      catch { return false; }
+    });
     return {
-      configured: true,
+      // Executable readiness is not a claim that remote authentication/model access was verified.
+      configured: Boolean(executable),
       model: {
         providerId: "codex-host",
         modelId: process.env[`FINANCE_EVAL_${role}_MODEL`]?.trim() || "gpt-6-astra",
         label: role === "JUDGE" ? "Codex 匿名 Judge" : role === "MIGRATION" ? "Codex 代码迁移模型" : "Codex Skill 优化模型",
         parameters: {},
       },
-      adapter: new CodexCliModelAdapter({
-        executable: process.env.FINANCE_EVAL_CODEX_BIN?.trim() || "codex",
+      adapter: executable ? new CodexCliModelAdapter({
+        executable,
         timeoutMs: 300_000,
-      }),
+      }) : null,
     };
   }
   const configured = Boolean(environment.baseUrl.trim() && environment.apiKey.trim());

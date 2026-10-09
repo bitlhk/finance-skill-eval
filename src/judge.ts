@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {judgeCaseFiles,caseFileJudgeGuidance} from './judge-case-files.js';
 import type { ModelAdapter } from "./adapters.js";
 import {
   fingerprint,
@@ -15,6 +16,7 @@ import {judgeRuntimeEvidence,runtimeSupportEvidenceGuidance} from './judge-runti
 
 export interface PairwiseJudge {
   readonly judgeId: string;
+  readonly assessesSidesIndependently?: boolean;
   compare(input: {
     signal?: AbortSignal;
     evalCase: EvalCase;
@@ -113,12 +115,21 @@ export class DeterministicRubricJudge implements PairwiseJudge {
       ? "tie" as const
       : leftTotal > rightTotal ? "left" as const : "right" as const;
     const difference = Math.abs(leftTotal - rightTotal);
+    const bothFullyCovered = leftChecks.length > 0
+      && leftChecks.every(check => check.passed)
+      && rightChecks.every(check => check.passed);
+    const neitherCovered = !leftChecks.some(check => check.passed)
+      && !rightChecks.some(check => check.passed);
     return {
       winner,
       confidence: difference >= 4 ? "high" : difference >= 2 ? "medium" : "low",
       summary: winner === "tie"
-        ? "两侧均覆盖了当前确定性规则要求，需由业务 Judge 比较表达与判断质量。"
-        : `${winner === "left" ? "左侧" : "右侧"}覆盖了更多金融专业闭环要素。`,
+        ? bothFullyCovered
+          ? "两侧均满足当前确定性规则；专业判断与表达质量仍需另行评估。"
+          : neitherCovered
+            ? "两侧均未满足当前确定性规则；请核对回答、规则及执行证据，不能据此认定业务通过。"
+            : "两侧确定性规则得分相同，但未全部满足规则；请查看各维度结果与未覆盖要求。"
+        : `${winner === "left" ? "左侧" : "右侧"}在当前确定性规则中得分更高；不代表完整专业质量验收通过。`,
       dimensions,
       reviewerLabel: input.profile.reviewerLabel,
     };
@@ -180,8 +191,8 @@ export class ModelCandidateJudge implements PairwiseJudge {
   async compare(input:{signal?:AbortSignal;evalCase:EvalCase;left:RuntimeExecutionEvidence;right:RuntimeExecutionEvidence;profile:JudgeProfile}):Promise<JudgeResult>{
     if(input.right.status!=="completed")return judgeResultSchema.parse({winner:"tie",confidence:"high",summary:"迁移候选未完成 Runtime 执行，本题不进行 Skill 质量评分。",
       dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,leftScore:0,rightScore:0,reason:"Runtime 执行未完成。"})),reviewerLabel:"Runtime 完整性判断"});
-    const businessEvidence=judgeRuntimeEvidence(input.right);
-    const messages=[{role:"system" as const,content:[input.profile.domainInstructions,runtimeSupportEvidenceGuidance,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","Runtime 工具证据是实际执行事实；没有证据时不得把题面中的就绪描述当成已完成调用。","只返回符合约定的 JSON。"].join("\n")},
+    const businessEvidence={...judgeRuntimeEvidence(input.right,{workspaceFiles:input.evalCase.workspaceFiles}),caseFiles:judgeCaseFiles(input.evalCase,input.right)};
+    const messages=[{role:"system" as const,content:[input.profile.domainInstructions,runtimeSupportEvidenceGuidance,caseFileJudgeGuidance,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","Runtime 工具证据是实际执行事实；没有证据时不得把题面中的就绪描述当成已完成调用。","只返回符合约定的 JSON。"].join("\n")},
       {role:"user" as const,content:JSON.stringify({task:input.evalCase.prompt,evaluationGoal:input.evalCase.evaluationGoal,rubric:input.evalCase.rubric,candidateOutput:input.right.output,runtimeEvidence:businessEvidence,
         responseContract:{confidence:"low | medium | high",summary:"string",scoreRule:"score must be a JSON integer from 0 to 4",dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,score:0,reason:"string"}))}})}];
     const request=(attempt:number)=>this.adapter.complete({requestId:`candidate-judge-${input.evalCase.caseId}-${attempt}`,model:this.model,signal:input.signal,responseFormat:"json",
@@ -243,13 +254,14 @@ export class ModelPairwiseJudge implements PairwiseJudge {
     const swapped = Number.parseInt(fingerprint(input.evalCase.caseId).slice(0, 2), 16) % 2 === 1;
     const a = swapped ? input.right : input.left;
     const b = swapped ? input.left : input.right;
-    const businessEvidence = judgeRuntimeEvidence;
+    const businessEvidence = (evidence:RuntimeExecutionEvidence)=>({...judgeRuntimeEvidence(evidence,{workspaceFiles:input.evalCase.workspaceFiles}),caseFiles:judgeCaseFiles(input.evalCase,evidence)});
     const messages = [
         {
           role: "system",
           content: [
             input.profile.domainInstructions,
             runtimeSupportEvidenceGuidance,
+            caseFileJudgeGuidance,
             "匿名比较答案 A 与 B，不推测 Skill 或模型身份。",
             "优先评价专业判断、业务完整性、表达质量和可执行性。",
             "当两份答案都正确时，比较谁更能解释取舍、验证条件和下一步。",

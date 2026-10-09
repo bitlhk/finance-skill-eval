@@ -112,22 +112,22 @@ export class MigrationPlanningService {
     });
   }
 
-  async runtimeRequirements(id:string) {
+  async runtimeRequirements(id:string,runtimeType='openjiuwen') {
     const value=await this.projects.get(id);
     if(!value.sourceInspection&&!value.inspection)return conflict('请先完成源码诊断');
-    return currentRuntimeRequirements(value)
+    return currentRuntimeRequirements(value,runtimeType)
       ??{schemaVersion:'finance.runtime-build-requirements.v1',status:'NOT_REQUIRED',requiredCapabilities:[]};
   }
 
-  async runtimeRequirementsYaml(id:string) {
+  async runtimeRequirementsYaml(id:string,runtimeType='openjiuwen') {
     const value=await this.projects.get(id);
-    const activeRequirements=currentRuntimeRequirements(value);
+    const activeRequirements=currentRuntimeRequirements(value,runtimeType);
     if(activeRequirements&&'requirementsDigest' in activeRequirements)return stringify(activeRequirements);
     const current=value.runtimeRebuilds?.filter(item=>item.candidateDigest===value.candidate?.artifactSha256).at(-1);
     if(current)return stringify(current.requirements);
     const inspection=value.sourceInspection??value.inspection;
     if(!inspection)return conflict('请先完成源码诊断');
-    const yaml=this.harnessSerializer.serialize(inspection);
+    const yaml=this.harnessSerializer.serialize(inspection,runtimeType);
     if(!yaml)return conflict('当前迁移没有 Runtime Harness 改造需求');
     return yaml;
   }
@@ -136,6 +136,9 @@ export class MigrationPlanningService {
     return this.projects.runExclusive(id,async()=>{
       const value=await this.projects.get(id);
       const delivery=runtimeLauncherBindingSchema.parse(input);
+      value.runtimeDeliveries={...value.runtimeDeliveries,
+        ...(value.runtimeDelivery?{[value.runtimeDelivery.environmentId]:value.runtimeDelivery}:{}),
+        [delivery.environmentId]:delivery};
       value.runtimeDelivery=delivery;
       delete value.runtimeReuse;
       await this.projects.save(value);

@@ -16,7 +16,7 @@ import { solutionRevision } from '../domain/migration-solution-revision.js';
 import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import type {EvalPack} from '../../contracts.js';
 import type {RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
-import {currentRuntimeRequirements} from '../domain/migration-runtime-requirements.js';
+import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 import {currentRuntimeReuse,reusedCapabilitiesDigest} from '../domain/migration-runtime-reuse.js';
 import {currentReuseProposal} from '../domain/migration-reuse-design.js';
 
@@ -28,7 +28,7 @@ export function frozenSuiteFingerprint(pack:EvalPack){
 }
 
 const planSchema = z.strictObject({
-  pair:z.enum(['AB','BC','AC','SC']), configuration:runConfigurationSchema,
+  pair:z.enum(['AB','BC','AC','SC','CC']), configuration:runConfigurationSchema,
   dataSnapshot:z.string().min(1).max(300), permissionBasis:z.string().min(1).max(1000),
   sourceProjectRef:z.string().min(1).max(1000), dependencyLockRef:z.string().min(1).max(1000),
 });
@@ -54,19 +54,19 @@ export class MigrationEvaluationService {
         return conflict('候选尚未落实当前确认的迁移方案，请重新确认并生成后评测');
       if(p.configuration.runtime.type!=='runtime_launcher')return conflict('Skill 迁移评测必须使用 Runtime Launcher');
       const launcherEnvironmentId=p.configuration.runtime.environmentId;
+      const runtimeComparison=p.pair==='CC';
+      if(runtimeComparison!==(p.configuration.evaluationMode==='candidate_runtime_comparison'))return conflict('CC 必须使用同候选跨 Runtime 评估模式');
       await verifyRuntimeReuse(value,this.environments,launcherEnvironmentId);
-      const requirements=experiment?.runtimeRequirements??currentRuntimeRequirements(value),reuse=currentRuntimeReuse(value);
-      if(requirements&&(!reuse||!('requirementsDigest' in requirements)||reuse.requirementsDigest!==requirements.requirementsDigest)){
-        if(!('requirementsDigest' in requirements)||value.runtimeDelivery?.requirementsDigest!==requirements.requirementsDigest)
+      const runtimeIds=runtimeComparison?[p.configuration.runtimeBindings.left.environmentId,p.configuration.runtimeBindings.right.environmentId]:[launcherEnvironmentId];
+      for(const runtimeId of runtimeIds){
+        const selected=await resolveMigrationEnvironment(this.environments,runtimeId);
+        if(await unresolvedMigrationRuntimeRequirements(value,this.environments,selected??undefined,experiment?.runtimeRequirements))
           return conflict('Runtime 能力尚未确认：请先核对并复用已有 Runtime，或接入 Builder 交付后再评测');
-        const resolved=await resolveMigrationEnvironment(this.environments,launcherEnvironmentId);
-        if(value.runtimeDelivery.environmentId!==launcherEnvironmentId||value.runtimeDelivery.deploymentId!==resolved?.launcher.delivery?.deploymentId)
-          return conflict('请选择本次 Builder 交付并已验收的 Runtime Launcher');
       }
       const solutionComparison=p.pair==='AC'&&p.configuration.evaluationMode==='solution_comparison';
       if((p.pair==='AC')!==(p.configuration.evaluationMode==='solution_comparison'))return conflict('整套方案对比必须使用 AC 对比计划');
-      if(p.configuration.runtimeBindings.right.environmentId!==launcherEnvironmentId
-        ||(!solutionComparison&&p.configuration.runtimeBindings.left.environmentId!==launcherEnvironmentId))return conflict('左右执行绑定必须属于所选 Runtime Launcher');
+      if((runtimeComparison?p.configuration.runtimeBindings.left.environmentId:p.configuration.runtimeBindings.right.environmentId)!==launcherEnvironmentId
+        ||(!solutionComparison&&!runtimeComparison&&p.configuration.runtimeBindings.left.environmentId!==launcherEnvironmentId))return conflict('左右执行绑定必须属于所选 Runtime Launcher');
       if(solutionComparison&&p.configuration.runtimeBindings.left.environmentId===p.configuration.runtimeBindings.right.environmentId)return conflict('整套方案对比需要分别选择旧版和新版 Runtime Launcher');
       let pack=p.configuration.packId ? this.catalog.get(p.configuration.packId):null;
       if (p.configuration.preparationId) {
@@ -80,13 +80,13 @@ export class MigrationEvaluationService {
         :pack.packFingerprint!==experiment.expectedPackFingerprint))return conflict('冻结测试集已变化，不能继续本次改进试验');
       const serviceComparison=p.pair==='SC'&&p.configuration.evaluationMode==='service_comparison';
       if((p.pair==='SC')!==(p.configuration.evaluationMode==='service_comparison'))return conflict('原服务对比必须使用 SC 对比计划');
-      if(pack.metadata.assessmentMode==='natural_language'&&(!(serviceComparison||solutionComparison||(p.pair==='BC'&&p.configuration.evaluationMode==='candidate_assessment'))||p.configuration.judgeMode!=='model'))return conflict('自然语言测试集仅用于目标评估或对比评估');
+      if(pack.metadata.assessmentMode==='natural_language'&&(!(runtimeComparison||serviceComparison||solutionComparison||(p.pair==='BC'&&p.configuration.evaluationMode==='candidate_assessment'))||p.configuration.judgeMode!=='model'))return conflict('自然语言测试集仅用于目标评估或对比评估');
       if(serviceComparison&&pack.metadata.assessmentMode!=='natural_language')return conflict('原服务对比请选择包含任务输入和验收要求的测试集');
       if(pack.metadata.comparisonOnly==='true'&&!serviceComparison)return conflict('这份测试集以原服务为基线，请选择原服务对比；目标评估需另外提供独立验收要求');
       const knownAssets=[value.source,c,...(value.candidateHistory??[]).map(item=>item.asset)];
       const comparisonBaseline=knownAssets.find(item=>item.assetId===p.configuration.runtimeBindings!.left.skillAssetId);
       if(solutionComparison&&!comparisonBaseline)return conflict('整套方案对比的旧版 Skill 不属于当前迁移工程');
-      const expected=p.pair==='AB' ? [value.source,c] : p.pair==='BC' ? [c,c] : p.pair==='AC' ? [comparisonBaseline!,c] : [value.source,c];
+      const expected=p.pair==='AB' ? [value.source,c] : p.pair==='BC'||runtimeComparison ? [c,c] : p.pair==='AC' ? [comparisonBaseline!,c] : [value.source,c];
       for (const [index,side] of (['left','right'] as const).entries()) {
         const binding=p.configuration.runtimeBindings[side], variant=p.configuration[side==='left'?'leftVariant':'rightVariant'];
         const asset=expected[index]!;
@@ -112,6 +112,9 @@ export class MigrationEvaluationService {
         solutionRevisions:revisions,
         cases:p.configuration.selectedCaseIds, data:p.dataSnapshot, permissions:p.permissionBasis,
         sourceProject:p.sourceProjectRef, lock:p.dependencyLockRef,evaluationMode:p.configuration.evaluationMode,
+        ...(runtimeComparison?{pair:p.pair,candidate:c,bindings:p.configuration.runtimeBindings,
+          models:{left:p.configuration.leftExecutionModel,right:p.configuration.rightExecutionModel},
+          variants:{left:p.configuration.leftVariant,right:p.configuration.rightVariant}}:{}),
         ...(p.configuration.originalService?{originalService:originalServiceFingerprint(p.configuration.originalService)}:{})});
       const job=await this.runs.create(p.configuration);
       value.runs.push({jobId:job.jobId,pair:p.pair,candidateDigest:c.artifactSha256,comparisonFingerprint,packFingerprint:pack.packFingerprint,declaredPlan:p,suiteSnapshot:pack,runtimeConfigurationDigest,

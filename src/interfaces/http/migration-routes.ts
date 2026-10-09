@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import type { ModelRef } from "../../contracts.js";
+import { resolveMigrationRuntimeSelection } from './migration-runtime-selection.js';
 import type { EnvironmentStore } from "../../service/environment-store.js";
 import type { MigrationStore } from "../../migration/migration-store.js";
 import { simpleMigrationSuiteExample } from "../../migration/domain/simple-migration-suite.js";
 import type { SkillStore } from "../../service/skill-store.js";
 import { z } from 'zod';
+import type {ModelRef} from '../../contracts.js';
 import type {RuntimeDeliveryCoordinator} from '../../service/runtime-delivery-coordinator.js';
 
 type MigrationRouteDependencies = {
@@ -41,6 +42,22 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
     return skills.uploadMigrationZip(request.body);
   });
   app.post("/api/migrations", request => migrations.create(request.body));
+  app.get<{Params:{id:string};Querystring:{environmentId:string}}>("/api/migrations/:id/native-tools",async request=>{
+    await migrations.get(request.params.id);
+    const query=z.strictObject({environmentId:z.string().min(1)}).parse(request.query);
+    return environments.nativeToolCatalog(query.environmentId);
+  });
+  app.post<{Params:{id:string}}>("/api/migrations/:id/native-candidate",async request=>{
+    const body=z.strictObject({baseAssetId:z.string().min(1),tools:z.array(z.string()),acknowledgeContracts:z.literal(true),
+      targets:z.array(z.strictObject({environmentId:z.string().min(1),catalogDigest:z.string().regex(/^[a-f0-9]{64}$/u)})).min(1).max(2)}).parse(request.body);
+    const targets=[];
+    for(const target of body.targets){
+      const current=await environments.nativeToolCatalog(target.environmentId);
+      if(current.catalog.catalogDigest!==target.catalogDigest)throw Object.assign(new Error('工具目录已变化，请重新查看合同后确认'),{statusCode:409});
+      targets.push(current);
+    }
+    return migrations.nativeCandidate(request.params.id,{baseAssetId:body.baseAssetId,tools:body.tools,acknowledgeContracts:body.acknowledgeContracts},targets);
+  });
   app.get<{ Params: { id: string } }>("/api/migrations/:id", request => migrations.get(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/analyze", request => migrations.analyze(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/diagnose", request => migrations.diagnose(request.params.id, true));
@@ -57,7 +74,10 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{Params:{id:string}}>('/api/migrations/:id/reuse-acceptance/start',request=>migrations.startReuseAcceptance(request.params.id,request.body));
   app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/reuse-acceptance/:taskId/cancel',request=>migrations.cancelReuseAcceptance(request.params.id,request.params.taskId));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-configuration", request => migrations.runtimeConfiguration(request.params.id));
-  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => migrations.runtimeRequirements(request.params.id));
+  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements", request => {
+    const query=z.strictObject({runtimeType:z.enum(['openjiuwen','agentscope','ea','generic_http']).optional()}).parse(request.query);
+    return migrations.runtimeRequirements(request.params.id,query.runtimeType);
+  });
   app.post<{ Params: { id: string } }>("/api/migrations/:id/runtime-rebuilds", request => migrations.proposeRuntimeRebuild(request.params.id,request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/improvement-plans", request => migrations.proposeImprovement(request.params.id,request.body));
   app.get<{Params:{id:string}}>('/api/migrations/:id/improvement-tasks',request=>migrations.improvementTasks(request.params.id));
@@ -72,10 +92,13 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
     const body=z.strictObject({result:z.unknown(),trustReference:z.string().regex(/^[a-z0-9-]+$/u),name:z.string().trim().min(1).max(80).optional()}).parse(request.body);
     return runtimeDeliveries.acceptAndBind(request.params.id,{result:body.result,trustReference:body.trustReference,name:body.name});
   });
-  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => reply
+  app.get<{ Params: { id: string } }>("/api/migrations/:id/runtime-requirements.yaml", async (request, reply) => {
+    const query=z.strictObject({runtimeType:z.enum(['openjiuwen','agentscope','ea','generic_http']).optional()}).parse(request.query);
+    return reply
     .type("application/yaml; charset=utf-8")
     .header("content-disposition", 'attachment; filename="runtime-build-requirements.yaml"')
-    .send(await migrations.runtimeRequirementsYaml(request.params.id)));
+    .send(await migrations.runtimeRequirementsYaml(request.params.id,query.runtimeType));
+  });
   app.put<{ Params: { id: string; dependencyId: string } }>("/api/migrations/:id/runtime-configuration/:dependencyId", request =>
     migrations.saveRuntimeDependency(request.params.id, request.params.dependencyId, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/check-business-connection", request =>
@@ -100,7 +123,12 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.get<{ Params: { id: string } }>("/api/migrations/:id/generation-progress", request => migrations.generationProgress(request.params.id));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/candidates", request => migrations.candidate(request.params.id, request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/drafts", request => migrations.draft(request.params.id, request.body));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/validate", request => migrations.validate(request.params.id, request.body));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/validate", async request => {
+    const body=request.body as {pair?:unknown;configuration?:{evaluationMode?:unknown}}|null;
+    if(body?.pair==='CC'||body?.configuration?.evaluationMode==='candidate_runtime_comparison')
+      return migrations.validateOpenJiuwen(request.params.id,await resolveMigrationRuntimeSelection(request.body,environments));
+    return migrations.validate(request.params.id,request.body);
+  });
   app.post<{ Params: { id: string } }>("/api/migrations/:id/validate/technical", request =>
     migrations.validateTechnical(request.params.id, request.body, requestSignal(request)));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/validations/technical", request => migrations.technicalValidations(request.params.id));

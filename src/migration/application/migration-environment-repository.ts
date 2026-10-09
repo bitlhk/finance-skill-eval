@@ -8,6 +8,16 @@ import {canonicalSha256} from '../../shared/json-canonicalization.js';
 export interface MigrationEnvironmentRepository {
   get(environmentId:string):Promise<EnvironmentRecord|null>;
   preflight?(record:EnvironmentRecord):Promise<{status:string;capabilities?:RuntimeLauncherCapabilities}>;
+  nativeToolCatalog?(environmentId:string):Promise<import('../../shared/contracts/native-tool-catalog.js').NativeBindingTarget>;
+}
+
+/** Legacy generic registrations need an online identity declaration, not a guessed framework. */
+export async function resolveManagedMigrationEnvironment(repository:MigrationEnvironmentRepository|undefined,environmentId:string){
+  const resolved=await resolveMigrationEnvironment(repository,environmentId);
+  if(!resolved||resolved.launcher.runtimeType!=='generic_http')return resolved;
+  const proof=await repository?.preflight?.(resolved.selected);
+  const runtime=proof?.capabilities?.runtime;
+  return proof?.status==='ready'&&runtime&&runtime.version!=='unknown'&&runtime.version.trim()?resolved:null;
 }
 
 export async function migrationRuntimeCapabilities(repository:MigrationEnvironmentRepository|undefined,environmentId:string){
@@ -42,8 +52,9 @@ export async function resolveMigrationEnvironment(
   environmentId:string,
 ):Promise<ResolvedMigrationEnvironment|null>{
   const selected=await repository?.get(environmentId);
+  if(selected?.archived)return null;
   if(selected?.type==='runtime_launcher')return {selected,launcher:selected};
   if(selected?.type!=='execution_environment')return null;
   const launcher=await repository?.get(selected.launcherEnvironmentId);
-  return launcher?.type==='runtime_launcher'?{selected,launcher}:null;
+  return launcher?.type==='runtime_launcher'&&!launcher.archived?{selected,launcher}:null;
 }

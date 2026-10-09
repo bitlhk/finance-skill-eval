@@ -1,6 +1,7 @@
 import { conversationTurnsSchema,fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
 import {canonicalSha256} from './shared/json-canonicalization.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
+import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
@@ -28,6 +29,7 @@ export const launcherGenerationSchema=z.strictObject({
   temperature:z.number().finite().min(0).max(2),
   top_p:z.number().finite().gt(0).max(1),
   max_tokens:z.number().int().min(1).max(32768),
+  thinking:z.strictObject({type:z.literal('disabled')}).optional(),
 });
 export type RuntimeInstanceRequest={
   schemaVersion:'finance.skill-eval.runtime-instance.v1';runId:string;side:EvaluationSide;modelId:string;
@@ -64,7 +66,7 @@ function extractSecrets(source:RuntimeEnvironmentDescriptor,provided:RuntimeInst
 }
 async function responseError(response:Response):Promise<Error>{const raw=await response.text();return new Error(`Runtime Launcher HTTP ${response.status}: ${raw.slice(0,400)}`);}
 function serializedBytes(value:unknown):number{return new TextEncoder().encode(JSON.stringify(value)).byteLength;}
-async function readBoundedJson(response:Response,limit:number,label:string):Promise<unknown>{
+export async function readBoundedJson(response:Response,limit:number,label:string):Promise<unknown>{
   if(!response.body)throw new Error(`${label} response body is empty`);
   const declared=Number(response.headers.get('content-length'));
   if(Number.isFinite(declared)&&declared>limit)throw new Error(`${label} exceeds ${limit} bytes`);
@@ -107,7 +109,7 @@ export function summarizeRuntimeObservation(event:RuntimeObservationEvent):Runti
   if(error&&typeof error==='object'&&'code' in error&&typeof error.code==='string')summary.errorCode=error.code;
   return summary;
 }
-async function readExecution(response:Response,request:RuntimeExecutionRequest):Promise<{payload:unknown;observations:RuntimeObservationSummary[];observationsTruncated:boolean}>{
+async function readExecution(response:Response,request:RuntimeExecutionRequest,instanceId:string):Promise<{payload:unknown;observations:RuntimeObservationSummary[];observationsTruncated:boolean}>{
   if(!response.headers.get('content-type')?.includes('text/event-stream'))return {payload:await readBoundedJson(response,RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes,'Runtime Launcher evidence'),observations:[],observationsTruncated:false};
   if(!response.body)throw new Error('Runtime instance stream is empty');
   const reader=response.body.getReader(),decoder=new TextDecoder();let value:unknown;const observations:RuntimeObservationSummary[]=[];let observationsTruncated=false;
@@ -122,8 +124,24 @@ async function readExecution(response:Response,request:RuntimeExecutionRequest):
         value=event.evidence;
       }else if(event.schemaVersion==='finance.runtime-observation.v1'){
         const parsed=runtimeObservationEventSchema.parse(event),summary=summarizeRuntimeObservation(parsed);
+        if((parsed.runId!==undefined&&parsed.runId!==request.runId)
+          ||(parsed.caseId!==undefined&&parsed.caseId!==request.evalCase.caseId)
+          ||(parsed.side!==undefined&&parsed.side!==request.side)||parsed.instanceId!==instanceId)
+          throw new Error('Runtime observation does not match the requested case');
         if(summary){if(observations.length<64)observations.push(summary);else observationsTruncated=true;}
         forwardObservation(parsed,request);
+        if(parsed.kind==='execution.failed'){
+          const code=parsed.payload.error?.code;
+          const metadata:Record<string,unknown>={instanceId,launcherTraceId:parsed.traceId};
+          if(parsed.source.adapter==='finance-solution-builder'&&parsed.source.nativeEventType==='builder.execution-correlation.v1'){
+            const fields=parsed.native?.data as Record<string,unknown>|undefined;
+            const diagnostic=Object.fromEntries(['buildId','hostInstanceId','hostRunId','hostTraceId']
+              .filter(key=>typeof fields?.[key]==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/u.test(fields[key] as string))
+              .map(key=>[key,fields![key]]));
+            if(Object.keys(diagnostic).length)metadata.launcherDiagnostics={basis:'LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION',...diagnostic};
+          }
+          throw new RuntimeExecutionFailure(`Runtime execution failed: ${code&&/^[A-Z][A-Z0-9_]{0,119}$/u.test(code)?code:'EXECUTION_FAILED'}`,metadata);
+        }
       }
       else if(typeof event.type==='string'&&['status','text_delta','tool_start','tool_end'].includes(event.type))request.onEvent?.({...event,caseId:request.evalCase.caseId,side:request.side} as never);
     }
@@ -142,13 +160,20 @@ function forwardObservation(event:RuntimeObservationEvent,request:RuntimeExecuti
 export class RuntimeLauncherAdapter implements RuntimeAdapter{
   readonly adapterId:string;
   private instance:InstanceState|null=null;
+  private cleanupObservation:Record<string,unknown>={status:'NOT_REQUESTED'};
+  private readonly cleanupReceipts=new Map<string,Record<string,unknown>>();
+  finalizationEvidence(){
+    const instances=[...this.cleanupReceipts.values()].map(receipt=>({...receipt}));
+    return instances.length<=1?{...this.cleanupObservation}:{status:instances.every(receipt=>receipt.status==='RELEASED')?'RELEASED':'UNKNOWN',scope:'ALL_CREATED_INSTANCES',instances};
+  }
   private executeUrl:URL|null=null;
   private incarnation=0;
   private recoveryRequired=false;
   private executionTail:Promise<void>=Promise.resolve();
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
+  private failedCaseId:string|null=null;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
-    skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean}){
+    skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
     this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
@@ -190,6 +215,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     // execution; never replay the failed case (it may already have caused side effects).
     const execution=this.executionTail.then(async()=>{
       request.signal?.throwIfAborted();
+      if(this.options.stopAfterFailure&&this.failedCaseId)throw new RuntimeCaseNotExecutedError(this.failedCaseId);
       try{
         if(this.recoveryRequired){
           await this.cleanup();
@@ -198,9 +224,9 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
           this.recoveryRequired=false;
         }
         const evidence=await this.executePrepared(request);
-        if(evidence.status==='failed')this.recoveryRequired=true;
+        if(evidence.status==='failed'){this.recoveryRequired=true;this.failedCaseId=request.evalCase.caseId;}
         return evidence;
-      }catch(error){this.recoveryRequired=true;throw error;}
+      }catch(error){this.recoveryRequired=true;this.failedCaseId=request.evalCase.caseId;throw error;}
     });
     this.executionTail=execution.then(()=>undefined,()=>undefined);
     return execution;
@@ -215,7 +241,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
       headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[],...(request.evalCase.turns?{turns:request.evalCase.turns}:{})}))});
     if(!response.ok)throw await responseError(response);
-    const execution=await readExecution(response,request),payload=execution.payload;
+    const execution=await readExecution(response,request,this.instance.instanceId),payload=execution.payload;
     const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);
     if(evidence.runId!==request.runId||evidence.side!==request.side||evidence.caseId!==request.evalCase.caseId)throw new Error('Runtime instance evidence does not match the requested case');
     if(evidence.modelId!==this.options.model.modelId)throw new Error('Runtime instance used a different model');
@@ -255,8 +281,23 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   }
   async cleanup():Promise<void>{
     const instance=this.instance;if(!instance)return;
-    const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});
-    if(!response.ok&&response.status!==404)throw await responseError(response);
+    this.cleanupObservation={status:'REQUESTED',instanceId:instance.instanceId};
+    try{
+    for(let attempt=0;attempt<10;attempt++){
+      let response:Response;
+      try{response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});}
+      catch(error){this.cleanupObservation={status:'REQUEST_FAILED',instanceId:instance.instanceId};throw error;}
+      if(!response.ok&&response.status!==404){this.cleanupObservation={status:'REQUEST_FAILED',instanceId:instance.instanceId};throw await responseError(response);}
+      const payload=await readBoundedJson(response,65536,'Cleanup receipt').catch(()=>null) as {cleanup?:Record<string,unknown>}|null;
+      const receipt=payload?.cleanup;
+      if(receipt?.schemaVersion==='finance.eval-cleanup-observation.v1'&&receipt.instanceId===instance.instanceId){
+        this.cleanupObservation=Object.fromEntries(['schemaVersion','instanceId','observedAt','status','buildId','hostInstanceId','buildRetirement','caseWorkspace','temporaryCandidate','scope']
+          .filter(key=>receipt[key]===null||typeof receipt[key]==='string'&&(receipt[key] as string).length<=500).map(key=>[key,receipt[key]]));
+        if(receipt.status==='PENDING'&&attempt<9){await new Promise(resolve=>setTimeout(resolve,200));continue;}
+      }else this.cleanupObservation={status:'UNKNOWN',instanceId:instance.instanceId,httpStatus:response.status,reason:'NO_RESOURCE_RECEIPT'};
+      break;
+    }
     this.instance=null;this.executeUrl=null;
+    }finally{this.cleanupReceipts.set(instance.instanceId,{...this.cleanupObservation});}
   }
 }

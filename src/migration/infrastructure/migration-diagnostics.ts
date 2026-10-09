@@ -43,6 +43,7 @@ async function parsePython(root:string,files:Record<string,string>):Promise<Pick
 }
 
 export class MigrationDiagnostics implements MigrationDiagnosisPort {
+  private closing=false;
   private pending=new Map<string,Promise<Diagnosis>>();
   private scans=new Map<string,Promise<Diagnosis>>();
   private explanations=new Map<string,Promise<void>>();
@@ -59,6 +60,7 @@ export class MigrationDiagnostics implements MigrationDiagnosisPort {
     return value.digest===asset.artifactSha256&&value.scannerDigest===scannerDigest?value:null;
   }
   async diagnose(asset:SkillAssetRecord,retry=false,options:{explain?:boolean}={}):Promise<Diagnosis>{
+    if(this.closing)throw new Error('DIAGNOSTICS_CLOSING');
     // Candidate inspection already runs independent A2. Static callers must not wait on
     // a concurrent explanation or launch a second model analysis of the same package.
     if(options.explain===false)return this.staticDiagnosis(asset);
@@ -77,6 +79,11 @@ export class MigrationDiagnostics implements MigrationDiagnosisPort {
       return value;
     })();this.pending.set(asset.artifactSha256,job);
     try{return await job;}finally{this.pending.delete(asset.artifactSha256);}
+  }
+  async close():Promise<void>{
+    this.closing=true;
+    await Promise.allSettled([...this.pending.values(),...this.scans.values()]);
+    await Promise.allSettled([...this.explanations.values()]);
   }
   private async staticDiagnosis(asset:SkillAssetRecord):Promise<Diagnosis>{
     const inflight=this.scans.get(asset.artifactSha256);if(inflight)return inflight;

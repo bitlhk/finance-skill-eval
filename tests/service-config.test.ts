@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { configuredModelRole, loadServiceConfig, modelTimeoutMs } from "../src/service/config.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -41,6 +44,7 @@ describe("Builder Launcher admission",()=>{
 
 describe("Codex Judge configuration", () => {
   it("keeps the Codex default independent of the shared execution model", () => {
+    vi.stubEnv("FINANCE_EVAL_CODEX_BIN", process.execPath);
     vi.stubEnv("FINANCE_EVAL_JUDGE_PROVIDER", "codex_cli");
     vi.stubEnv("FINANCE_EVAL_JUDGE_MODEL", undefined);
     vi.stubEnv("FINANCE_EVAL_MODEL", "glm-5.2");
@@ -60,5 +64,35 @@ describe("Codex Judge configuration", () => {
     vi.stubEnv("FINANCE_EVAL_JUDGE_MODEL", " pinned-judge-model ");
 
     expect(configuredModelRole("JUDGE").model.modelId).toBe("pinned-judge-model");
+  });
+
+  it("does not advertise an unavailable command as configured", () => {
+    vi.stubEnv("FINANCE_EVAL_JUDGE_PROVIDER", "codex_cli");
+    vi.stubEnv("FINANCE_EVAL_CODEX_BIN", "/missing/finance-judge-codex");
+    expect(configuredModelRole("JUDGE").configured).toBe(false);
+    expect(configuredModelRole("JUDGE").adapter).toBeNull();
+  });
+
+  it("uses an explicit executable even when the service PATH is empty", () => {
+    vi.stubEnv("FINANCE_EVAL_JUDGE_PROVIDER", "codex_cli");
+    vi.stubEnv("FINANCE_EVAL_CODEX_BIN", process.execPath);
+    vi.stubEnv("PATH", "");
+    expect(configuredModelRole("JUDGE").configured).toBe(true);
+  });
+
+  it.skipIf(process.platform==='win32')("checks POSIX service PATH and rejects directories or non-executable files", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "judge-readiness-"));
+    try {
+      vi.stubEnv("FINANCE_EVAL_JUDGE_PROVIDER", "codex_cli");
+      vi.stubEnv("FINANCE_EVAL_CODEX_BIN", undefined);
+      vi.stubEnv("PATH", root);
+      expect(configuredModelRole("JUDGE").configured).toBe(false);
+      writeFileSync(path.join(root, "codex"), "fixture-not-executed", {mode: 0o600});
+      expect(configuredModelRole("JUDGE").configured).toBe(false);
+      chmodSync(path.join(root, "codex"), 0o700);
+      expect(configuredModelRole("JUDGE").configured).toBe(true);
+      vi.stubEnv("FINANCE_EVAL_CODEX_BIN", root);
+      expect(configuredModelRole("JUDGE").configured).toBe(false);
+    } finally { rmSync(root, {recursive: true, force: true}); }
   });
 });

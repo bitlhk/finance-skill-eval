@@ -17,8 +17,8 @@ function safeArchivePath(name: string): string {
 }
 function parseFrontmatter(source: string): Record<string, unknown> {
   // Import legacy metadata without rewriting the immutable source bytes.
-  const match = source.match(/^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/u)
-    ?? source.match(/^(name:[^\n]*\n[\s\S]{0,8000}?)\n---\s*(?:\n|$)/u);
+  const match = source.match(/^---[^\S\r\n]*\r?\n([\s\S]*?)\r?\n---[^\S\r\n]*(?:\r?\n|$)/u)
+    ?? source.match(/^(name:[^\n]*\n[\s\S]{0,8000}?)\r?\n---[^\S\r\n]*(?:\r?\n|$)/u);
   if (!match?.[1]) return {};
   const parsed = parseYaml(match[1]);
   return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};

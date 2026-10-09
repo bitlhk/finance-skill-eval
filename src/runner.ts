@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EvaluationSide, RuntimeAdapter, RuntimeEvent } from "./adapters.js";
+import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from "./adapters.js";
 import type { EvalPack, RuntimeExecutionEvidence } from "./contracts.js";
 import type { PairwiseJudge } from "./judge.js";
 import { buildReport, type EvaluationReport } from "./report.js";
@@ -103,7 +104,9 @@ async function executeRuntime(input: {
       runtimeIdentityVerified: false,
       streamCompleted: false,
       error: error instanceof Error ? error.message : String(error),
-      metadata: {},
+      metadata: error instanceof RuntimeCaseNotExecutedError
+        ? {executionDisposition: 'NOT_EXECUTED', blockedByCaseId: error.failedCaseId}
+        : error instanceof RuntimeExecutionFailure ? error.metadata : {},
     };
   }
 }
@@ -213,11 +216,13 @@ export async function runEvaluation(input: {
   runtime: RuntimeAdapter;
   judge: PairwiseJudge;
   onProgress?: (progress: EvaluationProgress) => void;
+  onFinalization?: (evidence:Record<string,unknown>) => Promise<void>;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<EvaluationReport> {
   const runId = `finance-skill-eval-${randomUUID()}`;
   const evidence: EvidenceByCase = new Map();
+  let cleanupRequested=false;
   let completedRuns = 0;
   input.onProgress?.({
     stage: "preparing",
@@ -256,7 +261,7 @@ export async function runEvaluation(input: {
       let judge = null;
       let judgeError = null;
       try {
-        if (result.left.status !== "completed" || result.right.status !== "completed") {
+        if (!input.judge.assessesSidesIndependently && (result.left.status !== "completed" || result.right.status !== "completed")) {
           throw new Error("执行未完成，不计入专业质量评分；请修复运行环境后重测。");
         }
         judge = await input.judge.compare({
@@ -282,12 +287,15 @@ export async function runEvaluation(input: {
         judgeError,
       });
     }
+    cleanupRequested=true;
+    await input.runtime.cleanup?.();
     const report = buildReport({
       pack: input.pack,
       runtimeAdapterId: input.runtime.adapterId,
       judgeId: input.judge.judgeId,
       cases,
       reportId: runId,
+      finalization:input.runtime.finalizationEvidence?.(),
     });
     input.onProgress?.({
       stage: "completed",
@@ -296,6 +304,11 @@ export async function runEvaluation(input: {
     });
     return report;
   } finally {
-    await input.runtime.cleanup?.();
+    try {
+      if(!cleanupRequested)await input.runtime.cleanup?.();
+    } finally {
+      await input.onFinalization?.({runId,observedAt:new Date().toISOString(),
+        resources:input.runtime.finalizationEvidence?.()??{status:'UNKNOWN',reason:'NO_FINALIZATION_RECEIPT'}});
+    }
   }
 }

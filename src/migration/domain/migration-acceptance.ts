@@ -13,7 +13,9 @@ export function assessMigrationAcceptance(report:EvaluationReport|null,cases:Eva
     const definition=cases.find(item=>item.caseId===result.caseId);
     if(!definition){reasons.push(`${result.caseId}: 缺少冻结案例定义`);continue;}
     const expected=definition.toolExpectations??{mustSucceed:definition.requiredTools,mustNotCall:[]};
-    const evidence=result.right;
+    for(const side of (result.judge?.runtimeComparison?['left','right']:['right']) as Array<'left'|'right'>){
+    const evidence=result[side];
+    if(evidence.status!=='completed')reasons.push(`${result.caseId}: ${side} 执行未完成`);
     if(!evidence.streamCompleted||!evidence.runtimeIdentityVerified)reasons.push(`${result.caseId}: Runtime 执行证据未完成`);
     const facts=Array.isArray(evidence.metadata.toolEvidence)?evidence.metadata.toolEvidence as Array<{tool?:string;resultDigest?:string}>:[];
     for(const name of expected.mustSucceed){
@@ -24,8 +26,20 @@ export function assessMigrationAcceptance(report:EvaluationReport|null,cases:Eva
       const match=(pattern:string)=>{try{return new RegExp(pattern,'iu').test(evidence.output);}catch{return false;}};
       if(criterion.allOf.some(pattern=>!match(pattern))||(criterion.anyOf.length&&!criterion.anyOf.some(match))||criterion.noneOf.some(match))reasons.push(`${result.caseId}: 必备规则未满足 ${criterion.criterionId}`);
     }
+    }
     if(!result.judge||result.judgeError)reasons.push(`${result.caseId}: 质量评估缺失`);
     else {
+      if(result.judge.runtimeComparison){
+        for(const side of ['left','right'] as const){
+          const assessment=result.judge.runtimeComparison[side];
+          if(assessment.status!=='assessed')reasons.push(`${result.caseId}: ${side} 质量评估不可用`);
+          else if(assessment.assessment.verdict!=='PASS'){
+            if(assessment.assessment.verdict==='INDETERMINATE')indeterminate++;
+            reasons.push(`${result.caseId}: ${side} ${assessment.assessment.verdict==='FAIL'?'未满足验收要求':'无法判定'}：${assessment.assessment.reason}`);
+          }
+        }
+        continue;
+      }
       const assessment=result.judge.serviceComparison??result.judge.goalAssessment;
       if(assessment){
         if(result.judge.serviceComparison&&result.left.status!=='completed')reasons.push(`${result.caseId}: 原服务基线未执行完成`);

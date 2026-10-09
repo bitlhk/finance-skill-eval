@@ -8,12 +8,21 @@ const strictRecordValueSchema = z.union([
   z.null(),
 ]);
 
+const modelParametersSchema = z.record(z.union([
+  strictRecordValueSchema, z.strictObject({type:z.literal('disabled')}),
+])).superRefine((parameters, context) => {
+  for (const [key,value] of Object.entries(parameters)) {
+    if (value !== null && typeof value === 'object' && key !== 'thinking')
+      context.addIssue({code:z.ZodIssueCode.custom,path:[key],message:'Only the closed thinking mode supports an object value.'});
+  }
+});
+
 export const modelRefSchema = z.strictObject({
   providerId: z.string().min(1),
   modelId: z.string().min(1),
   label: z.string().min(1).optional(),
   credentialRef: z.string().min(1).optional(),
-  parameters: z.record(strictRecordValueSchema).default({}),
+  parameters: modelParametersSchema.default({}),
 });
 
 export const skillVariantSchema = z.discriminatedUnion("mode", [
@@ -52,7 +61,7 @@ export const workspaceFileSchema = z.strictObject({
     if (value.includes("\\") || value.includes("\0") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) return false;
     return value.split("/").every(part => part.length > 0 && part !== "." && part !== "..");
   }, "工作区文件路径必须是安全的 POSIX 相对路径"),
-  content: z.string().max(256 * 1024),
+  content: z.string().max(256 * 1024).refine(value => !value.includes("\0"), "案例文件只支持不含 NUL 的文本"),
 });
 
 export const workspaceFilesSchema = z.array(workspaceFileSchema).max(32).superRefine((files, context) => {
@@ -190,14 +199,26 @@ export const judgeDimensionResultSchema = z.strictObject({
 
 export const goalAssessmentSchema=z.strictObject({verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),checks:z.array(z.strictObject({criterion:z.string().min(1),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),evidence:z.string()})).min(1)});
 export const judgeResultSchema = z.strictObject({
+  runtimeComparison:z.strictObject({
+    left:z.discriminatedUnion('status',[
+      z.strictObject({status:z.literal('assessed'),assessment:goalAssessmentSchema}),
+      z.strictObject({status:z.literal('unavailable'),error:z.string().min(1)}),
+    ]),
+    right:z.discriminatedUnion('status',[
+      z.strictObject({status:z.literal('assessed'),assessment:goalAssessmentSchema}),
+      z.strictObject({status:z.literal('unavailable'),error:z.string().min(1)}),
+    ]),
+  }).optional(),
   serviceComparison:z.strictObject({verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),checks:z.array(z.strictObject({criterion:z.string().min(1),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().min(1),originalEvidence:z.string(),candidateEvidence:z.string()})).min(1)}).optional(),
   goalAssessment:goalAssessmentSchema.optional(),
-  winner: z.enum(["left", "right", "tie"]),
+  winner: z.enum(["left", "right", "tie"]).optional(),
   confidence: z.enum(["low", "medium", "high"]),
   summary: z.string().min(1),
   dimensions: z.array(judgeDimensionResultSchema).max(4),
   reviewerLabel: z.string().min(1),
-}).refine(result=>result.goalAssessment||result.serviceComparison?result.dimensions.length===0:result.dimensions.length===4,{message:'目标评估和服务对比不使用维度分数；常规评估必须包含四个维度'}).refine(result=>!(result.goalAssessment&&result.serviceComparison),{message:'目标评估与服务对比不能同时出现'});
+}).refine(result=>result.goalAssessment||result.serviceComparison||result.runtimeComparison?result.dimensions.length===0:result.dimensions.length===4,{message:'目标评估和服务对比不使用维度分数；常规评估必须包含四个维度'})
+  .refine(result=>[result.goalAssessment,result.serviceComparison,result.runtimeComparison].filter(Boolean).length<=1,{message:'评估结果模式不能同时出现'})
+  .refine(result=>result.runtimeComparison?result.winner===undefined:result.winner!==undefined,{message:'只有同候选跨 Runtime 评估不使用胜方'});
 
 export const evaluationScenarioSeedSchema = z.strictObject({
   seedId: z.string().min(1),
@@ -273,6 +294,7 @@ export function fingerprint(value: unknown): string {
 }
 
 export function workspaceFilesDigest(files: readonly WorkspaceFile[]): string {
+  workspaceFilesSchema.parse(files);
   const hash = createHash("sha256");
   for (const file of [...files].sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)) {
     hash.update(file.path, "utf8").update("\0").update(file.content, "utf8").update("\0");
