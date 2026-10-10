@@ -18,3 +18,28 @@ it('does not reinterpret incomplete coverage as PASS or retry the verdict',async
  complete.mockResolvedValue({content:JSON.stringify({status:'INCOMPLETE',reasons:['Original requirement needs actual deployment switching']})});
  expect(await runReuseAcceptanceModel({mode:'COVERAGE',context:{}})).toMatchObject({status:'INCOMPLETE'});expect(complete).toHaveBeenCalledTimes(1);
 });
+const plan=(checkId='original')=>({name:'Execution',groups:[{id:'group',cases:[{id:'case',input:'Check the actual result',criteria:['Actual result']}]}],checks:[{checkId,caseIds:['case'],criteria:['Original requirement']}],unresolvedQuestions:[]});
+const context={design:{scope:'Unchanged scope',acceptanceChecks:[{id:'original',purpose:'Business behavior',procedure:'Execute',expectedResult:'Actual result'}]}};
+it('re-plans one generated reference mismatch against unchanged original requirements',async()=>{
+ complete.mockResolvedValueOnce({content:JSON.stringify(plan('invented'))}).mockResolvedValueOnce({content:JSON.stringify(plan())});
+ expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual(plan());expect(complete).toHaveBeenCalledTimes(2);
+ const repair=complete.mock.calls[1]![0];expect(repair.toolFree).toBe(true);expect(repair.requestId).toContain('references-1');
+ expect(repair.messages[1].content).toBe(JSON.stringify(context));expect(repair.messages.at(-1).content).toContain('validationErrors');
+});
+it('stops after one re-planning attempt and never relabels invented requirements itself',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify(plan('invented'))});
+ await expect(runReuseAcceptanceModel({mode:'PLAN',context})).rejects.toMatchObject({failure:{phase:'PLAN',code:'MODEL_PLAN_REFERENCE_INVALID'}});expect(complete).toHaveBeenCalledTimes(2);
+});
+it('retains genuine unresolved requirements rather than retrying them away',async()=>{
+ const unresolved={...plan(),unresolvedQuestions:['Original requirement needs a new deployment']};complete.mockResolvedValue({content:JSON.stringify(unresolved)});
+ expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual(unresolved);expect(complete).toHaveBeenCalledTimes(1);
+});
+it('never regenerates a business verdict because references are incorrect',async()=>{
+ const verdict={checks:[{checkId:'invented',status:'PASSED',reason:'A claim',caseIds:['case']}]};complete.mockResolvedValue({content:JSON.stringify(verdict)});
+ expect(await runReuseAcceptanceModel({mode:'VERIFY',context})).toEqual(verdict);expect(complete).toHaveBeenCalledTimes(1);
+});
+it('does not silently truncate source or exceed the input budget when re-planning',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify(plan('invented'))});
+ const large={...context,source:'x'.repeat(599_700)};
+ await expect(runReuseAcceptanceModel({mode:'PLAN',context:large})).rejects.toMatchObject({failure:{phase:'PLAN',code:'INPUT_TOO_LARGE'}});expect(complete).toHaveBeenCalledTimes(1);
+});

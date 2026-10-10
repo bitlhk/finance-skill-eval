@@ -21,17 +21,20 @@ function fixture(){
  const model=vi.fn(async({mode}:any)=>mode==='PLAN'?structuredClone(plan):mode==='COVERAGE'?{status:'COVERED',reasons:[]}:{checks:[{checkId:'reusable',status:'PASSED',reason:'Observed isolated results',caseIds:['one','two','three']}]});
  const execution=vi.fn(async()=>{const jobId=`job-${jobs.size}`,instanceId=`instance-${jobs.size}`;const job={jobId,status:'completed',report:{cases:suite.cases.map((c:any)=>({caseId:c.id,right:{status:'completed',runtimeIdentityVerified:true,streamCompleted:true,output:c.input,toolCalls:[],metadata:{skillArtifactSha256:candidate.artifactSha256,instanceId,caseScopeId:c.id}},judge:{goalAssessment:{verdict:'PASS'}}}))}};jobs.set(jobId,job);return {job}});
  const cancel=vi.fn(async()=>undefined);
- const service=new MigrationReuseAcceptanceService({projects:projects as never,configs:{get:async()=>config} as never,environments:{get:async(id:string)=>(id==='selected'?selected:launcher) as never,preflight:async()=>({status:'ready',capabilities:capabilities as never})},
+ const readFiles=vi.fn(async()=>({'SKILL.md':'Actual delivered workflow'}));
+ const service=new MigrationReuseAcceptanceService({projects:projects as never,configs:{get:async()=>config} as never,skills:{readFiles} as never,environments:{get:async(id:string)=>(id==='selected'?selected:launcher) as never,preflight:async()=>({status:'ready',capabilities:capabilities as never})},
  suites:{importSimple:async(_id:string,value:any)=>{suite=value;return {preparationId:'suite'}}} as never,execution:{validateReuseAcceptance:execution} as never,jobs:{get:(id:string)=>jobs.get(id)},runs:{cancel} as never,model});
  async function approve(){const saved=await service.propose(project.id,{environmentId:'selected',modelId:'model'});await service.approve(project.id,{planId:saved.planId,inputDigest:saved.inputDigest});return saved;}
  async function finish(){await vi.waitFor(()=>expect(project.reuseAcceptanceResults?.at(-1)?.status).not.toBe('RUNNING'));return service.summary(project.id);}
- return {project,plan,launcher,capabilities,config,jobs,service,model,execution,cancel,approve,finish};
+ return {project,plan,launcher,capabilities,config,jobs,service,model,execution,cancel,readFiles,approve,finish};
 }
 
 it('executes frozen groups through existing suite/runtime/Judge pipeline and binds the result',async()=>{
  const f=fixture(),p=await f.approve();await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
  const summary=await f.finish();expect(summary.status).toBe('PASSED');expect(summary.result?.checks[0]?.status).toBe('PASSED');expect(f.execution).toHaveBeenCalledTimes(2);expect(f.model.mock.calls.map(c=>c[0].mode)).toEqual(['PLAN','COVERAGE','VERIFY']);
  expect((f.model.mock.calls[0]![0] as any).context.executionContract).toEqual(reuseExecutionContract);
+ expect((f.model.mock.calls[2]![0] as any).context).toMatchObject({candidateFiles:{'SKILL.md':'Actual delivered workflow'},candidateReview:{proposalId:'proposal',candidateDigest:'b'.repeat(64)},artifactDigest:'b'.repeat(64)});
+ expect(f.readFiles).toHaveBeenLastCalledWith('candidate');
  f.config.revision++;expect((await f.service.summary(f.project.id)).status).toBe('STALE');await f.service.shutdown();
 });
 it.each(['missing-check','duplicate-case','unknown-case','unmapped-case','unresolved'] as const)('refuses structural undercoverage: %s',async change=>{
@@ -86,6 +89,12 @@ it('creates integrated validation only for actually called tools after all reuse
 it('invalidates a frozen acceptance on candidate inspection or approved-design changes',async()=>{
  const f=fixture(),p=await f.approve();f.project.inspection!.tools=[{name:'changed'}] as never;await expect(f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest})).rejects.toThrow('失效');
  const g=fixture(),q=await g.approve();g.project.reuseProposal!.design.scope='Changed scope';await expect(g.service.start(g.project.id,{planId:q.planId,inputDigest:q.inputDigest})).rejects.toThrow('失效');
+});
+it('rechecks the binding after reading static artifact evidence and before asking for a verdict',async()=>{
+ const f=fixture(),p=await f.approve();
+ f.readFiles.mockImplementationOnce(async()=>{f.config.revision++;return {'SKILL.md':'Changed during artifact read'};});
+ await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
+ expect((await f.finish()).status).not.toBe('PASSED');expect(f.model.mock.calls.some(c=>c[0].mode==='VERIFY')).toBe(false);await f.service.shutdown();
 });
 it('normalizes a one-query turns representation without changing data or required tools',()=>{
  const suite=simpleMigrationSuiteSchema.parse({name:'single',cases:[{id:'one',input:'evaluation objective only',criteria:['Expected output'],turns:[{query:'actual user query',requiredTools:['lookup']}]}]});

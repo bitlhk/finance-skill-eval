@@ -28,13 +28,19 @@ export type ReuseAcceptanceResult={taskId:string;planId:string;planDigest:string
 export type ReuseAcceptanceSummary={plan:ReuseAcceptancePlan|null;current:boolean;status:ReuseAcceptanceResult['status']|'STALE'|'NOT_RUN';result:ReuseAcceptanceResult|null};
 
 export function reuseAcceptancePlanIssues(project:MigrationProject,plan:ReuseAcceptanceExecutionPlan){
-  const proposal=currentReuseProposal(project),issues:string[]=[],ids=plan.groups.flatMap(group=>group.cases.map(c=>c.id));
+  const proposal=currentReuseProposal(project),issues:string[]=[];
   const expected=proposal?.design.acceptanceChecks.map(c=>c.id)??[];
   if(!proposal?.approvedAt)issues.push('请先确认有效的迁移方案');
+  issues.push(...reuseAcceptanceReferenceIssues(plan,expected),...plan.unresolvedQuestions);
+  return issues;
+}
+
+/** Structural references only. Does not decide coverage or relax unresolved requirements. */
+export function reuseAcceptanceReferenceIssues(plan:ReuseAcceptanceExecutionPlan,expected:string[]){
+  const issues:string[]=[],ids=plan.groups.flatMap(group=>group.cases.map(c=>c.id));
   if(new Set(ids).size!==ids.length||new Set(plan.groups.map(g=>g.id)).size!==plan.groups.length)issues.push('运行组和案例标识不能重复');
   if(plan.checks.length!==expected.length||new Set(plan.checks.map(c=>c.checkId)).size!==expected.length||plan.checks.some(c=>!expected.includes(c.checkId)))issues.push('验收计划必须逐项覆盖已确认的复用要求');
   for(const check of plan.checks)if(new Set(check.caseIds).size!==check.caseIds.length||check.caseIds.some(c=>!ids.includes(c)))issues.push(`${check.checkId} 引用了不存在或重复的案例`);
   if(ids.some(caseId=>!plan.checks.some(check=>check.caseIds.includes(caseId))))issues.push('每个执行案例都应属于明确验收要求');
-  issues.push(...plan.unresolvedQuestions);
   return issues;
 }

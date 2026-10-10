@@ -205,7 +205,14 @@ export class MigrationReuseAcceptanceService{
     const groupInstances=plan.groups.map(group=>[...new Set(observed.filter(c=>c.groupId===group.id).map(c=>c.instanceId))]);
     if(groupInstances.some(ids=>ids.length!==1)||new Set(groupInstances.flat()).size!==plan.groups.length)return conflict('新运行组没有使用独立 Runtime 实例');
     const design=currentReuseProposal(await this.d.projects.get(id))!.design;
-    const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed},signal}));
+    // Static document/code checks and dynamic behavior checks have different
+    // evidence. Re-read this bound artifact, not an uploaded workspace copy or a
+    // model's statement that it inspected the delivered files.
+    const current=await this.d.projects.get(id);
+    const candidateFiles=this.d.skills?await this.d.skills.readFiles(candidate.assetId):undefined;
+    await this.guard(id,task,signal);
+    const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed,
+      candidateFiles,candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
     if(verdicts.checks.length!==plan.checks.length||new Set(verdicts.checks.map(c=>c.checkId)).size!==plan.checks.length)return conflict('复用验收判定未完整覆盖要求');
     for(const result of verdicts.checks){const expected=plan.checks.find(c=>c.checkId===result.checkId);
       if(!expected||new Set(result.caseIds).size!==result.caseIds.length||result.caseIds.some(c=>!expected.caseIds.includes(c))
