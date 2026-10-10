@@ -40,3 +40,13 @@ it('distinguishes reused native contracts from Builder delivery and business acc
  expect(html).toContain('可复用现有能力');expect(html).toContain('尚未代表业务验收通过');expect(html).toContain('验证能否运行');
  expect(html).not.toContain('Builder Launcher 已验收');
 });
+
+it('offers direct validation without unusable contract registration when no capability adaptation is required',()=>{
+ const html=renderToStaticMarkup(createElement(RuntimeAdaptationStep,{
+  capabilities:[],runtimes:[{runtimeId:'existing',name:'Existing Runtime'}],checkExisting:()=>{},reinspect:()=>{},
+  trustReferences:[],busy:false,download:()=>{},importResult:async()=>{},next:()=>{},
+ }));
+ expect(html).toContain('无需适配');expect(html).toContain('验证能否运行');
+ expect(html).not.toContain('核对并使用');expect(html).not.toContain('Builder Result JSON');
+ expect(html).not.toContain('尚未配置 Launcher 连接目标');
+});
