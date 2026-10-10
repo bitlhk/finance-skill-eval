@@ -174,6 +174,32 @@ it('normalizes single-item collections and casing without inventing missing desi
   expect(normalizeReuseRepresentation({status:'PROPOSED',design:{}})).toEqual({status:'PROPOSED',design:{}});
 });
 
+it('reports actionable nested review fields to correction and telemetry without storing received values',async()=>{
+  const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+  const input={mode:'REVIEW' as const,sourceFiles,candidateFiles:sourceFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design};
+  const valid=await reusePlannerFixture(input) as any,invalid=structuredClone(valid);
+  invalid.review.changes[0].status='private-source-string';invalid.review.changes[0].reason={secret:'do-not-log'};
+  const requests:any[]=[],traces:ReusePlannerTelemetry[]=[];
+  const planner=createReusePlanner({adapterId:'test',complete:async request=>{requests.push(request);return {content:JSON.stringify(requests.length===1?invalid:valid),modelId:'test'}}},{providerId:'test',modelId:'test',parameters:{}},undefined,async trace=>{traces.push(trace)});
+  const result=await planner(input) as any;
+  expect(result.status).toBe('REVIEWED');expect(requests).toHaveLength(2);
+  const feedback=JSON.parse(requests[1].messages.at(-1).content).validationErrors;
+  expect(feedback).toContain('review.changes.0.status (invalid_enum_value)');
+  expect(feedback).toContain('review.changes.0.reason (invalid_type; expected string)');
+  expect(feedback).not.toContain('Invalid input');
+  expect(result.telemetry.calls[0].validationFields).toContain('review.changes.0.status (invalid_enum_value)');
+  expect(JSON.stringify(traces)).not.toContain('private-source-string');expect(JSON.stringify(traces)).not.toContain('do-not-log');
+});
+
+it('rejects the other lifecycle result type even when its schema is otherwise valid',async()=>{
+  const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+  const input={mode:'REVIEW' as const,sourceFiles,candidateFiles:sourceFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design};
+  const complete=vi.fn(async()=>({content:JSON.stringify({status:'PROPOSED',design:proposal.design}),modelId:'test'}));
+  const traces:ReusePlannerTelemetry[]=[];
+  await expect(createReusePlanner({adapterId:'test',complete},{providerId:'test',modelId:'test',parameters:{}},undefined,async trace=>{traces.push(trace)})(input)).rejects.toThrow('expected REVIEWED or ABSTAINED');
+  expect(complete).toHaveBeenCalledTimes(2);expect(traces.at(-1)?.calls.at(-1)?.validationFields).toEqual(['status (expected REVIEWED or ABSTAINED)']);
+});
+
 it('does not retry a semantic rejection into approval and records cancellation without calling the model',async()=>{
   const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
   const input={mode:'REVIEW' as const,sourceFiles,candidateFiles:sourceFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design};

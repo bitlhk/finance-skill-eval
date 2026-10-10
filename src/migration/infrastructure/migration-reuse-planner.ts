@@ -12,7 +12,9 @@ import {writeJsonAtomic} from '../../service/file-store.js';
 import {reuseModelContext} from './migration-reuse-context.js';
 import type {ReusePlannerTelemetry} from '../domain/migration-reuse-telemetry.js';
 
-const judgement=z.union([
+// Select the declared result branch before validating it. A plain union hides
+// nested errors behind "Invalid input", leaving format correction unactionable.
+const judgement=z.discriminatedUnion('status',[
   z.object({status:z.literal('PROPOSED'),design:reuseDesignSchema}),
   z.object({status:z.literal('REVIEWED'),review:reuseReviewSchema}),
   z.object({status:z.literal('ABSTAINED'),reason:z.string().min(1)}),
@@ -68,7 +70,8 @@ export function createReusePlanner(adapter:ModelAdapter,model:ModelRef,signal?:A
     const last=trace.calls.at(-1);if(last){last.retryReason=reason;last.issueCount=issueCount;}await publish();
   };
   await publish();
-  try{const result=await buildReusePlanner(tracked,model,signal,retry)(input);
+  const validationFields=(fields:string[])=>{const last=trace.calls.at(-1);if(last)last.validationFields=fields.slice(0,16);};
+  try{const result=await buildReusePlanner(tracked,model,signal,retry,validationFields)(input);
     trace.status='COMPLETED';trace.finishedAt=new Date().toISOString();await publish();
     return {...result as Record<string,unknown>,telemetry:structuredClone(trace)};
   }catch(error){trace.status='FAILED';trace.failureCode=signal?.aborted?'TIME_LIMIT':'PLANNER_FAILED';
@@ -77,7 +80,7 @@ export function createReusePlanner(adapter:ModelAdapter,model:ModelRef,signal?:A
 
 /** Evidence repair re-reads the same source; it never relaxes verification or approves a design. */
 function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSignal|undefined,
-  retry:(reason:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE',issueCount:number)=>Promise<void>):MigrationReusePlanner{return async input=>{
+  retry:(reason:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE',issueCount:number)=>Promise<void>,validationFields:(fields:string[])=>void):MigrationReusePlanner{return async input=>{
   signal?.throwIfAborted();
   const content=JSON.stringify(reuseModelContext(input));
   // Never silently cut the code needed to reason about cross-tool state or behavior.
@@ -127,7 +130,20 @@ function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSigna
   const output=await correctModelOutput({raw:response.content,adapter,model,requestId:'skill-reuse',signal,
     ...(input.mode==='REVIEW'?{maxRepairs:0}:{}),
     preserve:(original,repaired)=>canonicalSha256(normalizeReuseRepresentation(original))===canonicalSha256(normalizeReuseRepresentation(repaired)),
-    check:value=>{const parsed=judgement.safeParse(normalizeReuseRepresentation(value));return parsed.success?{ok:true,value:parsed.data}:{ok:false,errors:parsed.error.issues.map(issue=>`${issue.path.join('.')}: ${issue.message}`)}}});
+    check:value=>{
+      const parsed=judgement.safeParse(normalizeReuseRepresentation(value));
+      if(!parsed.success){
+        // Store field locations and schema categories, never received values or
+        // raw Zod enum messages, which can quote untrusted model/source content.
+        const fields=parsed.error.issues.slice(0,16).map(issue=>`${issue.path.join('.').slice(0,150)||'root'} (${issue.code}${issue.code==='invalid_type'?`; expected ${issue.expected}`:''})`);
+        validationFields(fields);return {ok:false,errors:fields};
+      }
+      const expected=input.mode==='REVIEW'?'REVIEWED':'PROPOSED';
+      if(parsed.data.status!==expected&&parsed.data.status!=='ABSTAINED'){
+        const fields=[`status (expected ${expected} or ABSTAINED)`];validationFields(fields);return {ok:false,errors:fields};
+      }
+      return {ok:true,value:parsed.data};
+    }});
   if(!output.ok){
     if(attempt===maxAttempts-1)throw new Error(`迁移方案输出无法解析：${output.error}`);
     await retry('OUTPUT_FORMAT',1);
