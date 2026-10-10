@@ -13,10 +13,10 @@ const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const read=path=>readFile(resolve(root,path));
 const baseline=await read('examples/fact-check-demo/SKILL.md');
 assert.equal(digest(baseline),'526e1088b4f4b2eb859c0ce5901fbf8103e31c2729c52ebb4cba9e9da8239664','Baseline changed');
-// Missing, malformed and conflicting workspace receipts are distinguished in
-// the v5 evidence cohort. Never overwrite or mix recorded v2/v3/v4 results.
+// The v5 cohort distinguishes optional workspace receipts and repairs formatting
+// quotations without changing verdicts. Never mix recorded v2/v3/v4 results.
 const judge=Buffer.from((await read('src/goal-judge.ts')).toString('utf8').replace(/\r\n/g,'\n'));
-assert.equal(digest(judge),'1ec4a6dfe0da6eac892548675c895a4c182a6a501d2ed72de837ccc6faf42de7','Judge changed: do not silently mix policies');
+assert.equal(digest(judge),'dcf63a1a7eb4300114f3dd9f9c84865467d699c2e67b15e6b59b64fc94562920','Judge changed: do not silently mix policies');
 const evidenceSources={
   'src/judge-runtime-evidence.ts':'54740e85b5353d9ec0b96b6953d141c9ab31ce6ba9a351081ce8c52ef138269a',
   'src/judge-case-files.ts':'23f7510eb548c9f2a4cb27a48a660536c7b97d67ff8af40dd0dc4a7739a699ca',

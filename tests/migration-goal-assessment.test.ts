@@ -173,6 +173,38 @@ it('recovers an exact Markdown-delimited quote without accepting the surrounding
  expect(result.goalAssessment?.checks[0]?.evidence).toBe('ORIGINAL_HARNESS_7F31');
  expect(answer).toContain(result.goalAssessment?.checks[0]?.evidence??'missing');
 });
+it('repairs Markdown-only quotes mechanically on the first response without altering a negative verdict',async()=>{
+ let calls=0;const answer='- **总金额**：150.00\n- **合规结论**：false（不合规）';
+ const evaluator=new ModelGoalJudge({adapterId:'format-only',complete:async()=>{
+  calls++;return {modelId:'test',content:JSON.stringify({checks:[
+   {criterionIndex:0,verdict:'FAIL',reason:'原负面结论',evidence:'总金额：150.00'},
+   {criterionIndex:1,verdict:'PASS',reason:'结论正确',evidence:'合规结论：false（不合规）'},
+  ]})};
+ }},model);
+ const result=await evaluator.compare({...input,right:{...evidence,output:answer}});
+ expect(calls).toBe(1);expect(result.goalAssessment?.verdict).toBe('FAIL');
+ for(const check of result.goalAssessment!.checks)expect(answer).toContain(check.evidence);
+ expect(result.goalAssessment?.checks[0]?.reason).toBe('原负面结论');
+});
+it('does not change amounts or negation while recovering a formatted quotation',async()=>{
+ const answer='- **总金额**：15.00\n- **合规结论**：false（不合规）';
+ const evaluator=new ModelGoalJudge({adapterId:'wrong-content',complete:async()=>({modelId:'test',content:JSON.stringify({checks:[
+  {criterionIndex:0,verdict:'PASS',reason:'错引文',evidence:'总金额：150.00'},
+  {criterionIndex:1,verdict:'PASS',reason:'错引文',evidence:'合规结论：true（合规）'},
+ ]})})},model);
+ await expect(evaluator.compare({...input,right:{...evidence,output:answer}})).rejects.toThrow('引用不是回答');
+});
+it('rejects a quote repair that changes a valid negative judgment to PASS',async()=>{
+ let calls=0;
+ const evaluator=new ModelGoalJudge({adapterId:'changed-verdict',complete:async()=>{
+  calls++;return {modelId:'test',content:JSON.stringify({checks:[
+   {criterionIndex:0,verdict:calls===1?'FAIL':'PASS',reason:'保持原原因',evidence:calls===1?'不存在的逐字片段':'2.50 元'},
+   {criterionIndex:1,verdict:'PASS',reason:'未扣费',evidence:'尚未扣费'},
+  ]})};
+ }},model);
+ await expect(evaluator.compare(input)).rejects.toThrow('改变了原判定');expect(calls).toBe(2);
+});
+
 it('makes candidate tools available without requiring every tool to be called for each natural-language task',async()=>{
  const manager=new EvaluationRunManager({environments:{}} as any);
  const scripts=[{name:'quote_fee',path:'scripts/fee.py',kind:'PYTHON',filePaths:['scripts/fee.py']}];
