@@ -75,9 +75,12 @@ export class MigrationOpenJiuwenService {
     }
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
-      .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;
-        while(true){const prefix=cursor?`${cursor}/`:'';if(archive[`${prefix}pyproject.toml`]||archive[`${prefix}package.json`]){root=cursor;break;}if(!cursor)break;cursor=cursor.split('/').slice(0,-1).join('/');}
-        const filePaths=Object.keys(archive).filter(name=>(!root||name.startsWith(`${root}/`))&&/\.(?:py|js|mjs|cjs|json|toml|lock)$/iu.test(name));
+      .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');
+        // Runtime must receive the same portable Skill resources used in technical
+        // validation. A script directory or nearest dependency manifest is not the
+        // Skill root: resources may be siblings, and need not be JSON/code files.
+        const skillFile=asset.skillFile??'SKILL.md',root=skillFile.includes('/')?skillFile.slice(0,skillFile.lastIndexOf('/')+1):'';
+        const filePaths=Object.keys(archive).filter(name=>name.startsWith(root));
         return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,
           launch:this.commands.resolve(archive,entry,tool.entrypoint!.kind),
           ...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});

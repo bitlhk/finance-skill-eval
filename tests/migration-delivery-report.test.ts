@@ -46,10 +46,11 @@ it.each(['VERIFIED','UNVERIFIED'])('export names and headers use the complete de
  const app=Fastify();registerMigrationRoutes(app,{privateWorkspaceEnabled:true,migrations:{report:async()=>({project:{candidate:{skillId:'sample',artifactSha256:'digest'}},verification:{targetExecution:'PASSED',reuseAcceptance:status==='VERIFIED'?'PASSED':'NOT_RUN',delivery:{status}}}),exportPackage:async()=>({archive:Buffer.from('zip'),candidateDigest:'digest',skillId:'sample'})} as never,skills:{} as never,environments:{} as never,runtimeDeliveries:{} as never});
  try{const reply=await app.inject({method:'GET',url:'/api/migrations/test/export'});expect(reply.statusCode).toBe(200);expect(reply.headers['x-migration-acceptance']).toBe(status);
   expect(reply.headers['x-migration-business-acceptance']).toBe('PASSED');expect(reply.headers['content-disposition']).toContain(status==='VERIFIED'?'sample.zip':'sample-unverified.zip');
+  expect(reply.headers['x-migration-candidate-digest']).toBe('digest');
  }finally{await app.close();}
 });
 it('does not apply a different candidate verification to the downloaded bytes',async()=>{
  const app=Fastify();registerMigrationRoutes(app,{privateWorkspaceEnabled:true,migrations:{report:async()=>({project:{candidate:{artifactSha256:'new'}},verification:{targetExecution:'PASSED',reuseAcceptance:'PASSED',delivery:{status:'VERIFIED'}}}),
   exportPackage:async()=>({archive:Buffer.from('old zip'),candidateDigest:'old',skillId:'sample'})} as never,skills:{} as never,environments:{} as never,runtimeDeliveries:{} as never});
- try{const reply=await app.inject({method:'GET',url:'/api/migrations/test/export'});expect(reply.headers['x-migration-acceptance']).toBe('UNVERIFIED');expect(reply.headers['x-migration-reuse-acceptance']).toBe('STALE');expect(reply.headers['content-disposition']).toContain('sample-unverified.zip');}finally{await app.close();}
+ try{const reply=await app.inject({method:'GET',url:'/api/migrations/test/export'});expect(reply.headers['x-migration-acceptance']).toBe('UNVERIFIED');expect(reply.headers['x-migration-reuse-acceptance']).toBe('STALE');expect(reply.headers['content-disposition']).toContain('sample-unverified.zip');expect(reply.headers['x-migration-candidate-digest']).toBe('old');}finally{await app.close();}
 });

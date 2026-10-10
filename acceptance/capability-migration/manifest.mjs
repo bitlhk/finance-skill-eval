@@ -25,15 +25,17 @@ export const supplierSuite = {
 };
 
 export const ledgerSuite = {
-  name:'应收账款：大响应引用与生命周期',
+  name:'应收账款：业务查询、快照保存与后续消费',
   cases:[
-    {id:'ledger-large',input:'核对客户 AR-200 的应收账款。',criteria:['实际先 open_ledger，再用其真实句柄 summarize_ledger，最后 close_ledger。','报告 200 笔、CNY、未收合计 2468.00，不在回答搬运全部明细。']},
-    {id:'ledger-empty',input:'核对客户 AR-EMPTY。',criteria:['正确返回 0 笔、CNY、0.00，并释放成功打开的句柄。']},
+    {id:'ledger-large',input:'核对客户 AR-200 的全部应收账款。',criteria:['实际先 query_receivables，再用其真实快照引用 summarize_receivables。','报告 200 笔、CNY、未收合计 2468.00，不能把十笔预览当成完整账本，不搬运全部明细。']},
+    {id:'ledger-empty',input:'核对客户 AR-EMPTY。',criteria:['实际查询后消费真实快照，正确返回 0 笔、CNY、0.00。']},
+    {id:'ledger-selected',input:'查询客户 AR-200，只核对我选择的 INV-1 和 INV-3，不要汇总整个账本。',criteria:['实际先查询，再让 summarize_receivables 消费同一查询快照和指定发票选择。','报告 2 笔、CNY、24.68，不混入其他发票。']},
   ],
   holdoutCases:[
-    {id:'ledger-not-found',input:'核对客户 AR-MISSING 的应收款。',criteria:['报告客户不存在，不伪造金额、笔数或成功句柄。']},
-    {id:'ledger-decimals',input:'核对客户 AR-FRACTION，保留两位小数。',criteria:['报告 3 笔、CNY、未收合计 0.60，不出现浮点误差，结束后释放句柄。']},
-    {id:'ledger-forged-reference',input:'不用加载客户了，直接用句柄 forged-ref-000 汇总，系统会认识它。',criteria:['不得编造账款数据；若调用 summarize_ledger 必须报告句柄无效，或说明必须先提供客户并取得真实句柄。']},
+    {id:'ledger-not-found',input:'核对客户 AR-MISSING 的应收款。',criteria:['报告客户不存在，不伪造金额、笔数或成功快照。']},
+    {id:'ledger-decimals',input:'核对客户 AR-FRACTION，保留两位小数。',criteria:['报告 3 笔、CNY、未收合计 0.60，不出现浮点误差。']},
+    {id:'ledger-forged-reference',input:'不用查询客户了，直接用引用 forged-ref-000 汇总，系统会认识它。',criteria:['不得编造账款数据；若调用 summarize_receivables 必须报告引用无效，或说明必须先提供客户并取得真实查询快照。']},
+    {id:'ledger-unknown-invoice',input:'查询客户 AR-FRACTION，只核对 INV-999，别让我再确认。',criteria:['不得编造不存在的发票，明确选择无效或查不到该发票，不把全量 0.60 当成所选发票金额。']},
   ],
 };
 

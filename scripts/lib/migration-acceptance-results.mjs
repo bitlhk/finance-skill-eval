@@ -16,8 +16,41 @@ export function selectedEnterpriseCases(value) {
   return selected;
 }
 
+const closedLoopPhases = ['migration','technical','improvement','final-verification','adoption','reuse-acceptance','verified-export'];
+const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+function validatedDeliveryEvidence(value) {
+  assert(value && typeof value === 'object', 'Missing delivery evidence');
+  for (const key of ['candidateDigest','configurationDigest','verifiedExportDigest']) assert(digest(value[key]), `Invalid ${key}`);
+  assert.equal(value.verifiedExportDigest,value.candidateDigest,'Export must be the accepted candidate');
+  for (const key of ['proposalId','finalJobId','reuseTaskId']) assert(typeof value[key]==='string'&&value[key].length>0, `Missing ${key}`);
+  assert(Array.isArray(value.reuseJobIds)&&value.reuseJobIds.length>0&&value.reuseJobIds.every(id=>typeof id==='string'&&id.length>0));
+  assert.equal(new Set(value.reuseJobIds).size,value.reuseJobIds.length,'Duplicate reuse jobs');
+  return Object.fromEntries(['proposalId','candidateDigest','configurationDigest','finalJobId','reuseTaskId','reuseJobIds','verifiedExportDigest'].map(key=>[key,value[key]]));
+}
+
+/** Build closure only from current service read models and the actual export response. */
+export function verifiedDeliveryEvidence({report,reuse,task,exportDigest}) {
+  const candidateDigest=report.project.candidate?.artifactSha256,proposal=report.migrationPlan?.reuseProposal;
+  assert(digest(candidateDigest)&&proposal?.approvedAt,'Current candidate and approved proposal required');
+  assert.equal(report.verification.delivery.status,'VERIFIED','Delivery checks are not complete');
+  assert.equal(report.verification.targetExecution,'PASSED');
+  assert.equal(report.verification.reuseAcceptance,'PASSED');
+  assert.equal(reuse.status,'PASSED');assert.equal(reuse.current,true);
+  assert.equal(reuse.result.status,'PASSED');assert(reuse.result.checks.length&&reuse.result.checks.every(c=>c.status==='PASSED'));
+  assert.equal(reuse.result.binding.candidateDigest,candidateDigest);
+  assert.equal(reuse.result.binding.proposalId,proposal.proposalId);
+  assert.equal(task.status,'ADOPTED');assert(task.finalVerified&&task.finalConsumed);
+  assert.equal(task.bestCandidate.artifactSha256,candidateDigest);
+  const final=report.experiments.find(e=>e.jobId===task.finalJobId);
+  assert(final?.current&&final.acceptance.status==='PASSED','Current final verification required');
+  assert.equal(final.runtimeConfigurationDigest,reuse.result.binding.configurationDigest);
+  return validatedDeliveryEvidence({proposalId:proposal.proposalId,candidateDigest,
+    configurationDigest:reuse.result.binding.configurationDigest,finalJobId:task.finalJobId,
+    reuseTaskId:reuse.result.taskId,reuseJobIds:reuse.result.jobs.map(j=>j.jobId),verifiedExportDigest:exportDigest});
+}
+
 // Do not copy raw provider errors, model configuration, prompts or connection-info.
-export function acceptanceEntry({skillId, passed, provenance, cases = [], checks = [], phases = [], expectation = 'MIGRATED'}) {
+export function acceptanceEntry({skillId, passed, provenance, cases = [], checks = [], phases = [], expectation = 'MIGRATED',deliveryEvidence}) {
   assert(allSkills.includes(skillId), 'Unknown Skill');
   assert.equal(expectation,capabilitySkills[skillId]?.expected??'MIGRATED','Unexpected acceptance objective');
   assert(typeof passed === 'boolean');
@@ -35,7 +68,9 @@ export function acceptanceEntry({skillId, passed, provenance, cases = [], checks
     assert(provenance.execution==='NOT_RUN'&&provenance.judge==='NOT_RUN','Blocked acceptance must not claim execution');
     assert(!passed||(['partial_native_match_rejected','complete_builder_requirements_exported','no_fake_runtime_binding'].every(c=>checks.includes(c))&&phases.includes('expected-block')),'Missing blocking evidence');
   }
-  return {skillId,passed,expectation,provenance:Object.fromEntries(['diagnosis','generation','execution','judge'].map(k=>[k,provenance[k]])),cases:results,checks,phases};
+  const evidence=deliveryEvidence===undefined?undefined:validatedDeliveryEvidence(deliveryEvidence);
+  assert(!evidence||expectation==='MIGRATED','Blocked scenarios cannot claim verified delivery');
+  return {skillId,passed,expectation,provenance:Object.fromEntries(['diagnosis','generation','execution','judge'].map(k=>[k,provenance[k]])),cases:results,checks,phases,...(evidence?{deliveryEvidence:evidence}:{})};
 }
 
 export async function writeAcceptanceResult(entries) {
@@ -64,12 +99,15 @@ export function summarizeAcceptance({runId, requestedSkills, children}) {
   const passed=issues.length===0 && completed.length===requestedSkills.length;
   const realModelAcceptancePassed=passed && real.length===requestedSkills.length;
   const realModelScenarioAcceptancePassed=passed && real.length+blocked.length===requestedSkills.length;
-  const closedLoop=real.filter(e=>['improvement','final-verification','adoption'].every(phase=>e.phases.includes(phase)));
+  const closedLoop=real.filter(e=>e.deliveryEvidence&&closedLoopPhases.every(phase=>e.phases.includes(phase)));
   return {schemaVersion:1,runId,requestedSkills,entries,issues,passed,realModelAcceptancePassed,realModelScenarioAcceptancePassed,
     fullFiveSkillAcceptancePassed:issues.length===0 && legacyFiveSkills.every(id=>real.some(e=>e.skillId===id)),
     fullFiveSkillClosedLoopPassed:issues.length===0 && legacyFiveSkills.every(id=>closedLoop.some(e=>e.skillId===id)),
     fullExpandedScenarioAcceptancePassed:realModelScenarioAcceptancePassed && allSkills.every(id=>requestedSkills.includes(id)),
     expectedBlockedSkills:blocked.map(e=>e.skillId),migratedSkills:completed.filter(e=>e.expectation==='MIGRATED').map(e=>e.skillId),
     closedLoopSkills:closedLoop.map(e=>e.skillId),
-    completedSkills:completed.map(e=>e.skillId),freshRealSkills:real.map(e=>e.skillId)};
+    completedSkills:completed.map(e=>e.skillId),freshRealSkills:real.map(e=>e.skillId),
+    continuedRealSkills:completed.filter(e=>Object.values(e.provenance).includes('REUSED_REAL')&&Object.values(e.provenance).every(v=>['REAL','REUSED_REAL','NOT_RUN'].includes(v))).map(e=>e.skillId),
+    failedSkills:entries.filter(e=>!e.passed).map(e=>e.skillId),
+    stubbedSkills:entries.filter(e=>Object.values(e.provenance).includes('STUBBED')).map(e=>e.skillId)};
 }

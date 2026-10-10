@@ -9,8 +9,9 @@ import {capabilitySkills} from '../acceptance/capability-migration/manifest.mjs'
 // Use verify-migration-v2-ui.mjs directly for explicitly STUBBED UI regression.
 assert(process.env.MIGRATION_TEST_LAUNCHER_INFO,'Real acceptance requires a private, live Launcher connection file');
 assert(process.env.MIGRATION_TEST_REAL_AGENTS!=='false','Use the regression entry point for stubbed agents');
-assert(!process.env.MIGRATION_TEST_RESUME_DATA && !process.env.ENTERPRISE_TEST_A2_RECORD && !process.env.ENTERPRISE_TEST_A4_RECORD,
-  'Fresh Skill acceptance cannot reuse diagnosis or generated candidates');
+assert(['MIGRATION_TEST_RESUME_DATA','ENTERPRISE_TEST_A2_RECORD','ENTERPRISE_TEST_A4_RECORD',
+  'ENTERPRISE_TEST_CANDIDATE_A2_RECORD','ENTERPRISE_TEST_REUSE_RECORD','ENTERPRISE_TEST_REVIEW_DIRECTORY']
+  .every(key=>!process.env[key]), 'Fresh Skill acceptance cannot reuse diagnosis, design, generated candidates or review');
 const selected=selectedEnterpriseCases(process.env.ENTERPRISE_TEST_CASES);
 const root=process.cwd(),runId=randomUUID(),directory=path.join(root,'reports',`migration-acceptance-${runId}`);
 await mkdir(directory,{recursive:true});

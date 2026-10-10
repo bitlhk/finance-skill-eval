@@ -11,6 +11,7 @@ import {analyzeWithAgent,implementWithAgent} from '../dist/migration/infrastruct
 import {enterpriseSkills,selectedEnterpriseCases,writeAcceptanceResult} from './lib/migration-acceptance-results.mjs';
 import {enterpriseImprovementSuite} from '../acceptance/enterprise-migration-examples/improvement-suites.mjs';
 import {verifyImprovementThroughUi} from './lib/verify-improvement-ui.mjs';
+import {verifyReuseDeliveryThroughUi} from './lib/verify-reuse-delivery-ui.mjs';
 import {configuredModelRole,modelTimeoutMs} from '../dist/service/config.js';
 import {createConfiguredReusePlanner} from '../dist/migration/infrastructure/migration-reuse-planner.js';
 import {reuseModelContext} from '../dist/migration/infrastructure/migration-reuse-context.js';
@@ -163,14 +164,23 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
    outcome.checks.push('frozen development, independent behavioral holdout, explicit adoption and persisted UI');
    await save(current+'/improvement-result.json',outcome.improvement);
    await page.screenshot({path:path.join(report,current,'03-improvement.png'),fullPage:true});
-   phase='export';await page.getByRole('button',{name:'进入下载',exact:true}).click();const download=page.waitForEvent('download');await page.getByRole('button',{name:'下载迁移包',exact:true}).click();await (await download).saveAs(path.join(report,current,'candidate.zip'));assert.deepEqual(errors,[]);outcome.passed=true;
+   phase='reuse-delivery';outcome.deliveryEvidence=await verifyReuseDeliveryThroughUi({page,api,base,
+    downloadPath:path.join(report,current,'candidate.zip'),persistEvidence:async evidence=>{
+      for(const [name,value] of Object.entries(evidence))await save(current+'/'+name+'.json',value);
+    }});
+   outcome.checks.push('current_candidate_reuse_requirements_executed','verified_export_identity_checked');
+   await page.screenshot({path:path.join(report,current,'04-verified-delivery.png'),fullPage:true});assert.deepEqual(errors,[]);outcome.passed=true;
   }catch(e){outcome.phase=phase;outcome.error=String(e);await page.screenshot({path:path.join(report,current,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(path.join(report,current,'failure-page.txt'),await page.locator('body').innerText().catch(()=>''));console.error(current+' FAILED '+phase+' '+String(e).slice(0,1800))}
   finally{await ctx.tracing.stop({path:path.join(report,current,'browser-trace.zip')}).catch(()=>{});await ctx.close();outcomes.push(outcome);await save('result.json',{passed:outcomes.length===selectedCases.length&&outcomes.every(o=>o.passed),model:model.upstreamModelId??modelId,outcomes,report});console.log(current+' FINISHED '+outcome.passed)}
  }
  console.log(JSON.stringify({report,outcomes}));if(outcomes.some(o=>!o.passed))process.exitCode=1;
 }finally{await browser?.close();await app?.close();if(gateway)await new Promise(r=>gateway.close(r));await stop(worker);await stop(business);
  await writeAcceptanceResult(outcomes.map(o=>({skillId:enterpriseSkills[o.name],passed:o.passed,
-   provenance:{diagnosis:o.provenance.diagnosis==='fresh real model'?'REAL':'REUSED_REAL',generation:o.provenance.generation==='fresh real model'?'REAL':'REUSED_REAL',execution:o.verdicts?.length?'REAL':'NOT_RUN',judge:o.verdicts?.length?'REAL':'NOT_RUN'},
-   cases:o.improvement?.cases??(o.verdicts??[]).map(c=>({caseId:c.id,verdict:c.verdict??'UNKNOWN'})),checks:o.checks,phases:o.passed?['migration','technical','original-comparison','improvement','final-verification','adoption','export']:[]})));
+   provenance:{diagnosis:[o.provenance.diagnosis,o.provenance.reuseProposal].every(v=>v==='fresh real model')?'REAL':'REUSED_REAL',
+     generation:[o.provenance.generation,o.provenance.candidateAnalysis,o.provenance.candidateReview].every(v=>v==='fresh real model')?'REAL':'REUSED_REAL',
+     execution:o.verdicts?.length?'REAL':'NOT_RUN',judge:o.verdicts?.length?'REAL':'NOT_RUN'},
+   cases:o.improvement?.cases??(o.verdicts??[]).map(c=>({caseId:c.id,verdict:c.verdict??'UNKNOWN'})),checks:o.checks,
+   ...(o.deliveryEvidence?{deliveryEvidence:o.deliveryEvidence}:{}),
+   phases:o.passed?['migration','technical','original-comparison','improvement','final-verification','adoption','reuse-acceptance','verified-export']:[]})));
  if(process.env.MIGRATION_TEST_RETAIN_DATA==='true')console.error('Retained private test data: '+work);
  else await rm(work,{recursive:true,force:true})}

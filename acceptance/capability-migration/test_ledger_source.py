@@ -19,42 +19,54 @@ class LedgerSourceTests(unittest.TestCase):
     def setUp(self):
         self.module = load_source()
 
-    def open(self, amounts):
+    def query(self, amounts):
         payload = {"customer_id": "TEST", "currency": "CNY", "items": [
-            {"outstanding": amount, "description": "large business response " * 100} for amount in amounts]}
+            {"invoice_id": f"INV-{index+1}", "outstanding": amount, "description": "large business response " * 100}
+            for index, amount in enumerate(amounts)]}
         with patch.dict("os.environ", {"LEDGER_SERVICE_URL": "https://fixture.invalid"}), patch.object(
                 self.module, "urlopen", return_value=io.BytesIO(json.dumps(payload).encode())):
-            return self.module.open_ledger("TEST")
+            return self.module.query_receivables("TEST")
 
-    def test_large_response_stays_tool_side_and_handle_is_opaque(self):
-        opened = self.open(["12.34"] * 200)
-        self.assertEqual(opened["record_count"], 200)
-        self.assertLess(len(json.dumps(opened)), 200)
-        self.assertNotIn("items", opened)
-        self.assertEqual(self.module.summarize_ledger(opened["ledger_ref"])["outstanding"], "2468.00")
+    def test_large_response_stays_tool_side_and_preview_is_explicitly_incomplete(self):
+        queried = self.query(["12.34"] * 200)
+        self.assertEqual(queried["record_count"], 200)
+        self.assertLess(len(json.dumps(queried)), 1000)
+        self.assertNotIn("items", queried)
+        self.assertFalse(queried["preview_complete"])
+        self.assertEqual(len(queried["invoice_preview"]), 10)
+        self.assertEqual(self.module.summarize_receivables(queried["snapshot_ref"])["outstanding"], "2468.00")
 
     def test_decimal_precision_and_empty_ledger(self):
         for values, expected in [(["0.10", "0.20", "0.30"], "0.60"), ([], "0.00")]:
-            opened = self.open(values)
-            self.assertEqual(self.module.summarize_ledger(opened["ledger_ref"])["outstanding"], expected)
+            queried = self.query(values)
+            self.assertTrue(queried["preview_complete"])
+            self.assertEqual(self.module.summarize_receivables(queried["snapshot_ref"])["outstanding"], expected)
 
-    def test_release_and_forgery_fail_closed(self):
-        opened = self.open(["1.00"])
-        self.assertEqual(self.module.close_ledger(opened["ledger_ref"]), {"status": "closed"})
-        for ref in [opened["ledger_ref"], "forged-ref-000"]:
-            self.assertEqual(self.module.summarize_ledger(ref)["error"], "LEDGER_REFERENCE_INVALID")
-            self.assertEqual(self.module.close_ledger(ref)["error"], "LEDGER_REFERENCE_INVALID")
+    def test_consumer_uses_exact_selected_records_not_the_latest_query(self):
+        first = self.query(["12.34"] * 200)
+        self.query(["99.00"])
+        result = self.module.summarize_receivables(first["snapshot_ref"], ["INV-1", "INV-3"])
+        self.assertEqual(result["outstanding"], "24.68")
+        self.assertEqual(result["record_count"], 2)
+        # Selection is consumed from the full snapshot, not only the visible preview.
+        self.assertEqual(self.module.summarize_receivables(first["snapshot_ref"], ["INV-200"])["outstanding"], "12.34")
 
-    def test_handle_is_not_available_in_another_service_instance(self):
-        ref = self.open(["99.00"])["ledger_ref"]
-        self.assertEqual(load_source().summarize_ledger(ref)["error"], "LEDGER_REFERENCE_INVALID")
+    def test_invalid_selection_never_falls_back_to_all_invoices(self):
+        ref = self.query(["1.00"])["snapshot_ref"]
+        for selection in [[], ["INV-999"], ["INV-1", "INV-1"]]:
+            self.assertEqual(self.module.summarize_receivables(ref, selection)["error"], "INVOICE_SELECTION_INVALID")
+        self.assertEqual(self.module.summarize_receivables("forged-ref-000")["error"], "RECEIVABLES_SNAPSHOT_INVALID")
 
-    def test_missing_customer_never_creates_handle(self):
+    def test_new_instance_requeries_instead_of_reusing_an_old_snapshot(self):
+        ref = self.query(["99.00"])["snapshot_ref"]
+        self.assertEqual(load_source().summarize_receivables(ref)["error"], "RECEIVABLES_SNAPSHOT_INVALID")
+
+    def test_missing_customer_never_creates_snapshot(self):
         with patch.dict("os.environ", {"LEDGER_SERVICE_URL": "https://fixture.invalid"}), patch.object(
                 self.module, "urlopen", side_effect=HTTPError("fixture", 404, "not found", {}, None)):
-            result = self.module.open_ledger("MISSING")
+            result = self.module.query_receivables("MISSING")
         self.assertEqual(result, {"status": "not_found", "customer_id": "MISSING"})
-        self.assertEqual(self.module._ledgers, {})
+        self.assertEqual(self.module._snapshots, {})
 
 
 if __name__ == "__main__":

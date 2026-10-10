@@ -42,13 +42,13 @@ function deliver(value:MigrationProject,environment:MigrationLauncher) {
   return delivery;
 }
 
-function services(value:MigrationProject,environment:MigrationLauncher,ready=true) {
+function services(value:MigrationProject,environment:MigrationLauncher,ready=true,archive:Record<string,Uint8Array>={}) {
   const projects={get:vi.fn(async()=>value)};
   const configs={get:vi.fn(async()=>({revision:0,values:{},checks:[]}))};
   const repo={get:vi.fn(async(id:string)=>id===environment.environmentId?environment:null)};
   const evaluate=vi.fn(async(_id:string,body:unknown)=>body);
   const report=new MigrationReportService(projects as never,{get:()=>null} as never,undefined,undefined,undefined,repo,configs as never);
-  const entry=new MigrationOpenJiuwenService(projects as never,{readArchive:async()=>({})} as never,
+  const entry=new MigrationOpenJiuwenService(projects as never,{readArchive:async()=>archive} as never,
     {currentState:async()=>({ready,reasons:['technical validation missing']})} as never,
     {validate:evaluate} as never,report,{resolve:vi.fn()} as never,repo,configs as never);
   return {entry,report,evaluate,repo};
@@ -62,6 +62,17 @@ it.each(['openjiuwen','agentscope'] as const)('admits registered %s Launchers wi
   const blocked=services(value,environment,false);
   await expect(blocked.entry.validate(value.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:environment.environmentId}}})).rejects.toThrow('technical validation missing');
   expect(blocked.evaluate).not.toHaveBeenCalled();
+});
+
+it('mounts Script sibling resources without extension filtering or pulling an external MCP service into its Skill',async()=>{
+ const value=project(),environment=launcher();
+ Object.assign(value.candidate!,{skillFile:'skill/SKILL.md'});
+ value.inspection!.tools=[{name:'expense',kind:'SCRIPT',entrypoint:{kind:'PYTHON',path:'skill/scripts/expense.py'}}] as never;
+ const archive=Object.fromEntries(['skill/SKILL.md','skill/scripts/expense.py','skill/scripts/pyproject.toml','skill/assets/rules.json','skill/assets/data.csv','skill/references/rules.txt','mcp/server.py']
+  .map(path=>[path,new TextEncoder().encode('fixture')]));
+ const {entry}=services(value,environment,true,archive);
+ const result=await entry.validate(value.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:environment.environmentId}}}) as any;
+ expect(result.configuration.runtimeCommandBindings.right[0].filePaths).toEqual(Object.keys(archive).filter(path=>path.startsWith('skill/')));
 });
 
 it.each([

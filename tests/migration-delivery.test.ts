@@ -240,3 +240,40 @@ it('relocates multi-file scripts with their resources and documentation, retirin
  inspection.dependencyAnalysis!.dependencies.forEach(dep=>dep.toolIds.push(other.toolId));
  const shared=generatePortableCandidate(input);expect(shared.files['scripts/rates.json']).toBeDefined();expect(shared.files['scripts/tools/legacy_runtime.py']).toBeDefined();
 });
+
+it.each(['','migration-skill/'])('preserves a complete A4 Skill-relative Script/resource layout: %s',prefix=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/legacy.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ inspection.dependencyAnalysis={dependencies:[{owner:'TOOL',toolIds:[tool.toolId],resolvedPaths:['assets/rules.json']}]} as any;
+ const implementation={language:'python',sourcePath:prefix+'scripts/check_expense.py',source:'from pathlib import Path\nRULES=Path(__file__).resolve().parents[1]/"assets"/"rules.json"',
+  additionalFiles:[{path:prefix+'assets/rules.json',content:'{}\n'},{path:prefix+'README.md',content:'Deployment'}],dependencies:[],generatedBy:'A4',explanation:'',attempts:1,checks:[]};
+ const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD),'assets/rules.json':strToU8('{}')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,
+  decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',skillDelivery:{files:{'SKILL.md':SKILL_MD+'\nCall `scripts/check_expense.py` using `assets/rules.json`.'}},implementations:{[tool.toolId]:implementation} as any});
+ expect(result.generations[0]!.entrypoint).toBe('scripts/check_expense.py');
+ expect(result.generations[0]!.files).toEqual(['scripts/check_expense.py','assets/rules.json','README.md']);
+ expect(Buffer.from(result.files['assets/rules.json']!).toString()).toBe('{}\n');
+ expect(Object.keys(result.files).some(path=>path.startsWith('migration-skill/')||path.startsWith('scripts/expense/'))).toBe(false);
+});
+
+it('rejects mixed A4 delivery roots rather than changing a tested layout',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/legacy.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ expect(()=>generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD)},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,
+  decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'migration-skill/scripts/expense.py',source:'print(1)',additionalFiles:[{path:'assets/data.json',content:'{}'}],dependencies:[],generatedBy:'A4'}} as any})).toThrow('混用了');
+});
+
+it('does not overwrite a preserved resource still used by an unmigrated tool',()=>{
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/legacy.py'],language:'Python'}),other=toolFixture({name:'other',sourcePaths:['scripts/other.py'],language:'Python'}),inspection=inspectionFixture([tool,other]);
+ inspection.dependencyAnalysis={dependencies:[{owner:'TOOL',toolIds:[tool.toolId,other.toolId],resolvedPaths:['assets/rules.json']}]} as any;
+ expect(()=>generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD),'assets/rules.json':strToU8('{"old":true}')},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,
+  decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'migration-skill/scripts/expense.py',source:'print(1)',additionalFiles:[{path:'migration-skill/assets/rules.json',content:'{}'}],dependencies:[],generatedBy:'A4'}} as any})).toThrow('不会静默覆盖');
+});
+
+it('executes the packaged A4 script with its declared sibling resources and isolated workspace',async()=>{
+ vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
+ const tool=toolFixture({name:'expense',sourcePaths:['scripts/legacy.py'],language:'Python'}),inspection=inspectionFixture([tool]);
+ const source='import json,sys\nfrom pathlib import Path\nrules=json.loads((Path(__file__).resolve().parents[1]/"assets"/"rules.json").read_text())\nclaim=json.loads((Path("workspace")/(json.load(sys.stdin)["claim_id"]+".json")).read_text())\nprint(json.dumps({"limit":rules["limit"],"amount":claim["amount"]}))\n';
+ const result=generatePortableCandidate({archive:{'SKILL.md':strToU8(SKILL_MD)},base:{skillFile:'SKILL.md',skillId:'test'} as any,inspection,
+  decisions:[{toolId:tool.toolId,form:'SCRIPT',language:'python'}] as any,version:'2.0.0',implementations:{[tool.toolId]:{language:'python',sourcePath:'migration-skill/scripts/expense.py',source,additionalFiles:[{path:'migration-skill/assets/rules.json',content:'{"limit":150}'},{path:'migration-skill/README.md',content:'Deployment'}],dependencies:[],generatedBy:'A4'}} as any});
+ const executed=await new LocalWorker().run({requestId:'packaged-script',program:'python',args:[result.generations[0]!.entrypoint!],separateWorkspace:true,
+  files:Object.entries(result.files).map(([path,content])=>({path,content})),workspaceFiles:[{path:'workspace/one.json',content:strToU8('{"amount":42}')}],stdin:'{"claim_id":"one"}'});
+ expect(executed.exitCode,executed.stderr).toBe(0);expect(JSON.parse(executed.stdout)).toEqual({limit:150,amount:42});
+});

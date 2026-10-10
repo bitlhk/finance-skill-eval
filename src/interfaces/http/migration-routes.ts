@@ -179,6 +179,7 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
     const current=report.project.candidate?.artifactSha256===packaged.candidateDigest;
     const verified = current&&report.verification.delivery.status === "VERIFIED";
     return reply.type("application/zip").header("x-migration-acceptance", verified?'VERIFIED':'UNVERIFIED')
+      .header("x-migration-candidate-digest", packaged.candidateDigest)
       .header("x-migration-business-acceptance", current?report.verification.targetExecution:'STALE')
       .header("x-migration-reuse-acceptance", current?report.verification.reuseAcceptance:'STALE')
       .header("content-disposition", `attachment; filename="${name}${verified ? "" : "-unverified"}.zip"`)

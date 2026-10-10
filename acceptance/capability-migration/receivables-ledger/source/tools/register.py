@@ -1,7 +1,7 @@
 """The old application's registration boundary; no business behavior here."""
-from .ledger import open_ledger, summarize_ledger, close_ledger
+from .ledger import query_receivables, summarize_receivables
 
 
 def register(agent):
-    for function in (open_ledger, summarize_ledger, close_ledger):
+    for function in (query_receivables, summarize_receivables):
         agent.register_tool(function)

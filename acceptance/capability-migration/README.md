@@ -4,12 +4,12 @@
 
 | Skill | 迁移边界 | 验收目标 |
 | --- | --- | --- |
-| supplier-dossier | 宿主目录发现 + 文件读取，两项能力同时满足 | 真实诊断、生成、已有 Runtime 合同复用、2 开发 + 3 留出案例、页面采用 |
-| receivables-ledger | 大接口响应保留在业务工具进程，后续调用使用不透明句柄 | 保留逻辑迁移为共享 MCP，不转交 Builder；2 开发 + 3 留出案例、页面采用 |
+| supplier-dossier | 宿主目录发现 + 文件读取，两项能力同时满足 | 真实诊断、生成、已有 Runtime 合同复用、2 开发 + 3 留出案例、采用、复用验收与验证下载 |
+| receivables-ledger | 大接口响应保存在工具侧查询快照，后续调用按用户选择消费 | 保留逻辑迁移为共享 MCP，不转交 Builder；3 开发 + 4 留出案例、采用、复用验收与验证下载 |
 | payment-exception | 已有文件能力，但缺少可信人工审批与暂停恢复 | 拒绝部分匹配，保留并导出全部三项需求，不创建假 Runtime 绑定 |
 
 付款例外的预期是阻断，不能把它计为迁移成功或 Runtime/Judge 已通过。它不包含真实付款操作。
-正向路径包含成功、缺件、冲突、不可信文件、跨任务隔离、空账本、精度、客户不存在和伪造句柄。
+正向路径包含成功、缺件、冲突、不可信文件、跨任务隔离、大响应预览与完整数据的区分、选择发票、空账本、精度、客户不存在、伪造引用和无效选择。
 
 `source/` 是唯一交给迁移 Agent 的输入。`manifest.mjs` 保存独立业务服务数据、开发题与冻结留出题；没有把留出答案写进 Skill。
 `test_ledger_source.py` 直接核对源工具逻辑，仅属离线回归，不算真模型验收。
@@ -32,7 +32,7 @@ node --env-file=.env.local scripts/verify-capability-skills-ui.mjs
 脚本启动独立 Eval、合成业务服务和浏览器，结束后关闭；外部 Launcher 由启动者管理。
 公开报告仅保留通过状态、阶段、案例与检查项；源码诊断、运行记录和失败详情留在临时私有目录。
 
-总入口 `scripts/verify-migration-acceptance-ui.mjs` 已接入三项，输出分别统计 `migratedSkills`、`expectedBlockedSkills` 与 `fullExpandedScenarioAcceptancePassed`。
+总入口 `scripts/verify-migration-acceptance-ui.mjs` 已接入三项，输出分别统计 `migratedSkills`、`expectedBlockedSkills`、`freshRealSkills`、`continuedRealSkills`、`failedSkills` 与 `fullExpandedScenarioAcceptancePassed`。
 历史 `fullFiveSkill*` 字段仍只代表原五个，不偷换为八个；配置了八个并不意味着八个已通过。
 
 ## 验收推动的修复
@@ -56,6 +56,8 @@ A2/A4 无法解析 JSON 时，在原执行结束后通过无工具模型调用�
 若诊断没有业务 Tool 和逐 Tool 决策，生成阶段直接保留并规范化原 Skill 文档，不调用 A4 编造工具或空的迁移说明。
 
 ## 2026-10-08 实际验证记录
+
+以下均为历史版本记录，不代表当前版本重新验收。应收账款旧版的 open/close 工具已从当前源码移除；历史失败记录保留原名称，不能沿用为新版通过证据。
 
 - supplier-dossier：全新真实诊断、生成、Runtime 执行与 Judge；最终 5/5 通过，并通过 UI 采用和刷新确认。
   报告：`reports/capability-skills-ui-1791429249771/result.json`。

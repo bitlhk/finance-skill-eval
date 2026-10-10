@@ -114,6 +114,14 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const relocations=new Map<string,Set<string>>();
   const relocated=(from:string,to:string)=>{const targets=relocations.get(from)??new Set<string>();targets.add(to);relocations.set(from,targets);};
   const replacedResources=new Set<string>();
+  const replaceableResources=new Set(graphDependencies.filter(dep=>dep.owner==='TOOL'&&dep.toolIds.every(id=>migratedIds.has(id)))
+    .flatMap(dep=>dep.resolvedPaths??[]).filter(path=>exclusivelyMigrated(path)
+      &&input.inspection.tools.every(tool=>!tool.sourcePaths.includes(path)||migratedIds.has(tool.toolId)))
+    .map(path=>{
+      const relative=path.startsWith(skillRoot)?path.slice(skillRoot.length):path;
+      return `${hasMcp?'skill/':''}${normalizedSkill.moves.find(move=>move.from===relative)?.to??relative}`;
+    }).filter(path=>!input.skillDelivery?.files[hasMcp&&path.startsWith('skill/')?path.slice(6):path]));
+  const claimedToolPaths=new Set<string>();
 
   // Tools that share one MCP service each declare that service's files, so the same path arriving
   // twice is normal -- as long as it is the same bytes. Two Tools disagreeing about a file they
@@ -121,9 +129,15 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const claim=(entries:Array<{path:string;content:string}>)=>{
     for(const entry of entries){
       const existing=files[entry.path];
-      if(existing===undefined){files[entry.path]=strToU8(entry.content);continue;}
+      // The first A4 delivery may replace an exclusively owned source resource.
+      // Subsequent tools still have to agree on its bytes; source and two tools
+      // must not be confused as the same kind of collision.
+      if(existing===undefined||replaceableResources.has(entry.path)&&!claimedToolPaths.has(entry.path)){
+        files[entry.path]=strToU8(entry.content);claimedToolPaths.add(entry.path);continue;
+      }
       if(Buffer.from(existing).toString('utf8')!==entry.content)
         throw Object.assign(new Error(`生成的 ${entry.path} 被两个 Tool 以不同内容声明；不会静默覆盖`),{statusCode:409});
+      claimedToolPaths.add(entry.path);
     }
     return entries.map(entry=>entry.path);
   };
@@ -161,7 +175,17 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     const module=language==='node'?nodeName(tool.name):pythonName(tool.name);
     const extra='additionalFiles' in implementation?implementation.additionalFiles:[];
     const dependencies='dependencies' in implementation?implementation.dependencies:[];
-    const entries=[{path:implementation.sourcePath,content:implementation.source},...extra],multi=entries.length>1;
+    const declaredEntries=[{path:implementation.sourcePath,content:implementation.source},...extra];
+    // migration-skill/ is A4's isolated delivery root, not a directory inside the
+    // final Skill. Remove that root uniformly; never infer a new script module
+    // from the common parent of code + assets + README.
+    const deliveryRoot=Boolean(detailed?.generatedBy)&&packagePath(implementation.sourcePath).startsWith('migration-skill/scripts/');
+    if(deliveryRoot&&!declaredEntries.every(file=>packagePath(file.path).startsWith('migration-skill/')))
+      throw Object.assign(new Error(`Script ${tool.name} 的交付文件混用了 Skill 根目录，请统一声明路径`),{statusCode:409});
+    const entries=declaredEntries.map(file=>({...file,path:deliveryRoot?packagePath(file.path).slice('migration-skill/'.length):packagePath(file.path)})),multi=entries.length>1;
+    if(entries.some(file=>isWorkspaceData(file.path)))
+      throw Object.assign(new Error('Script 交付包含工作区业务数据；请移除测试数据后重新交付'),{statusCode:409});
+    const entrypoint=entries[0]!.path;
     // Preserve relative relationships, but do not repeat the common source directory.
     const parents=entries.map(file=>packagePath(file.path).split('/').slice(0,-1));
     let prefixLength=0;while(prefixLength<parents[0]!.length&&parents.every(parts=>parts[prefixLength]===parents[0]![prefixLength]))prefixLength++;
@@ -172,14 +196,14 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     // A4 has already compiled and contract-tested its declared package layout. Preserve that
     // layout when it is already under scripts/: moving the entrypoint one directory deeper can
     // silently break __file__/import.meta.url resource lookups after the contract has passed.
-    const preserveDeclaredLayout=Boolean(detailed?.generatedBy)&&entries.every(file=>packagePath(file.path).startsWith('scripts/'));
+    const preserveDeclaredLayout=Boolean(detailed?.generatedBy)&&entrypoint.startsWith('scripts/');
     // Node only treats a bare .js as ESM when a package.json says so, and the platform runs
     // the entrypoint as `node <path>`. A single non-A4 file therefore ships as .mjs.
     const target=preserveDeclaredLayout
-      ?`${hasMcp?'skill/':''}${packagePath(implementation.sourcePath)}`
+      ?`${hasMcp?'skill/':''}${entrypoint}`
       :language==='python'
-       ?(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.py`)
-       :(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.mjs`);
+       ?(multi?`${base}${module}/${relative(entrypoint)}`:`${base}${module}.py`)
+       :(multi?`${base}${module}/${relative(entrypoint)}`:`${base}${module}.mjs`);
     const written:{path:string;content:string}[]=entries.map((file,index)=>({
       path:preserveDeclaredLayout?`${hasMcp?'skill/':''}${packagePath(file.path)}`:multi?`${base}${module}/${relative(file.path)}`:target,
       content:index===0&&language==='python'?withPep723(file.content,dependencies):file.content,

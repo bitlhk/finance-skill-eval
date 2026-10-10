@@ -12,6 +12,7 @@ import {createEvaluationService} from '../dist/service/server.js';
 import {analyzeWithAgent,implementWithAgent} from '../dist/migration/infrastructure/migration-agent.js';
 import {capabilitySkills,supplierSuite,ledgerSuite,ledgerFixture} from '../acceptance/capability-migration/manifest.mjs';
 import {verifyImprovementThroughUi} from './lib/verify-improvement-ui.mjs';
+import {verifyReuseDeliveryThroughUi} from './lib/verify-reuse-delivery-ui.mjs';
 import {writeAcceptanceResult} from './lib/migration-acceptance-results.mjs';
 
 assert(process.env.MIGRATION_TEST_LAUNCHER_INFO,'A private live real-model Launcher is required');
@@ -111,7 +112,7 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
       rep=await api('GET',base+'/report');assert(rep.project.candidate);await privateRecord('generated-report',rep);
       if(current==='receivables-ledger'){
         const services=rep.project.portableGenerations??[];
-        assert.equal(services.length,3);assert(services.every(g=>g.form==='MCP'));
+        assert.equal(services.length,2);assert(services.every(g=>g.form==='MCP'));
         assert.equal(new Set(services.map(g=>JSON.stringify([g.start,g.prepare]))).size,1,'Tool-owned handles need one shared MCP service');
         outcome.checks.push('business_state_preserved_in_one_mcp_service');
       }
@@ -151,7 +152,7 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
       }
       if(current==='receivables-ledger'){
         phase='technical';
-        const probes={open_ledger:{customer_id:'AR-EMPTY'},summarize_ledger:{ledger_ref:'invalid-technical-probe'},close_ledger:{ledger_ref:'invalid-technical-probe'}};
+        const probes={query_receivables:{customer_id:'AR-EMPTY'},summarize_receivables:{snapshot_ref:'invalid-technical-probe'}};
         for(const tool of rep.inspection.tools){
           assert(probes[tool.name],'Unexpected business tool');
           const card=page.locator(`article[id="migration-tool-${tool.toolId}"]`);
@@ -163,7 +164,7 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
         outcome.checks.push('mcp_protocol_smoke_tests');
       }
       // Isolated invalid-handle probes above check protocol behavior only. A real
-      // shared handle and its complete lifecycle must pass the agent cases below.
+      // query snapshot and its actual business consumption must pass the agent cases below.
       await page.locator('.stage-actions').getByRole('button',{name:'验证实际效果',exact:true}).click();phase='evaluation';
       const suite=current==='supplier-dossier'?supplierSuite:ledgerSuite;
       const improvement=await verifyImprovementThroughUi({page,api,base,suite,environmentId:env.environmentId,verifyExternalEvidence:async()=>{
@@ -176,13 +177,16 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
         }
         for(const id of ['ledger-large','ledger-empty','ledger-decimals']){
           const calls=job.report.cases.find(c=>c.caseId===id).right.toolCalls.map(c=>c.name);
-          assert(calls.indexOf('open_ledger')>=0&&calls.indexOf('summarize_ledger')>calls.indexOf('open_ledger')&&calls.indexOf('close_ledger')>calls.indexOf('summarize_ledger'));
+          assert(calls.indexOf('query_receivables')>=0&&calls.indexOf('summarize_receivables')>calls.indexOf('query_receivables'));
         }
         assert(businessCalls.some(c=>c.customerId==='AR-200'&&c.found));return ['real_shared_mcp_lifecycle_and_business_service'];
       }});
       outcome.provenance.execution='REAL';outcome.provenance.judge='REAL';
       outcome.cases=improvement.cases;outcome.checks.push(...improvement.externalChecks);
-      outcome.phases=['migration','improvement','final-verification','adoption'];outcome.passed=true;
+      phase='reuse-acceptance';
+      outcome.deliveryEvidence=await verifyReuseDeliveryThroughUi({page,api,base,
+        persistEvidence:async value=>privateRecord('delivery-'+Date.now(),value),downloadPath:path.join(privateDir,current+'-verified.zip')});
+      outcome.phases=['migration','technical','improvement','final-verification','adoption','reuse-acceptance','verified-export'];outcome.passed=true;
       assert.deepEqual(errors,[]);await page.screenshot({path:path.join(report,current+'.png'),fullPage:true});
     }catch(error){outcome.passed=false;outcome.failurePhase=phase;outcome.failureType=error.name;await privateRecord('failure',{error:String(error),page:await page.locator('body').innerText().catch(()=>'' )});await page.screenshot({path:path.join(report,current+'-failure.png'),fullPage:true}).catch(()=>{});console.error(current+' FAILED '+phase+' '+error.name);}
     finally{await ctx.close();outcomes.push(outcome);await writeFile(path.join(report,'result.json'),JSON.stringify({passed:outcomes.length===selected.length&&outcomes.every(o=>o.passed),outcomes},null,2));console.log(current+' FINISHED '+outcome.passed);}
