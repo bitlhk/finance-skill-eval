@@ -50,9 +50,10 @@ const incompleteToolFiles=(inspection:Inspection)=>{const paths=new Set(inspecti
 
 export function MigrationPanel({catalog,api,uploadedAsset,onUpload,onUseAsset,refreshKey=0}:{catalog:Catalog;api:Api;uploadedAsset?:SkillAsset|null;onUpload?:()=>void;onUseAsset?:(asset:SkillAsset)=>Promise<void>;refreshKey?:number}){
   const [projects,setProjects]=useState<Project[]>([]),[legacyProjects,setLegacyProjects]=useState<LegacyProject[]>([]),[project,setProject]=useState<Project|null>(null),[report,setReport]=useState<Report|null>(null);
-  const [listView,setListView]=useState(true),[stage,setStage]=useState(0),[furthestStage,setFurthestStage]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [listView,setListView]=useState(true),[stage,setStage]=useState(0),[furthestStage,setFurthestStage]=useState(0),[requestBusy,setBusy]=useState(false),[error,setError]=useState('');
   const [generating,setGenerating]=useState(false);
   const [remoteGenerationStatus,setRemoteGenerationStatus]=useState<MigrationGenerationProgress['status']|null>(null);
+  const busy=requestBusy||remoteGenerationStatus==='RUNNING';
   const [sourceId,setSourceId]=useState(''),[decisions,setDecisions]=useState<Record<string,{form:Form;language?:string;reason:string}>>({});
   const [replacementId,setReplacementId]=useState(''),[validationToolId,setValidationToolId]=useState('');
   useEffect(()=>{if(stage===4&&validationToolId)(document.getElementById('migration-runtime-testing')??document.getElementById('migration-tool-'+validationToolId))?.scrollIntoView({block:'start',behavior:'smooth'})},[stage,validationToolId]);
@@ -99,7 +100,7 @@ export function MigrationPanel({catalog,api,uploadedAsset,onUpload,onUseAsset,re
   const post=<T,>(suffix:string,body:unknown={})=>api<T>(`/api/migrations${suffix}`,{method:'POST',body:JSON.stringify(body)});
   async function loadReport(p=project!){const next=await api<Report>(`/api/migrations/${p.id}/report`);setReport(next);setProject(next.project);setProjects(old=>[next.project,...old.filter(x=>x.id!==next.project.id)]);seedDecisions(next.inspection,next.decisions);setFurthestStage(next.workflow.furthestStage);setStage(current=>current>next.workflow.furthestStage?next.workflow.furthestStage:current);}
   function seedDecisions(value:Inspection|null|undefined,saved:Decision[]=[]){if(value)setDecisions(old=>Object.fromEntries(value.tools.map(t=>{const d=saved.find(x=>x.toolId===t.toolId),form=d&&['MCP','SCRIPT'].includes(d.form)?d.form:suggestedForm(t),existing=old[t.toolId];return [t.toolId,existing?.language?existing:{form:existing?.form??form,language:d?.language??suggestedLanguage(t,existing?.form??form),reason:existing?.reason??''}]})));}
-  function select(p:Project){setDecisions({});setProject(p);setReport(null);setOptimizationJob(null);setStage(1);setFurthestStage(1);}
+  function select(p:Project){setDecisions({});setProject(p);setReport(null);setOptimizationJob(null);const pending=p.generationAttempts?.at(-1)?.progress.status;const next=pending&&pending!=='COMPLETED'?2:1;setStage(next);setFurthestStage(next);}
   async function inspectProject(p=project!){await post(`/${p.id}/inspect`);await loadReport(p);goToStage(1);}
   async function create(){const asset=catalog.uploadedSkills.find(a=>a.assetId===sourceId);if(!asset)throw new Error('请选择原始 Skill 工程');const p=await post<Project>('',{sourceAssetId:sourceId,name:`${asset.displayName} 迁移`});select(p);await inspectProject(p);}
   async function saveDecisions(){if(!project||!inspection)return;for(const tool of inspection.tools){const d=decisions[tool.toolId]??defaultDecision(tool);await api(`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,{method:'PUT',body:JSON.stringify({form:d.form,language:d.language,baseAssetId:inspection.assetId})});}}
@@ -210,7 +211,8 @@ function GenerationProgress({api,projectId}:{api:Api;projectId:string}){
     void poll();return()=>{cancelled=true;window.clearTimeout(timer);};
   },[api,projectId]);
   useEffect(()=>{const started=Date.now(),timer=window.setInterval(()=>setElapsed(Math.floor((Date.now()-started)/1000)),1000);return()=>window.clearInterval(timer);},[]);
-  const duration=elapsed<60?`${elapsed} 秒`:`${Math.floor(elapsed/60)} 分 ${elapsed%60} 秒`;
+  const totalSeconds=progress?Math.floor(progress.elapsedMs/1000):elapsed;
+  const duration=totalSeconds<60?`${totalSeconds} 秒`:`${Math.floor(totalSeconds/60)} 分 ${totalSeconds%60} 秒`;
   const labels=generationPhaseLabels;
   const current=progress?.steps.at(-1);
   return <section className="generation-progress" role="status" aria-live="polite"><LoaderCircle size={24}/><div><h4>{current?labels[current.phase]:'正在准备迁移'}</h4><p>完成后会自动显示产物；已完成阶段会保存，重新打开页面可查看进度。</p><div className="generation-progress-track" aria-hidden="true"><span/></div><small>已运行 {duration}{current?` · 当前阶段 ${Math.max(0,Math.floor((Date.now()-Date.parse(current.startedAt))/1000))} 秒`:''}</small>{unavailable&&<p>暂时无法获取进度，生成请求仍在等待结果。</p>}{!!progress?.steps.length&&<details><summary>查看阶段耗时</summary>{progress.steps.slice(0,-1).map((step,i)=><p key={i}>{labels[step.phase]}：{Math.round(step.elapsedMs/1000)} 秒</p>)}</details>}</div></section>;
