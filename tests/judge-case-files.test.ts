@@ -47,6 +47,15 @@ it('does not send read file contents absent from the answer to the judge',async(
   expect(raw).not.toContain(content);
   expect(raw).not.toContain('PRIVATE_UNREAD_CONTENT');
 });
+
+it('distinguishes optional missing read receipts from malformed and conflicting receipts',async()=>{
+ const absent=fixture();delete absent.metadata.caseWorkspace;
+ expect((await capture(absent)).payload.runtimeEvidence.caseFiles).toEqual({status:'NOT_VERIFIED',reason:'WORKSPACE_READ_RECEIPT_NOT_PROVIDED'});
+ const malformed=fixture();malformed.metadata.caseWorkspace={closed:true};
+ expect((await capture(malformed)).payload.runtimeEvidence.caseFiles).toEqual({status:'NOT_VERIFIED',reason:'INVALID_WORKSPACE_READ_RECEIPT'});
+ const conflict=fixture();conflict.metadata.workspaceFilesDigest='0'.repeat(64);
+ expect((await capture(conflict)).payload.runtimeEvidence.caseFiles).toEqual({status:'NOT_VERIFIED',reason:'WORKSPACE_RECEIPT_MISMATCH'});
+});
 describe('does not promote unbound or inconsistent receipts',()=>{
   const mutations:Record<string,(e:ReturnType<typeof fixture>)=>void>={
     'wrong case':e=>{e.caseId='other-case';},

@@ -18,6 +18,17 @@ it('does not reinterpret incomplete coverage as PASS or retry the verdict',async
  complete.mockResolvedValue({content:JSON.stringify({status:'INCOMPLETE',reasons:['Original requirement needs actual deployment switching']})});
  expect(await runReuseAcceptanceModel({mode:'COVERAGE',context:{}})).toMatchObject({status:'INCOMPLETE'});expect(complete).toHaveBeenCalledTimes(1);
 });
+
+it('uses valid enum values in coverage and verdict JSON examples, with alternatives outside JSON',async()=>{
+ complete.mockResolvedValueOnce({content:JSON.stringify({status:'INCOMPLETE',reasons:['Need evidence']})});
+ await runReuseAcceptanceModel({mode:'COVERAGE',context:{}});
+ const coveragePrompt=complete.mock.calls[0]![0].messages[0].content;
+ expect(coveragePrompt).toContain('"status":"INCOMPLETE"');expect(coveragePrompt).not.toContain('"status":"COVERED|INCOMPLETE"');
+ complete.mockResolvedValueOnce({content:JSON.stringify({checks:[{checkId:'id',status:'INDETERMINATE',reason:'Need evidence',caseIds:['case']}]})});
+ await runReuseAcceptanceModel({mode:'VERIFY',context:{}});
+ const verdictPrompt=complete.mock.calls[1]![0].messages[0].content;
+ expect(verdictPrompt).toContain('"status":"INDETERMINATE"');expect(verdictPrompt).not.toContain('"status":"PASSED|FAILED|INDETERMINATE"');
+});
 const plan=(checkId='original')=>({name:'Execution',groups:[{id:'group',cases:[{id:'case',input:'Check the actual result',criteria:['Actual result']}]}],checks:[{checkId,caseIds:['case'],criteria:['Original requirement']}],unresolvedQuestions:[]});
 const context={design:{scope:'Unchanged scope',acceptanceChecks:[{id:'original',purpose:'Business behavior',procedure:'Execute',expectedResult:'Actual result'}]}};
 it('re-plans one generated reference mismatch against unchanged original requirements',async()=>{

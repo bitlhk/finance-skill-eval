@@ -19,8 +19,10 @@ export function judgeCaseFiles(evalCase:EvalCase,evidence:RuntimeExecutionEviden
   if(!parsedFiles.success)return missing('INVALID_CASE_FILES');
   const files=parsedFiles.data;
   const digest=workspaceFilesDigest(files);
+  if(evidence.metadata.caseWorkspace==null)return missing('WORKSPACE_READ_RECEIPT_NOT_PROVIDED');
   const receipt=receiptSchema.safeParse(evidence.metadata.caseWorkspace);
-  if(!receipt.success||receipt.data.digest!==digest||evidence.metadata.workspaceFilesDigest!==digest)
+  if(!receipt.success)return missing('INVALID_WORKSPACE_READ_RECEIPT');
+  if(receipt.data.digest!==digest||evidence.metadata.workspaceFilesDigest!==digest)
     return missing('WORKSPACE_RECEIPT_MISMATCH');
   const expected=new Map(files.map(file=>[file.path,{
     sha256:createHash('sha256').update(file.content,'utf8').digest('hex'),bytes:Buffer.byteLength(file.content,'utf8'),

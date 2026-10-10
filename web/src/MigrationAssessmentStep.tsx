@@ -20,7 +20,7 @@ const labels={PASS:'通过',FAIL:'不通过',INDETERMINATE:'无法判定'};
 const executionLabels:Record<string,string>={queued:'等待执行',preparing:'准备中',running:'执行中',judging:'评估中',completed:'已完成',failed:'运行失败',cancelled:'已取消',interrupted:'已中断'};
 
 export function MigrationAssessmentStep(p:{api:Api;projectId:string;candidateDigest?:string;suites:Array<Suite|null>;experiments:Experiment[];improvementPlans?:ImprovementPlan[];toolOptimizationAttempts?:ToolAttempt[];busy:boolean;refresh:()=>Promise<void>;configure?:()=>void;runtimeId:string;setRuntimeId:(value:string)=>void;runtimes:MigrationRuntime[];modelKey:string;setModelKey:(value:string)=>void;packId:string;setPackId:(value:string)=>void;run:(service?:OriginalServiceInput)=>void|Promise<void>;runSolution?:(leftRuntimeId:string,leftModelId:string)=>Promise<void>;generate?:()=>Promise<void>;next:()=>void;initialMode?:'goals'|'service'|'solution'}){
- const experiments=p.experiments.filter(e=>e.candidateDigest===p.candidateDigest).sort((left,right)=>(right.createdAt??'').localeCompare(left.createdAt??'')||right.jobId.localeCompare(left.jobId));
+ const experiments=p.experiments.filter(e=>e.candidateDigest===p.candidateDigest&&!e.reuseAcceptanceTaskId).sort((left,right)=>(right.createdAt??'').localeCompare(left.createdAt??'')||right.jobId.localeCompare(left.jobId));
  const previous=experiments[0]?.declaredPlan?.configuration,stored=previous?.originalService;
  const [mode,setMode]=useState<''|'goals'|'service'|'solution'>(p.initialMode??(previous?previous.evaluationMode==='service_comparison'?'service':previous.evaluationMode==='solution_comparison'?'solution':'goals':''));
  const [leftRuntimeId,setLeftRuntimeId]=useState(''),[leftModelId,setLeftModelId]=useState('');

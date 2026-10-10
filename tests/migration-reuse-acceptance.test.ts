@@ -38,6 +38,12 @@ it('executes frozen groups through existing suite/runtime/Judge pipeline and bin
  const f=fixture(),p=await f.approve();await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
  const summary=await f.finish();expect(summary.status).toBe('PASSED');expect(summary.result?.checks[0]?.status).toBe('PASSED');expect(f.execution).toHaveBeenCalledTimes(2);expect(f.model.mock.calls.map(c=>c[0].mode)).toEqual(['PLAN','COVERAGE','VERIFY']);
  expect((f.model.mock.calls[0]![0] as any).context.executionContract).toEqual(reuseExecutionContract);
+ const evidenceContract=(f.model.mock.calls[0]![0] as any).context.evaluatorEvidence;
+ expect(evidenceContract.caseJudge.available.join(' ')).toContain('可选 workspaceInputMatches');
+ expect(evidenceContract.caseJudge.unavailable.join(' ')).toContain('workspaceFiles 正文');
+ expect(evidenceContract.caseJudge.unavailable.join(' ')).toContain('脚本内部读取');
+ expect(evidenceContract.checkJudge.available.join(' ')).toContain('真实 candidateFiles');
+ expect(evidenceContract.checkJudge.rule).toContain('原承诺不能删减');
  expect((f.model.mock.calls[2]![0] as any).context).toMatchObject({candidateFiles:{'SKILL.md':'Actual delivered workflow'},candidateReview:{proposalId:'proposal',candidateDigest:'b'.repeat(64)},artifactDigest:'b'.repeat(64)});
  expect(f.readArchive).toHaveBeenLastCalledWith('candidate');
  f.config.revision++;expect((await f.service.summary(f.project.id)).status).toBe('STALE');await f.service.shutdown();
