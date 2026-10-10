@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react';
 import {AlertTriangle,CheckCircle2,FileText,Network,Settings2,Wrench} from 'lucide-react';
 import type {Dependency,DependencyAnalysis} from '../../src/migration/domain/migration-dependency';
+import {dependencyBlocksMigration,isExecutionInput} from '../../src/migration/domain/migration-dependency';
 import type {RuntimeHarnessCapability} from '../../src/migration/domain/migration-model';
 import type {MigrationReuseProposal} from '../../src/migration/domain/migration-reuse-design';
 import {MigrationReusePlan} from './MigrationReusePlan';
@@ -20,7 +21,7 @@ export function DiagnosisStep(p:{api:Api;projectId:string;analysis?:DependencyAn
  async function refreshRuntime(){setRuntime(await p.api<RuntimeConfiguration>(`/api/migrations/${p.projectId}/runtime-configuration`));setRuntimeError('')}
  useEffect(()=>{void refreshRuntime().catch(e=>setRuntimeError(String(e)))},[p.projectId,a]);
  const shared=a?.dependencies.filter(d=>d.toolIds.length>1)??[];
- const remaining=a?.dependencies.filter(d=>d.blocking&&(d.owner==='UNKNOWN'||d.contractStatus!=='KNOWN'||d.owner==='TOOL'&&d.availability!=='AVAILABLE')).length??0;
+ const remaining=a?.dependencies.filter(dependencyBlocksMigration).length??0;
  const documentFindings=(p.skillFindings??[]).filter(f=>!isPackageFinding(f));
  const injected=a?.dependencies.filter(d=>d.owner==='RUNTIME'&&d.action==='INJECT')??[];
  const moved=a?.dependencies.filter(d=>d.action==='MOVE_TO_RUNTIME')??[];
@@ -35,7 +36,7 @@ export function DiagnosisStep(p:{api:Api;projectId:string;analysis?:DependencyAn
  {!!a?.rejectedClaims&&<p role="alert">有 {a.rejectedClaims} 条结论缺少源码依据，请继续分析。</p>}
  <HarnessCapabilities capabilities={p.runtimeCapabilities} download={p.downloadRuntimeRequirements}/>
  {shared.length>0&&<section className="diagnosis-shared"><h3>多个工具共用的依赖</h3><p>共用项只需配置一次。</p>{(['RUNTIME','TOOL','UNKNOWN'] as const).map(owner=>{const values=shared.filter(d=>d.owner===owner);return values.length?<div key={owner}><h4>{owner==='RUNTIME'?'运行环境提供':owner==='TOOL'?'工具需要携带':'需要确认归属'}</h4>{values.map(render)}</div>:null})}</section>}
- {p.tools.map((tool,index)=>{const choice=p.choices[tool.toolId]??{form:tool.recommendedForm,language:tool.recommendedLanguage,reason:''},chain=a?.chains.find(c=>c.toolId===tool.toolId),dependencies=a?.dependencies.filter(d=>d.toolIds.includes(tool.toolId))??[],owned=dependencies.filter(d=>d.toolIds.length===1),unresolved=owned.filter(d=>d.blocking&&(d.owner==='UNKNOWN'||d.contractStatus!=='KNOWN'||d.owner==='TOOL'&&d.availability!=='AVAILABLE')),confirmed=owned.filter(d=>!unresolved.includes(d));return <article className="diagnosis-tool" key={tool.toolId}><div className="diagnosis-tool-header"><h3>{index+1}. {tool.name}</h3><span className={`diagnosis-status${unresolved.length?' attention':''}`}>{unresolved.length?<AlertTriangle size={14}/>:<CheckCircle2 size={14}/>} {unresolved.length?`${unresolved.length} 项待处理`:'依赖已确认'}</span></div><details><summary>查看源码位置</summary><p className="mono">{tool.sourcePaths.join(' · ')}</p></details>
+{p.tools.map((tool,index)=>{const choice=p.choices[tool.toolId]??{form:tool.recommendedForm,language:tool.recommendedLanguage,reason:''},chain=a?.chains.find(c=>c.toolId===tool.toolId),dependencies=a?.dependencies.filter(d=>d.toolIds.includes(tool.toolId))??[],owned=dependencies.filter(d=>d.toolIds.length===1),unresolved=owned.filter(dependencyBlocksMigration),confirmed=owned.filter(d=>!unresolved.includes(d));return <article className="diagnosis-tool" key={tool.toolId}><div className="diagnosis-tool-header"><h3>{index+1}. {tool.name}</h3><span className={`diagnosis-status${unresolved.length?' attention':''}`}>{unresolved.length?<AlertTriangle size={14}/>:<CheckCircle2 size={14}/>} {unresolved.length?`${unresolved.length} 项待处理`:'依赖已确认'}</span></div><details><summary>查看源码位置</summary><p className="mono">{tool.sourcePaths.join(' · ')}</p></details>
  <h4>迁移方案</h4><div className="migration-fields"><label>转换形式<select value={choice.form} disabled={p.busy} onChange={e=>{const form=e.target.value as Choice['form'];p.choose(tool.toolId,{...choice,form,language:form==='SCRIPT'&&choice.language==='java'?'python':choice.language??tool.recommendedLanguage})}}><option value="MCP">放入 MCP 服务</option><option value="SCRIPT">改成独立脚本</option></select></label><label>实现语言<select disabled={p.busy} value={choice.language??tool.recommendedLanguage} onChange={e=>p.choose(tool.toolId,{...choice,language:e.target.value})}><option value="python">Python{tool.recommendedLanguage==='python'?'（平台建议）':''}</option><option value="node">Node.js{tool.recommendedLanguage==='node'?'（平台建议）':''}</option>{choice.form==='MCP'&&<option value="java">Java{tool.recommendedLanguage==='java'?'（平台建议）':''}</option>}</select></label></div><p>{tool.recommendationReason}</p><p>{choice.form==='MCP'?'同语言的工具会合并到一个 MCP 服务，保留原有业务鉴权逻辑。':'生成可独立执行的脚本，显式接收原运行环境提供的必要数据。'}</p>
  <h4 className="diagnosis-section-title"><Network size={16}/>调用链路</h4>{chain?.nodes.length?<div className="diagnosis-flow">{chain.nodes.map((n,nodeIndex)=><div className="diagnosis-flow-node" key={n.id}><span className="diagnosis-flow-index">{nodeIndex+1}</span><strong>{n.title}</strong><p>{n.detail}</p><details><summary>查看源码依据</summary>{n.evidence.map((e,i)=><div key={i}><small>{e.path}:{e.line}</small><pre>{e.snippet}</pre></div>)}</details></div>)}</div>:<p role="alert">尚未确认完整调用链路，请继续分析。</p>}
  {choice.form==='SCRIPT'&&dependencies.some(d=>d.owner==='RUNTIME'&&d.action==='INJECT'&&!implicitWorkspace(d))&&<p role="alert">此实现需要 Runtime 上下文或凭证注入，Script command 暂不支持，请选择 MCP。</p>}
@@ -77,6 +78,15 @@ function ConnectionEditor(p:{api:Api;projectId:string;tool:Tool;config:RuntimeCo
 }
 
 function DependencyEditor(p:{dependency:Dependency;revision:number;api:Api;projectId:string;busy:boolean;refresh:()=>Promise<void>;runtime?:boolean;provided?:boolean}){
+ if(isExecutionInput(p.dependency))return <ExecutionInputDependency dependency={p.dependency}/>;
+ return <EditableDependency {...p}/>;
+}
+
+export function ExecutionInputDependency({dependency:d}:{dependency:Dependency}){
+ return <section className="diagnosis-dependency" data-dependency={d.key}><h4>{d.name} · 调用时提供</h4><p>{d.executionInput?.contract}</p><p>不需要在迁移前上传实际业务数据。试运行或评测时，通过工具参数或案例工作区文件提供；数据不打入 Skill 交付包。</p><details><summary>查看输入与源码依据</summary>{d.schema&&<pre>{JSON.stringify(d.schema,null,2)}</pre>}{d.executionInput?.evidence.map((e,i)=><div key={i}><small>{e.path}:{e.line}</small><pre>{e.snippet}</pre></div>)}</details></section>;
+}
+
+function EditableDependency(p:{dependency:Dependency;revision:number;api:Api;projectId:string;busy:boolean;refresh:()=>Promise<void>;runtime?:boolean;provided?:boolean}){
  const d=p.dependency,[text,setText]=useState(''),[loaded,setLoaded]=useState(false),[working,setWorking]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
  const url=`/api/migrations/${p.projectId}/dependencies/${d.id}`,data=['DATA','CONFIG'].includes(d.kind),schema=d.schema;
  useEffect(()=>{let active=true;setLoaded(false);if(data)void p.api<{provided:boolean;value:unknown}>(url+'/data').then(v=>{if(active){setText(v.provided?(schema?.type==='string'?String(v.value):JSON.stringify(v.value,null,2)):'');setLoaded(true)}}).catch(e=>{if(active)setError(String(e))});else setLoaded(true);return()=>{active=false}},[url,data]);

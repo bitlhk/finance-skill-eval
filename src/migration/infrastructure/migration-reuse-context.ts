@@ -4,8 +4,8 @@ import type {ProjectInspection} from '../domain/migration-model.js';
 function inspectionFacts(value:ProjectInspection){
   return {tools:value.tools.map(({name,sourcePaths,portability,inputSchema,outputSchema,entrypoint})=>
     ({name,sourcePaths,portability,inputSchema,outputSchema,entrypoint})),
-    dependencies:value.dependencyAnalysis?.dependencies.map(({key,name,owner,action,purpose,schema,binding,resolvedPaths,contractStatus,blocking,sensitive})=>
-      ({key,name,owner,action,purpose,schema,binding,resolvedPaths,contractStatus,blocking,sensitive})),
+    dependencies:value.dependencyAnalysis?.dependencies.map(({key,name,owner,action,purpose,schema,binding,resolvedPaths,contractStatus,blocking,sensitive,executionInput})=>
+      ({key,name,owner,action,purpose,schema,binding,resolvedPaths,contractStatus,blocking,sensitive,executionInput})),
     runtimeCapabilities:value.runtimeCapabilities?.map(({name,reason,usageContract,contract,constraints,consumerTools})=>
       ({name,reason,usageContract,contract,constraints,consumerTools}))};
 }

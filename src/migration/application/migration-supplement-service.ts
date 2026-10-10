@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import type {Supplement} from '../domain/migration-dependency.js';
+import {isExecutionInput} from '../domain/migration-dependency.js';
 import {validateDependencyData} from '../domain/migration-dependency-schema.js';
 import {migrationConflict as conflict} from './migration-errors.js';
 import type {MigrationProjectStore} from './migration-project-store.js';
@@ -40,6 +41,7 @@ export class MigrationSupplementService {
     const value=await this.projects.get(id),diagnostic=value.sourceInspection?.dependencyAnalysis;
     const dependency=diagnostic?.dependencies.find(item=>item.id===dependencyId);
     if(!dependency)return conflict('缺项已变化，请刷新诊断');
+    if(isExecutionInput(dependency)&&!explanation)return conflict('调用输入请通过试运行参数或评测案例提供，不作为迁移补充材料保存');
     if(dependency.owner!=='TOOL'&&!explanation)return conflict('运行时依赖请在运行配置中提供；归属未确认的依赖请补充契约说明');
     const record=await this.supplements.get(id);
     if(!Number.isInteger(revision)||revision!==record.revision)return conflict('补充内容已变化，请刷新后再提交');
