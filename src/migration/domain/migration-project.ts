@@ -42,6 +42,14 @@ export const persistedMigrationProjectSchema = z.object({
   createdAt: z.string().min(1),
   source: skillAssetReferenceSchema,
   candidate: skillAssetReferenceSchema.nullable(),
+  generationAttempts:z.array(z.object({
+    attemptId:z.string().min(1),inputDigest:z.string().regex(/^[a-f0-9]{64}$/u),baseAssetId:z.string().min(1),
+    proposalId:z.string().min(1),version:z.string().min(1),candidate:skillAssetReferenceSchema.optional(),
+    progress:z.object({status:z.enum(['RUNNING','COMPLETED','FAILED','INTERRUPTED']),startedAt:z.string().min(1),elapsedMs:z.number().nonnegative(),
+      steps:z.array(z.object({phase:z.enum(['PREPARING','GENERATING','PACKAGING','STATIC_SCAN','CANDIDATE_ANALYSIS','PLAN_REVIEW']),startedAt:z.string().min(1),elapsedMs:z.number().nonnegative()}).passthrough()),
+      failure:z.object({phase:z.enum(['PREPARING','GENERATING','PACKAGING','STATIC_SCAN','CANDIDATE_ANALYSIS','PLAN_REVIEW']),code:z.string().min(1),message:z.string().min(1),recoverable:z.boolean(),fields:z.array(z.string()).optional()}).optional(),
+    }).passthrough(),
+  }).passthrough()).optional(),
   candidateNotes: z.string(),
   candidateHistory: z.array(z.object({
     asset: skillAssetReferenceSchema,
@@ -140,6 +148,7 @@ export type MigrationProject = {
   decisions?: ToolDecision[];
   portableGenerations?: PortableGeneration[];
   generationStats?:{agentAttempts:number;outputCorrectionAttempts:number};
+  generationAttempts?:import('./migration-generation-progress.js').MigrationGenerationAttempt[];
   portableGenerationDiff?: PortableDiff[];
   technicalValidations?: TechnicalValidation[];
 };

@@ -38,6 +38,12 @@ type WorkflowEvidence = {
  * mutable "current step": refreshing the page must reconstruct the same workflow state.
  */
 export function migrationWorkflow(project: MigrationProject, evidence: WorkflowEvidence): MigrationWorkflow {
+  const pending=project.generationAttempts?.at(-1);
+  if(pending&&pending.progress.status!=='COMPLETED'&&pending.baseAssetId===(project.candidate??project.source).assetId
+    &&pending.proposalId===evidence.migrationPlan?.reuseProposal?.proposalId){
+    return {stage:'GENERATE',furthestStage:2,allowedActions:['INSPECT','SAVE_DECISIONS','GENERATE'],
+      blockers:[pending.progress.failure?.message??'候选生成与检查尚未完成']};
+  }
   if(project.candidate&&project.nativeBindings?.candidateDigest===project.candidate.artifactSha256){
     return {stage:evidence.evaluationCompleted?'EXPORT':'EVALUATE',furthestStage:evidence.evaluationCompleted?6:5,
       allowedActions:['EVALUATE','EXPORT'],blockers:evidence.evaluationCompleted?[]:['已绑定准入工具；本候选尚需实际执行与业务效果验证']};

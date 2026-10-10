@@ -211,6 +211,13 @@ it('does not retry a semantic rejection into approval and records cancellation w
   await expect(createReusePlanner(adapter,model)(input)).resolves.toMatchObject({status:'REVIEWED',review:reuseReviewSchema.parse(rejected.review)});
   expect(complete).toHaveBeenCalledTimes(1);
   expect(reuseReviewIssues(rejected.review,proposal.design,sourceFiles)).not.toEqual([]);
+  // Bad citations do not authorize rewriting an already negative verdict.
+  rejected.review.changes[0].evidence=[{path:'invented.py',snippet:'invented'}];
+  complete.mockClear();
+  await expect(createReusePlanner(adapter,model)(input)).resolves.toMatchObject({status:'REVIEWED',review:{semanticIssues:['Behavior drift']}});
+  expect(complete).toHaveBeenCalledTimes(1);
+  const reviewPrompt=complete.mock.calls[0] as unknown as [{messages:Array<{content:string}>}];
+  expect(reviewPrompt[0].messages[0]!.content).not.toContain('"status":"CONFORMING|NEEDS_CHANGES|UNKNOWN"');
   complete.mockClear();
   await expect(createReusePlanner(adapter,model,AbortSignal.abort(),async trace=>{traces.push(trace)})(input)).rejects.toThrow();
   expect(complete).not.toHaveBeenCalled();expect(traces.at(-1)).toMatchObject({status:'FAILED',failureCode:'TIME_LIMIT',calls:[]});
@@ -267,7 +274,7 @@ it('requires every approved change to have candidate evidence and preserves actu
     decisions:ctx.get().decisions!,baseAssetId:'source',generations:[]})).rejects.toThrow('尚未确认解除');
 });
 
-it('reports transient generation stages and clears stale failure when the next run completes',async()=>{
+it('persists generation stage history and clears the active failure when recovery completes',async()=>{
   const ctx=context();
   const staticAnalysis={status:'COMPLETE' as const,dependencyStatus:'NO_BINDING_IN_CHECKED_SCOPE',incompleteFiles:[]};
   ctx.get().inspection!.staticAnalysis=staticAnalysis;ctx.get().sourceInspection!.staticAnalysis=staticAnalysis;
@@ -287,13 +294,14 @@ it('reports transient generation stages and clears stale failure when the next r
   const pending=await service.executionProgress('migration-fixture');
   expect(pending?.status).toBe('RUNNING');expect(pending?.steps.at(-1)?.phase).toBe('GENERATING');
   pending!.steps.length=0;expect((await service.executionProgress('migration-fixture'))?.steps.length).toBe(2);
-  release();await expect(failed).rejects.toThrow('private provider error');
+  release();await expect(failed).rejects.toThrow('已保存完成阶段');
   const failure=await service.executionProgress('migration-fixture');
   expect(failure?.status).toBe('FAILED');expect(failure?.finishedAt).toBeTruthy();expect(JSON.stringify(failure)).not.toContain('private provider error');
   generate.mockImplementationOnce(async()=>({generationStats:{agentAttempts:1,outputCorrectionAttempts:0}}) as never);
   await service.generate('migration-fixture',{baseAssetId:'source'});
   const completed=await service.executionProgress('migration-fixture');expect(completed?.status).toBe('COMPLETED');
-  expect(completed?.steps.map(step=>step.phase)).toEqual(['PREPARING','GENERATING','PACKAGING','STATIC_SCAN','CANDIDATE_ANALYSIS','PLAN_REVIEW']);
+  expect(completed?.steps.map(step=>step.phase)).toEqual(['PREPARING','GENERATING','PREPARING','GENERATING','PACKAGING','STATIC_SCAN','CANDIDATE_ANALYSIS','PLAN_REVIEW']);
+  expect(completed?.steps[1]?.status).toBe('FAILED');
 });
 
 it('keeps supplemented source available during optimization review and rejects changed materials',async()=>{

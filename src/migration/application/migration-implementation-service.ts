@@ -5,6 +5,7 @@ import {recommendLanguage,type MigrationPlan,type ProjectInspection,type ToolDec
 import type {MigrationAgentResultMapper} from './migration-agent-result-mapper.js';
 import type {MigrationImplementer} from './migration-agent-port.js';
 import {migrationConflict as conflict} from './migration-errors.js';
+import {MigrationGenerationError} from '../domain/migration-generation-progress.js';
 
 export function validSkillFrontmatter(source:string|undefined):boolean{
   const match=source?.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u);
@@ -62,9 +63,11 @@ export class MigrationImplementationService {
           .filter(item=>String(item.status??'').toUpperCase()==='ABSTAINED');
         if(abstained.length){
           const detail=abstained.map(item=>`${item.toolId||'未知 Tool'}：${item.reason?.trim()||'未说明原因'}${item.missing?.length?`（缺 ${item.missing.join('、')}）`:''}`).join('；');
-          return conflict(`有 Tool 无法忠实迁移，已停止生成并退回授权环节重新决策。${detail}`);
+          throw new MigrationGenerationError({phase:'GENERATING',code:'IMPLEMENTATION_ABSTAINED',
+            message:`有 Tool 无法忠实迁移，已停止生成并退回授权环节重新决策。${detail}`,recoverable:false});
         }
-        if(result.status==='ABSTAINED')return conflict(`迁移模型无法完成本次迁移，已退回授权环节重新决策。${String((result.payload as {reason?:string}).reason??'').trim()}`);
+        if(result.status==='ABSTAINED')throw new MigrationGenerationError({phase:'GENERATING',code:'IMPLEMENTATION_ABSTAINED',
+          message:`迁移模型无法完成本次迁移，已退回授权环节重新决策。${String((result.payload as {reason?:string}).reason??'').trim()}`,recoverable:false});
       }
       if(result?.status==='FAILED'){
         if(result.failureKind==='OUTPUT_FORMAT')return conflict(`A4 的模型输出经过格式纠错仍无法解析：${result.reason}。请查看 agent 日志；不重复执行代码生成与工具测试。`);

@@ -11,6 +11,7 @@ import path from 'node:path';
 import {writeJsonAtomic} from '../../service/file-store.js';
 import {reuseModelContext} from './migration-reuse-context.js';
 import type {ReusePlannerTelemetry} from '../domain/migration-reuse-telemetry.js';
+import {MigrationGenerationError} from '../domain/migration-generation-progress.js';
 
 // Select the declared result branch before validating it. A plain union hides
 // nested errors behind "Invalid input", leaving format correction unactionable.
@@ -120,9 +121,11 @@ function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSigna
     '资源位于 Skill 与服务两侧时，核对真实消费者、路径及内容；相同资源的交付副本不自动等于业务语义变化，错位读取、内容分歧或违反明确方案仍须报告。',
     '这是源码审查，不是执行验收；不得宣称尚未执行的验收已通过。不要重复源诊断或为原有业务缺陷新增改造要求。',
     '每项只给简短结论及必要的连续原文片段，path 必须使用候选侧的真实路径。引用保留原空白、换行与引号，不重新排版。证据不足用 UNKNOWN；不符合用 NEEDS_CHANGES，禁止为通过而改成 CONFORMING。',
-    '只返回 JSON：'+JSON.stringify({status:'REVIEWED',review:{changes:[{changeId:'方案中的 id',status:'CONFORMING|NEEDS_CHANGES|UNKNOWN',reason:'简短原因',evidence:[{path:'候选路径',snippet:'必要的连续原文'}]}],unexpectedDependencies:[],semanticIssues:[]}}),
+    'changes[].status 只能是 CONFORMING、NEEDS_CHANGES 或 UNKNOWN 中的一个值；下面的合法示例不代表默认通过。',
+    '只返回 JSON：'+JSON.stringify({status:'REVIEWED',review:{changes:[{changeId:'方案中的 id',status:'CONFORMING',reason:'简短原因',evidence:[{path:'候选路径',snippet:'必要的连续原文'}]}],unexpectedDependencies:[],semanticIssues:[]}}),
   ].join('\n');
   const maxAttempts=input.mode==='REVIEW'?2:3;
+  let lastValidationFields:string[]=[];
   for(let attempt=0;attempt<maxAttempts;attempt++){
   signal?.throwIfAborted();
   const response=await adapter.complete({requestId:`skill-reuse-${input.mode.toLowerCase()}-${attempt}`,model,responseFormat:'json',toolFree:true,messages,signal});
@@ -136,21 +139,26 @@ function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSigna
         // Store field locations and schema categories, never received values or
         // raw Zod enum messages, which can quote untrusted model/source content.
         const fields=parsed.error.issues.slice(0,16).map(issue=>`${issue.path.join('.').slice(0,150)||'root'} (${issue.code}${issue.code==='invalid_type'?`; expected ${issue.expected}`:''})`);
-        validationFields(fields);return {ok:false,errors:fields};
+        lastValidationFields=fields;validationFields(fields);return {ok:false,errors:fields};
       }
       const expected=input.mode==='REVIEW'?'REVIEWED':'PROPOSED';
       if(parsed.data.status!==expected&&parsed.data.status!=='ABSTAINED'){
-        const fields=[`status (expected ${expected} or ABSTAINED)`];validationFields(fields);return {ok:false,errors:fields};
+        const fields=[`status (expected ${expected} or ABSTAINED)`];lastValidationFields=fields;validationFields(fields);return {ok:false,errors:fields};
       }
       return {ok:true,value:parsed.data};
     }});
   if(!output.ok){
-    if(attempt===maxAttempts-1)throw new Error(`迁移方案输出无法解析：${output.error}`);
+    if(attempt===maxAttempts-1)throw new MigrationGenerationError({phase:input.mode==='REVIEW'?'PLAN_REVIEW':'PREPARING',
+      code:'MODEL_OUTPUT_INVALID',message:'迁移方案输出无法解析：模型返回格式不符合要求',recoverable:true,fields:lastValidationFields.slice(0,16)});
     await retry('OUTPUT_FORMAT',1);
     messages.push({role:'user',content:JSON.stringify({previousOutput:response.content,validationErrors:output.error,
       instruction:'根据同一份源码重新提出完整方案/审查，不得编造缺失信息；若证据不足返回 ABSTAINED。'})});
     continue;
   }
+  // A well-formed negative verdict stays negative even if its citations need work.
+  // The candidate inspector records all issues; evidence retries must not erase it.
+  if(output.value.status==='REVIEWED'&&(output.value.review.changes.some(change=>change.status!=='CONFORMING')
+    ||output.value.review.semanticIssues.length||output.value.review.unexpectedDependencies.length))return output.value;
   const issues=output.value.status==='PROPOSED'&&input.mode==='PROPOSE'
     ?reuseDesignIssues(output.value.design,input.inspection,input.sourceFiles)
     :output.value.status==='REVIEWED'&&input.mode==='REVIEW'
