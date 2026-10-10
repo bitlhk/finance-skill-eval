@@ -1,12 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenAiCompatibleModelAdapter } from "../src/index.js";
 import {createServer} from 'node:http';
+const agentOptions=vi.hoisted(()=>vi.fn());
+vi.mock('undici',async importOriginal=>{
+  const original=await importOriginal<typeof import('undici')>();
+  return {...original,Agent:class extends original.Agent{constructor(options:ConstructorParameters<typeof original.Agent>[0]){super(options);agentOptions(options);}}};
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  agentOptions.mockClear();
 });
 
 describe("OpenAiCompatibleModelAdapter", () => {
+  it('uses one explicit deadline for connection, headers and body without hidden retries',async()=>{
+    const fetchMock=vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'ok'}}]})));
+    vi.stubGlobal('fetch',fetchMock);
+    const adapter=new OpenAiCompatibleModelAdapter({apiKey:'private',baseUrl:'https://models.example/v1',timeoutMs:120000});
+    await adapter.complete({requestId:'deadline-phases',model:{providerId:'test',modelId:'test',parameters:{}},messages:[]});
+    expect(agentOptions).toHaveBeenCalledWith({connect:{timeout:120000},headersTimeout:120000,bodyTimeout:120000});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(['UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET','ECONNRESET','ENOTFOUND','PRIVATE_CAUSE','constructor'])('reports safe network failures: %s',code=>{
+    vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('fetch failed',{cause:{code,detail:'PRIVATE_KEY https://private.host/'}})));
+    const adapter=new OpenAiCompatibleModelAdapter({apiKey:'private',baseUrl:'https://models.example/v1'});
+    return expect(adapter.complete({requestId:'network',model:{providerId:'test',modelId:'test',parameters:{}},messages:[]})).rejects.toMatchObject({code:'MODEL_NETWORK_ERROR',message:expect.not.stringContaining('PRIVATE')});
+  });
   it('uses the configured deadline for a slow real HTTP response and closes the pool',async()=>{
     const server=createServer((_req,res)=>{const timer=setTimeout(()=>res.end('{}'),2000);res.once('close',()=>clearTimeout(timer));});
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));

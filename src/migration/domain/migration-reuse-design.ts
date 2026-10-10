@@ -4,6 +4,7 @@ import {SourceEvidenceValidator,sourceEvidencePath} from './migration-source-evi
 import type {ProjectInspection,ToolDecision} from './migration-model.js';
 import type {MigrationProject} from './migration-project.js';
 import {buildMigrationPlan} from './migration-model.js';
+import {reuseExecutionContract} from './migration-reuse-execution-contract.js';
 
 const text=z.string().trim().min(1);
 const evidence=z.object({path:text,snippet:text});
@@ -32,7 +33,7 @@ export type ReuseConformance={proposalId:string;candidateDigest:string;reviewedA
 
 export function reuseInputDigest(inspection:ProjectInspection,decisions:ToolDecision[],sourceDigest:string){
   const {inspectedAt:_,reuseConformance:__,...facts}=inspection;
-  return canonicalSha256({sourceDigest,facts,decisions:decisions.filter(item=>item.baseAssetId===inspection.assetId)
+  return canonicalSha256({sourceDigest,facts,executionContract:reuseExecutionContract,decisions:decisions.filter(item=>item.baseAssetId===inspection.assetId)
     .map(({toolId,form,language})=>({toolId,form,language})).sort((a,b)=>a.toolId.localeCompare(b.toolId))});
 }
 

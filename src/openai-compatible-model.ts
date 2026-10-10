@@ -15,7 +15,7 @@ export type OpenAiCompatibleModelOptions = {
 };
 
 export class ModelCompletionError extends Error{
-  constructor(readonly code:'MODEL_HTTP_ERROR'|'MODEL_OUTPUT_TRUNCATED'|'MODEL_EMPTY_RESPONSE',message:string,readonly httpStatus?:number){super(message);this.name='ModelCompletionError';}
+  constructor(readonly code:'MODEL_HTTP_ERROR'|'MODEL_OUTPUT_TRUNCATED'|'MODEL_EMPTY_RESPONSE'|'MODEL_NETWORK_ERROR',message:string,readonly httpStatus?:number){super(message);this.name='ModelCompletionError';}
 }
 
 /** Minimal OpenAI-compatible adapter for Analyzer or Judge roles. */
@@ -41,7 +41,9 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
     const timeoutMs=this.options.timeoutMs??180_000;
     // Undici otherwise imposes a hidden 300s response-header timeout even when
     // the Analyzer's explicit deadline is longer. Own and close this request pool.
-    const dispatcher=new Agent({headersTimeout:timeoutMs,bodyTimeout:timeoutMs});
+    // The connector also defaults to a hidden 10s deadline. All HTTP phases must
+    // obey the explicit request deadline, including TCP/TLS establishment.
+    const dispatcher=new Agent({connect:{timeout:timeoutMs},headersTimeout:timeoutMs,bodyTimeout:timeoutMs});
     try{
     const init={
       method: "POST",
@@ -88,6 +90,16 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
         totalTokens: payload.usage.total_tokens,
       } : undefined,
     };
+    }catch(error){
+      if(error instanceof TypeError){
+        const code=(error.cause as {code?:unknown}|undefined)?.code;
+        const labels:Record<string,string>={UND_ERR_CONNECT_TIMEOUT:'连接模型服务超时',UND_ERR_HEADERS_TIMEOUT:'等待模型响应超时',
+          UND_ERR_BODY_TIMEOUT:'读取模型响应超时',UND_ERR_SOCKET:'模型服务连接中断',ECONNRESET:'模型服务连接中断',
+          ECONNREFUSED:'无法连接模型服务',ENOTFOUND:'无法解析模型服务地址',EAI_AGAIN:'暂时无法解析模型服务地址'};
+        if(typeof code==='string'&&Object.hasOwn(labels,code))throw new ModelCompletionError('MODEL_NETWORK_ERROR',labels[code]!);
+        if(error.message==='fetch failed')throw new ModelCompletionError('MODEL_NETWORK_ERROR','模型服务网络请求失败，请检查连接');
+      }
+      throw error;
     }finally{await dispatcher.close();}
   }
 }

@@ -16,6 +16,7 @@ import type {MigrationSkillRepository} from './migration-skill-repository.js';
 import type {MigrationSupplementRepository} from './migration-supplement-repository.js';
 import {portableDeliveryContract} from '../domain/migration-delivery-contract.js';
 import type {ReusePlannerTelemetry} from '../domain/migration-reuse-telemetry.js';
+import {reuseExecutionContract} from '../domain/migration-reuse-execution-contract.js';
 
 /** Records migration choices and derives the plan and Runtime requirements from inspection evidence. */
 export class MigrationPlanningService {
@@ -82,7 +83,7 @@ export class MigrationPlanningService {
       const sourceFiles:Record<string,string>={};
       for(const [name,bytes] of Object.entries(archive)){try{sourceFiles[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{}}
       const output=await this.reusePlanner({mode:'PROPOSE',sourceFiles,inspection,toolPlan,
-        deliveryContract:portableDeliveryContract(inspection,decisions,project.source.skillFile)}) as {status?:string;design?:unknown;reason?:string;telemetry?:ReusePlannerTelemetry};
+        deliveryContract:portableDeliveryContract(inspection,decisions,project.source.skillFile),executionContract:reuseExecutionContract}) as {status?:string;design?:unknown;reason?:string;telemetry?:ReusePlannerTelemetry};
       if(output?.status!=='PROPOSED')return conflict(`迁移方案无法确认：${output?.reason??'模型未提供方案'}`);
       const parsed=reuseDesignSchema.safeParse(output.design);
       if(!parsed.success)return conflict('迁移方案结构不完整，请重新生成');

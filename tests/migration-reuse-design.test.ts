@@ -2,7 +2,7 @@ import {expect,it,vi} from 'vitest';
 import {strToU8} from 'fflate';
 import {MigrationPlanningService} from '../src/migration/application/migration-planning-service.js';
 import {MigrationCandidateInspectionService} from '../src/migration/application/migration-candidate-inspection-service.js';
-import {projectMigrationPlan,reuseReviewIssues,evidenceIssues,reuseDesignSchema,reuseReviewSchema,type ReuseDesign} from '../src/migration/domain/migration-reuse-design.js';
+import {projectMigrationPlan,currentReuseProposal,reuseReviewIssues,evidenceIssues,reuseDesignSchema,reuseReviewSchema,type ReuseDesign} from '../src/migration/domain/migration-reuse-design.js';
 import type {MigrationProject} from '../src/migration/domain/migration-project.js';
 import type {MigrationProjectStore} from '../src/migration/application/migration-project-store.js';
 import type {MigrationSkillRepository} from '../src/migration/application/migration-skill-repository.js';
@@ -16,6 +16,8 @@ import {reuseModelContext} from '../src/migration/infrastructure/migration-reuse
 import type {ReusePlannerTelemetry} from '../src/migration/domain/migration-reuse-telemetry.js';
 import {OpenAiCompatibleModelAdapter} from '../src/openai-compatible-model.js';
 import {MigrationGenerationService} from '../src/migration/application/migration-generation-service.js';
+import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-execution-contract.js';
+import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
 const sourceFiles={'SKILL.md':SKILL_MD,'scripts/lookup.py':'def lookup(account_id): return {"amount": 10}\n'};
 function context(planner:MigrationReusePlanner=reusePlannerFixture){
@@ -60,6 +62,7 @@ it('blocks material unknowns but permits a design before test credentials are pr
 it('gives planning the same delivery boundaries used by implementation instead of inventing configuration',async()=>{
   const ctx=context(async input=>{
     if(input.mode==='PROPOSE'){
+      expect(input.executionContract).toEqual(reuseExecutionContract);
       expect(input.deliveryContract).toMatchObject({script:{cwd:'WORKSPACE'},mcp:{transport:'STREAMABLE_HTTP',
         launcher:{portEnvironment:'PORT',requiresBusinessDependencyDeclaration:false},
         workspaceContext:{header:'X-Workspace-Root',scope:'PER_REQUEST_WORKSPACE',requiresDependencyDeclaration:false,
@@ -70,6 +73,33 @@ it('gives planning the same delivery boundaries used by implementation instead o
     return reusePlannerFixture(input);
   });
   await expect(ctx.service.propose('migration-fixture')).resolves.toHaveProperty('design');
+});
+
+it('does not silently carry confirmation from before the acceptance-executor contract was bound',async()=>{
+  const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+  await ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest});
+  const project=ctx.get(),inspection=project.sourceInspection!;
+  const {inspectedAt:_,reuseConformance:__,...facts}=inspection;
+  project.reuseProposal!.inputDigest=canonicalSha256({sourceDigest:project.source.artifactSha256,facts,
+    decisions:project.decisions!.map(({toolId,form,language})=>({toolId,form,language})).sort((a,b)=>a.toolId.localeCompare(b.toolId))});
+  expect(currentReuseProposal(project)).toBeNull();
+  expect(projectMigrationPlan(project)?.generationAllowed).toBe(false);
+});
+
+it('guides planning with observable execution boundaries and blocks declared unmet requirements before confirmation',async()=>{
+  const complete=vi.fn(async request=>{
+    expect(request.messages[0].content).toContain('不得假设 Eval 能在轮次之间删除文件');
+    const modelInput=JSON.parse(request.messages[1].content);
+    expect(modelInput.executionContract.workspace.betweenTurns).toContain('no file-write/delete');
+    const proposed=await reusePlannerFixture(modelInput) as {design:ReuseDesign};
+    proposed.design.unresolvedQuestions=['原承诺需要在轮次之间删除文件，但执行契约未提供该操作'];
+    return {content:JSON.stringify(proposed),modelId:'controlled-test'};
+  });
+  const ctx=context(createReusePlanner({adapterId:'controlled-test',complete},
+    {providerId:'test',modelId:'test',parameters:{}}));
+  const proposal=await ctx.service.propose('migration-fixture');
+  await expect(ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest})).rejects.toThrow('删除文件');
+  expect(complete).toHaveBeenCalledTimes(1);
 });
 
 it('rejects invented source evidence instead of accepting the model reuse assertion',async()=>{

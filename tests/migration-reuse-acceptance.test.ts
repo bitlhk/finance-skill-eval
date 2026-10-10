@@ -6,6 +6,7 @@ import {simpleMigrationCases,simpleMigrationSuiteSchema,normalizeOriginalService
 import {inspectionFixture} from './analysis-fixture.js';
 import type {MigrationProject} from '../src/migration/domain/migration-project.js';
 import {ReuseAcceptanceError} from '../src/migration/domain/migration-reuse-failure.js';
+import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-execution-contract.js';
 
 function fixture(){
  const inspection=inspectionFixture([]),source={assetId:inspection.assetId,artifactSha256:'a'.repeat(64)},candidate={assetId:'candidate',artifactSha256:'b'.repeat(64),skillId:'fixture',version:'1'};
@@ -30,6 +31,7 @@ function fixture(){
 it('executes frozen groups through existing suite/runtime/Judge pipeline and binds the result',async()=>{
  const f=fixture(),p=await f.approve();await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
  const summary=await f.finish();expect(summary.status).toBe('PASSED');expect(summary.result?.checks[0]?.status).toBe('PASSED');expect(f.execution).toHaveBeenCalledTimes(2);expect(f.model.mock.calls.map(c=>c[0].mode)).toEqual(['PLAN','COVERAGE','VERIFY']);
+ expect((f.model.mock.calls[0]![0] as any).context.executionContract).toEqual(reuseExecutionContract);
  f.config.revision++;expect((await f.service.summary(f.project.id)).status).toBe('STALE');await f.service.shutdown();
 });
 it.each(['missing-check','duplicate-case','unknown-case','unmapped-case','unresolved'] as const)('refuses structural undercoverage: %s',async change=>{
