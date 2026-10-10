@@ -13,7 +13,7 @@ it('freezes all repetitions with an unchanged baseline and judge, preserving com
   try{
     execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output]);
     const manifest=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));
-    expect(manifest.judge.policy).toBe('fact-provenance-v4');
+    expect(manifest.judge.policy).toBe('fact-provenance-v5');
     for(const [file,hash]of Object.entries(manifest.judge.evidenceSources)){
       expect(createHash('sha256').update((await readFile(file,'utf8')).replace(/\r\n/g,'\n')).digest('hex')).toBe(hash);
     }

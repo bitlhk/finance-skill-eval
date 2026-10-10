@@ -13,13 +13,13 @@ const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const read=path=>readFile(resolve(root,path));
 const baseline=await read('examples/fact-check-demo/SKILL.md');
 assert.equal(digest(baseline),'526e1088b4f4b2eb859c0ce5901fbf8103e31c2729c52ebb4cba9e9da8239664','Baseline changed');
-// Source-result collection guidance is a new v4 cohort, not a replacement for
-// any recorded v2/v3 results. Pin imported prompt/evidence modules as well.
+// Missing, malformed and conflicting workspace receipts are distinguished in
+// the v5 evidence cohort. Never overwrite or mix recorded v2/v3/v4 results.
 const judge=Buffer.from((await read('src/goal-judge.ts')).toString('utf8').replace(/\r\n/g,'\n'));
 assert.equal(digest(judge),'1ec4a6dfe0da6eac892548675c895a4c182a6a501d2ed72de837ccc6faf42de7','Judge changed: do not silently mix policies');
 const evidenceSources={
   'src/judge-runtime-evidence.ts':'54740e85b5353d9ec0b96b6953d141c9ab31ce6ba9a351081ce8c52ef138269a',
-  'src/judge-case-files.ts':'3bf988b273046bd14188208761978804cd08e5f363dda8b3c8ae4dc84392c64e',
+  'src/judge-case-files.ts':'23f7510eb548c9f2a4cb27a48a660536c7b97d67ff8af40dd0dc4a7739a699ca',
 };
 for(const [file,expected]of Object.entries(evidenceSources)){
   assert.equal(digest(Buffer.from((await read(file)).toString('utf8').replace(/\r\n/g,'\n'))),expected,
@@ -45,7 +45,7 @@ for(let repeat=1;repeat<=3;repeat++)for(const variant of repeat%2?['baseline','r
 const manifest={schemaVersion:'fact-attribution-experiment.v1',status:'FROZEN_NOT_EXECUTED',frozenAt:new Date().toISOString(),
   repositoryCommit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),
   variants:identities,suiteSha256:digest(suite),
-  judge:{policy:'fact-provenance-v4',sourceSha256:digest(judge),evidenceSources,sourceEncoding:'UTF8_LF',modelLabel:'gpt-6-astra'},
+  judge:{policy:'fact-provenance-v5',sourceSha256:digest(judge),evidenceSources,sourceEncoding:'UTF8_LF',modelLabel:'gpt-6-astra'},
   execution:{modelLabel:'deepseek-v4-flash',temperature:0,top_p:1,max_tokens:2000,
     runtimes:{openjiuwen:'0.1.15',agentscope:'2.0.3'},businessDate:'2026-09-20',timeZone:'Asia/Shanghai',
     tools:[],repeatsPerCombination:3,totalPlanned:96,parameterEvidence:'REQUIRE_HOST_CONFIGURATION_AND_RECORD_CAPTURE_POSITION'},
