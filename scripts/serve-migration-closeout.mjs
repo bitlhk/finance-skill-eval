@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {createEvaluationService} from '../dist/service/server.js';
 import {configuredModelRole} from '../dist/service/config.js';
+import {pinnedBuilderSource} from './lib/pinned-builder-source.mjs';
 
 const root=process.cwd(),work=await mkdtemp(path.join(os.tmpdir(),'migration-closeout-'));
 const builder=process.env.CLOSEOUT_BUILDER_ROOT??path.resolve(root,'../agent-store-builder-dev-wo-fork/community/finance/builder/finance-solution-builder');
@@ -17,9 +18,10 @@ function version(directory,scope=[]){
   assert(!changed&&!untracked,'Commit the scoped acceptance implementation before running version-pinned UI acceptance');
   return {commit,clean:true};
 }
-const versions={eval:version(root),builder:version(builder,['.']),
+const versions={eval:version(root),builder:version(builder,['.','../base','../pyproject.toml','../uv.lock']),
   harness:version(process.env.CLOSEOUT_HARNESS_ROOT??path.resolve(root,'../finance-agent-harness-eval-generation-windows'))};
-await writeFile(path.join(work,'versions.json'),JSON.stringify({versions,launcherBackend:'NATIVE_PACKAGE',harnessExecution:'NOT_USED'},null,2));
+const pinnedBuilder=await pinnedBuilderSource({project:builder,commit:versions.builder.commit,destination:work});
+await writeFile(path.join(work,'versions.json'),JSON.stringify({versions,launcherBackend:'NATIVE_PACKAGE',harnessExecution:'NOT_USED',builderSource:'COMMITTED_ISOLATED_EXPORT'},null,2));
 const cfg=JSON.parse(await readFile(path.join(root,'.runtime.local.json'),'utf8'));
 const [,model]=Object.entries(cfg.models).find(([,m])=>m.enabled!==false);
 assert(model.apiKey&&model.baseUrl&&model.upstreamModelId,'Configured real execution model required');
@@ -38,7 +40,7 @@ const state=path.join(work,'launcher');await mkdir(state,{recursive:true});
 const child=spawn('uv',['run','--extra','test','python','engineering/verify_eval_package_native.py',
   '--state-root',state,'--python',python,'--model-base',model.baseUrl,'--model-name',model.upstreamModelId,
   '--model-key-env','CLOSEOUT_RUNTIME_MODEL_KEY','--port','0','--serve','--capture-tool-results'],
-  {cwd:builder,windowsHide:true,env:{...process.env,PYTHONUTF8:'1',CLOSEOUT_RUNTIME_MODEL_KEY:model.apiKey},stdio:['ignore','pipe','pipe']});
+  {cwd:pinnedBuilder,windowsHide:true,env:{...process.env,PYTHONUTF8:'1',CLOSEOUT_RUNTIME_MODEL_KEY:model.apiKey},stdio:['ignore','pipe','pipe']});
 let app,closed=false;child.stdout.resume();let helperError='';child.stderr.on('data',chunk=>{helperError=(helperError+chunk).slice(-200000)});
 async function shutdown(){if(closed)return;closed=true;await app?.close();await writeFile(path.join(state,'stop'),'stop');
   await new Promise(resolve=>{if(child.exitCode!==null)return resolve();const timer=setTimeout(()=>{child.kill();resolve()},15000);child.once('exit',()=>{clearTimeout(timer);resolve()})});}
