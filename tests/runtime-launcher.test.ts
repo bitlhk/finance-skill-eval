@@ -15,7 +15,7 @@ describe('Runtime Launcher adapter',()=>{
       if(init?.method==='DELETE'){
         deletions++;
         return Response.json({cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',instanceId:'instance-1',
-          status:deletions===1?'PENDING':'RELEASED',buildId:'owned-build',scope:'THIS_INSTANCE',error:'PRIVATE_CLEANUP_DETAIL'}});
+          observedAt:'2026-10-09T00:00:00Z',status:deletions===1?'PENDING':'RELEASED',buildId:'owned-build',scope:'THIS_INSTANCE',error:'PRIVATE_CLEANUP_DETAIL'}});
       }
       if(String(_input).endsWith('/v1/runtime-instances'))return Response.json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00Z',error:null,configurationDigest});
       executions++;return Response.json({error:'FIRST_CASE_FAILURE'},{status:502});

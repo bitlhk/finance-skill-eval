@@ -42,7 +42,8 @@ try{
  }catch(error){await writeFile(path.join(report,`model-call-${callId}.json`),JSON.stringify({phase,status:'FAILED',elapsedMs:Date.now()-began,code:controller.signal.aborted?'CALL_CANCELLED':error?.name==='TimeoutError'?'UPSTREAM_TIMEOUT':'UPSTREAM_TRANSPORT_ERROR'}));if(!res.destroyed){res.writeHead(502);res.end('{"error":"REAL_MODEL_RELAY_FAILED"}')}}});
  await new Promise(r=>relay.listen(0,'127.0.0.1',r));relayUrl=`http://127.0.0.1:${relay.address().port}/v1`;
  globalThis.fetch=(url,init)=>originalFetch(url,{...init,...(String(url).startsWith(relayUrl+'/')?{dispatcher:modelDispatcher}:{})});
- for(const role of ['ANALYZER','JUDGE'])Object.assign(process.env,{[`FINANCE_EVAL_${role}_PROVIDER`]:'openai_compatible',[`FINANCE_EVAL_${role}_BASE_URL`]:relayUrl,[`FINANCE_EVAL_${role}_API_KEY`]:'private-loopback-placeholder',[`FINANCE_EVAL_${role}_MODEL`]:upstreamModel,[`FINANCE_EVAL_${role}_REQUEST_DEFAULTS`]:JSON.stringify({max_tokens:32000,...model.extraBody})});
+ const judgeDefaults=JSON.parse(process.env.REUSE_UI_JUDGE_REQUEST_DEFAULTS??'{}');
+ for(const role of ['ANALYZER','JUDGE'])Object.assign(process.env,{[`FINANCE_EVAL_${role}_PROVIDER`]:'openai_compatible',[`FINANCE_EVAL_${role}_BASE_URL`]:relayUrl,[`FINANCE_EVAL_${role}_API_KEY`]:'private-loopback-placeholder',[`FINANCE_EVAL_${role}_MODEL`]:upstreamModel,[`FINANCE_EVAL_${role}_REQUEST_DEFAULTS`]:JSON.stringify({max_tokens:32000,...model.extraBody,...(role==='JUDGE'?judgeDefaults:{})})});
  // Optional separate MCP regression; UI itself always executes real native turns.
  if(process.env.REUSE_UI_NATIVE_PRECHECK==='true'){
  const native=await helper(['--state-root',path.join(work,'native-check'),'--port','0']);let nativeText='',nativeError='';native.stdout.on('data',b=>{nativeText+=b.toString()});native.stderr.on('data',b=>{nativeError+=b.toString()});
@@ -95,6 +96,7 @@ try{
  const summary=await api('GET',`/api/migrations/${id}/reuse-acceptance`),jobs=await Promise.all(summary.result.jobs.map(j=>api('GET',`/api/runs/${j.jobId}`)));
  await writeFile(path.join(report,'summary.json'),JSON.stringify(summary,null,2));await writeFile(path.join(report,'jobs.json'),JSON.stringify(jobs,null,2));assert.equal(summary.status,'PASSED',summary.result.reason??JSON.stringify(summary.result.checks));
  assert(jobs.every(j=>j.report.cases.every(c=>c.right.status==='completed'&&c.judge.goalAssessment.verdict==='PASS')));
+ assert(jobs.every(j=>j.finalization?.resources.status==='RELEASED'),'Every reuse group must retain its real Launcher cleanup receipt');
  const groupInstances=jobs.map(j=>new Set(j.report.cases.map(c=>c.right.metadata.instanceId)));assert(groupInstances.every(s=>s.size===1));assert.equal(new Set(groupInstances.flatMap(s=>[...s])).size,jobs.length);
  const integrated=(await api('GET',`/api/migrations/${id}/report`)).technicalValidations;assert(integrated.some(v=>v.toolId===tool.toolId&&v.mode==='RUNTIME_INTEGRATED'&&v.status==='PASSED'));
  await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'继续处理',exact:true}).click();await page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:'验证实际效果',exact:true}).click();await expect(page.getByRole('region',{name:'复用验收'}).getByText('通过',{exact:true}).first()).toBeVisible();
@@ -111,6 +113,7 @@ try{
  const businessConfig=page.locator('.assessment-config-grid');await businessConfig.getByLabel(/^Runtime/u).selectOption(environment.environmentId);await businessConfig.getByLabel(/^执行模型/u).selectOption(info.modelId);
  const businessResponse=page.waitForResponse(r=>r.url().endsWith('/validate/openjiuwen')&&r.request().method()==='POST');await page.getByRole('button',{name:'执行并自动评估',exact:true}).click();const businessReply=await businessResponse;assert.equal(businessReply.status(),200,await businessReply.text());const businessJob=(await businessReply.json()).job;
  await expect.poll(async()=> (await api('GET',`/api/runs/${businessJob.jobId}`)).status,{timeout:600000,intervals:[2000]}).toBe('completed');
+ assert.equal((await api('GET',`/api/runs/${businessJob.jobId}`)).finalization?.resources.status,'RELEASED','Candidate business assessment must forward its Launcher cleanup receipt');
  const finalReport=await api('GET',`/api/migrations/${id}/report`);await writeFile(path.join(report,'delivery-report.json'),JSON.stringify(finalReport,null,2));assert.equal(finalReport.verification.delivery.status,'VERIFIED',JSON.stringify(finalReport.verification));
  await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'继续处理',exact:true}).click();await page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:'下载结果',exact:true}).click();
  await expect(page.getByRole('region',{name:'交付检查'})).toBeVisible();await expect(page.getByText('当前版本已通过自动检查',{exact:true})).toBeVisible();

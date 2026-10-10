@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Launcher managed resource cleanup observation",
+  "type": "object",
+  "required": ["schemaVersion", "instanceId", "observedAt", "status", "scope"],
+  "properties": {
+    "schemaVersion": {"const": "finance.eval-cleanup-observation.v1"},
+    "instanceId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$"},
+    "observedAt": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["PENDING", "RELEASED", "FAILED", "UNKNOWN"]},
+    "scope": {"enum": ["LAUNCHER_MANAGED_RESOURCES", "THIS_INSTANCE"]},
+    "buildId": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$"},
+    "hostInstanceId": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$"}
+  },
+  "description": "DELETE response optional cleanup field. RELEASED observes completion only for resources owned by this Launcher, never business success or a global OS audit. Receivers discard unknown fields and limit the response to 65536 UTF-8 bytes. Older servers without a valid receipt remain UNKNOWN."
+}

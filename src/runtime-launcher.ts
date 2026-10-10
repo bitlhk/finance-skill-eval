@@ -4,7 +4,7 @@ import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePr
 import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from './adapters.js';
 import type { ResolvedSkillSource } from './direct-model-runtime.js';
 import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
-import { runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
+import { runtimeCleanupObservationSchema, runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 import { runtimeObservationEventSchema, type RuntimeObservationEvent } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
 
@@ -64,7 +64,24 @@ function extractSecrets(source:RuntimeEnvironmentDescriptor,provided:RuntimeInst
   }
   return {environment,secrets:{mode:'inline' as const,values}};
 }
-async function responseError(response:Response):Promise<Error>{const raw=await response.text();return new Error(`Runtime Launcher HTTP ${response.status}: ${raw.slice(0,400)}`);}
+export function runtimeLauncherErrorMessage(code:string):string{
+  const messages:Record<string,string>={
+    EVAL_RUNTIME_QUALIFICATION_REQUIRED:'此 Runtime 缺少准入材料，请 Builder 管理者生成并配置原生运行与可观测性资格证明。',
+    EVAL_RUNTIME_QUALIFICATION_REJECTED:'此 Runtime 的准入材料与当前源码、产物或观测要求不匹配，请 Builder 管理者重新验证。',
+    EVAL_ASSET_DIRECTORY_CHANGED:'Builder 的资产目录已更新，请刷新运行配置后重新验证。',
+    EVAL_BUILD_PREFLIGHT_FAILED:'Builder 构建预检未通过，请检查工具链、模板和依赖配置。',
+  };
+  return messages[code]?`${messages[code]}（${code}）`:code;
+}
+function launcherPayloadError(status:number,payload:unknown):Error{
+  const value=payload as {error?:unknown}|null;
+  const code=typeof value?.error==='string'&&/^[A-Za-z][A-Za-z0-9_]{0,79}$/u.test(value.error)?value.error:null;
+  return new Error(`Runtime Launcher HTTP ${status}${code?`: ${runtimeLauncherErrorMessage(code)}`:''}`);
+}
+export async function runtimeLauncherResponseError(response:Response):Promise<Error>{
+  return launcherPayloadError(response.status,await readBoundedJson(response,65536,'Runtime Launcher error').catch(()=>null));
+}
+const responseError=runtimeLauncherResponseError;
 function serializedBytes(value:unknown):number{return new TextEncoder().encode(JSON.stringify(value)).byteLength;}
 export async function readBoundedJson(response:Response,limit:number,label:string):Promise<unknown>{
   if(!response.body)throw new Error(`${label} response body is empty`);
@@ -207,7 +224,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       });
       await readStatus();
     }
-    if(this.instance.status!=='ready'||!this.instance.executeEndpoint)throw new Error(this.instance.error??'Runtime instance failed to start');
+    if(this.instance.status!=='ready'||!this.instance.executeEndpoint)throw new Error(runtimeLauncherErrorMessage(this.instance.error??'Runtime instance failed to start'));
     this.executeUrl=controlledUrl(this.options.baseUrl,this.instance.executeEndpoint);
   }
   async execute(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
@@ -287,14 +304,16 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       let response:Response;
       try{response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(instance.instanceId)}`),{method:'DELETE',headers:this.options.headers,redirect:'error',signal:AbortSignal.timeout(10_000)});}
       catch(error){this.cleanupObservation={status:'REQUEST_FAILED',instanceId:instance.instanceId};throw error;}
-      if(!response.ok&&response.status!==404){this.cleanupObservation={status:'REQUEST_FAILED',instanceId:instance.instanceId};throw await responseError(response);}
-      const payload=await readBoundedJson(response,65536,'Cleanup receipt').catch(()=>null) as {cleanup?:Record<string,unknown>}|null;
-      const receipt=payload?.cleanup;
-      if(receipt?.schemaVersion==='finance.eval-cleanup-observation.v1'&&receipt.instanceId===instance.instanceId){
-        this.cleanupObservation=Object.fromEntries(['schemaVersion','instanceId','observedAt','status','buildId','hostInstanceId','buildRetirement','caseWorkspace','temporaryCandidate','scope']
-          .filter(key=>receipt[key]===null||typeof receipt[key]==='string'&&(receipt[key] as string).length<=500).map(key=>[key,receipt[key]]));
-        if(receipt.status==='PENDING'&&attempt<9){await new Promise(resolve=>setTimeout(resolve,200));continue;}
+      const payload=await readBoundedJson(response,65536,'Cleanup receipt').catch(()=>null) as {cleanup?:unknown}|null;
+      const parsed=runtimeCleanupObservationSchema.safeParse(payload?.cleanup);
+      if(parsed.success&&parsed.data.instanceId===instance.instanceId){
+        this.cleanupObservation=parsed.data;
       }else this.cleanupObservation={status:'UNKNOWN',instanceId:instance.instanceId,httpStatus:response.status,reason:'NO_RESOURCE_RECEIPT'};
+      if(!response.ok&&response.status!==404){
+        if(!parsed.success||parsed.data.instanceId!==instance.instanceId)this.cleanupObservation={status:'REQUEST_FAILED',instanceId:instance.instanceId};
+        throw launcherPayloadError(response.status,payload);
+      }
+      if(parsed.success&&parsed.data.instanceId===instance.instanceId&&parsed.data.status==='PENDING'&&attempt<9){await new Promise(resolve=>setTimeout(resolve,200));continue;}
       break;
     }
     this.instance=null;this.executeUrl=null;

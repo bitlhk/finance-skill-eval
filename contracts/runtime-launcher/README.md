@@ -11,6 +11,30 @@ from its directory, but executable launch paths from the archive root. Existing
 root packages omit this additive v1 field. Nested-entrypoint senders and receivers
 must be deployed together; unsupported receivers must reject rather than guess.
 
+## Lifecycle and availability
+
+### Cleanup observations
+
+DELETE may return `{ "deleted": true, "cleanup": <observation> }` using
+[`finance.eval-cleanup-observation.v1.schema.json`](finance.eval-cleanup-observation.v1.schema.json).
+`deleted` acknowledges cancellation/deletion intent, not completed release. `PENDING`
+means preparation, execution or retirement is still active; `FAILED` means cleanup
+failed and can be retried. `RELEASED` observes only this Launcher's managed resources
+(`LAUNCHER_MANAGED_RESOURCES`, or legacy `THIS_INSTANCE`), not a global OS audit or
+a business verdict. Retained diagnostic evidence is outside this disposable scope.
+Never return secrets, paths or raw error details in a receipt. Eval discards unknown
+fields, requires a matching instance ID, limits responses to 64 KiB and polls at
+most ten times. No valid receipt (including an old acknowledgement or 404) is
+`UNKNOWN`, never inferred success. Cleanup errors do not change business scores.
+
+Capabilities are discovery, not admission by declaration. A configured target
+whose native qualification is missing or stale must fail preflight with a safe,
+actionable error, not advertise readiness or silently switch frameworks. Instance
+creation still independently enforces the current admission gates.
+Eval allows at most 60 seconds for capabilities and native-catalog probes, since
+native qualification may require a bounded subprocess plus artifact validation.
+This is separate from instance execution and deletion timeouts.
+
 ## Builder delivery descriptor
 
 After deployment, the Builder returns a `finance.runtime-launcher-descriptor.v1` document. It identifies one deployed Launcher by `deploymentId` and `artifactSha256`, provides its `baseUrl`, declares the supported protocol versions and states whether the caller must supply a bearer credential. The descriptor never contains a token, API key, model credential or MCP secret.

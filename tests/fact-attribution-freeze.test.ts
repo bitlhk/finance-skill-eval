@@ -3,6 +3,7 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {unzipSync,strFromU8} from 'fflate';
 import {simpleMigrationSuiteSchema} from '../src/migration/domain/simple-migration-suite.js';
 
@@ -12,6 +13,10 @@ it('freezes all repetitions with an unchanged baseline and judge, preserving com
   try{
     execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output]);
     const manifest=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));
+    expect(manifest.judge.policy).toBe('fact-provenance-v4');
+    for(const [file,hash]of Object.entries(manifest.judge.evidenceSources)){
+      expect(createHash('sha256').update((await readFile(file,'utf8')).replace(/\r\n/g,'\n')).digest('hex')).toBe(hash);
+    }
     const suite=simpleMigrationSuiteSchema.parse(JSON.parse(await readFile(join(output,'suite.json'),'utf8')));
     const original=JSON.parse(await readFile('examples/fact-check-attribution-v011/original-cases.json','utf8'));
     expect(suite.cases.slice(0,4)).toEqual(original.cases);

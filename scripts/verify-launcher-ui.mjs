@@ -38,7 +38,9 @@ if(prebuilt){
     'PREBUILT_FIXTURE_MISMATCH: use the bank fixture pinned by this evaluation pack; do not score a different bank snapshot');
 }
 const builtin=prebuilt?await installNativeSample(path.join(output,'data')):null;
-const judge=await controlledGoalJudge();
+const liveJudge=process.env.LAUNCHER_UI_JUDGE_MODE==='LIVE';
+if(liveJudge)assert.equal(realModel,'LIVE','Live Judge acceptance requires actual live native execution');
+const judge=liveJudge?null:await controlledGoalJudge();
 const accountMode=process.env.LAUNCHER_ACCOUNT_WORKSPACES==='true';
 const origin='https://eval.example.test',subject='studio_native_alice';
 const accountHeaders=name=>accountMode?{'x-demo-user':name,origin}:{};
@@ -74,6 +76,8 @@ try{
   }
   browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH});
   page=await browser.newPage({viewport:{width:1440,height:1000}});
+  // Catalog discovery includes bounded native qualification, not just rendering.
+  page.setDefaultTimeout(120_000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   if(accountMode)await page.route(`${url}/api/**`,async route=>{
     const headers={...route.request().headers(),authorization:`Bearer ${token}`,...accountHeaders(subject)};
@@ -141,7 +145,9 @@ try{
   for(const name of ['temperature','top_p','max_tokens'])await page.getByLabel(name,{exact:true}).fill(String(generation[name]));
   if(generation.thinking)await page.getByRole('combobox',{name:'思考模式',exact:true}).selectOption(generation.thinking.type);
   await expect(page.getByRole('combobox',{name:/^评分方式/})).toHaveValue('model');
-  await expect(page.getByRole('button',{name:'开始测试',exact:true})).toBeEnabled({timeout:15000});
+  // Two independent native admission probes can each take up to 60 seconds.
+  // Wait for the real gate; never force-enable the button or bypass preflight.
+  await expect(page.getByRole('button',{name:'开始测试',exact:true})).toBeEnabled({timeout:120000});
   await page.screenshot({path:path.join(output,'desktop-configuration.png'),fullPage:true});
   const creating=page.waitForResponse(response=>response.url().endsWith('/api/runs')&&response.request().method()==='POST');
   await page.getByRole('button',{name:'开始测试',exact:true}).click();
@@ -157,6 +163,9 @@ try{
   do{job=await api(`/api/runs/${created.jobId}`);if(['completed','failed','cancelled','interrupted'].includes(job.status))break;await new Promise(resolve=>setTimeout(resolve,1000));}while(Date.now()<deadline);
   await writeFile(path.join(output,'job.json'),JSON.stringify(job,null,2),{mode:0o600});
   assert.equal(job.status,'completed',JSON.stringify(job.error));
+  for(const side of ['left','right'])assert.equal(job.finalization?.resources[side]?.status,'RELEASED',
+    `A completed dual-runtime evaluation must retain the ${side} Launcher's actual release receipt`);
+  checks.push('Both Launcher instances reported managed resources RELEASED; retained diagnostics are outside that scope');
   assert.equal(job.evidence.length,prebuilt?2:4);
   for(const row of job.evidence){
     assert.equal(row.status,'completed');assert.equal(row.runtimeIdentityVerified,true);
@@ -172,10 +181,14 @@ try{
   }
   assert.equal(new Set(job.evidence.map(row=>row.metadata.loadedSkillDigest)).size,1);
   assert.equal(new Set(job.evidence.map(row=>row.metadata.sessionId)).size,job.evidence.length);
-  assert.equal(judge.calls.length,job.evidence.length);
+  if(judge)assert.equal(judge.calls.length,job.evidence.length);
+  if(liveJudge)for(const row of job.evidence){
+    assert.equal(row.metadata.toolEvidenceCollection?.status,'CAPTURED');
+    assert(row.metadata.toolEvidence?.some(fact=>fact.status==='completed'&&fact.resultCapture==='REDACTED_PROJECTION'&&fact.result));
+  }
   for(const item of job.report.cases)for(const side of ['left','right']){
     assert.equal(item.judge.runtimeComparison[side].status,'assessed');
-    assert.equal(item.judge.runtimeComparison[side].assessment.verdict,'INDETERMINATE');
+    assert.equal(item.judge.runtimeComparison[side].assessment.verdict,liveJudge?'PASS':'INDETERMINATE');
   }
   checks.push('Both native runtimes returned tool/Lock/history evidence and a fresh session for every case');
   if(process.env.LAUNCHER_ASSERT_FACTS==='true'){
@@ -233,13 +246,13 @@ try{
       assert.deepEqual(row.metadata.declaredModelParameters,generation);
       if(caseFiles)assert(row.metadata.caseWorkspace.closed&&row.metadata.caseWorkspace.reads.length===1);
     }
-    assert.equal(judge.calls.length,job.evidence.length+secondJob.evidence.length);
+    if(judge)assert.equal(judge.calls.length,job.evidence.length+secondJob.evidence.length);
     assert.equal((await request(subject,`/api/runs/${secondJob.jobId}`)).status,404);
     assert.deepEqual((await (await request(subject,'/api/runs')).json()).runs.map(row=>row.jobId),[job.jobId]);
     assert.deepEqual((await (await request('studio_native_bob','/api/runs')).json()).runs.map(row=>row.jobId),[secondJob.jobId]);
     checks.push('Two account stores independently executed both native runtimes with disjoint sessions/instances and denied cross-account history access');
   }
-  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel,generation,judgeMode:'CONTROLLED_INDETERMINATE',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId,
+  await writeFile(path.join(output,'report.json'),JSON.stringify({status:'PASS',scope:info.mode??'CONTROLLED_NATIVE_FIXTURE',realModel,generation,judgeMode:liveJudge?'LIVE_REAL_MODEL':'CONTROLLED_INDETERMINATE',factChecks:process.env.LAUNCHER_ASSERT_FACTS==='true'?'PASSED':'NOT_ASSERTED',humanQuality:'NOT_ASSESSED',checks,jobId:job.jobId,
     accountMode,secondAccountJobId:secondJob?.jobId,sso:accountMode?'SYNTHETIC_TRUSTED_INGRESS':'NOT_TESTED'},null,2));
 }catch(error){
   if(page){
@@ -248,6 +261,6 @@ try{
   }
   throw error;
 }finally{
-  await writeFile(path.join(output,'judge-calls.json'),JSON.stringify(judge.calls,null,2));
-  await browser?.close();await app.close();await judge.close();
+  if(judge)await writeFile(path.join(output,'judge-calls.json'),JSON.stringify(judge.calls,null,2));
+  await browser?.close();await app.close();await judge?.close();
 }

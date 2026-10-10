@@ -12,6 +12,18 @@ import {
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 
+/** Resource-manager observation, not a business verdict or a global OS audit. */
+export const runtimeCleanupObservationSchema = z.object({
+  schemaVersion: z.literal('finance.eval-cleanup-observation.v1'),
+  instanceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/u),
+  observedAt: z.string().datetime(),
+  status: z.enum(['PENDING', 'RELEASED', 'FAILED', 'UNKNOWN']),
+  scope: z.enum(['LAUNCHER_MANAGED_RESOURCES', 'THIS_INSTANCE']),
+  buildId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/u).nullable().optional(),
+  hostInstanceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/u).nullable().optional(),
+});
+export type RuntimeCleanupObservation = z.infer<typeof runtimeCleanupObservationSchema>;
+
 export const runtimeLauncherBaseUrlSchema = z.string().url().transform(value => {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) {

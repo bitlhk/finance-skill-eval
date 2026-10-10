@@ -21,4 +21,5 @@ export class CandidateAssessmentRuntimeAdapter implements RuntimeAdapter {
     return {...evidence,side:request.side,metadata:{...evidence.metadata,candidateAssessmentSourceSide:'right',candidateAssessmentReused:request.side==='left'}};
   }
   async cleanup(){this.runs.clear();await this.inner.cleanup?.();}
+  finalizationEvidence(){return this.inner.finalizationEvidence?.()??{status:'UNKNOWN',reason:'NO_FINALIZATION_RECEIPT'};}
 }

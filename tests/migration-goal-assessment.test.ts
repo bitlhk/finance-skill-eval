@@ -84,6 +84,24 @@ it('does not invent a business date from missing, malformed or unverified Runtim
   expect(payload.runtimeEvidence.businessTime).toEqual({status:'NOT_VERIFIED'});
  }
 });
+it('passes actual result projections and collection limits without treating data time as the business clock',async()=>{
+ const requests:any[]=[];
+ const facts=[{tool:'get_balance',status:'completed',resultCapture:'REDACTED_PROJECTION',
+  result:JSON.stringify({amount:'42.00',currency:'CNY',asOf:'2026-09-06T00:00:00Z'})}];
+ const collection={status:'CAPTURED',scope:'OBSERVED_BUSINESS_TOOL_RESULTS',completeFieldCoverage:false};
+ const right={...evidence,toolCalls:[{name:'get_balance',status:'completed' as const}],metadata:{
+  toolEvidence:facts,toolEvidenceCollection:collection,executionMode:'runtime-launcher',
+  businessDate:'2026-10-10',businessTimeZone:'Asia/Shanghai',businessDateBasis:'HOST_CONFIGURED'}};
+ await judge([{criterionIndex:0,verdict:'PASS',reason:'Observed',evidence:''},
+  {criterionIndex:1,verdict:'PASS',reason:'Observed',evidence:''}],requests).compare({...input,right});
+ const payload=JSON.parse(requests[0].messages[1].content);
+ expect(payload.runtimeEvidence.sourceFacts).toEqual(facts);
+ expect(payload.runtimeEvidence.sourceFactsCollection).toEqual(collection);
+ expect(payload.runtimeEvidence.businessTime.businessDate).toBe('2026-10-10');
+ expect(requests[0].messages[0].content).toContain('不能因两者不同判错');
+ expect(requests[0].messages[0].content).toContain('不得凭空增加工具未返回');
+ expect(requests[0].messages[0].content).toContain('不得因 completed 状态就推定数值正确');
+});
 it('distinguishes failed criteria and indeterminate outcomes from execution failure',async()=>{
  for(const verdict of ['FAIL','INDETERMINATE'] as const){const result=await judge([{criterionIndex:0,verdict,reason:'不满足或缺证据',evidence:''},{criterionIndex:1,verdict:'PASS',reason:'未扣费',evidence:'尚未扣费'}]).compare(input);expect(result.goalAssessment?.verdict).toBe(verdict);expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe(verdict==='FAIL'?'FAILED':'NOT_VALIDATED')}
  await expect(judge([]).compare({...input,right:{...evidence,status:'failed'}})).rejects.toThrow('执行失败');
@@ -98,6 +116,25 @@ it('instructs the model to distinguish missing required answer fields from missi
 });
 it('rejects missing criteria, duplicates, and fabricated quotes instead of returning a pass',async()=>{
  for(const checks of [[{criterionIndex:0,verdict:'PASS',reason:'x',evidence:''}],[{criterionIndex:0,verdict:'PASS',reason:'x',evidence:''},{criterionIndex:0,verdict:'PASS',reason:'x',evidence:''}],[{criterionIndex:0,verdict:'PASS',reason:'x',evidence:'伪造的回答'},{criterionIndex:1,verdict:'PASS',reason:'x',evidence:''}]])await expect(judge(checks).compare(input)).rejects.toThrow();
+});
+it('provides the full neutral response shape on both attempts without preselecting PASS',async()=>{
+ const requests:any[]=[];
+ const evaluator=new ModelGoalJudge({adapterId:'missing-check-repair',complete:async request=>{
+  requests.push(request);
+  return {modelId:'test',content:JSON.stringify({checks:[
+   {criterionIndex:0,verdict:'PASS',reason:'金额符合',evidence:'2.50 元'},
+   ...(requests.length===1?[]:[{criterionIndex:1,verdict:'FAIL',reason:'测试判定不得改成通过',evidence:''}]),
+  ]})};
+ }},model);
+ const result=await evaluator.compare(input);
+ expect(result.goalAssessment?.verdict).toBe('FAIL');
+ expect(requests).toHaveLength(2);
+ for(const request of requests){
+  const payload=JSON.parse(request.messages[1].content);
+  expect(payload.requiredCheckCount).toBe(2);
+  expect(payload.responseTemplate.checks).toEqual([0,1].map(criterionIndex=>({criterionIndex,verdict:null,reason:'',evidence:''})));
+ }
+ expect(JSON.parse(requests[1].messages[1].content).previousResponseError).toContain('期望索引 [0,1]');
 });
 it('tells the model which quote failed before retrying without weakening evidence checks',async()=>{
  const requests:any[]=[];

@@ -13,7 +13,7 @@ import { ensureDirectory, listJsonFiles, readJson, writeJsonAtomic } from "./fil
 import { RuntimeLauncherAdapter, runtimeLauncherCapabilitiesSchema, type RuntimeLauncherCapabilities } from '../runtime-launcher.js';
 import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult } from '../shared/contracts/runtime-builder.js';
 import {nativeToolCatalogSchema} from '../shared/contracts/native-tool-catalog.js';
-import {readBoundedJson} from '../runtime-launcher.js';
+import {readBoundedJson,runtimeLauncherResponseError} from '../runtime-launcher.js';
 import type {ResolvedSkillSource} from '../direct-model-runtime.js';
 import type {SkillVariant} from '../contracts.js';
 
@@ -27,6 +27,9 @@ function headersFor(record: EnvironmentRecord): Record<string, string> {
 function requireNotArchived(record: EnvironmentRecord): void {
   if(record.archived)throw Object.assign(new Error('Environment is archived'),{statusCode:409,code:'ENVIRONMENT_ARCHIVED'});
 }
+// Native qualification can take up to 45 seconds, plus bounded local I/O.
+// Capabilities are an availability probe, not an instant static declaration.
+const launcherProbeTimeoutMs = 60_000;
 export class EnvironmentStore {
   private readonly directory: string;
   private readonly writes = new KeyedQueue();
@@ -43,7 +46,7 @@ export class EnvironmentStore {
     const record=await this.requireAvailable(environmentId);
     if(record?.type!=='runtime_launcher')throw Object.assign(new Error('请选择已登记的原生 Runtime Launcher'),{statusCode:409});
     const response=await fetch(new URL('v1/native-tool-catalog',record.baseUrl),{
-      headers:headersFor(record),redirect:'error',signal:AbortSignal.timeout(10000),
+      headers:headersFor(record),redirect:'error',signal:AbortSignal.timeout(launcherProbeTimeoutMs),
     });
     if(!response.ok)throw Object.assign(new Error('此环境尚未配置已准入工具合同目录'),{statusCode:409});
     const catalog=nativeToolCatalogSchema.parse(await readBoundedJson(response,1_048_576,'Native tool catalog'));
@@ -146,9 +149,9 @@ export class EnvironmentStore {
     let conformanceError:Error|null=null;
     try{
       const response=await fetch(new URL('v1/runtime-capabilities',launcher.baseUrl),{
-        headers:authorization?{authorization}:{},redirect:'error',signal:AbortSignal.timeout(10_000),
+        headers:authorization?{authorization}:{},redirect:'error',signal:AbortSignal.timeout(launcherProbeTimeoutMs),
       });
-      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      if(!response.ok)throw await runtimeLauncherResponseError(response);
       capabilities=runtimeLauncherCapabilitiesSchema.parse(await response.json());
     }catch(error){
       throw Object.assign(new Error(`无法验证 Builder 返回的 Launcher: ${error instanceof Error?error.message:String(error)}`),{statusCode:400});
@@ -301,8 +304,8 @@ export class EnvironmentStore {
     if(record.type==='runtime_launcher'){
       const startedAt=Date.now();
       try{
-        const response=await fetch(new URL('v1/runtime-capabilities',record.baseUrl),{headers:headersFor(record),signal:AbortSignal.timeout(10_000),redirect:'error'});
-        if(!response.ok)throw new Error(`HTTP ${response.status}`);
+        const response=await fetch(new URL('v1/runtime-capabilities',record.baseUrl),{headers:headersFor(record),signal:AbortSignal.timeout(launcherProbeTimeoutMs),redirect:'error'});
+        if(!response.ok)throw await runtimeLauncherResponseError(response);
         const capabilities=runtimeLauncherCapabilitiesSchema.parse(await response.json());
         if(record.runtimeType!=='generic_http'&&capabilities.runtime.type!==record.runtimeType)throw new Error('Runtime type does not match the registered Launcher');
         return {status:'ready',elapsedMs:Date.now()-startedAt,error:null,capabilities};

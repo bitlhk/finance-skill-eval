@@ -4,7 +4,7 @@
 
 ## 冻结
 
-当前融合分支使用新批次 `fact-provenance-v3`，包含分轮查询和工作区读取证据。脚本固定该策略源码的 LF 摘要；此前 v2 实验和结果保留，不与新批次混合统计。Skill 两版与案例内容没有变更。
+当前分支使用新批次 `fact-provenance-v4`，在分轮查询和工作区证据之外，明确工具结果采集状态及数据时间的来源边界。脚本固定策略源码及所导入证据模块的 LF 摘要；此前 v2/v3 实验和结果保留，不与新批次混合统计。Skill 两版与案例内容没有变更。使用旧 manifest 时必须检出它所绑定的源码，不能拿当前评分覆盖旧结果。
 
 ```sh
 node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v1
