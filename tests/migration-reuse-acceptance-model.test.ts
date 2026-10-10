@@ -43,3 +43,9 @@ it('does not silently truncate source or exceed the input budget when re-plannin
  const large={...context,source:'x'.repeat(599_700)};
  await expect(runReuseAcceptanceModel({mode:'PLAN',context:large})).rejects.toMatchObject({failure:{phase:'PLAN',code:'INPUT_TOO_LARGE'}});expect(complete).toHaveBeenCalledTimes(1);
 });
+it('guides static condition checks into original check ids without inventing dynamic evidence',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify(plan())});await runReuseAcceptanceModel({mode:'PLAN',context});
+ const instruction=complete.mock.calls[0]![0].messages[0].content;
+ expect(instruction).toContain('相关原 check 的 checks.criteria');expect(instruction).toContain('candidateBinaryPaths');
+ expect(instruction).toContain('不能凭空断言已测量运行环境');expect(complete).toHaveBeenCalledTimes(1);
+});

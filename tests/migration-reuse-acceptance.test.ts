@@ -7,6 +7,11 @@ import {inspectionFixture} from './analysis-fixture.js';
 import type {MigrationProject} from '../src/migration/domain/migration-project.js';
 import {ReuseAcceptanceError} from '../src/migration/domain/migration-reuse-failure.js';
 import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-execution-contract.js';
+import {SkillStore} from '../src/service/skill-store.js';
+import {mkdtemp,writeFile} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {zipSync,strToU8} from 'fflate';
 
 function fixture(){
  const inspection=inspectionFixture([]),source={assetId:inspection.assetId,artifactSha256:'a'.repeat(64)},candidate={assetId:'candidate',artifactSha256:'b'.repeat(64),skillId:'fixture',version:'1'};
@@ -21,12 +26,12 @@ function fixture(){
  const model=vi.fn(async({mode}:any)=>mode==='PLAN'?structuredClone(plan):mode==='COVERAGE'?{status:'COVERED',reasons:[]}:{checks:[{checkId:'reusable',status:'PASSED',reason:'Observed isolated results',caseIds:['one','two','three']}]});
  const execution=vi.fn(async()=>{const jobId=`job-${jobs.size}`,instanceId=`instance-${jobs.size}`;const job={jobId,status:'completed',report:{cases:suite.cases.map((c:any)=>({caseId:c.id,right:{status:'completed',runtimeIdentityVerified:true,streamCompleted:true,output:c.input,toolCalls:[],metadata:{skillArtifactSha256:candidate.artifactSha256,instanceId,caseScopeId:c.id}},judge:{goalAssessment:{verdict:'PASS'}}}))}};jobs.set(jobId,job);return {job}});
  const cancel=vi.fn(async()=>undefined);
- const readFiles=vi.fn(async()=>({'SKILL.md':'Actual delivered workflow'}));
- const service=new MigrationReuseAcceptanceService({projects:projects as never,configs:{get:async()=>config} as never,skills:{readFiles} as never,environments:{get:async(id:string)=>(id==='selected'?selected:launcher) as never,preflight:async()=>({status:'ready',capabilities:capabilities as never})},
+ const readArchive=vi.fn(async():Promise<Record<string,Uint8Array>>=>({'SKILL.md':strToU8('Actual delivered workflow')}));
+ const service=new MigrationReuseAcceptanceService({projects:projects as never,configs:{get:async()=>config} as never,skills:{readArchive} as never,environments:{get:async(id:string)=>(id==='selected'?selected:launcher) as never,preflight:async()=>({status:'ready',capabilities:capabilities as never})},
  suites:{importSimple:async(_id:string,value:any)=>{suite=value;return {preparationId:'suite'}}} as never,execution:{validateReuseAcceptance:execution} as never,jobs:{get:(id:string)=>jobs.get(id)},runs:{cancel} as never,model});
  async function approve(){const saved=await service.propose(project.id,{environmentId:'selected',modelId:'model'});await service.approve(project.id,{planId:saved.planId,inputDigest:saved.inputDigest});return saved;}
  async function finish(){await vi.waitFor(()=>expect(project.reuseAcceptanceResults?.at(-1)?.status).not.toBe('RUNNING'));return service.summary(project.id);}
- return {project,plan,launcher,capabilities,config,jobs,service,model,execution,cancel,readFiles,approve,finish};
+ return {project,plan,launcher,capabilities,config,jobs,service,model,execution,cancel,readArchive,approve,finish};
 }
 
 it('executes frozen groups through existing suite/runtime/Judge pipeline and binds the result',async()=>{
@@ -34,7 +39,7 @@ it('executes frozen groups through existing suite/runtime/Judge pipeline and bin
  const summary=await f.finish();expect(summary.status).toBe('PASSED');expect(summary.result?.checks[0]?.status).toBe('PASSED');expect(f.execution).toHaveBeenCalledTimes(2);expect(f.model.mock.calls.map(c=>c[0].mode)).toEqual(['PLAN','COVERAGE','VERIFY']);
  expect((f.model.mock.calls[0]![0] as any).context.executionContract).toEqual(reuseExecutionContract);
  expect((f.model.mock.calls[2]![0] as any).context).toMatchObject({candidateFiles:{'SKILL.md':'Actual delivered workflow'},candidateReview:{proposalId:'proposal',candidateDigest:'b'.repeat(64)},artifactDigest:'b'.repeat(64)});
- expect(f.readFiles).toHaveBeenLastCalledWith('candidate');
+ expect(f.readArchive).toHaveBeenLastCalledWith('candidate');
  f.config.revision++;expect((await f.service.summary(f.project.id)).status).toBe('STALE');await f.service.shutdown();
 });
 it.each(['missing-check','duplicate-case','unknown-case','unmapped-case','unresolved'] as const)('refuses structural undercoverage: %s',async change=>{
@@ -92,9 +97,38 @@ it('invalidates a frozen acceptance on candidate inspection or approved-design c
 });
 it('rechecks the binding after reading static artifact evidence and before asking for a verdict',async()=>{
  const f=fixture(),p=await f.approve();
- f.readFiles.mockImplementationOnce(async()=>{f.config.revision++;return {'SKILL.md':'Changed during artifact read'};});
+ f.readArchive.mockImplementationOnce(async()=>{f.config.revision++;return {'SKILL.md':strToU8('Changed during artifact read')};});
  await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
  expect((await f.finish()).status).not.toBe('PASSED');expect(f.model.mock.calls.some(c=>c[0].mode==='VERIFY')).toBe(false);await f.service.shutdown();
+});
+async function actualArchiveFixture(){
+ const f=fixture(),root=await mkdtemp(path.join(os.tmpdir(),'reuse-archive-evidence-')),store=new SkillStore(root);
+ await store.initialize();
+ const files={'SKILL.md':'---\nname: evidence-fixture\ndescription: Read input and call the delivered script.\n---\nUse scripts/check.py.',
+  'scripts/check.py':'import json,sys\nprint(json.dumps(json.load(sys.stdin)))\n',
+  'scripts/check.js':'process.stdout.write("actual JS")',
+  'assets/rules.json':'{"limit":150}'};
+ const asset=await store.uploadZip(Buffer.from(zipSync({...Object.fromEntries(Object.entries(files).map(([name,text])=>[name,strToU8(text)])),
+  'assets/binary.bin':Uint8Array.from([255,0,255])})));
+ Object.assign(f.project.candidate!,asset);f.project.inspection!.reuseConformance!.candidateDigest=asset.artifactSha256;
+ f.readArchive.mockImplementation(id=>store.readArchive(id));
+ return {...f,root,store,files,asset};
+}
+it('supplies verified full Python/JS/resources to PLAN, COVERAGE and VERIFY, not the documentation-only projection',async()=>{
+ const f=await actualArchiveFixture();expect(await f.store.readFiles(f.asset.assetId)).not.toHaveProperty('scripts/check.py');
+ const approved=await f.approve();await f.service.start(f.project.id,{planId:approved.planId,inputDigest:approved.inputDigest});expect((await f.finish()).status).toBe('PASSED');
+ for(const call of f.model.mock.calls){expect((call[0] as any).context).toMatchObject({candidateFiles:f.files,
+   candidateFilePaths:[...Object.keys(f.files),'assets/binary.bin'].sort(),candidateBinaryPaths:['assets/binary.bin']});}
+ expect(f.readArchive).toHaveBeenCalledTimes(2);await f.service.shutdown();
+});
+it('rejects altered archive bytes before proposing a plan',async()=>{
+ const f=await actualArchiveFixture();await writeFile(path.join(f.root,'skills/assets',f.asset.assetId,'scripts/check.py'),'changed code');
+ await expect(f.service.propose(f.project.id,{environmentId:'selected',modelId:'model'})).rejects.toThrow('快照摘要不一致');expect(f.model).not.toHaveBeenCalled();
+});
+it('does not let the final verdict read code altered after plan approval',async()=>{
+ const f=await actualArchiveFixture(),approved=await f.approve();await writeFile(path.join(f.root,'skills/assets',f.asset.assetId,'scripts/check.py'),'changed after approval');
+ await f.service.start(f.project.id,{planId:approved.planId,inputDigest:approved.inputDigest});expect((await f.finish()).status).not.toBe('PASSED');
+ expect(f.model.mock.calls.some(call=>call[0].mode==='VERIFY')).toBe(false);await f.service.shutdown();
 });
 it('normalizes a one-query turns representation without changing data or required tools',()=>{
  const suite=simpleMigrationSuiteSchema.parse({name:'single',cases:[{id:'one',input:'evaluation objective only',criteria:['Expected output'],turns:[{query:'actual user query',requiredTools:['lookup']}]}]});

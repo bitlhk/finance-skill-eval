@@ -38,6 +38,20 @@ export class MigrationReuseAcceptanceService{
     suites:MigrationSuiteService;execution:MigrationOpenJiuwenService;jobs:MigrationEvaluationJobReader;runs:MigrationEvaluationRunner;
     model:MigrationReuseAcceptanceModel;skills?:MigrationSkillRepository}){}
 
+  private async artifactEvidence(assetId:string){
+    if(!this.d.skills)return {};
+    // readFiles is a documentation projection: it intentionally omits py/js and
+    // does not verify the archive digest. Acceptance needs the same immutable
+    // full archive used by candidate inspection and actual execution.
+    const archive=await this.d.skills.readArchive(assetId),candidateFiles:Record<string,string>={};
+    const candidateBinaryPaths:string[]=[];
+    for(const [name,bytes] of Object.entries(archive)){
+      try{candidateFiles[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
+      catch{candidateBinaryPaths.push(name);}
+    }
+    return {candidateFiles,candidateFilePaths:Object.keys(archive).sort(),candidateBinaryPaths};
+  }
+
   private async binding(id:string,choice:{environmentId:string;modelId:string}):Promise<ReuseAcceptanceBinding>{
     const project=await this.d.projects.get(id),proposal=currentReuseProposal(project);
     if(!proposal?.approvedAt||!project.candidate||project.candidateReuseProposalId!==proposal.proposalId
@@ -58,8 +72,8 @@ export class MigrationReuseAcceptanceService{
     const project=await this.d.projects.get(id),proposal=currentReuseProposal(project)!;
     if(project.improvementTasks?.some(task=>activeStatuses.includes(task.status))||project.reuseAcceptanceResults?.some(task=>task.status==='RUNNING'))return conflict('请先完成或停止当前任务');
     const capabilities=(await migrationRuntimeCapabilities(this.d.environments,parsed.environmentId)).capabilities;
-    const candidateFiles=this.d.skills?await this.d.skills.readFiles(project.candidate!.assetId):undefined;
-    const context={executionContract:reuseExecutionContract,design:proposal.design,candidateFiles,candidateReview:project.inspection!.reuseConformance?.review,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:tool.inputSchema,outputSchema:tool.outputSchema,samples:tool.samples})),
+    const artifactEvidence=await this.artifactEvidence(project.candidate!.assetId);
+    const context={executionContract:reuseExecutionContract,design:proposal.design,...artifactEvidence,candidateReview:project.inspection!.reuseConformance,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:tool.inputSchema,outputSchema:tool.outputSchema,samples:tool.samples})),
       runtimeCapabilities:capabilities,executionSemantics:'group=new Runtime instances (not Launcher deployment); case=fresh native session/workspace/MCP scope; turns=preserved native session/workspace/MCP scope',
       evaluatorEvidence:{caseJudge:{available:['当前案例的实际查询、分轮输出及工具调用','成功读取与已挂载文件的摘要匹配','已声明 Script 实参与案例 JSON 字段值的摘要匹配'],unavailable:['原生实例/会话/工作区身份标识','其他案例或运行组的事实']},checkJudge:{available:['关联案例的输出、评测、调用和输入匹配','跨案例的实例/会话/工作区身份比较'],rule:'跨案例/组事实只能放 checks.criteria，不能放 case.criteria；不能因此删掉原要求'}},
       evidenceSemantics:'Per-case Judge receives actual turn queries, per-turn native output/tool-name receipts, overall tool calls, and authorized redacted business result projections. Original tool arguments are not exposed; hashes do not let Judge reconstruct them. Eval can exactly match read_file argument/result hashes to mounted case files, and Script input hashes to a JSON object projection using its declared inputSchema; these optional workspaceInputMatches prove value equality, not causal program data flow. Missing matches cannot be assumed. Instance/session/workspace identity comparisons belong to check-level verification across cases, not one-case criteria. Do not introduce unobservable criteria absent from original requirements; requirements genuinely depending on unavailable evidence remain uncovered.'};
@@ -209,10 +223,10 @@ export class MigrationReuseAcceptanceService{
     // evidence. Re-read this bound artifact, not an uploaded workspace copy or a
     // model's statement that it inspected the delivered files.
     const current=await this.d.projects.get(id);
-    const candidateFiles=this.d.skills?await this.d.skills.readFiles(candidate.assetId):undefined;
+    const artifactEvidence=await this.artifactEvidence(candidate.assetId);
     await this.guard(id,task,signal);
     const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed,
-      candidateFiles,candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
+      ...artifactEvidence,candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
     if(verdicts.checks.length!==plan.checks.length||new Set(verdicts.checks.map(c=>c.checkId)).size!==plan.checks.length)return conflict('复用验收判定未完整覆盖要求');
     for(const result of verdicts.checks){const expected=plan.checks.find(c=>c.checkId===result.checkId);
       if(!expected||new Set(result.caseIds).size!==result.caseIds.length||result.caseIds.some(c=>!expected.caseIds.includes(c))
