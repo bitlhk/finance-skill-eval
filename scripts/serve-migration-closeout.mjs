@@ -11,6 +11,7 @@ import {pinnedBuilderSource} from './lib/pinned-builder-source.mjs';
 const root=process.cwd(),work=await mkdtemp(path.join(os.tmpdir(),'migration-closeout-'));
 const builder=process.env.CLOSEOUT_BUILDER_ROOT??path.resolve(root,'../agent-store-builder-dev-wo-fork/community/finance/builder/finance-solution-builder');
 const python=process.env.CLOSEOUT_PACKAGE_PYTHON??'C:/fb-pkg-py317/Scripts/python.exe';
+const builderPython=process.env.CLOSEOUT_BUILDER_PYTHON??path.join(builder,'../.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python');
 function version(directory,scope=[]){
   const git=(...args)=>execFileSync('git',args,{cwd:directory,encoding:'utf8',windowsHide:true}).trim();
   const commit=git('rev-parse','HEAD');
@@ -37,7 +38,9 @@ for(const role of ['ANALYZER','MIGRATION','JUDGE','OPTIMIZER'])assert(configured
 process.env.FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS='1';
 process.env.FINANCE_EVAL_AGENT_DUMP=path.join(work,'agent-logs');
 const state=path.join(work,'launcher');await mkdir(state,{recursive:true});
-const child=spawn('uv',['run','--extra','test','python','engineering/verify_eval_package_native.py',
+// Use a provisioned interpreter; do not resync/reinstall dependencies into the
+// developer's live workspace or require downloads during a pinned acceptance.
+const child=spawn(builderPython,['-B','engineering/verify_eval_package_native.py',
   '--state-root',state,'--python',python,'--model-base',model.baseUrl,'--model-name',model.upstreamModelId,
   '--model-key-env','CLOSEOUT_RUNTIME_MODEL_KEY','--port','0','--serve','--capture-tool-results'],
   {cwd:pinnedBuilder,windowsHide:true,env:{...process.env,PYTHONUTF8:'1',CLOSEOUT_RUNTIME_MODEL_KEY:model.apiKey},stdio:['ignore','pipe','pipe']});
