@@ -8,8 +8,8 @@ const input={modelId:'test',sourceJobId:'job-1',baseSolutionRevisionId:'revision
   technicalEvidence:[],cases:[{caseId:'dev-1',task:'查询',runtimeStatus:'completed',runtimeIdentityVerified:true,
     streamCompleted:true,toolTraceStatus:'COMPLETE' as const,toolCalls:[],review:null,verdict:'FAIL'}]};
 
-async function serve(outputs:string[],run:(url:string,requests:Array<{tools?:unknown}>)=>Promise<void>,withToolDefaults=false){
-  const requests:Array<{tools?:unknown}>=[];
+async function serve(outputs:string[],run:(url:string,requests:Array<{tools?:unknown;messages?:Array<{content:string}>}>)=>Promise<void>,withToolDefaults=false){
+  const requests:Array<{tools?:unknown;messages?:Array<{content:string}>}>=[];
   const server=createServer(async(req,res)=>{
     let body='';for await(const part of req)body+=String(part);
     requests.push(JSON.parse(body) as {tools?:unknown});
@@ -39,6 +39,8 @@ it('normalizes an unambiguous enum representation without another model call',as
     const result=await planMigrationImprovement(input);
     expect(result).toMatchObject({judgement:{status:'PROPOSED',hypothesis:{confidence:'LOW'}},outputCorrection:{attempts:0}});
     expect(requests).toHaveLength(1);
+    const prompt=requests[0]?.messages?.[0]?.content;
+    expect(prompt).toContain('已发布的 Builder JSON Schema');expect(prompt).toContain('"required":["inputSchema","outputSchema","errorSchema","semantics"]');
   });
 });
 it('reports safe invalid field categories without retaining arbitrary model values',async()=>{
