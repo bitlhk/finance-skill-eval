@@ -21,6 +21,8 @@ import {verifiedToolProcessEvidence} from '../../runtime-tool-process-evidence.j
 import {runtimeLauncherDeliverySchema} from '../../shared/contracts/environment.js';
 import {migrationScriptInputSchema} from '../domain/migration-script-contract.js';
 import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
+import {resolveReuseInputs} from '../domain/migration-reuse-input-binding.js';
+import type {RuntimeExecutionEvidence} from '../../contracts.js';
 
 const digest=(value:unknown)=>canonicalSha256(JSON.parse(JSON.stringify(value)));
 const planIntact=(plan:{binding:unknown;plan:unknown;coverage:unknown;inputDigest:string})=>plan.inputDigest===digest({binding:plan.binding,plan:plan.plan,coverage:plan.coverage});
@@ -106,7 +108,9 @@ export class MigrationReuseAcceptanceService{
     const planningFeedback=parsed.plan===undefined&&previous&&planIntact(previous)
       &&digest(previous.binding)===digest(binding)&&previous.coverage.status==='INCOMPLETE'
       ?{previousPlan:previous.plan,coverage:previous.coverage}:undefined;
-    const context={...(planningFeedback?{planningFeedback}:{}),executionContract:reuseExecutionContract,design:proposal.design,...artifactEvidence,candidateReview:project.inspection!.reuseConformance,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:migrationScriptInputSchema(project,tool),outputSchema:tool.outputSchema,samples:tool.samples})),
+    const context={...(planningFeedback?{planningFeedback}:{}),executionContract:reuseExecutionContract,
+      inputBindingContract:{available:true,source:'earlier group completed verified case, authorized successful tool result projection',target:'query placeholder {{reuse:id}} only',limits:'16 bindings; short identifier/numeric/boolean scalar; no secrets, raw output, files, criteria or missing-result fallback',receipt:'source case/job/tool/call/path and value/query digests; actual resolved query goes to native execution'},
+      design:proposal.design,...artifactEvidence,candidateReview:project.inspection!.reuseConformance,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:migrationScriptInputSchema(project,tool),outputSchema:tool.outputSchema,samples:tool.samples})),
       runtimeCapabilities:capabilities,availableRunTargets,executionSemantics:'group=fresh Runtime instance at the frozen group.runtime target (default primary); distinct deployments require distinct admitted deployment identities, not just fresh instances; case=fresh native session/workspace/MCP scope; turns=preserved native session/workspace/MCP scope',
       evaluatorEvidence:{caseJudge:{available:['当前案例实际查询、分轮输出及成功/失败工具调用','已采集且获授权的 sourceFacts 结果投影；不保证包含内部判定原因','工作区挂载摘要；不等于文件内容或成功读取','可选 workspaceInputMatches：仅匹配成功 read_file 调用及满足实际摘要核对条件的字段；无记录不能推断'],unavailable:['原生实例/会话/工作区身份标识与其他案例或运行组的事实','workspaceFiles 正文、目录完整清单、未挂载文件不存在的证明','工具原始实参与脚本内部读取、规则执行原因；argumentsDigest 不可逆','交付源码、业务规则与 Skill 文档原文']},checkJudge:{available:['关联案例输出、评测、实际采集的调用和输入匹配','跨案例实例/会话/工作区身份比较','当前绑定的真实 candidateFiles，可检查源码、文档和规则事实'],rule:'原承诺不能删减；源码/规则、宿主与跨案例事实放 checks.criteria。case.criteria 仅验证当前案例实际可见证据；将规则推导当成工具可见结果、将挂载当读取，或将结果错误当目录证明，都应返回 INCOMPLETE 并要求修正判据层级'}},
       evidenceSemantics:'Per-case Judge receives actual turn queries, per-turn native output/tool-name receipts, overall tool calls, and authorized redacted business result projections. Original tool arguments are not exposed; hashes do not let Judge reconstruct them. Eval can exactly match read_file argument/result hashes to mounted case files, and Script input hashes to a JSON object projection using its declared inputSchema; these optional workspaceInputMatches prove value equality, not causal program data flow. Missing matches cannot be assumed. Instance/session/workspace identity comparisons belong to check-level verification across cases, not one-case criteria. Do not introduce unobservable criteria absent from original requirements; requirements genuinely depending on unavailable evidence remain uncovered.'};
@@ -208,10 +212,15 @@ export class MigrationReuseAcceptanceService{
   }
   private async execute(id:string,task:ReuseAcceptanceResult,signal:AbortSignal){
     const project=await this.d.projects.get(id),plan=project.reuseAcceptancePlan!.plan,candidate=project.candidate!,observed:Array<Record<string,unknown>>=[];
+    const sourceCases=new Map<string,{jobId:string;evidence:RuntimeExecutionEvidence}>();
     for(const group of plan.groups){
       task.phase='PREPARATION';await this.save(id,task);
       await this.guard(id,task,signal);
-      const suite=await this.d.suites.importSimple(id,{name:`复用验收：${plan.name} · ${group.id}`,cases:group.cases});
+      let resolved;
+      try{resolved=resolveReuseInputs(group.cases,plan.inputBindings??[],sourceCases)}
+      catch{throw new ReuseAcceptanceError({phase:'PREPARATION',code:'INPUT_BINDING_UNAVAILABLE',message:'前序工具结果无法绑定到本组查询；未使用模拟引用或模型回答代替',groupId:group.id})}
+      if(resolved.receipts.length)(task.inputBindings??=[]).push(...resolved.receipts);
+      const suite=await this.d.suites.importSimple(id,{name:`复用验收：${plan.name} · ${group.id}`,cases:resolved.cases});
       const variant={mode:'skill_version' as const,skillId:candidate.skillId,version:candidate.version,artifactSha256:candidate.artifactSha256};
       const choice=group.runtime??task.binding,target=[task.binding,...(task.binding.additionalRuntimes??[])].find(t=>t.environmentId===choice.environmentId&&t.modelId===choice.modelId);
       if(!target)return conflict('运行组部署未绑定到冻结验收计划');
@@ -245,11 +254,13 @@ export class MigrationReuseAcceptanceService{
           typeof evidence.metadata.caseScopeId!=='string'||!evidence.metadata.caseScopeId?'caseScopeId':null].filter((field):field is string=>!!field);
         if(missing.length)return fail('RUNTIME_EVIDENCE_MISSING',`案例 ${result.caseId} 缺少有效执行证据：${missing.join('、')}`,result.caseId,missing);
         if(definition.turns&&definition.turns.length>1&&!evidence.metadata.conversation)return fail('CONVERSATION_EVIDENCE_MISSING',`案例 ${result.caseId} 缺少真实会话续接证据`,result.caseId,['conversation']);
+        sourceCases.set(result.caseId,{jobId:job.jobId,evidence});
         observed.push({caseId:result.caseId,groupId:group.id,jobId:job.jobId,output:evidence.output,
           environmentId:target.environmentId,deploymentId:target.deploymentId,deliveryDigest:target.deliveryDigest,
           launcherId:target.launcherId,
           instanceId:evidence.metadata.instanceId,caseScopeId:evidence.metadata.caseScopeId,conversation:evidence.metadata.conversation,
           toolCalls:evidence.toolCalls,toolEvidence:evidence.metadata.toolEvidence,
+          inputBindings:resolved.receipts.filter(receipt=>receipt.targetCaseId===result.caseId),
           toolProcessEvidence:verifiedToolProcessEvidence(evidence),
           workspaceInputMatches:judgeRuntimeEvidence(evidence,{workspaceFiles:definition.workspaceFiles,tools:project.inspection?.tools}).workspaceInputMatches,
           toolResultInputMatches:judgeRuntimeEvidence(evidence,{tools:project.inspection?.tools.map(tool=>({...tool,inputSchema:migrationScriptInputSchema(project,tool)}))}).toolResultInputMatches,
@@ -281,7 +292,7 @@ export class MigrationReuseAcceptanceService{
       executionEnvironment:(await migrationRuntimeCapabilities(this.d.environments,target.environmentId)).capabilities.executionEnvironment,
     })));
     await this.guard(id,task,signal);
-    const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed,
+    const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed,inputBindingContract:{available:true},
       ...artifactEvidence,executionEnvironments,tools:current.inspection?.tools.map(tool=>({name:tool.name,inputSchema:migrationScriptInputSchema(current,tool),outputSchema:tool.outputSchema})),candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
     if(verdicts.checks.length!==plan.checks.length||new Set(verdicts.checks.map(c=>c.checkId)).size!==plan.checks.length)return conflict('复用验收判定未完整覆盖要求');
     for(const result of verdicts.checks){const expected=plan.checks.find(c=>c.checkId===result.checkId);

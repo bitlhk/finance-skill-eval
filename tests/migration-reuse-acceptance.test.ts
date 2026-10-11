@@ -119,6 +119,41 @@ it('executes frozen groups through existing suite/runtime/Judge pipeline and bin
  expect(f.readArchive).toHaveBeenLastCalledWith('candidate');
  f.config.revision++;expect((await f.service.summary(f.project.id)).status).toBe('STALE');await f.service.shutdown();
 });
+it('feeds a genuine prior-group tool result into a fresh group query and exposes only binding receipts',async()=>{
+ const f=fixture();
+ f.project.inspection!.tools=[toolFixture({name:'query',sourcePaths:['mcp/server.py']})];
+ const plan={...f.plan,inputBindings:[{id:'previousRef',sourceCaseId:'one',toolName:'query',occurrence:0,resultPath:['snapshot_ref']}]};
+ plan.groups[1]!.cases[0]!.input='Use actual old reference {{reuse:previousRef}}';
+ const original=f.execution.getMockImplementation()!;
+ f.execution.mockImplementation(async()=>{
+  const started=await original();
+  for(const c of started.job.report.cases){
+   c.right.toolCalls=[{name:'query',status:'completed'}];
+   c.right.metadata.toolEvidence=[{tool:'query',status:'completed',result:{snapshot_ref:`ref-${c.caseId}`},resultDigest:'f'.repeat(64)}];
+  }
+  return started;
+ });
+ const saved=await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model',plan});
+ await f.service.approve(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest});
+ await f.service.start(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest});
+ const result=await f.finish();expect(result.status).toBe('PASSED');
+ expect(f.jobs.get('job-1').report.cases[0].right.output).toBe('Use actual old reference ref-one');
+ expect(result.result?.inputBindings?.[0]).toMatchObject({sourceCaseId:'one',sourceJobId:'job-0',targetCaseId:'three',valueDigest:canonicalSha256('ref-one')});
+ const context=(f.model.mock.calls.find(c=>c[0].mode==='VERIFY')![0] as any).context;
+ expect(context.observed.find((c:any)=>c.caseId==='three').inputBindings).toHaveLength(1);
+ expect(f.project.reuseAcceptancePlan!.plan.groups[1]!.cases[0]!.input).toContain('{{reuse:previousRef}}');
+ await f.service.shutdown();
+});
+it('stops before creating the target run when the required actual source projection is absent',async()=>{
+ const f=fixture();f.project.inspection!.tools=[toolFixture({name:'query',sourcePaths:['mcp/server.py']})];
+ const plan={...f.plan,inputBindings:[{id:'previousRef',sourceCaseId:'one',toolName:'query',resultPath:['snapshot_ref']}]};
+ plan.groups[1]!.cases[0]!.input='Use {{reuse:previousRef}}';
+ const saved=await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model',plan});
+ await f.service.approve(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest});
+ await f.service.start(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest});
+ const result=await f.finish();expect(result.status).toBe('INDETERMINATE');expect(result.result?.failure?.code).toBe('INPUT_BINDING_UNAVAILABLE');
+ expect(f.execution).toHaveBeenCalledTimes(1);await f.service.shutdown();
+});
 it('projects actual selected deployment software facts into planning and guarded check verification',async()=>{
  const f=fixture();
  const executionEnvironment={software:[{name:'python',version:'3.12.9'}]};
