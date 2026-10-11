@@ -145,6 +145,16 @@ it.each([['HARNESS','WAITING_BUILDER'],['CONFIGURATION','WAITING_CONFIGURATION']
   const task=await f.terminal();expect(task.status).toBe(status);expect(f.d.tools.propose).not.toHaveBeenCalled();
   expect(f.d.execution.validateExperiment).not.toHaveBeenCalled();expect(task.finalConsumed).toBe(false);
 });
+it('completes a missing Builder contract within the same task without changing its frozen tests or consuming holdout',async()=>{
+ const f=setup({layer:'HARNESS'});await f.service.start('migration-1234',{jobId:'baseline'});
+ const waiting=await f.terminal(),frozen=structuredClone(waiting.frozenSuite),id=waiting.taskId;
+ expect(waiting.runtimeRequirements).toBeUndefined();
+ await f.service.replanBuilder('migration-1234',id);const replanned=await f.terminal();
+ expect(replanned.taskId).toBe(id);expect(f.project().improvementTasks).toHaveLength(1);
+ expect(replanned.frozenSuite).toEqual(frozen);expect(replanned.finalConsumed).toBe(false);
+ expect(replanned.iterations[0]).toMatchObject({outcome:'RETAINED'});
+ expect(f.d.planner.propose).toHaveBeenCalledTimes(2);expect(f.d.execution.validateExperiment).not.toHaveBeenCalled();
+});
 
 it('does not run another optimization when the confirmed development target already passes',async()=>{
   const f=setup({baselinePasses:['dev1','dev2']});await f.service.start('migration-1234',{jobId:'baseline'});

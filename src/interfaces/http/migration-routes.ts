@@ -85,6 +85,7 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/cancel',request=>migrations.cancelImprovementTask(request.params.id,request.params.taskId));
   app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/adopt',request=>migrations.adoptImprovementTask(request.params.id,request.params.taskId));
   app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/resume',request=>migrations.resumeImprovementTask(request.params.id,request.params.taskId,request.body));
+  app.post<{Params:{id:string;taskId:string}}>('/api/migrations/:id/improvement-tasks/:taskId/replan-builder',request=>migrations.replanImprovementBuilder(request.params.id,request.params.taskId));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/tool-optimizations", request => migrations.proposeToolOptimization(request.params.id,request.body));
   app.post<{ Params: { id: string; attemptId:string } }>("/api/migrations/:id/tool-optimizations/:attemptId/adopt", request =>
     migrations.adoptToolOptimization(request.params.id,{attemptId:request.params.attemptId}));

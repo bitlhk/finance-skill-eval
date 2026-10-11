@@ -27,7 +27,7 @@ const work=await mkdtemp(path.join(os.tmpdir(),'continued-rebuild-ui-')),data=pa
 await cp(parent.data,data,{recursive:true,errorOnExist:true});
 const project=JSON.parse(await readFile(path.join(data,'migrations',`${prior.projectId}.json`),'utf8'));
 assert(project.candidate?.artifactSha256===prior.candidateDigest,'Candidate provenance must remain unchanged');
-assert(!project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)),'Data parent must be idle');
+assert(!project.improvementTasks?.some(task=>task.status==='RUNNING'),'Data parent must have no active model or evaluation operation');
 for(const suffix of ['PROVIDER','BASE_URL','API_KEY','MODEL','REQUEST_DEFAULTS','TIMEOUT_MS']){
  const value=process.env[`FINANCE_EVAL_ANALYZER_${suffix}`];if(value!==undefined)process.env[`FINANCE_EVAL_OPTIMIZER_${suffix}`]=value;
 }

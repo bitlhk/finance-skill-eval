@@ -83,3 +83,11 @@ it('allows the model to abstain when the original proposal lacks a necessary fac
     expect(result).toMatchObject({judgement:{status:'ABSTAINED'},outputCorrection:{attempts:1}});
   });
 });
+it('does not present a Harness suggestion without a Builder contract as executable',async()=>{
+ const incomplete={status:'PROPOSED',hypothesis:{...hypothesis,layer:'HARNESS'}};
+ await serve([JSON.stringify(incomplete),JSON.stringify({status:'ABSTAINED',reason:'缺少可核实的能力合同'})],async(_url,requests)=>{
+  const result=await planMigrationImprovement(input);
+  expect(result).toMatchObject({judgement:{status:'ABSTAINED'}});
+  expect(requests[1]?.messages?.[1]?.content).toContain('hypothesis.requiredCapabilities');
+ });
+});

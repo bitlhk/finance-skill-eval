@@ -74,6 +74,7 @@ export class MigrationImprovementPlanningService {
     // New experiments, changed solution revisions and previously dispatched actions must replan.
     if(reuseUnexecuted&&!previousExperiments?.length){
       const existing=[...(project.improvementPlans??[])].reverse().find(plan=>plan.status==='PROPOSED'&&plan.hypothesis
+        &&(plan.hypothesis.layer!=='HARNESS'||!!plan.hypothesis.requiredCapabilities?.length)
         &&!(plan as MigrationImprovementPlan&{action?:unknown}).action&&plan.sourceJobId===jobId&&plan.candidateDigest===project.candidate!.artifactSha256
         &&plan.baseSolutionRevisionId===baseSolutionRevisionId
         &&JSON.stringify(plan.developmentCaseIds)===JSON.stringify(cases.map(item=>item.caseId)));

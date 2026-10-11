@@ -128,6 +128,22 @@ export class MigrationImprovementTaskService{
     this.launch(id,task);return task;
   }
 
+  async replanBuilder(id:string,taskId:string){
+    const task=await this.d.projects.runExclusive(id,async()=>{
+      const project=await this.d.projects.get(id),task=project.improvementTasks?.find(item=>item.taskId===taskId);
+      if(!task||task.status!=='WAITING_BUILDER'||task.runtimeRequirements||task.finalConsumed)
+        return conflict('只有缺少 Builder 能力合同的等待任务可以补全需求');
+      await this.guard(id,task,undefined,false);
+      for(const iteration of task.iterations)if(iteration.outcome==='PENDING'){
+        iteration.outcome='RETAINED';iteration.summary='原假设缺少可执行能力合同，未构建或改变候选；保留记录并重新规划';
+      }
+      task.status='RUNNING';task.reason=null;task.stage='PLANNING';
+      task.deadlineAt=new Date(Date.now()+(task.remainingDurationMs??0)).toISOString();
+      await this.d.projects.save(project);this.active.set(taskId,new AbortController());return task;
+    });
+    this.launch(id,task);return task;
+  }
+
   async list(id:string){
     return this.d.projects.runExclusive(id,async()=>{
       const project=await this.d.projects.get(id);let changed=false;

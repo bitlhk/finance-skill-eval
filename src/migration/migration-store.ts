@@ -43,6 +43,7 @@ export class MigrationStore {
   async cancelImprovementTask(id:string,taskId:string){return this.services.improvementTasks.cancel(id,taskId);}
   async adoptImprovementTask(id:string,taskId:string){return this.services.improvementTasks.adopt(id,taskId);}
   async resumeImprovementTask(id:string,taskId:string,input:unknown){return this.services.improvementTasks.resume(id,taskId,input);}
+  async replanImprovementBuilder(id:string,taskId:string){return this.services.improvementTasks.replanBuilder(id,taskId);}
   async proposeReuseAcceptance(id:string,input:unknown,signal?:AbortSignal){return this.services.reuseAcceptance.propose(id,input,signal);}
   async approveReuseAcceptance(id:string,input:unknown){return this.services.reuseAcceptance.approve(id,input);}
   async startReuseAcceptance(id:string,input:unknown){return this.services.reuseAcceptance.start(id,input);}

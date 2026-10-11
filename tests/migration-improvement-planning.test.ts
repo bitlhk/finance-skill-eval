@@ -34,7 +34,7 @@ it('proposes an evidence-grounded layer without exposing holdout cases to the mo
 });
 it('reuses only an unexecuted first hypothesis bound to the exact development run and solution',async()=>{
  const {project,projects,jobs}=fixture();
- const planner=vi.fn(async()=>({status:'PROPOSED',hypothesis:{layer:'HARNESS',issue:'budget',expectedBehavior:'complete',evidenceCaseIds:['dev-1'],validation:'frozen cases',risk:'cost',confidence:'HIGH'}}));
+ const planner=vi.fn(async()=>({status:'PROPOSED',hypothesis:{layer:'TOOL',issue:'implementation',expectedBehavior:'complete',evidenceCaseIds:['dev-1'],validation:'frozen cases',risk:'cost',confidence:'HIGH'}}));
  const service=new MigrationImprovementPlanningService(projects,jobs,planner,()=> 'fixture-model');
  const first=await service.propose(project.id,{jobId:'job-1'});
  expect((await service.propose(project.id,{jobId:'job-1'},undefined,[],undefined,true)).planId).toBe(first.planId);

@@ -24,6 +24,8 @@ function normalizeRepresentation(value:unknown):unknown{
 
 function checkJudgement(value:unknown):OutputCheck<unknown>{
   const parsed=improvementJudgementSchema.safeParse(normalizeRepresentation(value));
+  if(parsed.success&&parsed.data.status==='PROPOSED'&&parsed.data.hypothesis.layer==='HARNESS'&&!parsed.data.hypothesis.requiredCapabilities?.length)
+    return {ok:false,errors:['hypothesis.requiredCapabilities: Harness 改进必须给出有真实证据的 Builder 能力合同；证据不足则 ABSTAINED']};
   return parsed.success?{ok:true,value:parsed.data}:{ok:false,errors:parsed.error.issues.map(issue=>
     `${issue.path.join('.').slice(0,150)||'$'} (${issue.code})`)};
 }
@@ -70,8 +72,8 @@ export const planMigrationImprovement:ImprovementPlanner=async (input,signal)=>{
       reuseVerificationPolicy,
       '先区分候选实现缺陷、配置或宿主缺口、测试数据错误和方案要求本身不合理。后两者不能通过修改业务工具或重复构建来掩盖；EVALUATION 假设应说明应修订的测试或方案条款，仍需重新确认，不直接改判已有结果。',
       'consumerTools 仅列直接调用该原生能力的工具；agent loop 的迭代容量等调度能力由 Agent 自身消费，此时 consumerTools 留空，不能把所有受调度工具都列成原生调用者。',
-      '若选择 HARNESS，可附 hypothesis.requiredCapabilities：复用输入 runtimeRequirements 的合同，或仅根据源码和实际开发集证据提出新合同。每项需 id,name,required,reason,contract:{inputSchema,outputSchema,errorSchema,semantics},constraints:{permissions,sideEffects,isolation},preferredTargetCapability,consumerTools,evidence:[{path,line,detail}]。不得伪造来源，不确定时 ABSTAINED。',
-      '只返回 JSON：{status:"PROPOSED",hypothesis:{layer,issue,expectedBehavior,evidenceCaseIds,validation,risk,confidence,toolIds?}} 或 {status:"ABSTAINED",reason}。',
+      '若选择 HARNESS，必须附 hypothesis.requiredCapabilities，不能只给文字建议却无法交给 Builder：复用输入 runtimeRequirements 的合同，或仅根据源码和实际开发集证据提出新合同。每项需 id,name,required,reason,contract:{inputSchema,outputSchema,errorSchema,semantics},constraints:{permissions,sideEffects,isolation},preferredTargetCapability,consumerTools,evidence:[{path,line,detail}]。合同描述需要实现并复测的能力，不是声称能力已存在；不得伪造来源，不确定时 ABSTAINED。',
+      '只返回 JSON：{status:"PROPOSED",hypothesis:{layer,issue,expectedBehavior,evidenceCaseIds,validation,risk,confidence,toolIds?,requiredCapabilities?}} 或 {status:"ABSTAINED",reason}。HARNESS 时 requiredCapabilities 必填且非空。',
     ].join('\n')},{role:'user',content:JSON.stringify(input)}]});
   let validationFields:string[]=[];
   const corrected=await correctModelOutput({raw:completion.content,check:value=>{

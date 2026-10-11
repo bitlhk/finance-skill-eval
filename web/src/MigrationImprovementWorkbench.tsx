@@ -1,7 +1,7 @@
 import {useEffect,useState,useRef} from 'react';
 import {CheckCircle2,LoaderCircle,PauseCircle,Sparkles} from 'lucide-react';
 
-type Task={taskId:string;status:string;stage:string;reason:string|null;maxIterations:number;finalVerified:boolean;
+type Task={taskId:string;status:string;stage:string;reason:string|null;maxIterations:number;finalVerified:boolean;runtimeRequirements?:unknown;
   bestCandidate:{version:string};contextChanges?:Array<{environmentId:string;modelId:string}>;iterations:Array<{iteration:number;layer:string;outcome:string;passed?:number;total?:number;jobId?:string;summary?:string;changedPaths?:string[]}>;
   events:Array<{sequence:number;at:string;message:string}>};
 type Evidence={cases:Array<{caseId:string;right:{status:string;toolCalls:Array<{name:string;status:string}>};judge?:{summary:string;goalAssessment?:{verdict:string}}}>};
@@ -54,7 +54,9 @@ export function MigrationImprovementWorkbench(p:{api:Api;projectId:string;source
       </details>)}
       {!!latest.events.length&&<details className="stage-detail"><summary>查看执行记录（{latest.events.length}）</summary>{[...latest.events].reverse().map(event=><p key={event.sequence}>{new Date(event.at).toLocaleTimeString('zh-CN',{hour12:false})} · {event.message}</p>)}</details>}
       {latest.status==='REVIEW'&&latest.finalVerified&&<button className="button primary" disabled={busy} onClick={()=>void act(`/${latest.taskId}/adopt`)}>采用已通过复核的候选</button>}
-      {waiting&&<><p>完成 Runtime 适配或运行配置后，在下方选择要验证的 Runtime 和模型，再继续。测试集与验收要求保持不变。</p><button className="button primary" disabled={busy||!p.environmentId||!p.model} onClick={()=>void act(`/${latest.taskId}/resume`,{environmentId:p.environmentId,model:p.model?{providerId:p.model.providerId,modelId:p.model.modelId,parameters:p.model.parameters??{}}:undefined})}>使用所选 Runtime 继续</button></>}
+      {waiting&&(latest.status==='WAITING_BUILDER'&&!latest.runtimeRequirements
+        ?<><p>当前假设缺少可执行的 Builder 能力合同。补全需求会重新分析同一开发集，不改测试标准或读取留出题。</p><button className="button primary" disabled={busy} onClick={()=>void act(`/${latest.taskId}/replan-builder`)}>补全 Builder 需求</button></>
+        :<><p>完成 Runtime 适配或运行配置后，在下方选择要验证的 Runtime 和模型，再继续。测试集与验收要求保持不变。</p><button className="button primary" disabled={busy||!p.environmentId||!p.model} onClick={()=>void act(`/${latest.taskId}/resume`,{environmentId:p.environmentId,model:p.model?{providerId:p.model.providerId,modelId:p.model.modelId,parameters:p.model.parameters??{}}:undefined})}>使用所选 Runtime 继续</button></>)}
       {(running||waiting)&&<button className="button secondary" disabled={busy} onClick={()=>void act(`/${latest.taskId}/cancel`)}>停止此任务</button>}
     </div>}
     {error&&<p role="alert">{error}</p>}
