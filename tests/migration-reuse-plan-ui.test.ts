@@ -3,6 +3,7 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {MigrationReusePlan} from '../web/src/MigrationReusePlan';
 import {CandidateStep} from '../web/src/MigrationPanel';
+import {DiagnosisStep} from '../web/src/DiagnosisStep';
 import type {MigrationReuseProposal,ReuseDesign} from '../src/migration/domain/migration-reuse-design.js';
 
 const design:ReuseDesign={scope:'在声明依赖的 Runtime 上复用',preservedBehavior:['金额和规则保持'],sourceCouplings:[],
@@ -10,6 +11,14 @@ const design:ReuseDesign={scope:'在声明依赖的 Runtime 上复用',preserved
   dependencies:[],conditions:['提供工作区'],unresolvedQuestions:[],
   acceptanceChecks:[{id:'isolation',purpose:'请求不串扰',requirement:'不同业务请求不得读取对方的数据',procedure:'执行不同请求',expectedResult:'各自得到正确结果'}]};
 const proposal:MigrationReuseProposal={proposalId:'new',inputDigest:'digest',sourceDigest:'source',createdAt:'now',design};
+it('does not treat an unavailable dependency graph as zero issues or confirmed tool dependencies',()=>{
+ const html=renderToStaticMarkup(createElement(DiagnosisStep,{api:async()=>({}),projectId:'project',
+  analysis:{status:'UNAVAILABLE',revision:0,materialsDigest:'digest',dependencies:[],chains:[],rejectedClaims:0,reason:'调用链结果尚未完成'},
+  skillFindings:[],tools:[{toolId:'tool',name:'query',sourcePaths:['tools/query.py'],evidence:[],recommendedForm:'MCP',recommendedLanguage:'python'}],
+  choices:{},busy:false,refresh:async()=>{},inspect:()=>{},downloadRuntimeRequirements:()=>{},next:()=>{}} as any));
+ expect(html).toContain('依赖分析未完成');expect(html).toContain('调用链结果尚未完成');
+ expect(html).not.toContain('0 项需要处理');expect(html).not.toContain('依赖已确认');
+});
 it('offers explicit clarification rather than letting unresolved proposals bypass confirmation',()=>{
  const html=renderToStaticMarkup(createElement(MigrationReusePlan,{proposal:{...proposal,clarification:'本次仅限任务范围',
   design:{...design,unresolvedQuestions:['部署范围待确认']}},clarify:()=>{}}));
