@@ -3,7 +3,6 @@ import {spawn} from 'node:child_process';
 import {mkdtemp,cp,readFile,writeFile,mkdir} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {zipSync,strToU8} from 'fflate';
 import {parse as parseYaml} from 'yaml';
 import {chromium,expect} from '@playwright/test';
 import {SkillStore} from '../dist/service/skill-store.js';
@@ -33,19 +32,9 @@ if(resumeOnly){
   assert(pending?.status==='WAITING_BUILDER'&&!pending.finalConsumed,'Only an unconsumed waiting task can continue');
   assert.equal(pending.bestCandidate.artifactSha256,originalCandidate.artifactSha256,'This fixture preserves the original Skill/Tools');
 }
-if(!resumeOnly){
-const contract={inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},
-  semantics:'Execute up to 16 native agent iterations per case. Preserve native tool invocation, cleanup and case isolation. Never change or hardcode business tool behavior.'};
-const constraints={permissions:[],sideEffects:'none',isolation:'per_case'};
-const sourceFiles=await skills.readArchive(project.source.assetId);
-const legacy=Object.keys(sourceFiles).find(name=>name.endsWith('legacy_runtime_tools.py'));assert(legacy);
-if(!Buffer.from(sourceFiles[legacy]).toString().includes('AGENT_HOST_RUNTIME_CONTRACT_JSON'))
-  sourceFiles[legacy]=strToU8(Buffer.from(sourceFiles[legacy]).toString()+`\n# Synthetic source-host configuration for native loop acceptance.\nAGENT_MAX_ITERATIONS = 16\nAGENT_HOST_RUNTIME_CONTRACT_JSON = r'''${JSON.stringify({name:'agent.tool_loop',contract,constraints,consumerTools:[]})}'''\n`);
-project.source=await skills.uploadZip(Buffer.from(zipSync(sourceFiles)),{migrationInput:true});
-project.sourceInspection.assetId=project.source.assetId;project.sourceInspection.assetDigest=project.source.artifactSha256;
-project.technicalValidations=[];project.runs=[];project.suiteIds=[];project.improvementTasks=[];project.improvementPlans=[];project.toolOptimizationAttempts=[];project.runtimeRebuilds=[];delete project.runtimeDelivery;
-await projects.save(project);
-}
+// Discover the Harness gap from actual failed execution/budget evidence. Never
+// append a host requirement to a source after its diagnosis/design/generation,
+// rewrite source identity, or erase historical outcomes to manufacture the gap.
 const builderRoot=path.resolve(process.env.MIGRATION_TEST_BUILDER_ROOT),state=path.resolve(process.env.MIGRATION_TEST_BUILDER_STATE);
 const sourceFile=path.join(data,'builder-source.json');await writeFile(sourceFile,JSON.stringify({assetId:originalCandidate.assetId,artifactSha256:originalCandidate.artifactSha256}),{mode:0o600});
 const child=spawn('uv',['run','--extra','test','python','engineering/verify_eval_runtime_construction.py',
