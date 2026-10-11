@@ -91,6 +91,14 @@ it('guides source-based requirements without prohibiting legitimate state or exp
   expect(result.acceptanceChecks[0]!.requirement).toContain('工具 A');
 });
 
+it('keeps the approved executor contract stable when input-match observation is added',()=>{
+  // Evidence descriptions belong in judge guidance, not the frozen execution semantics.
+  expect(reuseExecutionContract.evidence.caseJudge).toEqual([
+    'current case queries, turn outputs and completed tool receipts',
+    'authorized redacted business projections and exact mounted-file/input matches',
+  ]);
+  expect(reuseExecutionContract.revision).toBe('reuse-execution-v2');
+});
 it('invalidates the old universal process contract without rewriting the approved design',async()=>{
   const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
   await ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest});
