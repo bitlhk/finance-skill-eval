@@ -16,7 +16,15 @@ const citation=z.object({path:z.string().min(1),snippet:z.string().min(8)});
 const wireLibrary=z.object({type:z.enum(['STANDARD_LIBRARY','PACKAGE','CUSTOM_SDK','UNKNOWN']),language:z.enum(['python','node']),module:z.string().min(1).max(200),packageName:z.string().min(1).max(200).nullish().transform(v=>v??undefined),version:z.string().max(200).nullish().transform(v=>v??undefined),declarationPaths:z.array(z.string()).max(20).nullish().transform(v=>v??[])});
 const wireDependency=z.object({library:z.preprocess(v=>v&&typeof v==='object'&&(v as {type?:unknown}).type==='UNKNOWN'&&(!(v as {module?:unknown}).module||!(v as {language?:unknown}).language)?undefined:v,wireLibrary.nullish()).transform(v=>v??undefined),key:z.string().min(1).max(200),name:z.string().min(1).max(200),kind:z.enum(['DATA','SDK','CONFIG','RESOURCE']),owner:z.enum(['TOOL','RUNTIME','UNKNOWN']).default('UNKNOWN'),action:z.enum(['KEEP','INJECT','MOVE_TO_RUNTIME']).default('KEEP'),contractStatus:z.enum(['KNOWN','UNKNOWN']).default('UNKNOWN'),sensitive:z.boolean().default(true),binding:z.object({kind:z.enum(['HTTP_HEADER','SCRIPT_CONTEXT','SERVICE_ENV']),name:z.string().min(1).max(100)}).nullable().default(null),purpose:z.string().min(1).max(2000),blocking:z.boolean().default(true),availability:z.enum(['AVAILABLE','MISSING','UNKNOWN']),references:z.array(citation.extend({toolName:z.string()})).min(1).max(100),resolvedPaths:z.array(z.string()).default([]),resolutionEvidence:z.array(citation).default([]),schema:z.record(z.unknown()).nullable().default(null),schemaCompleteness:z.enum(['UNKNOWN','PARTIAL','COMPLETE']).default('UNKNOWN'),schemaEvidence:z.array(citation).default([])});
 const wireChain=z.object({toolName:z.string(),nodes:z.array(z.object({id:z.string(),title:z.string(),detail:z.string(),dependencyKeys:z.array(z.string()).default([]),evidence:z.array(citation).min(1)})).max(100),edges:z.array(z.object({from:z.string(),to:z.string(),condition:z.string().nullable().optional().transform(value=>value??undefined)})).default([])});
-const graphSchema=z.object({dependencies:z.array(wireDependency.extend({executionInput:z.object({contract:z.string().trim().min(1).max(2000),evidence:z.array(citation).min(1).max(100)}).nullish()})).max(200),chains:z.array(wireChain).max(100)});
+const graphSchema=z.object({dependencies:z.array(z.preprocess(value=>{
+ // A display label is not an execution contract. Preserve the dependency and its evidence
+ // when the model omits the label; the existing stable key is an unambiguous fallback.
+ if(value&&typeof value==='object'&&!Array.isArray(value)){
+  const item=value as Record<string,unknown>;
+  if((item.name==null||typeof item.name==='string'&&!item.name.trim())&&typeof item.key==='string')return {...item,name:item.key};
+ }
+ return value;
+},wireDependency.extend({executionInput:z.object({contract:z.string().trim().min(1).max(2000),evidence:z.array(citation).min(1).max(100)}).nullish()}))).max(200),chains:z.array(wireChain).max(100)});
 export const dependencyId=(key:string,kind:string)=>'dep-'+createHash('sha256').update(kind+'\0'+key).digest('hex').slice(0,16);
 
 /** Resolve against this invocation's trusted workspace and the actual asset file inventory. */

@@ -6,6 +6,16 @@ import {inspectionFixture,toolFixture,SKILL_MD,analyzedTool} from './analysis-fi
 import {createEvaluationService} from '../src/service/server.js';
 const files={'scripts/check.py':'rules = load_rules()\n','assets/rules.json':'{"mealLimit":"150.00"}\n'};
 function payload(root:string){return {status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[analyzedTool({name:'check',sourcePaths:['scripts/check.py'],sample:{},inputSchema:{type:'object'}})],dependencyAnalysis:{dependencies:[{key:'rules',name:'Rules',kind:'CONFIG',owner:'TOOL',action:'KEEP',contractStatus:'KNOWN',purpose:'Read the included rules',blocking:true,availability:'AVAILABLE',references:[{toolName:'check',path:root+'/scripts/check.py',snippet:'rules = load_rules()'}],resolvedPaths:[root+'/assets/rules.json'],resolutionEvidence:[{path:root+'/assets/rules.json',snippet:'"mealLimit":"150.00"'}]}],chains:[{toolName:'check',nodes:[{id:'rules',title:'Read rules',detail:'Read included rules',dependencyKeys:['rules'],evidence:[{path:root+'/scripts/check.py',snippet:'rules = load_rules()'}]}],edges:[]}]}}}
+it('uses the stable key for an omitted display label without weakening dependency evidence or ownership',()=>{
+ const root='C:/Temp/current',inspection=inspectionFixture([toolFixture({name:'check',sourcePaths:['scripts/check.py']})]);
+ for(const name of [undefined,null,'','  ']){
+  const raw=payload(root) as any;raw.dependencyAnalysis.dependencies[0].name=name;
+  const result=analyzeDependencies(raw,inspection,files,[],0,'digest',root);
+  expect(result.status).toBe('COMPLETE');expect(result.dependencies[0]).toMatchObject({name:'rules',owner:'TOOL',action:'KEEP'});
+  raw.dependencyAnalysis.dependencies[0].references[0].snippet='not in actual source';
+  expect(analyzeDependencies(raw,inspection,files,[],0,'digest',root).status).toBe('PARTIAL');
+ }
+});
 it('resolves Windows absolute and relative paths to the actual asset key, including case and separators',()=>{
  const root='C:\\Temp\\current';
  for(const value of ['assets/rules.json','assets\\rules.json','./assets/rules.json','assets/../assets/rules.json','c:/temp/CURRENT/ASSETS/RULES.JSON','C:\\Temp\\current\\assets\\rules.json'])expect(resolveDependencyPath(value,files,root)).toEqual({path:'assets/rules.json'});
