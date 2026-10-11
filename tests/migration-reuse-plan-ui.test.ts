@@ -44,3 +44,8 @@ it('does not label a confirmed revision as awaiting confirmation',()=>{
   const html=renderToStaticMarkup(createElement(MigrationReusePlan,{proposal:{...proposal,approvedAt:'now',previousProposalId:'old',previousDesign:design}}));
   expect(html).toContain('方案内容未变化');expect(html).toContain('本版已确认');expect(html).not.toContain('请核对后重新确认');
 });
+it('allows clarification of an approved plan without presenting it as an in-place approved edit',()=>{
+ const html=renderToStaticMarkup(createElement(MigrationReusePlan,{proposal:{...proposal,approvedAt:'now'},clarify:()=>{}}));
+ expect(html).toContain('补充说明并调整方案');expect(html).toContain('方案补充说明');
+ expect(html).toContain('重新规划后仍需核对并确认方案');expect(html).not.toContain('确认方案前需要补充');
+});

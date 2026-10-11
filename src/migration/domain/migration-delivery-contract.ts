@@ -6,6 +6,9 @@ import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} 
 export function portableDeliveryContract(inspection:ProjectInspection,decisions:ToolDecision[],sourceSkillFile?:string){
  return {
   skillDocumentation:{sourceSkillFile,manifestPathsRelativeToSkillRoot:true,
+   assembledLayout:decisions.some(decision=>decision.form==='MCP')
+    ?'The delivery archive contains skill/SKILL.md and its skill-relative resources. MCP service source files retain their declared delivery-root-relative paths outside skill/. Do not cite scripts/<file> as a Skill-relative file when it is only delivered as external MCP service code. The model uses registered MCP tool names, not service source files.'
+    :'SKILL.md and Script tools share the Skill root; supporting Script files retain their Skill-relative layout.',
    manifestSourceDirectory:'migration-skill/',manifestTargets:['SKILL.md','references/<name>.md|mdx|txt'],
    serviceReadme:'Declare tool deployment README in tools[].files, not skillDelivery.files. Script supporting files retain their declared Skill-relative layout; a tool README may therefore appear in the final Skill package, but it does not replace SKILL.md.',
    purpose:'SKILL.md remains the model-executed business workflow, including scope, inputs, tool order, branches, stop conditions and outputs; deployment notes cannot replace it'},

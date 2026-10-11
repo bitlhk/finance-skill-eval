@@ -66,7 +66,8 @@ export class MigrationCandidateInspectionService {
     if(diagnosis.digest!==input.candidate.artifactSha256)return conflict('生成候选的静态诊断与资产不匹配');
     const rules=inspectProject({assetId:input.candidate.assetId,assetDigest:input.candidate.artifactSha256,
       files:decoded,skillFile:input.candidate.skillFile,diagnosis});
-    if(rules.skill.status!=='COMPLIANT')return blocked('STATIC_SCAN','SKILL_NON_COMPLIANT','生成候选不符合 Skill 包规范，需要修改产物后重新检查');
+    if(rules.skill.status!=='COMPLIANT')return blocked('STATIC_SCAN','SKILL_NON_COMPLIANT',
+      `生成候选不符合 Skill 包规范：${rules.skill.findings.filter(finding=>finding.severity==='ERROR').slice(0,3).map(finding=>`${finding.path}:${finding.line} ${finding.message}`).join('；')}。请修改产物后重新检查`);
     checkpoint.rules={assetId:rules.assetId,assetDigest:rules.assetDigest,skill:rules.skill,staticAnalysis:rules.staticAnalysis};
     await save();
     }
