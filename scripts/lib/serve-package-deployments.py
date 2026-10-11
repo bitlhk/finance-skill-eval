@@ -17,14 +17,15 @@ from finance_solution_builder.runtime_builder import RuntimeBuilder, PROTOCOLS, 
 from finance_solution_builder.runtime_construction import source_archive, source_snapshot
 from finance_solution_builder.runtime_package_release import ManagedPackageRelease
 from finance_solution_builder.eval_package_contract import RUNTIME_VERSION
+from finance_solution_builder.eval_package_release_sources import package_worker_sources
 from finance_solution_builder.method_assets import write_private
 
 root = args.state_root.resolve()
 root.mkdir(parents=True, exist_ok=False)
 template = root / 'template'
 template.mkdir()
-for name in ('eval_package_worker.py', 'eval_package_process.py', 'eval_package_evidence.py', 'runtime_workspace.py'):
-    (template / name).write_bytes((args.builder_root / 'src/finance_solution_builder' / name).read_bytes())
+for name, content in package_worker_sources().items():
+    (template / name).write_bytes(content)
 artifact = source_archive(source_snapshot(template))
 preset = {'owner': 'cross-deployment-acceptance', 'runtime': {'type': 'openjiuwen', 'version': RUNTIME_VERSION},
     'model': {'modelId': 'builder-package-model', 'upstreamModelId': os.environ['CLOSEOUT_MODEL_NAME']},
