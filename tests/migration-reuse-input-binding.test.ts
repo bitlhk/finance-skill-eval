@@ -47,6 +47,21 @@ it('keeps old plans without bindings unchanged',()=>{
  const f=fixture(),cases=f.plan.groups[0]!.cases;
  expect(resolveReuseInputs(cases,[],new Map())).toEqual({cases,receipts:[]});
 });
+it.each([false,true])('reads the actual single MCP text JSON projection without changing original evidence: encoded=%s',encoded=>{
+ const f=fixture(),fact=(f.evidence.metadata.toolEvidence as any[])[0]!;
+ const content=[{type:'text',text:JSON.stringify({snapshot_ref:'actual-mcp-ref'})}];
+ fact.result=encoded?JSON.stringify(content):content;const before=structuredClone(f.evidence);
+ const resolved=resolveReuseInputs(f.plan.groups[1]!.cases,f.plan.inputBindings!,f.sources);
+ expect(resolved.cases[0]!.input).toBe('Consume reference actual-mcp-ref');
+ expect(resolved.receipts[0]!.sourceResultDigest).toBe(fact.resultDigest);
+ expect(f.evidence).toEqual(before);expect(JSON.stringify(resolved.receipts)).not.toContain('actual-mcp-ref');
+});
+it.each([[],[{type:'image',data:'private'}],[{type:'text',text:'ref-123'}],
+ [{type:'text',text:'{"snapshot_ref":"ref-123"}'},{type:'text',text:'{"snapshot_ref":"other"}'}],
+ [{type:'text',text:'{"snapshot_ref":{"id":"nested"}}'}]])('does not guess a scalar from ambiguous or non-JSON MCP content: %j',content=>{
+ const f=fixture();(f.evidence.metadata.toolEvidence as any[])[0]!.result=JSON.stringify(content);
+ expect(()=>resolveReuseInputs(f.plan.groups[1]!.cases,f.plan.inputBindings!,f.sources)).toThrow('输入绑定');
+});
 it('requires the source and actual consumer to be visible to the same check verification',()=>{
  const f=fixture();f.plan.checks=[{checkId:'source',caseIds:['query'],criteria:['Source result']},{checkId:'target',caseIds:['consume'],criteria:['Target result']}];
  expect(reuseAcceptanceReferenceIssues(f.plan,['source','target']).join(' ')).toContain('来源与消费案例必须关联同一验收要求');

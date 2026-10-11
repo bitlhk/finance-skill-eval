@@ -62,6 +62,15 @@ export function resolveReuseInputs(cases:Case[],bindings:ReuseInputBinding[],sou
     if(!selected||selected.fact.resultOmitted===true||!Object.hasOwn(selected.fact,'result'))throw new Error(`输入绑定 ${name} 没有可用的授权结果投影`);
     let value:unknown=selected.fact.result;
     if(typeof value==='string')try{value=JSON.parse(value)}catch{throw new Error(`输入绑定 ${name} 的结果不是可读取对象`)}
+    // MCP may expose only content, without structuredContent. Decode exactly
+    // one actual text JSON block from the authorized projection, not model prose
+    // or a guessed field among multiple/image/error blocks. Keep the digest of
+    // the original observed result in the receipt.
+    if(Array.isArray(value)){
+     const block=value.length===1?value[0]:undefined;
+     if(!block||typeof block!=='object'||block.type!=='text'||typeof block.text!=='string')throw new Error(`输入绑定 ${name} 的 MCP 结果不是唯一文本 JSON`);
+     try{value=JSON.parse(block.text)}catch{throw new Error(`输入绑定 ${name} 的 MCP 文本不是 JSON`)}
+    }
     for(const field of binding.resultPath){
      if(forbidden(field)||!value||typeof value!=='object'||Array.isArray(value)||!Object.hasOwn(value,field))throw new Error(`输入绑定 ${name} 的结果字段不可用`);
      value=(value as Record<string,unknown>)[field];

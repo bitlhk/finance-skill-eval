@@ -243,6 +243,14 @@ Eval `806e01f5f3a740d9b9c1b4fb409a437ee0991c9c` 通过 UI 运行：开发 `run-c
 
 ### 2026-10-12 续测修复与版本边界
 
+#### 实际续测结果及第二个执行器缺口
+
+固定 Eval `c818968a394e81d33f76648ef29a7b386464b471` / Builder `da5a1a30a856f1200fff4a59d794b8619997249d` 后，两份真实新部署均独立准入。退款修复候选 `67b845d7fcd5739fb3c59684ea4983240cd579d1b3cca4226cf599b1a81cd767`（2.0.0-migration.2-api.1）真实独立诊断及方案审查通过，后者 17 秒一次调用；前端采纳，旧候选和失败保留。实际 MCP 试运行通过。
+
+应收新计划 `reuse-plan-5b271b33-5be4-4a44-b51d-93f5d6d3aa1e` 经真实覆盖审查通过。第一组运行 `run-81e9321e-7f3b-47db-aa04-77d20ac74c6b` 的 3 案例全部通过；后续组准备因 INPUT_BINDING_UNAVAILABLE 停止，未冒充跨部署通过。原因是实际 MCP 仅返回单个 text JSON 内容块，授权结果投影为 JSON 编码的内容块数组；原绑定器仅识别对象/对象 JSON。现支持准确解码唯一 text JSON，不接受多内容、图片、非 JSON 或猜测字段，原结果和摘要不改变。88 项相关回归、全量 1065 通过/0 失败/2 跳过及类型检查通过；报告 `reports/runtime-rebuild-ui/regression-mcp-text-input-binding.json`。
+
+退款新开发题 `run-749dc797-e52b-4498-b46b-e98790e3d36d` 仅 1/3 通过，但全部实际工具响应的两通道回执 MATCH。失败原因不是 Judge：连接的旧合成接口实际只有 RF-001/RF-002（政策 PAID），冻结计划使用 RF001/RF002（政策 PENDING）；实际请求正确但返回 ORDER_NOT_FOUND。另建 `scripts/serve-refund-business-acceptance.mjs` 的显式独立 IT 测试服务，数据与已冻结计划一致；原接口、候选业务代码、判据与失败记录均不覆盖。真实 UI 更新服务地址和公开合成凭证后重新试运行，不使用模型回答模拟业务服务。新配置的业务/留出/复用验收另记。
+
 退款人工修复包的真实 A2 诊断把候选目标协议 SDK 标为 KNOWN + RUNTIME + KEEP，违反原有归属/动作合同，导入原子拒绝、旧候选未替换。现完善通用指导：源框架胶水与业务工具自身声明的目标协议 SDK 分开判断，后者按实际实现和声明证据归属 TOOL + KEEP；不按 SDK 名字自动改标签或跳过依赖验证。另外已核对当前 OpenJiuwen SDK，init_model 无 extra_body 入参；A2/A4 改为在公共 invoke/stream 上传递可信运行配置及角色环境变量的扩展参数，保留原客户端、回调与流实现，上传内容不能配置这些参数。5 项 Python 模型配置测试通过。
 
 Builder 本地提交 `da5a1a30a856f1200fff4a59d794b8619997249d` 支持受限 uv 锁定版本 import/version 准备探针（不接受任意 shell、索引 URL、未固定版本或其他内联程序），以及实际 MCP tools/call 文本 JSON 与 structuredContent 摘要比较。两项能力从不可变 worker 实际探测并冻结，旧部署不能继承主机新源码的声明。Builder 114 项相关回归通过。
