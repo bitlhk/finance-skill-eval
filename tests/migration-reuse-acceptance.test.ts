@@ -105,6 +105,26 @@ it.each(['missing-check','duplicate-case','unknown-case','unmapped-case','unreso
  const f=fixture();if(change==='missing-check')f.project.reuseProposal!.design.acceptanceChecks.push({id:'another',purpose:'Other',procedure:'Other',expectedResult:'Other'});if(change==='duplicate-case')f.plan.groups[1]!.cases[0]!.id='one';if(change==='unknown-case')f.plan.checks[0]!.caseIds=['unknown'];if(change==='unmapped-case')f.plan.checks[0]!.caseIds=['one'];if(change==='unresolved')f.plan.unresolvedQuestions=['Cannot redeploy Launcher'] as never;
  const saved=await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model',plan:f.plan});expect(saved.coverage.status).toBe('INCOMPLETE');expect(f.model).not.toHaveBeenCalled();await expect(f.service.approve(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest})).rejects.toThrow('完整覆盖');
 });
+it('uses intact same-binding incomplete coverage to inform a new plan without rerating old verdicts',async()=>{
+ const f=fixture();
+ f.model.mockImplementation(async({mode}:any)=>mode==='PLAN'?structuredClone(f.plan):{status:'INCOMPLETE',reasons:['Move session identity comparison to checks']});
+ const first=await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model'});
+ await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model'});
+ expect((f.model.mock.calls[2]![0] as any).context.planningFeedback).toEqual({previousPlan:first.plan,coverage:first.coverage});
+ expect(first.coverage.status).toBe('INCOMPLETE');expect(f.execution).not.toHaveBeenCalled();
+ f.config.revision++;
+ await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model'});
+ expect((f.model.mock.calls[4]![0] as any).context.planningFeedback).toBeUndefined();
+});
+it('never uses tampered or operator-authored plan history as automatic planning feedback',async()=>{
+ const f=fixture();f.model.mockImplementation(async({mode}:any)=>mode==='PLAN'?structuredClone(f.plan):{status:'INCOMPLETE',reasons:['Missing coverage']});
+ await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model'});
+ f.project.reuseAcceptancePlan!.coverage.reasons=['Tampered'];
+ await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model'});
+ expect((f.model.mock.calls[2]![0] as any).context.planningFeedback).toBeUndefined();
+ await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model',plan:f.plan});
+ expect((f.model.mock.calls.at(-1)![0] as any).context.planningFeedback).toBeUndefined();
+});
 it('requires independent model coverage review even for manually authored plans',async()=>{
  const f=fixture();f.model.mockResolvedValueOnce({status:'INCOMPLETE',reasons:['Not a real Launcher redeployment']} as never);
  const saved=await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model',plan:f.plan});expect(saved.coverage.status).toBe('INCOMPLETE');expect(f.model.mock.calls[0]![0].mode).toBe('COVERAGE');
