@@ -190,3 +190,21 @@ Judge 使用本地已配置的真实 GLM 模型。
 的真实验收缺口。该新配置的复用验收与下载另行核验，不借用失效的旧结果，也不把八 Skill
 全部记为本次通过。当前版本完整回归 974 项通过、0 失败、2 项跳过；类型检查通过。
 报告为 `reports/runtime-rebuild-ui/regression-f0112af.json`。
+
+### 同一已采用任务的新配置复用验收、刷新和实际下载
+
+2026-10-12 02:29，上述同一任务已完成最后交付链，不再只停在业务复核。
+复用执行版本 Eval `97d0c6e`，全量回归版本 `83a43e7`（后者仅更新测试、冻结批次和说明，生产实现不变）；Builder 版本同上。
+
+- 计划 `reuse-plan-8a8b9fb3-5006-486b-aa13-97d53e0a9604`：通过真实模型独立 COVERAGE，保留全部 5 项原方案要求。人工编辑只纠正判据：去掉非原承诺的每调用独立 OS 进程强制条件，核验两工具输入 schema，以实际 `toolResultInputMatches` 核验原样传参。先前 INCOMPLETE 记录未改判。
+- 实际复用任务 `reuse-test-f9587ed1-c528-417c-b1e3-18fb16fc2856`，运行 `run-3a3dbd46-3854-4f9b-95c0-6733aad472a5`：4/4 案例、5/5 原要求通过。含真实双轮不可用订单停止、完整 ORDER-002 工作流、ROUND_HALF_UP 舍入、不同请求不串扰。
+- `toolResultInputMatches` 实际记录前一个查询工具与后一个计算工具的 `subtotal`、`tax_rate` 值匹配；原实参不公开。这是值相等和调用先后证据，不是内部因果或内存证明。
+- 前端刷新后重进同一项目，交付页仍显示三项通过。实际点击下载，得到 `openjiuwen-portability-acceptance (1).zip`；6 个文件的内容指纹精确等于已采用候选 `1f518ae718f6ad8ee1e74ebfa8901bcbf5ce912d809fbfc79caaeae46ac6dfe1`。
+- 针对当前实际服务报告与真实下载，同时运行 `verifiedDeliveryEvidence`、`verifiedHarnessRebuildEvidence`，均通过；delivery=VERIFIED、gaps=[]。新实例验收未冒充跨部署；跨部署证据来自上文 expense 的两独立部署，二者分别记账。
+
+证据 `reports/runtime-rebuild-ui/03-verified-delivery-evidence.json`，刷新后下载页截图 `reports/runtime-rebuild-ui/03-current-verified-download.jpg`。
+本例已闭合“批准方案 → 生成审查 → 基线发现 Harness 问题 → Builder 重建 → 独立准入 → 原任务恢复 → 留出复核 → 采用 → 新配置复用验收 → 刷新 → 实际下载”链。
+原始生成/批准沿用真实记录，本轮不记为从空白新生成。八 Skill 的历史与当前续测仍分别保留；本例闭环不把其他样例自动改为通过。
+
+本轮额外发现并修复：新增观测说明误进入执行合同指纹，导致已批准方案失效。观测说明保留在 Judge 指导中，执行语义合同恢复稳定，不改写批准记录。
+全量回归 `83a43e7`：987 通过、0 失败、2 跳过；核心、示例、前端类型检查通过。报告 `reports/runtime-rebuild-ui/regression-current.json`。
