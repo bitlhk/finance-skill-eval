@@ -101,6 +101,17 @@ it('executes frozen groups through existing suite/runtime/Judge pipeline and bin
  expect(f.readArchive).toHaveBeenLastCalledWith('candidate');
  f.config.revision++;expect((await f.service.summary(f.project.id)).status).toBe('STALE');await f.service.shutdown();
 });
+it('projects actual selected deployment software facts into planning and guarded check verification',async()=>{
+ const f=fixture();
+ const executionEnvironment={software:[{name:'python',version:'3.12.9'}]};
+ Object.assign(f.capabilities,{executionEnvironment});
+ const p=await f.approve();
+ expect((f.model.mock.calls[0]![0] as any).context.availableRunTargets[0]).toMatchObject({environmentId:'selected',executionEnvironment});
+ await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
+ expect((await f.finish()).status).toBe('PASSED');
+ expect((f.model.mock.calls.find(c=>c[0].mode==='VERIFY')![0] as any).context.executionEnvironments).toEqual([{environmentId:'selected',executionEnvironment}]);
+ await f.service.shutdown();
+});
 it.each(['missing-check','duplicate-case','unknown-case','unmapped-case','unresolved'] as const)('refuses structural undercoverage: %s',async change=>{
  const f=fixture();if(change==='missing-check')f.project.reuseProposal!.design.acceptanceChecks.push({id:'another',purpose:'Other',procedure:'Other',expectedResult:'Other'});if(change==='duplicate-case')f.plan.groups[1]!.cases[0]!.id='one';if(change==='unknown-case')f.plan.checks[0]!.caseIds=['unknown'];if(change==='unmapped-case')f.plan.checks[0]!.caseIds=['one'];if(change==='unresolved')f.plan.unresolvedQuestions=['Cannot redeploy Launcher'] as never;
  const saved=await f.service.propose(f.project.id,{environmentId:'selected',modelId:'model',plan:f.plan});expect(saved.coverage.status).toBe('INCOMPLETE');expect(f.model).not.toHaveBeenCalled();await expect(f.service.approve(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest})).rejects.toThrow('完整覆盖');

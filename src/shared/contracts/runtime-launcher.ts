@@ -52,6 +52,9 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   auxiliaryToolNames: z.array(z.string().min(1)).optional(),
   nativeCapabilities:z.array(nativeCapabilitySchema).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
+  executionEnvironment:z.strictObject({
+    software:z.array(z.strictObject({name:z.string().min(1).max(100),version:z.string().min(1).max(100)})).min(1).max(64),
+  }).optional(),
   features: z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),

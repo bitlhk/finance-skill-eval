@@ -39,6 +39,10 @@ it('retains absence as unknown instead of inferring independent processes from c
 it('publishes an additive optional capabilities flag and portable strict receipt schema',async()=>{
   const base=JSON.parse(await readFile(new URL('../contracts/runtime-launcher/examples/builder-capabilities.json',import.meta.url),'utf8'));
   expect(runtimeLauncherCapabilitiesSchema.parse(base).features.toolProcessEvidence).toBeUndefined();
+  expect(runtimeLauncherCapabilitiesSchema.parse(base).executionEnvironment).toBeUndefined();
+  const measured={software:[{name:'python',version:'3.12.9'},{name:'fastmcp',version:'2.14.7'}]};
+  expect(runtimeLauncherCapabilitiesSchema.parse({...base,executionEnvironment:measured}).executionEnvironment).toEqual(measured);
+  expect(runtimeLauncherCapabilitiesSchema.safeParse({...base,executionEnvironment:{...measured,hostPath:'PRIVATE'}}).success).toBe(false);
   expect(runtimeLauncherCapabilitiesSchema.parse({...base,features:{...base.features,toolProcessEvidence:true}}).features.toolProcessEvidence).toBe(true);
   const schema=JSON.parse(await readFile(new URL('../contracts/runtime-launcher/finance.runtime-tool-process-evidence.v1.schema.json',import.meta.url),'utf8'));
   expect(schema).toMatchObject({$id:'finance.runtime-tool-process-evidence.v1',additionalProperties:false});

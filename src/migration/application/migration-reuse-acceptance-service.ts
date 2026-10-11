@@ -93,8 +93,11 @@ export class MigrationReuseAcceptanceService{
     const project=await this.d.projects.get(id),proposal=currentReuseProposal(project)!;
     if(project.improvementTasks?.some(task=>activeStatuses.includes(task.status))||project.reuseAcceptanceResults?.some(task=>task.status==='RUNNING'))return conflict('请先完成或停止当前任务');
     const capabilities=(await migrationRuntimeCapabilities(this.d.environments,parsed.environmentId)).capabilities;
-    const availableRunTargets=await Promise.all([binding,...(binding.additionalRuntimes??[])].map(async({environmentId,modelId,deploymentId})=>({
-      environmentId,modelId,deploymentId,toolProcessEvidence:(await migrationRuntimeCapabilities(this.d.environments,environmentId)).capabilities.features.toolProcessEvidence===true})));
+    const availableRunTargets=await Promise.all([binding,...(binding.additionalRuntimes??[])].map(async({environmentId,modelId,deploymentId})=>{
+      const target=(await migrationRuntimeCapabilities(this.d.environments,environmentId)).capabilities;
+      return {environmentId,modelId,deploymentId,toolProcessEvidence:target.features.toolProcessEvidence===true,
+        ...(target.executionEnvironment?{executionEnvironment:target.executionEnvironment}:{})};
+    }));
     const artifactEvidence=await this.artifactEvidence(project.candidate!.assetId);
     const previous=project.reuseAcceptancePlan;
     // Feedback belongs only to the same intact source/configuration/deployment
@@ -271,9 +274,13 @@ export class MigrationReuseAcceptanceService{
     // model's statement that it inspected the delivered files.
     const current=await this.d.projects.get(id);
     const artifactEvidence=await this.artifactEvidence(candidate.assetId);
+    const executionEnvironments=await Promise.all([task.binding,...(task.binding.additionalRuntimes??[])].map(async target=>({
+      environmentId:target.environmentId,deploymentId:target.deploymentId,
+      executionEnvironment:(await migrationRuntimeCapabilities(this.d.environments,target.environmentId)).capabilities.executionEnvironment,
+    })));
     await this.guard(id,task,signal);
     const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed,
-      ...artifactEvidence,candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
+      ...artifactEvidence,executionEnvironments,candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
     if(verdicts.checks.length!==plan.checks.length||new Set(verdicts.checks.map(c=>c.checkId)).size!==plan.checks.length)return conflict('复用验收判定未完整覆盖要求');
     for(const result of verdicts.checks){const expected=plan.checks.find(c=>c.checkId===result.checkId);
       if(!expected||new Set(result.caseIds).size!==result.caseIds.length||result.caseIds.some(c=>!expected.caseIds.includes(c))

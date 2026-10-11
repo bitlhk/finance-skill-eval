@@ -1,5 +1,16 @@
 # Runtime Launcher v1 contract
 
+Capabilities may optionally include `executionEnvironment.software`, a bounded
+list of public `{name, version}` facts measured by the Launcher in its actual
+execution environment. Omission means unknown, not incompatible. This additive
+v1 field is included in the frozen capabilities digest; each selected deployment
+is checked independently. Never put paths, credentials or customer data here.
+These facts support deployment prerequisite checks at check-Judge level, not
+business case verdicts. A worker interpreter version does not attest a different
+interpreter selected by `uv`, containers, MCP or remote services; those require
+their own actual observations. Do not substitute Skill dependency declarations
+or the control server's interpreter for measured execution facts.
+
 This directory is the portable contract for Runtime Launchers returned by an external Runtime Builder. A Launcher implementation is framework-neutral at this boundary: it translates framework-native lifecycle callbacks into stable Finance Runtime events and may attach a sanitized native extension.
 
 An instance's optional `skill.skillFile` names the document relative to the full
