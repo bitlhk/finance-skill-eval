@@ -83,7 +83,14 @@ export class LocalWorker{
         const env:NodeJS.ProcessEnv={HOME:executionDirectory,USERPROFILE:executionDirectory,TMPDIR:executionDirectory,TEMP:executionDirectory,TMP:executionDirectory,PYTHONUTF8:'1',PYTHONUNBUFFERED:'1'};
         for(const key of ['PATH','PATHEXT','SystemRoot','WINDIR','COMSPEC','LANG','LC_ALL'])if(process.env[key])env[key]=process.env[key];
         const child=spawn(request.program,args,{cwd:executionDirectory,env,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe'],windowsHide:true});
-        const killTree=()=>{if(!child.pid)return;try{if(process.platform==='win32')spawn('taskkill',['/pid',String(child.pid),'/T','/F'],{stdio:'ignore'}).on('error',()=>child.kill());else process.kill(-child.pid,'SIGKILL');}catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')child.kill('SIGKILL');}};
+        // Output may keep arriving while taskkill starts. Launching a new killer
+        // for every chunk can exhaust Windows processes and delay termination.
+        let terminationRequested=false;
+        const killTree=()=>{if(!child.pid||terminationRequested)return;terminationRequested=true;
+          try{if(process.platform==='win32')spawn('taskkill',['/pid',String(child.pid),'/T','/F'],{stdio:'ignore',windowsHide:true})
+            .on('error',()=>child.kill()).on('exit',code=>{if(code!==0&&child.exitCode===null)child.kill();});
+          else process.kill(-child.pid,'SIGKILL');}
+          catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')child.kill('SIGKILL');}};
         let stdout='',stderr='',timedOut=false,cancelled=false,truncated=false,settled=false;
         const append=(current:string,chunk:unknown)=>{const next=current+String(chunk);if(Buffer.byteLength(next)>limit){truncated=true;killTree();return Buffer.from(next).subarray(0,limit).toString();}return next;};
         child.stdout.on('data',chunk=>{stdout=append(stdout,chunk);});child.stderr.on('data',chunk=>{stderr=append(stderr,chunk);});
