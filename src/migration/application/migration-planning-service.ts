@@ -68,6 +68,7 @@ export class MigrationPlanningService {
     return this.projects.runExclusive(id,async()=>{
       const project=await this.projects.get(id);
       if(project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，不能替换已确认方案');
+      if(project.reuseAcceptanceResults?.some(task=>task.status==='RUNNING')||project.generationAttempts?.some(task=>task.progress.status==='RUNNING'))return conflict('生成或复用验收进行中，不能替换迁移方案');
       const inspection=project.sourceInspection??project.inspection;
       if(!inspection||inspection.assetDigest!==project.source.artifactSha256)return conflict('请先分析源工程');
       const decisions=(project.decisions??[]).filter(item=>item.baseAssetId===(project.candidate??project.source).assetId)
@@ -89,8 +90,11 @@ export class MigrationPlanningService {
       if(!parsed.success)return conflict('迁移方案结构不完整，请重新生成');
       const issues=reuseDesignIssues(parsed.data,inspection,sourceFiles);
       if(issues.length)return conflict(issues.join('；'));
+      const previous=project.reuseProposal;
+      if(previous)project.reuseProposalHistory=[...(project.reuseProposalHistory??[]),structuredClone(previous)];
       project.reuseProposal={proposalId:`reuse-${randomUUID()}`,sourceDigest:project.source.artifactSha256,
         inputDigest:reuseInputDigest(inspection,decisions,project.source.artifactSha256),createdAt:new Date().toISOString(),design:parsed.data,
+        ...(previous?{previousProposalId:previous.proposalId,previousDesign:structuredClone(previous.design)}:{}),
         ...(output.telemetry?{telemetry:output.telemetry}:{})};
       await this.projects.save(project);
       return project.reuseProposal;
@@ -102,6 +106,7 @@ export class MigrationPlanningService {
     return this.projects.runExclusive(id,async()=>{
       const project=await this.projects.get(id),proposal=currentReuseProposal(project);
       if(project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，不能替换已确认方案');
+      if(project.reuseAcceptanceResults?.some(task=>task.status==='RUNNING')||project.generationAttempts?.some(task=>task.progress.status==='RUNNING'))return conflict('生成或复用验收进行中，不能替换迁移方案');
       if(!proposal||proposal.proposalId!==parsed.proposalId||proposal.inputDigest!==parsed.inputDigest)return conflict('源码、诊断或工具选择已变化，请重新生成迁移方案');
       const supplements=await this.supplements?.get(id);
       if(supplements&&(project.sourceInspection??project.inspection)?.dependencyAnalysis?.materialsDigest!==this.supplements!.digest(supplements))return conflict('补充材料已变化，请重新分析源工程');

@@ -3,6 +3,15 @@ const complete=vi.hoisted(()=>vi.fn());
 vi.mock('../src/service/config.js',()=>({configuredModelRole:()=>({adapter:{complete},model:{providerId:'unit',modelId:'unit'}}),modelTimeoutMs:()=>10000}));
 import {runReuseAcceptanceModel} from '../src/migration/infrastructure/migration-reuse-acceptance-model.js';
 beforeEach(()=>{complete.mockReset();});
+it.each(['PLAN','COVERAGE','VERIFY'] as const)('does not add universal implementation constraints during %s or relax approved ones',async mode=>{
+ complete.mockResolvedValue({content:JSON.stringify(mode==='PLAN'?plan():mode==='COVERAGE'?{status:'INCOMPLETE',reasons:['Explicit requirement not covered']}:{checks:[{checkId:'original',status:'INDETERMINATE',reason:'Missing evidence',caseIds:['case']}]})});
+ await runReuseAcceptanceModel({mode,context});
+ const prompt=complete.mock.calls[0]![0].messages[0].content;
+ expect(prompt).toContain('可选证据能力不构成新的必测项');expect(prompt).toContain('不能在测试阶段自行删除、弱化或换义');
+ expect(prompt).toContain('声明的状态和宿主依赖不自动判为不复用');
+ expect(prompt).not.toContain('组内每个 case 使用独立会话/工作区/业务工具进程');
+ expect(complete).toHaveBeenCalledTimes(1);
+});
 it('separates pre-execution evidence collectability from actual post-execution proof',async()=>{
  complete.mockResolvedValueOnce({content:JSON.stringify({status:'INCOMPLETE',reasons:['Unsupported original requirement']})});
  await runReuseAcceptanceModel({mode:'COVERAGE',context:{availableRunTargets:[{toolProcessEvidence:true}]}});

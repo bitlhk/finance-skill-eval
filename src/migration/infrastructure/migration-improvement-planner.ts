@@ -5,6 +5,7 @@ import type { ImprovementPlanner } from '../application/migration-improvement-pl
 import {improvementJudgementSchema,ImprovementPlanningError} from '../application/migration-improvement-planning-service.js';
 import {correctModelOutput,type OutputCheck} from './model-output-correction.js';
 import {normalizeCapabilityConstraints} from '../../shared/contracts/runtime-capability.js';
+import {reuseVerificationPolicy} from '../domain/migration-reuse-policy.js';
 
 function normalizeRepresentation(value:unknown):unknown{
   if(!value||typeof value!=='object'||Array.isArray(value))return value;
@@ -66,6 +67,8 @@ export const planMigrationImprovement:ImprovementPlanner=async (input,signal)=>{
       'requiredCapabilities 的每项必须满足已发布的 Builder JSON Schema（这里只限定表示格式，不提供业务事实；schema 本身不能作为能力存在或改造可行的证据）：'+JSON.stringify(capabilityFormat),
       '优先保留和修复可复用的 MCP/Script。HARNESS 仅用于这些形式无法实现的 Runtime/Agent 能力。',
       'approvedReuseDesign 是已确认的迁移方案。改进必须满足其复用范围、业务行为和运行条件；新部署依赖、隐式状态或业务权衡不能作为小修复偷偷引入。',
+      reuseVerificationPolicy,
+      '先区分候选实现缺陷、配置或宿主缺口、测试数据错误和方案要求本身不合理。后两者不能通过修改业务工具或重复构建来掩盖；EVALUATION 假设应说明应修订的测试或方案条款，仍需重新确认，不直接改判已有结果。',
       'consumerTools 仅列直接调用该原生能力的工具；agent loop 的迭代容量等调度能力由 Agent 自身消费，此时 consumerTools 留空，不能把所有受调度工具都列成原生调用者。',
       '若选择 HARNESS，可附 hypothesis.requiredCapabilities：复用输入 runtimeRequirements 的合同，或仅根据源码和实际开发集证据提出新合同。每项需 id,name,required,reason,contract:{inputSchema,outputSchema,errorSchema,semantics},constraints:{permissions,sideEffects,isolation},preferredTargetCapability,consumerTools,evidence:[{path,line,detail}]。不得伪造来源，不确定时 ABSTAINED。',
       '只返回 JSON：{status:"PROPOSED",hypothesis:{layer,issue,expectedBehavior,evidenceCaseIds,validation,risk,confidence,toolIds?}} 或 {status:"ABSTAINED",reason}。',

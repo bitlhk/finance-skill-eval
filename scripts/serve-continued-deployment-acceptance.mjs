@@ -15,9 +15,23 @@ const privateDelivery=JSON.parse(await readFile(path.join(original,'launcher/del
 assert(privateDelivery.status==='READY'&&privateDelivery.records.length===2);
 const parentWork=process.env.CLOSEOUT_CONTINUE_DATA_WORK?path.resolve(process.env.CLOSEOUT_CONTINUE_DATA_WORK):original;
 const parent=parentWork===original?prior:JSON.parse(await readFile(path.join(parentWork,'service.json'),'utf8'));
-assert(parent.launcherBackend==='NATIVE_PACKAGE'&&parent.admitted?.length===2,'Data parent must preserve the admitted deployments');
-assert(JSON.stringify(parent.admitted)===JSON.stringify(prior.admitted),'Data and credential hosts must identify the same deployments');
+if(parent.purpose!=='REAL_MODEL_PLAN_REVISION_ONLY'){
+ assert(parent.launcherBackend==='NATIVE_PACKAGE'&&parent.admitted?.length===2,'Data parent must preserve the admitted deployments');
+ assert(JSON.stringify(parent.admitted)===JSON.stringify(prior.admitted),'Data and credential hosts must identify the same deployments');
+}
 assert(path.resolve(parent.data)===path.join(parentWork,'data'),'Data must belong to the explicitly selected acceptance host');
+// A plan-only UI copy has no credentials or admission manifest. Check its actual
+// saved environments against the credential owner's immutable delivery instead
+// of inventing admission evidence or accepting endpoints from copied metadata.
+for(const [i,admitted] of prior.admitted.entries()){
+ const saved=JSON.parse(await readFile(path.join(parent.data,'environments',`${admitted.environmentId}.json`),'utf8'));
+ assert.equal(saved.environmentId,admitted.environmentId);
+ assert.equal(saved.type,'runtime_launcher');
+ assert.equal(saved.baseUrl,privateDelivery.records[i].connection.baseUrl);
+ assert.equal(saved.credentialEnv,`CLOSEOUT_DEPLOYMENT_${i}_TOKEN`);
+ for(const field of ['deploymentId','artifactSha256','capabilitiesDigest'])assert.equal(saved.delivery?.[field],admitted[field]);
+ assert.deepEqual(saved.delivery?.evalConformance,admitted.evalConformance);
+}
 const work=await mkdtemp(path.join(os.tmpdir(),'continued-deployment-ui-')),data=path.join(work,'data');
 await cp(parent.data,data,{recursive:true,errorOnExist:true});
 const trust=privateDelivery.records.map((r,i)=>{

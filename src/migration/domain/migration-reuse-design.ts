@@ -17,10 +17,12 @@ export const reuseDesignSchema=z.object({
   dependencies:z.array(z.object({key:text,name:text,contract:text,configuration:text})),
   conditions:z.array(text).min(1),
   unresolvedQuestions:z.array(text),
-  acceptanceChecks:z.array(z.object({id:text,purpose:text,procedure:text,expectedResult:text})).min(1),
+  acceptanceChecks:z.array(z.object({id:text,purpose:text,requirement:text.optional(),procedure:text,expectedResult:text})).min(1),
 });
 export type ReuseDesign=z.infer<typeof reuseDesignSchema>;
 export type MigrationReuseProposal={proposalId:string;inputDigest:string;sourceDigest:string;createdAt:string;design:ReuseDesign;approvedAt?:string;
+  previousProposalId?:string;
+  previousDesign?:ReuseDesign;
   telemetry?:import('./migration-reuse-telemetry.js').ReusePlannerTelemetry};
 export const reuseReviewSchema=z.object({
   changes:z.array(z.object({changeId:text,status:z.enum(['CONFORMING','NEEDS_CHANGES','UNKNOWN']),reason:text,evidence:z.array(evidence)})),

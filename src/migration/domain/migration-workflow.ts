@@ -54,9 +54,11 @@ export function migrationWorkflow(project: MigrationProject, evidence: WorkflowE
   if (!evidence.migrationPlan?.generationAllowed) {
     return { stage: 'DIAGNOSE', furthestStage: 1, allowedActions: ['INSPECT', 'SAVE_DECISIONS'], blockers: evidence.migrationPlan?.skillBlockingReasons ?? ['迁移方案尚未完成'] };
   }
-  if (!project.candidate || (evidence.migrationPlan.reuseProposal&&project.candidateReuseProposalId!==evidence.migrationPlan.reuseProposal.proposalId)
+  const proposalChanged=!!evidence.migrationPlan.reuseProposal&&project.candidateReuseProposalId!==evidence.migrationPlan.reuseProposal.proposalId;
+  if (!project.candidate || proposalChanged
     || project.portableGenerations?.some(item => !item.readyForValidation)) {
-    return { stage: 'GENERATE', furthestStage: 2, allowedActions: ['INSPECT', 'SAVE_DECISIONS', 'GENERATE'], blockers: project.candidate ? ['候选仍有待实现的 Tool'] : [] };
+    return { stage: 'GENERATE', furthestStage: 2, allowedActions: ['INSPECT', 'SAVE_DECISIONS', 'GENERATE'],
+      blockers: project.candidate ? [proposalChanged?'迁移方案已更新，请按本版方案生成并审查候选':'候选仍有待实现的 Tool'] : [] };
   }
   if (evidence.runtimeRequirementsPending) {
     return { stage: 'ADAPT_RUNTIME', furthestStage: 3, allowedActions: ['GENERATE', 'DOWNLOAD_RUNTIME_REQUIREMENTS', 'EXPORT'], blockers: ['请核对已有 Runtime 能力；不满足时由 Builder 适配后接入'] };

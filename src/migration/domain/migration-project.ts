@@ -141,6 +141,7 @@ export type MigrationProject = {
   inspection?: ProjectInspection;
   sourceInspection?: ProjectInspection;
   reuseProposal?:import('./migration-reuse-design.js').MigrationReuseProposal;
+  reuseProposalHistory?:import('./migration-reuse-design.js').MigrationReuseProposal[];
   candidateReuseProposalId?:string;
   reuseAcceptancePlan?:import('./migration-reuse-acceptance.js').ReuseAcceptancePlan;
   reuseAcceptanceResults?:import('./migration-reuse-acceptance.js').ReuseAcceptanceResult[];

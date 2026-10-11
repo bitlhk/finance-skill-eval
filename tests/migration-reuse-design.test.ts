@@ -21,6 +21,65 @@ import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-ex
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
 const sourceFiles={'SKILL.md':SKILL_MD,'scripts/lookup.py':'def lookup(account_id): return {"amount": 10}\n'};
+it('revises from original source without anchoring on generated requirements, preserving approval and historical evidence',async()=>{
+  const planner=vi.fn<MigrationReusePlanner>(reusePlannerFixture),ctx=context(planner);
+  const first=await ctx.service.propose('migration-fixture');
+  await ctx.service.approve('migration-fixture',{proposalId:first.proposalId,inputDigest:first.inputDigest});
+  const previous=structuredClone(ctx.get().reuseProposal!);
+  ctx.get().reuseAcceptanceResults=[{taskId:'old-negative',status:'FAILED'} as any];
+  const second=await ctx.service.propose('migration-fixture');
+  expect(planner.mock.calls[1]![0]).toMatchObject({mode:'PROPOSE',sourceFiles});
+  expect(planner.mock.calls[1]![0]).not.toHaveProperty('previousDesign');
+  expect(second).toMatchObject({previousProposalId:first.proposalId,previousDesign:previous.design});
+  expect(second.approvedAt).toBeUndefined();expect(projectMigrationPlan(ctx.get())?.generationAllowed).toBe(false);
+  expect(ctx.get().reuseProposalHistory).toEqual([previous]);
+  expect(ctx.get().reuseAcceptanceResults).toEqual([{taskId:'old-negative',status:'FAILED'}]);
+  await expect(ctx.service.approve('migration-fixture',{proposalId:first.proposalId,inputDigest:first.inputDigest})).rejects.toThrow('已变化');
+  await ctx.service.approve('migration-fixture',{proposalId:second.proposalId,inputDigest:second.inputDigest});
+  expect(ctx.get().reuseProposalHistory![0]).toEqual(previous);
+});
+
+it.each(['generation','acceptance'])('does not replace requirements while %s is running',async kind=>{
+  const planner=vi.fn<MigrationReusePlanner>(reusePlannerFixture),ctx=context(planner);
+  const proposal=await ctx.service.propose('migration-fixture');
+  if(kind==='generation')ctx.get().generationAttempts=[{progress:{status:'RUNNING'}} as any];
+  else ctx.get().reuseAcceptanceResults=[{status:'RUNNING'} as any];
+  await expect(ctx.service.propose('migration-fixture')).rejects.toThrow('进行中');
+  await expect(ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest})).rejects.toThrow('进行中');
+  expect(planner).toHaveBeenCalledTimes(1);expect(ctx.get().reuseProposalHistory).toBeUndefined();
+});
+
+it('does not archive or replace an approved proposal when revision generation fails',async()=>{
+  let fail=false;const ctx=context(async input=>{if(fail)throw new Error('model unavailable');return reusePlannerFixture(input)});
+  const proposal=await ctx.service.propose('migration-fixture');await ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest});
+  const original=structuredClone(ctx.get());fail=true;
+  await expect(ctx.service.propose('migration-fixture')).rejects.toThrow('model unavailable');expect(ctx.get()).toEqual(original);
+});
+
+it('guides source-based requirements without prohibiting legitimate state or explicit safety constraints',async()=>{
+  const ctx=context();const complete=vi.fn(async request=>({content:JSON.stringify(await reusePlannerFixture(JSON.parse(request.messages[1].content))),modelId:'fixture'}));
+  const planner=createReusePlanner({adapterId:'fixture',complete},{providerId:'fixture',modelId:'fixture',parameters:{}});
+  await planner({mode:'PROPOSE',sourceFiles,inspection:ctx.get().inspection!,toolPlan:projectMigrationPlan(ctx.get())!});
+  const prompt=complete.mock.calls[0]![0].messages[0].content;
+  expect(prompt).toContain('不默认要求每次独立进程');expect(prompt).toContain('保留它们并说明依据及必要性');
+  expect(prompt).toContain('合法的工具侧缓存、快照或会话状态');expect(prompt).toContain('不要求措辞');
+  expect(prompt).toContain('不要为了使用平台证据能力而生成要求');
+  const result=reuseDesignSchema.parse({... (await reusePlannerFixture({mode:'PROPOSE',sourceFiles,inspection:ctx.get().inspection!,toolPlan:projectMigrationPlan(ctx.get())!}) as any).design,
+    acceptanceChecks:[{id:'state',purpose:'复用快照',requirement:'工具 A 的完整业务数据可由工具 B 使用，其他请求不能读取',procedure:'同任务续接，再执行不同任务',expectedResult:'数据完整且不串扰'}]});
+  expect(result.acceptanceChecks[0]!.requirement).toContain('工具 A');
+});
+
+it('invalidates the old universal process contract without rewriting the approved design',async()=>{
+  const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+  await ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest});
+  const project=ctx.get(),{inspectedAt:_,reuseConformance:__,...facts}=project.sourceInspection!;
+  const oldContract={...reuseExecutionContract,topology:{...reuseExecutionContract.topology,case:'independent native session, workspace and business-tool process'}};
+  project.reuseProposal!.inputDigest=canonicalSha256({sourceDigest:project.source.artifactSha256,facts,executionContract:oldContract,
+    decisions:project.decisions!.map(({toolId,form,language})=>({toolId,form,language})).sort((a,b)=>a.toolId.localeCompare(b.toolId))});
+  const old=structuredClone(project.reuseProposal);
+  expect(currentReuseProposal(project)).toBeNull();expect(project.reuseProposal).toEqual(old);
+  expect(projectMigrationPlan(project)?.generationAllowed).toBe(false);
+});
 it.each(['MODEL_NETWORK_ERROR','MODEL_HTTP_ERROR','MODEL_OUTPUT_TRUNCATED','MODEL_EMPTY_RESPONSE'] as const)('preserves safe review failure classification %s without retry or private details',async code=>{
   const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
   const complete=vi.fn(async()=>{throw new ModelCompletionError(code,'PRIVATE_PROVIDER_DETAILS')});

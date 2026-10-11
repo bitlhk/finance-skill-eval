@@ -8,6 +8,12 @@ const project=(overrides:Partial<MigrationProject>={}):MigrationProject=>({schem
 const plan=(generationAllowed:boolean)=>({baseAssetId:'asset',generationAllowed,skillMigrationItems:[],skillBlockingReasons:generationAllowed?[]:['blocked'],items:[]});
 
 describe('migration workflow',()=>{
+  it('requires implementation under the revised proposal despite old technical and business passes',()=>{
+    const p=project({candidate:asset,inspection:inspectionFixture([]),candidateReuseProposalId:'old'});
+    const result=migrationWorkflow(p,{migrationPlan:{...plan(true),reuseProposal:{proposalId:'new',approvedAt:'now'} as any},runtimeRequirementsPending:false,technicalReady:true,evaluationCompleted:true});
+    expect(result).toMatchObject({stage:'GENERATE',furthestStage:2,blockers:['迁移方案已更新，请按本版方案生成并审查候选']});
+    expect(result.allowedActions).not.toContain('EVALUATE');expect(result.allowedActions).not.toContain('EXPORT');
+  });
   it('derives diagnosis and generation from persisted inspection evidence',()=>{
     expect(migrationWorkflow(project(),{migrationPlan:null,runtimeRequirementsPending:false,technicalReady:false,evaluationCompleted:false}).stage).toBe('DIAGNOSE');
     const inspected=project({inspection:inspectionFixture([])});

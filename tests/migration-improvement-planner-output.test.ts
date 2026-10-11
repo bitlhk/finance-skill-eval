@@ -41,6 +41,8 @@ it('normalizes an unambiguous enum representation without another model call',as
     expect(requests).toHaveLength(1);
     const prompt=requests[0]?.messages?.[0]?.content;
     expect(prompt).toContain('已发布的 Builder JSON Schema');expect(prompt).toContain('"required":["inputSchema","outputSchema","errorSchema","semantics"]');
+    expect(prompt).toContain('测试数据错误');
+    expect(prompt).toContain('方案要求本身不合理');expect(prompt).toContain('不能通过修改业务工具或重复构建来掩盖');
   });
 });
 it('reports safe invalid field categories without retaining arbitrary model values',async()=>{

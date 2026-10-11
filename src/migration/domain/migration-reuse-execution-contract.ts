@@ -3,7 +3,7 @@
 export const reuseExecutionContract={
   revision:'reuse-execution-v2',
   topology:{group:'fresh Runtime instances at the selected, frozen group.runtime target; default primary Launcher; distinct admitted deployment identities and endpoints required for cross-deployment acceptance',
-    case:'independent native session, workspace and business-tool process',turns:'actual native calls preserving the same case session, workspace and tool lifecycle'},
+    case:'independent native session and workspace; business-tool state follows its declared ownership and lifecycle, not a universal fresh OS process guarantee',turns:'actual native calls preserving the same case session, workspace and tool lifecycle'},
   workspace:{initialFiles:'UTF-8 synthetic files mounted before execution',
     betweenTurns:'Eval has no file-write/delete, clock-control or service-restart operation between turns; only actually declared business/native tools can perform such actions'},
   evidence:{caseJudge:['current case queries, turn outputs and completed tool receipts','authorized redacted business projections and exact mounted-file/input matches'],
