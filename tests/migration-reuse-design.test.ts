@@ -221,6 +221,8 @@ it('separates optional delivery capabilities from actual Skill dependencies and 
   expect(instruction).toContain('不代表所有 Script 都需要该 Header');
   expect(instruction).toContain('JSON stdin/stdout 契约');
   expect(instruction).toContain('确有新增宿主能力或契约缺口仍须如实阻塞');
+  expect(instruction).toContain('挂载 workspaceFiles 只提供文件，不会自动启动 HTTP/MCP 服务');
+  expect(instruction).toContain('示例编号和金额不能冒充固定业务要求');
 });
 it('resolves unique Skill-root citations but rejects ambiguous files and invented snippets',()=>{
   const evidence=[{path:'assets/rules.json',snippet:'{"limit":100}'}];
