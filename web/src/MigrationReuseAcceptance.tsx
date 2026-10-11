@@ -6,6 +6,10 @@ import type {ReuseAcceptanceSummary} from '../../src/migration/domain/migration-
 type Api=<T>(url:string,init?:RequestInit)=>Promise<T>;
 const labels:Record<string,string>={NOT_RUN:'尚未验收',RUNNING:'正在验收',PASSED:'通过',FAILED:'不通过',INDETERMINATE:'无法判定',CANCELLED:'已停止',INTERRUPTED:'已中断',STALE:'结果已失效'};
 const phases:Record<string,string>={PLAN:'生成验收计划',COVERAGE:'检查覆盖范围',PREPARATION:'准备运行',EXECUTION:'执行案例',VERIFICATION:'核对验收结果'};
+export function reuseActionMessage(path:string,body:unknown){
+ if(path==='/plan')return body&&typeof body==='object'&&Object.hasOwn(body,'plan')?'正在检查并保存验收计划':'正在生成计划并独立检查覆盖范围';
+ return path==='/approve'?'正在确认验收计划':path==='/start'?'正在启动复用验收':'正在停止复用验收';
+}
 export function unavailableReuseTargets(selected:Array<{environmentId:string;modelId:string}>,available:Array<{runtimeId:string}>){
   return selected.filter(t=>!available.some(r=>r.runtimeId===t.environmentId));
 }
@@ -16,6 +20,8 @@ export function MigrationReuseAcceptance(p:{api:Api;projectId:string;runtimeId:s
   const [summary,setSummary]=useState<ReuseAcceptanceSummary|null>(null),[working,setWorking]=useState(false),[error,setError]=useState(''),[text,setText]=useState('');
   const [runDetails,setRunDetails]=useState<Record<string,EvaluationJob>>({}),[loadingJob,setLoadingJob]=useState('');
   const [additionalRuntimes,setAdditionalRuntimes]=useState<Array<{environmentId:string;modelId:string}>>([]);
+  const [actionMessage,setActionMessage]=useState(''),[elapsed,setElapsed]=useState(0);
+  useEffect(()=>{if(!working)return;const started=Date.now();const timer=setInterval(()=>setElapsed(Math.floor((Date.now()-started)/1000)),1000);return()=>clearInterval(timer)},[working]);
   const runtime=p.runtimes.find(r=>r.runtimeId===p.runtimeId),plan=summary?.plan,result=summary?.result;
   const running=result?.status==='RUNNING',selected=!!runtime?.models.some(m=>m.modelId===p.modelId);
   const targetKey=(targets:Array<{environmentId:string;modelId:string}>)=>JSON.stringify(targets.map(({environmentId,modelId})=>({environmentId,modelId})).sort((a,b)=>a.environmentId.localeCompare(b.environmentId)));
@@ -25,7 +31,7 @@ export function MigrationReuseAcceptance(p:{api:Api;projectId:string;runtimeId:s
   // Changing a local primary/model choice must not restore the old plan's targets.
   useEffect(()=>{let disposed=false;void p.api<ReuseAcceptanceSummary>(`/api/migrations/${p.projectId}/reuse-acceptance`).then(s=>{if(!disposed){setSummary(s);setAdditionalRuntimes((s.plan?.binding.additionalRuntimes??[]).map(({environmentId,modelId})=>({environmentId,modelId})))}}).catch(e=>{if(!disposed)setError(String(e))});return()=>{disposed=true}},[p.projectId]);
   useEffect(()=>{if(!running)return;let disposed=false,busy=false;const timer=setInterval(()=>{if(busy)return;busy=true;void load().then(next=>{if(!disposed&&next.status!=='RUNNING')void p.refresh()}).catch(e=>{if(!disposed)setError(String(e))}).finally(()=>{busy=false})},2000);return()=>{disposed=true;clearInterval(timer)}},[running,p.projectId]);
-  async function act(path:string,body:unknown){setWorking(true);setError('');try{await p.api(`/api/migrations/${p.projectId}/reuse-acceptance${path}`,{method:'POST',body:JSON.stringify(body)});await load();await p.refresh()}catch(e){setError(e instanceof Error?e.message:String(e))}finally{setWorking(false)}}
+  async function act(path:string,body:unknown){setActionMessage(reuseActionMessage(path,body));setElapsed(0);setWorking(true);setError('');try{await p.api(`/api/migrations/${p.projectId}/reuse-acceptance${path}`,{method:'POST',body:JSON.stringify(body)});await load();await p.refresh()}catch(e){setError(e instanceof Error?e.message:String(e))}finally{setWorking(false)}}
   async function inspectRun(jobId:string){setLoadingJob(jobId);setError('');try{const job=await p.api<EvaluationJob>(`/api/runs/${jobId}`);setRunDetails(old=>({...old,[jobId]:job}))}catch(e){setError(e instanceof Error?e.message:String(e))}finally{setLoadingJob('')}}
   const tone=summary?.status==='PASSED'?'success':summary?.status==='FAILED'?'danger':'attention';
   const choices={environmentId:p.runtimeId,modelId:p.modelId,additionalRuntimes:additionalRuntimes.filter(t=>t.environmentId!==p.runtimeId)};
@@ -36,6 +42,7 @@ export function MigrationReuseAcceptance(p:{api:Api;projectId:string;runtimeId:s
     <div className="assessment-config-grid"><label>复用验收 Runtime<select aria-label="复用验收 Runtime" value={p.runtimeId} disabled={working||running} onChange={e=>{p.setRuntimeId(e.target.value);p.setModelId('')}}><option value="">请选择</option>{p.runtimes.map(r=><option key={r.runtimeId} value={r.runtimeId}>{r.name}</option>)}</select></label><label>复用验收执行模型<select aria-label="复用验收执行模型" value={p.modelId} disabled={working||running||!runtime} onChange={e=>p.setModelId(e.target.value)}><option value="">请选择</option>{runtime?.models.map(m=><option key={m.modelId} value={m.modelId}>{m.upstreamModelId??m.label??m.modelId}</option>)}</select></label></div>
     <details className="stage-detail"><summary>跨部署验收（可选）</summary><p>选择另一份已准入的 Launcher 部署。同一服务的重复登记不能作为新部署。</p>{p.runtimes.filter(r=>r.runtimeId!==p.runtimeId).map(r=>{const target=additionalRuntimes.find(t=>t.environmentId===r.runtimeId);return <div className="assessment-config-grid" key={r.runtimeId}><label><input type="checkbox" disabled={working||running||additionalRuntimes.length>=3&&!target} checked={!!target} onChange={e=>setAdditionalRuntimes(old=>e.target.checked?[...old,{environmentId:r.runtimeId,modelId:r.models[0]?.modelId??''}]:old.filter(t=>t.environmentId!==r.runtimeId))}/>{r.name}</label>{target&&<label>执行模型<select aria-label={`${r.name} 复用执行模型`} value={target.modelId} disabled={working||running} onChange={e=>setAdditionalRuntimes(old=>old.map(t=>t.environmentId===r.runtimeId?{...t,modelId:e.target.value}:t))}>{r.models.map(m=><option key={m.modelId} value={m.modelId}>{m.upstreamModelId??m.label??m.modelId}</option>)}</select></label>}</div>})}</details>
     <button className="button secondary" disabled={working||running||!targetsReady} onClick={()=>void act('/plan',choices)}>{working&&<LoaderCircle size={16} className="spinning"/>}{plan?'重新生成验收计划':'生成验收计划'}</button>
+    {working&&<p role="status">{actionMessage} · 已等待 {elapsed} 秒。完成后会显示结果，请勿重复提交。</p>}
     {!!unavailableTargets.length&&<div className="stage-alert attention" role="alert"><strong>之前选择的部分部署已不可用</strong><p>请明确移除这些选择，再选择可用部署重新生成计划。旧计划与运行记录不会因此改写。</p>{unavailableTargets.map(t=><div className="stage-inline-action" key={t.environmentId}><span>历史部署 {t.environmentId}</span><button className="button secondary" disabled={working||running} onClick={()=>setAdditionalRuntimes(old=>old.filter(target=>target.environmentId!==t.environmentId))}>移除不可用部署</button></div>)}</div>}
     <details className="stage-detail"><summary>编辑验收计划（可选）</summary><p>可以修改测试数据和步骤；提交后会重新检查是否完整覆盖原方案。</p><button className="button secondary" disabled={!plan||working||running} onClick={()=>setText(JSON.stringify(plan!.plan,null,2))}>载入当前计划</button><label>验收计划 JSON<textarea rows={10} value={text} disabled={working||running} onChange={e=>setText(e.target.value)}/></label><button className="button secondary" disabled={!text.trim()||!targetsReady||working||running} onClick={()=>{try{void act('/plan',{...choices,plan:JSON.parse(text)})}catch{setError('验收计划不是有效 JSON')}}}>检查并保存计划</button></details>
     {plan&&<>

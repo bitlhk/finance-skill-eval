@@ -1,6 +1,7 @@
 import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool-config.js';
 import {fingerprint} from '../../contracts.js';
 import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} from './migration-model.js';
+import {parseRetiredSources} from './migration-source-retirement.js';
 
 /** The same delivery constraints guide planning and implementation; values remain deployment-local. */
 export function portableDeliveryContract(inspection:ProjectInspection,decisions:ToolDecision[],sourceSkillFile?:string){
@@ -9,6 +10,7 @@ export function portableDeliveryContract(inspection:ProjectInspection,decisions:
    ...(decisions.some(decision=>decision.form==='MCP')?{assembledLayout:'The delivery archive contains skill/SKILL.md and its skill-relative resources. MCP service source files retain their declared delivery-root-relative paths outside skill/. Do not cite scripts/<file> as a Skill-relative file when it is only delivered as external MCP service code. The model uses registered MCP tool names, not service source files.'}:{}),
    manifestSourceDirectory:'migration-skill/',manifestTargets:['SKILL.md','references/<name>.md|mdx|txt'],
    serviceReadme:'Declare tool deployment README in tools[].files, not skillDelivery.files. Script supporting files retain their declared Skill-relative layout; a tool README may therefore appear in the final Skill package, but it does not replace SKILL.md.',
+   sourceRetirement:'Optional skillDelivery.retiredSources=[{path,reason}] explicitly identifies original implementation code superseded by the approved migration (including framework registration glue). Exact original archive paths only; never delete or edit the upload. Do not retire business assets, documents, configuration, or code still needed by an unmigrated tool. Explain the replacement using inspected source evidence; candidate analysis and independent conformance review still decide whether the removal preserves the approved behavior.',
    purpose:'SKILL.md remains the model-executed business workflow, including scope, inputs, tool order, branches, stop conditions and outputs; deployment notes cannot replace it'},
   script:{execution:'COMMAND',cwd:'WORKSPACE',entrypoint:'RUNTIME_PROVIDED_ABSOLUTE_PATH',packageResources:'RELATIVE_TO_SCRIPT',runtimeInjection:false,
    deliveryLayout:'Keep the contract-tested Skill-relative scripts/, assets/ and references/ layout. If files are authored under migration-skill/, declare all Script files under that same root; packaging removes only migration-skill/ uniformly, without moving files into an extra module directory.'},
@@ -30,10 +32,11 @@ export function portableDeliveryContract(inspection:ProjectInspection,decisions:
 
 /** Diagnose the manifest before retrying; a wrong supporting entry is not a missing SKILL.md. */
 export function agentDocumentDeliveryIssues(payload:Record<string,unknown>,files:Record<string,string>):string[]{
- const delivery=payload.skillDelivery as {skillFile?:unknown;files?:unknown}|undefined;
+ const delivery=payload.skillDelivery as {skillFile?:unknown;files?:unknown;retiredSources?:unknown}|undefined;
  if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)
   return ['skillDelivery 必须包含 skillFile=SKILL.md 和非空 files 清单（最多 100 项）'];
  const issues:string[]=[],targets=new Set<string>();
+ if(parseRetiredSources(delivery.retiredSources)===null)issues.push('skillDelivery.retiredSources 必须是最多 100 项的 {path,reason} 清单，使用安全、唯一的原始相对路径及非空理由');
  for(const entry of delivery.files){
   const item=entry as {source?:unknown;path?:unknown}|null;
   const source=typeof item?.source==='string'?item.source.replaceAll('\\','/').replace(/^\.\//u,''):'';

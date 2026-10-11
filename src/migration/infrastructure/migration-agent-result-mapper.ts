@@ -1,4 +1,5 @@
 import {SourceEvidenceValidator} from "../domain/migration-source-evidence.js";
+import {parseRetiredSources} from '../domain/migration-source-retirement.js';
 import { SCAN_COMPLETE_STATUSES } from "../domain/migration-diagnosis.js";
 import { languageOfSourcePaths, recommendLanguage,stableToolId } from "../domain/migration-model.js";
 import {isAdaptableHarnessCapability} from '../domain/migration-harness.js';
@@ -301,7 +302,7 @@ type AgentGeneration = {
   reason?: string; missing?: string[];
 };
 
-type AgentSkillDelivery={skillFile?:string;files?:Array<{source?:string;path?:string}>};
+type AgentSkillDelivery={skillFile?:string;files?:Array<{source?:string;path?:string}>;retiredSources?:unknown};
 
 /** Decode the explicit A4 documentation manifest.  Paths in `source` address the isolated agent
  * workspace; paths in `path` are relative to the final Skill root.  Keeping the two separate lets
@@ -311,6 +312,7 @@ export function toSkillDocumentDelivery(
 ):import('../domain/migration-candidate-artifact.js').SkillDocumentDelivery|null{
   const delivery=payload.skillDelivery;
   if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)return null;
+  const retiredSources=parseRetiredSources(delivery.retiredSources);if(!retiredSources)return null;
   const result:Record<string,string>={},targets=new Set<string>();
   for(const item of delivery.files){
     const source=typeof item.source==='string'?item.source.replaceAll('\\','/').replace(/^\.\//u,''):'';
@@ -324,7 +326,7 @@ export function toSkillDocumentDelivery(
       result[target]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);targets.add(key);
     }catch{return null}
   }
-  return result['SKILL.md']?{files:result}:null;
+  return result['SKILL.md']?{files:result,...(retiredSources.length?{retiredSources}:{})}:null;
 }
 
 /**

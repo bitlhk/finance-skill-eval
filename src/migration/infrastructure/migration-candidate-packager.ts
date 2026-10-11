@@ -1,4 +1,5 @@
 import {runtimeToolConfigTemplate} from '../domain/migration-delivery-contract.js';
+import {parseRetiredSources,sourceRetirementIssues} from '../domain/migration-source-retirement.js';
 import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
 import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
@@ -69,6 +70,11 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const implementations=input.implementations??{};
   const files:Record<string,Uint8Array>={},generations:PortableGeneration[]=[];
   const hasMcp=input.decisions.some(decision=>decision.form==='MCP');
+  const explicitRetirements=parseRetiredSources(input.skillDelivery?.retiredSources);
+  if(!explicitRetirements)throw Object.assign(new Error('退役源文件清单不合法'),{statusCode:409});
+  const retirementIssues=sourceRetirementIssues(explicitRetirements,input.archive,input.inspection,input.decisions,input.base.skillFile);
+  if(retirementIssues.length)throw Object.assign(new Error(retirementIssues.join('；')),{statusCode:409});
+  const explicitlyRetired=new Set(explicitRetirements.map(item=>item.path));
   // A Tool being migrated is replaced, not carried alongside. Shipping the
   // runtime-coupled original next to its replacement would defeat the migration.
   // sourcePaths also contains citations (SKILL.md, policies, data). It is not a deletion list.
@@ -92,7 +98,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     const relative=skillRoot&&name.startsWith(skillRoot)?name.slice(skillRoot.length):name;
     return relative.startsWith('workspace/')||relative.startsWith('references/workspace/');
   };
-  const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
+  const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!explicitlyRetired.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
   const normalizedSkill=normalizeSkillPackage(sourceArchive,input.base.skillFile,input.base.skillId,input.version);
   if(input.skillDelivery){
     // Document structure is an editorial migration decision made by A4.  The packager may check
@@ -285,6 +291,12 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     if(before&&Buffer.compare(Buffer.from(before),Buffer.from(bytes))===0)return [];
     return [{path:name,operation:before?'MODIFY':'ADD',before:before?Buffer.from(before).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')} as PortableDiff];
   });
+  // Explicit removals are visible to users and review, even when the original code was
+  // outside the scanner's Tool ownership graph. The original asset remains unchanged.
+  for(const {path,reason} of explicitRetirements){
+    if(files[path]!==undefined||files[`skill/${path}`]!==undefined)throw Object.assign(new Error(`退役源文件同时又被交付：${path}`),{statusCode:409});
+    diff.push({path,operation:'DELETE',before:Buffer.from(input.archive[path]!).toString('utf8'),after:'',reason});
+  }
   return {files,generations,diff};
 }
 

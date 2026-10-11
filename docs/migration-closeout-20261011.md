@@ -208,3 +208,19 @@ Judge 使用本地已配置的真实 GLM 模型。
 
 本轮额外发现并修复：新增观测说明误进入执行合同指纹，导致已批准方案失效。观测说明保留在 Judge 指导中，执行语义合同恢复稳定，不改写批准记录。
 全量回归 `83a43e7`：987 通过、0 失败、2 跳过；核心、示例、前端类型检查通过。报告 `reports/runtime-rebuild-ui/regression-current.json`。
+
+### 企业退款续测与当前尚未完成的复用证据
+
+实际生成候选 `dd0e6a960b8ff07d08ae90ad6d9bb82c6e63b10ae26aef795132f3676c2f320e`，独立候选分析和方案落实审查通过，MCP 技术验证 1/1。此前运行 `run-521cd65b-87fc-44be-8211-590ca9f4fa62` 因 Builder 拒绝已声明的 runtimeToolConfig，在创建实例前返回 `RUNTIME_TOOL_CONFIG_UNSUPPORTED`；失败保留，不改判。
+
+Builder `92ddec15ff8191343ba63433dc07b5be5763a984` 实现已声明实例上下文到 MCP 请求 Header 的绑定。只消费实例提供的值及其秘密引用，不读取宿主环境变量、不导入用户指定 Provider、不改业务入参；拒绝头碰撞、传输保留头和 X-Workspace-Root 覆盖。相同绑定的业务工具在案例内共享 Client/MCP 生命周期，不共享不同上下文。新的两个不可变部署实际独立准入；部署准备使用 API，不记为 UI 准入测试。
+
+Eval `806e01f5f3a740d9b9c1b4fb409a437ee0991c9c` 通过 UI 运行：开发 `run-c1613adf-40c1-4053-a3be-9b6d4d64050d` 为 3/3；冻结留出与开发复核 `run-bf60821a-3e5a-428c-a46b-0127a984e69e` 为 5/5。任务 `improve-e8d4978e-8f3c-45a9-b7a1-e600c0d7ab97` 已实际采用，finalConsumed/finalVerified 均为 true；因开发已通过没有优化迭代，不宣称本例执行了 Harness 重建。
+
+复用计划的真实独立覆盖审查返回 INCOMPLETE：模型将工作区 JSON 误当作 BUSINESS_SERVICE_URL 上的 HTTP 服务，且原方案的政策端点故障、负向鉴权要求未具备实际执行配置。没有执行这个不可覆盖的计划，没有将 5/5 业务通过记为复用或下载闭环。需对齐真实外部测试资源与验收程序，而不是放宽金额、错误、鉴权或隔离要求。Builder 本轮 Windows/SPI/包发布及上下文回归 148 项通过。
+
+### 原源码退役交付能力
+
+修正装配缺口：可选 `skillDelivery.retiredSources=[{path,reason}]` 让迁移模型显式声明被本次迁移替代的原实现/注册胶水，不按文件名自动删除。仅从新候选排除，原上传资产及字节保持不变；完整相对路径、非空理由、唯一性和数量受限，拒绝不存在文件、文档/配置/业务资源、运行数据，以及未迁移工具仍消费的共享源码。删除及理由展示在产物差异中，候选分析和原方案独立一致性审查保持不变，不因清单合法自动判通过。旧交付不需要增加该字段，没有新增 Runtime 协议版本。
+
+全量回归 1012 通过、0 失败、2 跳过，核心、示例、前端类型检查和构建通过；报告 `reports/runtime-rebuild-ui/regression-source-retirement.json`。其中源码退役 24 项和 UI 等待状态 1 项新增回归通过。此处记录实现与回归，不冒充应收快照样例已完成新的真实 UI 迁移。

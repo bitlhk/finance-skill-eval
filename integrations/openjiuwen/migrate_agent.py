@@ -121,6 +121,7 @@ deliveryContract.approvedReuseProposal 是已确认的可复用迁移方案。�
   写清 reason 和 missing，**不要编一个看起来对的实现**。
 - 不要原地修改源工程。Tool 实现写入新的交付路径；最终 Skill 文档写入 `migration-skill/`，并通过 `skillDelivery` 给出目标 Skill 内路径。
 - `skillDelivery.files` 只列 migration-skill/ 内的最终 SKILL.md 和 references/ 文档。服务部署 README 放在 tools[].files，不要再加入 skillDelivery；即使 SKILL.md 正确，错误的额外清单项也会拒绝整份交付。可复用的原模块必须显式列入 tools[].files，即使无需修改。
+- 原工程中不再需要的框架注册、返回包装等实现代码可在 `skillDelivery.retiredSources` 显式列出 `{path,reason}`。path 必须是输入原包的完整相对文件路径，reason 依据读过的源码和已确认迁移方案说明如何被替代。只影响候选包，不在工作区删除原文件。不得退役文档、业务资源、配置或仍被未迁移工具消费的共享代码；不要按 register.py 等文件名猜测。候选分析与独立方案一致性审查仍需核验移除后行为。
 
 最后**只输出一个 JSON 对象**，不要有其它文字：
 {
@@ -141,6 +142,7 @@ deliveryContract.approvedReuseProposal 是已确认的可复用迁移方案。�
   }],
   "skillDelivery": {
     "skillFile": "SKILL.md",
+    "retiredSources": [],
     "files": [
       {"source": "migration-skill/SKILL.md", "path": "SKILL.md"},
       {"source": "migration-skill/references/manual.md", "path": "references/manual.md"}

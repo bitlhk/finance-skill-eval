@@ -6,6 +6,7 @@ import type {MigrationAgentResultMapper} from './migration-agent-result-mapper.j
 import type {MigrationImplementer} from './migration-agent-port.js';
 import {migrationConflict as conflict} from './migration-errors.js';
 import {MigrationGenerationError} from '../domain/migration-generation-progress.js';
+import {sourceRetirementIssues} from '../domain/migration-source-retirement.js';
 
 export function validSkillFrontmatter(source:string|undefined):boolean{
   const match=source?.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/u);
@@ -79,6 +80,10 @@ export class MigrationImplementationService {
         const nameById=Object.fromEntries(inspection.tools.map(tool=>[tool.toolId,tool.name]));
         const implementations=this.agentResults.generatedImplementations(result.payload,result.files,nameById);
         const skillDelivery=this.agentResults.skillDocumentDelivery(result.payload,result.files);
+        if(skillDelivery){
+          const issues=sourceRetirementIssues(skillDelivery.retiredSources??[],archive,inspection,decisions,asset.skillFile);
+          if(issues.length){agentFailure=issues.join('；');continue;}
+        }
         if(skillDelivery&&!validSkillFrontmatter(skillDelivery.files['SKILL.md'])){
           agentFailure='最终 SKILL.md 的 YAML frontmatter 无法解析，或缺少字符串 name/description；请修正并重新交付';
           continue;
