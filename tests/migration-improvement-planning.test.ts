@@ -32,6 +32,21 @@ it('proposes an evidence-grounded layer without exposing holdout cases to the mo
   expect(project.improvementPlans).toHaveLength(1);
   expect(plan.developmentCaseIds).toEqual(['dev-1']);
 });
+it('allows Harness contracts to cite actual line-addressable development telemetry without inventing Skill source',async()=>{
+  const {project,projects,jobs,job}=fixture();
+  job.report.cases[0]!.right.status='failed';
+  Object.assign(job.report.cases[0]!.right,{error:'EVAL_PACKAGE_ITERATION_LIMIT',metadata:{executionBudget:{maxAgentIterations:2,owner:'HARNESS',changeMechanism:'BUILDER_REBUILD'},secret:'PRIVATE_TOKEN'}});
+  const planner=vi.fn(async(input:any)=>{
+    expect(JSON.stringify(input.runtimeEvidence)).not.toContain('HOLDOUT_SECRET');expect(JSON.stringify(input.runtimeEvidence)).not.toContain('PRIVATE_TOKEN');
+    const document=input.runtimeEvidence[0],lines=document.content.split('\n'),line=lines.findIndex((value:string)=>value.includes('maxAgentIterations'))+1;
+    expect(line).toBeGreaterThan(0);
+    return {status:'PROPOSED',hypothesis:{layer:'HARNESS',issue:'Budget too small',expectedBehavior:'Complete the workflow',evidenceCaseIds:['dev-1'],validation:'Re-run frozen development cases',risk:'Budget cost',confidence:'HIGH',
+      requiredCapabilities:[{id:'budget',name:'Agent budget',required:true,reason:'Observed iteration limit',contract:{inputSchema:{},outputSchema:{},errorSchema:{},semantics:'Sufficient native iterations'},constraints:{permissions:[],sideEffects:'none',isolation:'per instance'},preferredTargetCapability:null,consumerTools:[],evidence:[{path:document.path,line,detail:'Actual native execution budget is 2'}]}]}};
+  });
+  const service=new MigrationImprovementPlanningService(projects,jobs,planner,()=> 'fixture-model');
+  const result=await service.propose(project.id,{jobId:'job-1'});
+  expect(result.hypothesis?.requiredCapabilities?.[0]?.evidence[0]?.path).toContain('runtime-evidence/job-1/dev-1.json');
+});
 
 it('persists only correction count and digests from the planning model',async()=>{
   const {project,projects,jobs}=fixture();

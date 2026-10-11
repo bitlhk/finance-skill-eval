@@ -35,6 +35,7 @@ export type ImprovementPlanningInput={
     toolCalls:Array<{name:string;status:string}>;review:string|null;verdict:string|null}>;
   previousExperiments?:Array<{layer:string;outcome:string;passed?:number;total?:number}>;
   codeEvidence?:Array<{origin:'source'|'candidate';path:string;content:string}>;
+  runtimeEvidence?:Array<{path:string;content:string}>;
   runtimeRequirements?:unknown;
   approvedReuseDesign?:import('../domain/migration-reuse-design.js').ReuseDesign;
 };
@@ -97,11 +98,18 @@ export class MigrationImprovementPlanningService {
         return {dependencyId:item.id,key:item.key,provided,valid:provided&&!validateDependencyData(config!.values[item.id],item.schema).length,
           sensitive:item.sensitive};
       });
+    // Line-addressable documents derived only from this frozen development run.
+    // They are telemetry evidence, not invented Skill source or holdout content.
+    const runtimeEvidence=cases.map(item=>({path:`runtime-evidence/${encodeURIComponent(jobId)}/${encodeURIComponent(item.caseId)}.json`,
+      content:JSON.stringify({jobId,caseId:item.caseId,status:item.right.status,
+        ...(stableRuntimeErrorCode(item.right.error)?{runtimeErrorCode:stableRuntimeErrorCode(item.right.error)}:{}),
+        ...this.executionBudget(item.right.metadata),runtimeIdentityVerified:item.right.runtimeIdentityVerified===true,
+        streamCompleted:item.right.streamCompleted===true,toolCalls:item.right.toolCalls.map(call=>({name:call.name,status:call.status})).slice(0,30)},null,2)}));
     const modelResponse=await this.planner({modelId,sourceJobId:jobId,baseSolutionRevisionId,
       tools:(project.inspection?.tools??[]).map(tool=>({toolId:tool.toolId,name:tool.name,form:tool.kind})),
       runtimeConfiguration,
       technicalEvidence,
-      codeEvidence,runtimeRequirements:currentRuntimeRequirements(project),
+      codeEvidence,runtimeEvidence,runtimeRequirements:currentRuntimeRequirements(project),
       ...(project.reuseProposal?.approvedAt?{approvedReuseDesign:project.reuseProposal.design}:{}),
       ...(previousExperiments?{previousExperiments}:{}),
       cases:cases.map(item=>({caseId:item.caseId,task:item.prompt.slice(0,4000),runtimeStatus:item.right.status,
@@ -122,8 +130,8 @@ export class MigrationImprovementPlanningService {
     if(judgement.status==='PROPOSED'&&judgement.hypothesis.requiredCapabilities){
       if(judgement.hypothesis.layer!=='HARNESS')return conflict('只有 Harness 假设能提出 Runtime 能力合同');
       for(const capability of judgement.hypothesis.requiredCapabilities){
-        if(!capability.evidence.length||capability.evidence.some(item=>!codeEvidence.some(file=>file.path===item.path&&item.line<=file.content.split('\n').length)))
-          return conflict('能力合同必须引用本轮提供的源码位置');
+        if(!capability.evidence.length||capability.evidence.some(item=>![...codeEvidence,...runtimeEvidence].some(file=>file.path===item.path&&item.line<=file.content.split('\n').length)))
+          return conflict('能力合同必须引用本轮提供的源码位置或运行证据位置');
         if(capability.consumerTools.some(toolId=>!project.inspection?.tools.some(tool=>tool.toolId===toolId||tool.name===toolId)))
           return conflict('能力合同引用了不存在的消费者工具');
       }
