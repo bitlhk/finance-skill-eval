@@ -139,3 +139,54 @@ Eval：128 个测试文件通过，927 项通过、2 项跳过；Builder 相关�
 `reports/reuse-policy-closure-regression.json`。核心、示例与前端类型检查通过，
 前端构建通过。另有针对性回归 64 项，以及格式兼容与工具隔离纠错回归 28 项通过；
 这些单元/集成回归与上面的真实模型 UI 证据分开记账。
+
+## 2026-10-12：同一任务的真实 Harness 重建与最终采用
+
+本节记录新的实际任务，不覆盖之前失败的留出复核。固定执行版本：
+Eval `f0112afd562e32b4eef7440ac3de3fe6d80ccd63`，Builder
+`01a0e686d6566688e2e1858e57974a83ba185d74`；Harness 仓版本不变，本轮仍运行
+Python OpenJiuwen Native Package，未运行 Java Harness。执行和规划使用真实模型，
+Judge 使用本地已配置的真实 GLM 模型。
+
+### 已证实并修复的平台问题
+
+上一条任务 `improve-daba2c68-120b-4347-8ba2-5c3925337757` 的开发集通过，但
+最终复核 `run-013d8121-976e-4220-811e-f84875f66622` 只有 3/4 通过，保持 FAILED、
+未采用。订单 ORDER-002 的计算工具真实调用失败，不是 Judge 误判。
+源码与实际调用摘要对照证明：候选分析遗漏了计算工具的 inputSchema，登记层随后
+丢失源工具已确认的 `subtotal`、`tax_rate` 顶层字符串参数，模型传入了嵌套 input 对象。
+
+修复不改业务脚本或金额规则：仅当工具映射、原始合同、已确认方案和当前候选的独立
+一致性审查全部匹配时，登记层保留原合同；显式的新合同不被覆盖，也不从测试样例猜 schema。
+新运行记录已实际包含两个必填字符串字段。原失败记录及截图
+`reports/runtime-rebuild-ui/01-contract-loss-block.jpg` 保留。
+
+### 本次同一任务的实际执行
+
+候选摘要始终为 `1f518ae718f6ad8ee1e74ebfa8901bcbf5ce912d809fbfc79caaeae46ac6dfe1`。
+新的测试任务在开始改进前冻结开发题及两个不同提问的留出题；留出题不供规划和 Builder 使用。
+这不是把上一任务已消费的留出题重新记为未见数据。业务事实来自原始 Skill，
+不宣称订单数据本身在源码中不可见。
+
+| 环节 | 实际证据 |
+| --- | --- |
+| 新基线 | `run-91648f08-e2ca-4571-a4a0-289a457710f3`：正常订单因两次迭代上限中断，缺失订单停止分支通过 |
+| 同一改进任务 | `improve-5943f6eb-977a-42c2-a4b7-744ad7a1b299`，前端观察 WAITING_BUILDER 并下载实际需求 |
+| 冻结需求摘要 | `4509587a6dfaaa6cd268da31cab584d7b13e6465d0d52572256b472d842e6480` |
+| 真实 Builder | 真实 Codex construction agent；逐条审核确定命令，未禁用审批；独立契约测试 PASSED |
+| 新产物 | `05a590c27a9e89e4917c714b162881982e8f699e68a6696a9a9f017ce76a1e12`，独立部署 `runtime-07b24e60bbc3666b30217bec` |
+| 修改范围 | 实际 worker 与基线逐字节比较：长度相同，仅 1 字节变化，agent 迭代预算 2 → 6；业务工具和 Skill 不变 |
+| 独立准入与恢复 | 前端导入实际 Builder Result，Eval 独立准入，点击恢复原任务，非另建通过任务 |
+| 恢复后的开发集 | `run-5e870d6d-e37e-4dbb-9e3e-f77545889a51`：2/2，HARNESS 改进 PROMOTED |
+| 最终复核 | `run-8441ccce-6eb5-4213-821d-69f74efc0f4c`：4/4，包含实际税率和币种优先于用户猜测的留出要求 |
+| 前端采用 | 同一任务 ADOPTED，finalConsumed / finalVerified 均为 true |
+
+`verifiedHarnessRebuildEvidence` 已针对实际等待快照、当前服务报告和最终任务执行通过，
+校验同一任务、同一需求摘要、不同产物与部署、恢复运行、当前最终复核和采用。
+不含令牌的结果为 `reports/runtime-rebuild-ui/02-same-task-rebuild-evidence.json`；
+前端采用截图为 `reports/runtime-rebuild-ui/02-same-task-adopted.jpg`。
+
+本节已关闭“发现问题 → Builder 重建 → 新 Launcher 准入 → 原任务恢复 → 留出复核 → 采用”
+的真实验收缺口。该新配置的复用验收与下载另行核验，不借用失效的旧结果，也不把八 Skill
+全部记为本次通过。当前版本完整回归 974 项通过、0 失败、2 项跳过；类型检查通过。
+报告为 `reports/runtime-rebuild-ui/regression-f0112af.json`。
