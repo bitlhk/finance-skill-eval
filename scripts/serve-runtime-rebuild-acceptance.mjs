@@ -42,7 +42,9 @@ const child=spawn(process.env.CLOSEOUT_BUILDER_PYTHON??path.join(builder,'../.ve
   '--model-key-env','CLOSEOUT_RUNTIME_MODEL_KEY','--await-eval-request','--source-file',sourceFile,
   '--baseline-port',String(baselinePort),'--release-port',String(releasePort),'--serve'],
  {cwd:pinned,windowsHide:true,env:{...process.env,PYTHONUTF8:'1',CLOSEOUT_RUNTIME_MODEL_KEY:model.apiKey},stdio:['ignore','pipe','pipe']});
-child.stdout.resume();let stderr='';child.stderr.on('data',b=>{stderr=(stderr+b).slice(-200000)});
+let stdout='',stderr='';
+child.stdout.on('data',b=>{stdout=(stdout+b).slice(-200000)});
+child.stderr.on('data',b=>{stderr=(stderr+b).slice(-200000)});
 let app,closed=false;
 async function shutdown(){if(closed)return;closed=true;await app?.close();await mkdir(state,{recursive:true});await writeFile(path.join(state,'stop'),'stop');
  await new Promise(resolve=>{if(child.exitCode!==null)return resolve();const timer=setTimeout(()=>{child.kill();resolve()},15000);child.once('exit',()=>{clearTimeout(timer);resolve()})});}
@@ -71,4 +73,5 @@ try{
   try{await readFile(path.join(work,'stop'));await shutdown()}catch(e){if(e.code!=='ENOENT')throw e}
   await new Promise(r=>setTimeout(r,500));
  }
-}finally{await shutdown();if(stderr)await writeFile(path.join(work,'builder-private.log'),stderr);}
+}finally{await shutdown();if(stdout)await writeFile(path.join(work,'builder-private-stdout.log'),stdout);
+ if(stderr)await writeFile(path.join(work,'builder-private.log'),stderr);}
