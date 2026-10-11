@@ -7,13 +7,14 @@ import {createHash} from 'node:crypto';
 import {unzipSync,strFromU8} from 'fflate';
 import {simpleMigrationSuiteSchema} from '../src/migration/domain/simple-migration-suite.js';
 
-it('freezes all repetitions with an unchanged baseline and judge, preserving common-date positive cases',async()=>{
+it('freezes an explicitly separate v6 cohort and refuses silently relabeling v5, preserving baseline and cases',async()=>{
   const root=await mkdtemp(join(tmpdir(),'fact-attribution-'));
   const output=join(root,'frozen');
   try{
-    execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output]);
+    expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output],{stdio:'pipe'})).toThrow(/Judge changed/);
+    execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v6']);
     const manifest=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));
-    expect(manifest.judge.policy).toBe('fact-provenance-v5');
+    expect(manifest.judge.policy).toBe('fact-provenance-v6');
     for(const [file,hash]of Object.entries(manifest.judge.evidenceSources)){
       expect(createHash('sha256').update((await readFile(file,'utf8')).replace(/\r\n/g,'\n')).digest('hex')).toBe(hash);
     }
@@ -30,6 +31,6 @@ it('freezes all repetitions with an unchanged baseline and judge, preserving com
     const old=unzipSync(await readFile(join(output,'baseline.zip')));
     expect(strFromU8(old['SKILL.md']!)).toBe(await readFile('examples/fact-check-demo/SKILL.md','utf8'));
     expect(manifest.variants.revision.skillSha256).not.toBe(manifest.variants.baseline.skillSha256);
-    expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output],{stdio:'pipe'})).toThrow();
+    expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v6'],{stdio:'pipe'})).toThrow();
   }finally{await rm(root,{recursive:true,force:true})}
 });

@@ -5,6 +5,7 @@ import path from 'node:path';
 import {strToU8,zipSync} from 'fflate';
 import {simpleMigrationSuiteSchema,simpleMigrationCases,simpleMigrationHoldoutCases,simpleMigrationSuiteExample} from '../src/migration/domain/simple-migration-suite.js';
 import {ModelGoalJudge} from '../src/goal-judge.js';
+import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 import {runtimeExecutionEvidenceSchema} from '../src/contracts.js';
 import {assessMigrationAcceptance} from '../src/migration/domain/migration-acceptance.js';
 import {createEvaluationService} from '../src/service/server.js';
@@ -17,6 +18,20 @@ const evidence=runtimeExecutionEvidenceSchema.parse({runId:'test',side:'right',c
 const definition=simpleMigrationCases(simpleMigrationSuiteSchema.parse({name:'test',cases:[{id:'fee-001',input:'计算服务费',criteria:['服务费为2.5元','说明尚未扣费']}]}))[0]!;
 function judge(checks:unknown[],capture?:Array<unknown>){return new ModelGoalJudge({adapterId:'fixture',complete:async request=>{capture?.push(request);return {modelId:'test',content:JSON.stringify({checks})}}},model)}
 const input={evalCase:definition,left:{...evidence,side:'left' as const},right:evidence,profile:{} as any};
+it('passes exact Skill read matches but never forwards the immutable private file map',async()=>{
+ const capture:any[]=[];
+ const skillPackage={artifactSha256:'a'.repeat(64),files:{'references/policy.md':'PRIVATE_POLICY_BYTES'}};
+ const goal=new ModelGoalJudge({adapterId:'fixture',complete:async request=>{
+  capture.push(request);return {modelId:'test',content:JSON.stringify({checks:[0,1].map(criterionIndex=>({criterionIndex,verdict:'PASS',reason:'Observed evidence.',evidence:''}))})};
+ }},model,{skillPackage});
+ await goal.compare({...input,right:{...evidence,toolCalls:[{name:'read_file',status:'completed'}],metadata:{skillArtifactSha256:skillPackage.artifactSha256,
+  toolEvidence:[{tool:'read_file',status:'completed',argumentsDigest:canonicalSha256({path:'references/policy.md',scope:'skill'}),resultDigest:canonicalSha256({path:'references/policy.md',content:'PRIVATE_POLICY_BYTES'})}]}}});
+ const payload=JSON.parse(capture[0].messages[1].content);
+ expect(payload.runtimeEvidence.skillFileReads).toEqual([{tool:'read_file',path:'references/policy.md',scope:'skill',kind:'FILE_READ'}]);
+ expect(JSON.stringify(capture)).not.toContain('PRIVATE_POLICY_BYTES');
+ expect(payload.criteria).toHaveLength(2);
+ expect(capture[0].messages[0].content).toContain('已安装 Skill 制品摘要匹配');
+});
 it('sends actual native turn queries and receipts, not just the evaluation objective',async()=>{
  const captures:any[]=[];await judge([{criterionIndex:0,verdict:'PASS',reason:'Observed',evidence:''},{criterionIndex:1,verdict:'PASS',reason:'Observed',evidence:''}],captures).compare({...input,
   evalCase:{...definition,turns:[{query:'Read and wait',requiredTools:['read_file']},{query:'Continue without rereading',requiredTools:['calculate_total']}]},
@@ -43,7 +58,7 @@ it('returns model goal checks with grounded evidence and no dimension scores',as
  expect(result.dimensions).toEqual([]);expect(result.goalAssessment?.verdict).toBe('PASS');expect(result.goalAssessment?.checks[0]!.criterion).toBe('服务费为2.5元');
  const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual([{criterionIndex:0,description:'服务费为2.5元'},{criterionIndex:1,description:'说明尚未扣费'}]);expect(payload.requiredCriterionIndices).toEqual([0,1]);
  expect(JSON.stringify(requests[0])).not.toContain('JUDGE_MUST_NOT_SEE_THIS');
- expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[],businessTime:{status:'NOT_VERIFIED'},caseFiles:{status:'NOT_VERIFIED',reason:'UNVERIFIED_CASE_RUNTIME'}});
+ expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[],skillFileReads:[],businessTime:{status:'NOT_VERIFIED'},caseFiles:{status:'NOT_VERIFIED',reason:'UNVERIFIED_CASE_RUNTIME'}});
  expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe('PASSED');
 });
 it('gives the goal judge authoritative Runtime tool evidence instead of requiring tool narration in the answer',async()=>{

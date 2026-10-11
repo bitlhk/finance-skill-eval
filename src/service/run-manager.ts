@@ -425,11 +425,14 @@ export class EvaluationRunManager {
     const skillFor=async(side:'left'|'right')=>{
       const resolve=await this.skillResolver(configuration.runtimeBindings?.[side].skillAssetId??configuration.skillAssetId);
       const source=await resolve(pack.variants[side]);
-      return source?{skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256,instructions:source.instructions}:undefined;
+      const prefix=source?.skillFile?.includes('/')?source.skillFile.slice(0,source.skillFile.lastIndexOf('/')+1):'';
+      const files=Object.fromEntries(Object.entries(source?.files??{}).filter(([path])=>path.startsWith(prefix)).map(([path,content])=>[path.slice(prefix.length),content]));
+      return source?{skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256,instructions:source.instructions,
+        skillPackage:{artifactSha256:source.artifactSha256,files}}:undefined;
     };
     if(configuration.evaluationMode==='candidate_runtime_comparison')return new ModelRuntimeComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{left:await skillFor('left'),right:await skillFor('right')});
     if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
-    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{tools:configuration.runtimeCommandBindings?.right});
+    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{tools:configuration.runtimeCommandBindings?.right,skillPackage:(await skillFor('right'))?.skillPackage});
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
       :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);

@@ -4,10 +4,10 @@
 
 ## 冻结
 
-当前分支使用新批次 `fact-provenance-v5`。在 v4 的工具结果采集状态及数据时间来源边界之上，区分工作区读取收据未提供、格式非法和真实摘要冲突；缺失收据不代表读取成功。有效业务判定的引文可机械恢复 Markdown 格式差异，无法恢复时仅允许纠正引文，不能改变原判定和原因。脚本固定策略源码及所导入证据模块的 LF 摘要；此前 v2/v3/v4 实验和结果保留，不与新批次混合统计。Skill 两版与案例内容没有变更。使用旧 manifest 时必须检出它所绑定的源码，不能拿当前评分覆盖旧结果。这是实验的证据策略批次，不是 Runtime 或 Builder 协议版本升级。
+既有 `fact-provenance-v5` 批次在 v4 之上区分工作区读取收据和格式引文恢复；该批次及旧结果保留。当前策略为独立的 `fact-provenance-v6`：增加已绑定 Skill 制品内文件的精确读取摘要匹配，不暴露正文、不降低证据要求。脚本固定策略源码及证据模块的 LF 摘要，必须显式选择 v6 新批次；默认 v5 在当前源码下拒绝冻结，不能悄悄重标旧记录。Skill 两版与案例内容没有变更。使用旧 manifest 时必须检出它绑定的源码，不能拿当前评分覆盖旧结果。这是证据策略批次，不是 Runtime 或 Builder 协议升级。
 
 ```sh
-node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v1
+node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v6 fact-provenance-v6
 ```
 
 输出两个可上传ZIP、同一份8题测试集及96条执行计划。输出目录必须不存在；同名目录不能被覆盖。脚本检查旧Skill和Judge源文件摘要，**不执行模型**。

@@ -29,3 +29,17 @@ it('retains per-turn receipts without exposing host session/workspace identifier
  const result=judgeRuntimeEvidence({status:'completed',streamCompleted:true,toolCalls:[],metadata:{conversation:{sessionId:'PRIVATE_SESSION',workspaceId:'PRIVATE_PATH',turns:[{index:0,status:'completed',queryDigest:'query-sha',outputDigest:'output-sha',output:'wait',toolNames:['read_file']},{index:1,status:'completed',queryDigest:'next-sha',outputDigest:'answer-sha',output:'40.11',toolNames:['calculate_total']}]}}} as never);
  expect(result.conversation?.turns[1]).toMatchObject({index:1,toolNames:['calculate_total']});expect(JSON.stringify(result)).not.toContain('PRIVATE');
 });
+
+it.each(['match','unverified','different-artifact','different-content','workspace-scope','failed-read','unsafe-path'] as const)('proves Skill-package reads only from exact bound actual receipts: %s',change=>{
+ const path=change==='unsafe-path'?'../private.txt':'references/policy.md',content='PRIVATE_POLICY_CONTENT';
+ const artifact='a'.repeat(64);
+ const evidence={status:'completed',streamCompleted:true,runtimeIdentityVerified:change!=='unverified',
+  toolCalls:[{name:'read_file',status:change==='failed-read'?'failed':'completed'}],metadata:{skillArtifactSha256:change==='different-artifact'?'b'.repeat(64):artifact,
+  toolEvidence:[{tool:'read_file',status:change==='failed-read'?'failed':'completed',
+   argumentsDigest:canonicalSha256({path,scope:change==='workspace-scope'?'workspace':'skill'}),
+   resultDigest:canonicalSha256({path,content:change==='different-content'?'different':content})}]}};
+ const result=judgeRuntimeEvidence(evidence as never,{skillPackage:{artifactSha256:artifact,files:{[path]:content}}});
+ expect(result.skillFileReads).toEqual(change==='match'?[{tool:'read_file',path,scope:'skill',kind:'FILE_READ'}]:[]);
+ expect(JSON.stringify(result)).not.toContain(content);
+ expect(result.workspaceInputMatches).toEqual([]);
+});

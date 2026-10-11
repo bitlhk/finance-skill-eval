@@ -3,11 +3,12 @@ import type {ModelAdapter} from './adapters.js';
 import {judgeResultSchema,type ModelRef,type RuntimeExecutionEvidence} from './contracts.js';
 import type {PairwiseJudge} from './judge.js';
 import {parseFirstJsonObject} from './json-response.js';
-import {judgeRuntimeEvidence,runtimeSupportEvidenceGuidance,type JudgeInputEvidence} from './judge-runtime-evidence.js';
+import {judgeRuntimeEvidence,runtimeSupportEvidenceGuidance as baseRuntimeSupportEvidenceGuidance,skillFileEvidenceGuidance,type JudgeInputEvidence} from './judge-runtime-evidence.js';
+const runtimeSupportEvidenceGuidance=baseRuntimeSupportEvidenceGuidance+skillFileEvidenceGuidance;
 import {judgeCaseFiles,caseFileJudgeGuidance} from './judge-case-files.js';
 const responseSchema=z.strictObject({checks:z.array(z.strictObject({criterionIndex:z.number().int().nonnegative(),verdict:z.enum(['PASS','FAIL','INDETERMINATE']),reason:z.string().trim().min(1).max(3000),evidence:z.string().max(6000)})).min(1).max(21)});
-export const GOAL_JUDGE_POLICY_VERSION='fact-provenance-v5';
-export type JudgeSkillContract={skillId:string;version:string;artifactSha256:string;instructions:string};
+export const GOAL_JUDGE_POLICY_VERSION='fact-provenance-v6';
+export type JudgeSkillContract={skillId:string;version:string;artifactSha256:string;instructions:string;skillPackage?:JudgeInputEvidence['skillPackage']};
 export const FACT_PROVENANCE_CRITERION='来源边界核验：依据 Skill 正文和任务核对已知事实的来源。若限定仅依据用户输入，每项已知事实必须可追溯到用户输入；宿主业务日期、环境、未安装工具说明不得混入。若允许工具来源，区分用户陈述、工具事实与宿主环境，不要求工具事实来自用户。可在相关限制说明中解释环境，但不得冒充用户事实。无法核对时保留无法判断。';
 function businessTimeEvidence(evidence:RuntimeExecutionEvidence){
  const unknown={status:'NOT_VERIFIED' as const};
@@ -56,8 +57,8 @@ const recoverContinuousQuote=(answer:string,evidence:string)=>{
 };
 export class ModelGoalJudge implements PairwiseJudge{
  readonly judgeId:string;
- constructor(private readonly adapter:ModelAdapter,private readonly model:ModelRef,private readonly inputEvidence:Pick<JudgeInputEvidence,'tools'> & Partial<JudgeSkillContract>={}){this.judgeId=`model-goals:${GOAL_JUDGE_POLICY_VERSION}:${adapter.adapterId}:${model.providerId}:${model.modelId}`}
- private get skillContract(){return this.inputEvidence.artifactSha256 ? this.inputEvidence as JudgeSkillContract : undefined;}
+ constructor(private readonly adapter:ModelAdapter,private readonly model:ModelRef,private readonly inputEvidence:Pick<JudgeInputEvidence,'tools'|'skillPackage'> & Partial<JudgeSkillContract>={}){this.judgeId=`model-goals:${GOAL_JUDGE_POLICY_VERSION}:${adapter.adapterId}:${model.providerId}:${model.modelId}`}
+ private get skillContract(){const {skillId,version,artifactSha256,instructions}=this.inputEvidence;return artifactSha256?{skillId,version,artifactSha256,instructions}:undefined;}
  async compare(input:Parameters<PairwiseJudge['compare']>[0]){
  const criteria=input.evalCase.rubric.map(r=>r.description);
  if(this.skillContract)criteria.push(FACT_PROVENANCE_CRITERION);
