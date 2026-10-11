@@ -49,6 +49,37 @@ export function verifiedDeliveryEvidence({report,reuse,task,exportDigest}) {
     reuseTaskId:reuse.result.taskId,reuseJobIds:reuse.result.jobs.map(j=>j.jobId),verifiedExportDigest:exportDigest});
 }
 
+/** One task must span the external rebuild and adoption. A later passing task
+ * cannot replace a failed holdout from the task that requested the rebuild. */
+export function verifiedHarnessRebuildEvidence({report,waitingTask,task}) {
+  assert.equal(waitingTask.status,'WAITING_BUILDER','Missing observed Builder wait');
+  assert.equal(task.taskId,waitingTask.taskId,'Rebuild and adoption must use the same task');
+  assert.equal(task.sourceJobId,waitingTask.sourceJobId);
+  assert.equal(task.status,'ADOPTED');assert(task.finalConsumed&&task.finalVerified);
+  const requirements=waitingTask.runtimeRequirements,delivery=report.project.runtimeDelivery;
+  assert(requirements?.rebuild?.baseline&&delivery,'Missing rebuild requirements or admitted delivery');
+  assert.equal(task.runtimeRequirements?.requirementsDigest,requirements.requirementsDigest);
+  assert.equal(delivery.requirementsDigest,requirements.requirementsDigest);
+  assert.equal(requirements.source.artifactSha256,task.baseCandidateDigest);
+  assert.notEqual(delivery.artifactSha256,requirements.rebuild.baseline.artifactSha256);
+  assert.notEqual(delivery.deploymentId,requirements.rebuild.baseline.deploymentId);
+  assert(task.contextChanges?.some(c=>c.environmentId===delivery.environmentId),'Missing task resumption with admitted deployment');
+  const promoted=task.iterations?.find(i=>i.layer==='HARNESS'&&i.outcome==='PROMOTED'&&i.jobId===task.bestJobId);
+  assert(promoted?.total>0&&promoted.passed===promoted.total,'No verified development improvement');
+  const baseline=report.experiments.find(e=>e.jobId===task.sourceJobId);
+  assert(baseline&&baseline.acceptance.status!=='PASSED','Missing failing baseline');
+  for(const jobId of [promoted.jobId,task.finalJobId]){
+    const run=report.experiments.find(e=>e.jobId===jobId);
+    assert(run?.current&&run.acceptance.status==='PASSED','Missing current resumed/final verification');
+    assert.equal(run.runtimeConfigurationDigest,task.configurationDigest);
+  }
+  assert.equal(report.project.candidate?.artifactSha256,task.bestCandidate.artifactSha256);
+  assert.equal(report.verification.targetExecution,'PASSED');
+  return {taskId:task.taskId,sourceJobId:task.sourceJobId,requirementsDigest:requirements.requirementsDigest,
+    deploymentId:delivery.deploymentId,artifactSha256:delivery.artifactSha256,
+    resumedJobId:promoted.jobId,finalJobId:task.finalJobId,candidateDigest:task.bestCandidate.artifactSha256};
+}
+
 // Do not copy raw provider errors, model configuration, prompts or connection-info.
 export function acceptanceEntry({skillId, passed, provenance, cases = [], checks = [], phases = [], expectation = 'MIGRATED',deliveryEvidence}) {
   assert(allSkills.includes(skillId), 'Unknown Skill');

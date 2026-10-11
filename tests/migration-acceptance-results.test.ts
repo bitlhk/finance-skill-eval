@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 // @ts-expect-error Test orchestration is deliberately outside the production bundle.
-import {acceptanceEntry,allSkills,legacyFiveSkills,selectedEnterpriseCases,summarizeAcceptance,verifiedDeliveryEvidence} from '../scripts/lib/migration-acceptance-results.mjs';
+import {acceptanceEntry,allSkills,legacyFiveSkills,selectedEnterpriseCases,summarizeAcceptance,verifiedDeliveryEvidence,verifiedHarnessRebuildEvidence} from '../scripts/lib/migration-acceptance-results.mjs';
 
 const entry=(skillId:string,change:Record<string,unknown>={})=>acceptanceEntry({skillId,passed:true,
   provenance:{diagnosis:'REAL',generation:'REAL',execution:'REAL',judge:'REAL'},cases:[{caseId:'actual-case',verdict:'PASS'}],
@@ -53,6 +53,31 @@ function closureFixture(){
   reuse:{status:'PASSED',current:true,result:{status:'PASSED',taskId:'reuse',checks:[{status:'PASSED'}],jobs:[{jobId:'reuse-run'}],
    binding:{candidateDigest:hash,proposalId:'proposal',configurationDigest:config}}},exportDigest:hash};
 }
+
+function rebuildFixture(){
+ const hash='a'.repeat(64),config='b'.repeat(64);
+ const req={requirementsDigest:'req',source:{artifactSha256:hash},rebuild:{baseline:{artifactSha256:'old-artifact',deploymentId:'old-deployment'}}};
+ const waitingTask={taskId:'one-task',sourceJobId:'baseline',status:'WAITING_BUILDER',runtimeRequirements:req};
+ const task={...waitingTask,status:'ADOPTED',baseCandidateDigest:hash,runtimeRequirements:req,configurationDigest:config,
+  finalConsumed:true,finalVerified:true,finalJobId:'final',bestJobId:'resumed',bestCandidate:{artifactSha256:hash},
+  contextChanges:[{environmentId:'new-env'}],iterations:[{layer:'HARNESS',outcome:'PROMOTED',jobId:'resumed',passed:2,total:2}]};
+ const report={project:{candidate:{artifactSha256:hash},runtimeDelivery:{requirementsDigest:'req',environmentId:'new-env',artifactSha256:'new-artifact',deploymentId:'new-deployment'}},
+  verification:{targetExecution:'PASSED'},experiments:[{jobId:'baseline',acceptance:{status:'FAILED'}},
+   ...['resumed','final'].map(jobId=>({jobId,current:true,runtimeConfigurationDigest:config,acceptance:{status:'PASSED'}}))]};
+ return {report,waitingTask,task};
+}
+it('requires the same task to wait for Builder, resume, verify holdout and adopt',()=>{
+ const f=rebuildFixture();expect(verifiedHarnessRebuildEvidence(f)).toMatchObject({taskId:'one-task',resumedJobId:'resumed',finalJobId:'final'});
+ for(const change of [
+  (v:any)=>{v.task.taskId='later-passing-task'},(v:any)=>{v.task.finalVerified=false},
+  (v:any)=>{v.waitingTask.status='FAILED'},(v:any)=>{v.task.iterations=[]},
+  (v:any)=>{v.task.contextChanges=[]},(v:any)=>{v.report.project.runtimeDelivery.requirementsDigest='other'},
+  (v:any)=>{v.report.project.runtimeDelivery.artifactSha256='old-artifact'},
+  (v:any)=>{v.report.project.runtimeDelivery.deploymentId='old-deployment'},
+  (v:any)=>{v.report.experiments[2].current=false},(v:any)=>{v.report.experiments[2].acceptance.status='FAILED'},
+  (v:any)=>{v.report.experiments[2].runtimeConfigurationDigest='other'},
+ ]){const input=rebuildFixture();change(input);expect(()=>verifiedHarnessRebuildEvidence(input)).toThrow();}
+});
 it('binds closed-loop evidence to current approved, adopted, business/reuse-tested and exported identity',()=>{
  const f=closureFixture();expect(verifiedDeliveryEvidence(f)).toMatchObject({candidateDigest:f.exportDigest,reuseTaskId:'reuse',finalJobId:'final'});
  for(const mutate of [
