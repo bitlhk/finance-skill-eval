@@ -31,6 +31,14 @@ it('uses valid enum values in coverage and verdict JSON examples, with alternati
 });
 const plan=(checkId='original')=>({name:'Execution',groups:[{id:'group',cases:[{id:'case',input:'Check the actual result',criteria:['Actual result']}]}],checks:[{checkId,caseIds:['case'],criteria:['Original requirement']}],unresolvedQuestions:[]});
 const context={design:{scope:'Unchanged scope',acceptanceChecks:[{id:'original',purpose:'Business behavior',procedure:'Execute',expectedResult:'Actual result'}]}};
+it('asks for compact plans without omitting deployment topology, turns or original requirements',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify(plan())});
+ await runReuseAcceptanceModel({mode:'PLAN',context});
+ const prompt=complete.mock.calls[0]![0].messages[0].content;
+ expect(prompt).toContain('返回紧凑 JSON');expect(prompt).toContain('不能因此删减要求、跨部署运行或真实多轮');
+ expect(complete.mock.calls[0]![0].messages[1].content).toBe(JSON.stringify(context));
+ expect(complete).toHaveBeenCalledTimes(1);
+});
 it('re-plans one generated reference mismatch against unchanged original requirements',async()=>{
  complete.mockResolvedValueOnce({content:JSON.stringify(plan('invented'))}).mockResolvedValueOnce({content:JSON.stringify(plan())});
  expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual(plan());expect(complete).toHaveBeenCalledTimes(2);

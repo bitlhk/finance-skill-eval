@@ -44,6 +44,19 @@ describe("OpenAiCompatibleModelAdapter", () => {
     const adapter=new OpenAiCompatibleModelAdapter({apiKey:'private',baseUrl:'https://models.example/v1'});
     return expect(adapter.complete({requestId:'truncated',model:{providerId:'test',modelId:'test',parameters:{}},messages:[]})).rejects.toMatchObject({code:'MODEL_OUTPUT_TRUNCATED'});
   });
+  it('reports safe numeric truncation usage without accepting partial output or changing budget',async()=>{
+    const fetchMock=vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'PRIVATE_PARTIAL'},finish_reason:'length'}],usage:{completion_tokens:8192,private:'PRIVATE_KEY'}})));
+    vi.stubGlobal('fetch',fetchMock);
+    const adapter=new OpenAiCompatibleModelAdapter({apiKey:'private',baseUrl:'https://models.example/v1',requestDefaults:{max_tokens:8192}});
+    await expect(adapter.complete({requestId:'budget',model:{providerId:'test',modelId:'test',parameters:{}},messages:[]})).rejects.toMatchObject({code:'MODEL_OUTPUT_TRUNCATED',message:expect.stringContaining('已用输出 token：8192；请求输出上限：8192')});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).max_tokens).toBe(8192);
+  });
+  it('does not put malformed usage or budget fields in truncation diagnostics',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'PRIVATE_PARTIAL'},finish_reason:'length'}],usage:{completion_tokens:'PRIVATE_USAGE'}}))));
+    const adapter=new OpenAiCompatibleModelAdapter({apiKey:'private',baseUrl:'https://models.example/v1',requestDefaults:{max_tokens:'PRIVATE_BUDGET'}});
+    await expect(adapter.complete({requestId:'malformed-budget',model:{providerId:'test',modelId:'test',parameters:{}},messages:[]})).rejects.toMatchObject({code:'MODEL_OUTPUT_TRUNCATED',message:expect.not.stringContaining('PRIVATE')});
+  });
   it('does not expose provider error text or credentials',()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{message:'PRIVATE_KEY'}}),{status:401})));
     const adapter=new OpenAiCompatibleModelAdapter({apiKey:'private',baseUrl:'https://models.example/v1'});

@@ -76,7 +76,15 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
         total_tokens?: number;
       };
     };
-    if(payload.choices?.[0]?.finish_reason==='length')throw new ModelCompletionError('MODEL_OUTPUT_TRUNCATED','模型输出达到长度上限，未形成完整结果；请检查模型输出预算');
+    if(payload.choices?.[0]?.finish_reason==='length'){
+      // Report numeric usage only, never provider output, reasoning or secrets.
+      const count=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:undefined;
+      const used=count(payload.usage?.completion_tokens);
+      const limit=count(body.max_completion_tokens)??count(body.max_tokens);
+      const details=[used!==undefined?`已用输出 token：${used}`:undefined,
+        limit!==undefined?`请求输出上限：${limit}`:'请求未显式配置输出上限'].filter(Boolean).join('；');
+      throw new ModelCompletionError('MODEL_OUTPUT_TRUNCATED',`模型输出达到长度上限，未形成完整结果（${details}）；请检查模型输出预算`);
+    }
     const content = payload.choices?.[0]?.message?.content;
     if (typeof content !== "string" || content.trim().length === 0) {
       throw new ModelCompletionError('MODEL_EMPTY_RESPONSE','模型没有返回最终答案');

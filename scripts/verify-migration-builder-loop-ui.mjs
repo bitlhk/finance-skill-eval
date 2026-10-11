@@ -12,7 +12,8 @@ import {createEvaluationService} from '../dist/service/server.js';
 import {configuredModelRole} from '../dist/service/config.js';
 
 // Real model + real Builder UI round trip. Only fixture preparation is administrative:
-// a disposable source host declares 16 iterations; its deployed baseline deliberately permits 2.
+// the deployed baseline deliberately permits only 2 iterations; verified execution
+// failures must drive the Harness requirement without rewriting the Skill source.
 // No fake model, fake execution, fake evaluation result or rewritten business Tool is used.
 for(const key of ['MIGRATION_TEST_RESUME_DATA','MIGRATION_TEST_BUILDER_ROOT','MIGRATION_TEST_BUILDER_STATE','MIGRATION_TEST_BUILDER_PYTHON','MIGRATION_TEST_CODEX_BIN','MIGRATION_TEST_BUILDER_MODEL_NAME'])assert(process.env[key],`Missing ${key}`);
 // Test-only opt-in for installations without a separate optimizer configuration.
