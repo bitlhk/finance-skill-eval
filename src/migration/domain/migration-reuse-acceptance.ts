@@ -15,6 +15,14 @@ export const reuseAcceptancePlanSchema=z.strictObject({
   unresolvedQuestions:z.array(z.string().trim().min(1).max(2000)).max(32),
 });
 export type ReuseAcceptanceExecutionPlan=z.infer<typeof reuseAcceptancePlanSchema>;
+/** Selected topology references, not a business verdict or deployment admission. */
+export function reuseAcceptanceTargetIssues(plan:ReuseAcceptanceExecutionPlan,targets:Array<{environmentId:string;modelId:string}>){
+  if(!targets.length)return [];
+  const key=(t:{environmentId:string;modelId:string})=>JSON.stringify([t.environmentId,t.modelId]);
+  const expected=new Set(targets.map(key)),used=new Set(plan.groups.map(g=>key(g.runtime??targets[0]!)));
+  return [...[...used].filter(k=>!expected.has(k)).map(()=> '运行组引用未选择的部署或模型'),
+    ...targets.filter(t=>!used.has(key(t))).map(t=>`计划未执行所选运行目标：${t.environmentId} / ${t.modelId}`)];
+}
 export const coverageSchema=z.strictObject({status:z.enum(['COVERED','INCOMPLETE']),reasons:z.array(z.string().min(1)).max(64)});
 export const reuseAcceptanceVerdictsSchema=z.strictObject({checks:z.array(z.strictObject({checkId:z.string().min(1),
   status:z.enum(['PASSED','FAILED','INDETERMINATE']),reason:z.string().min(1),caseIds:z.array(z.string().min(1)).min(1)})).min(1).max(32)});

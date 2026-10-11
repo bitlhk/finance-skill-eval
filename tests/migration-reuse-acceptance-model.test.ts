@@ -49,6 +49,19 @@ it('stops after one re-planning attempt and never relabels invented requirements
  complete.mockResolvedValue({content:JSON.stringify(plan('invented'))});
  await expect(runReuseAcceptanceModel({mode:'PLAN',context})).rejects.toMatchObject({failure:{phase:'PLAN',code:'MODEL_PLAN_REFERENCE_INVALID'}});expect(complete).toHaveBeenCalledTimes(2);
 });
+it('replans omitted selected deployment references once without silently cloning or deselecting targets',async()=>{
+ const targets=[{environmentId:'primary',modelId:'m'},{environmentId:'additional',modelId:'m'}];
+ const initial=plan(),fixed={...plan(),groups:[...initial.groups,{id:'other',runtime:targets[1],cases:[{id:'other-case',input:'Check actual result',criteria:['Actual result']}]}],checks:[{...initial.checks[0]!,caseIds:['case','other-case']}]};
+ complete.mockResolvedValueOnce({content:JSON.stringify(initial)}).mockResolvedValueOnce({content:JSON.stringify(fixed)});
+ await expect(runReuseAcceptanceModel({mode:'PLAN',context:{...context,availableRunTargets:targets}})).resolves.toEqual(fixed);
+ expect(complete).toHaveBeenCalledTimes(2);
+ expect(complete.mock.calls[1]![0].messages.at(-1).content).toContain('additional');
+});
+it('rejects repeated omitted or unselected targets after the one planning correction',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify(plan())});
+ await expect(runReuseAcceptanceModel({mode:'PLAN',context:{...context,availableRunTargets:[{environmentId:'primary',modelId:'m'},{environmentId:'additional',modelId:'m'}]}})).rejects.toMatchObject({failure:{code:'MODEL_PLAN_REFERENCE_INVALID'}});
+ expect(complete).toHaveBeenCalledTimes(2);
+});
 it('retains genuine unresolved requirements rather than retrying them away',async()=>{
  const unresolved={...plan(),unresolvedQuestions:['Original requirement needs a new deployment']};complete.mockResolvedValue({content:JSON.stringify(unresolved)});
  expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual(unresolved);expect(complete).toHaveBeenCalledTimes(1);

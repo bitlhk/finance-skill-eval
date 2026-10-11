@@ -15,11 +15,24 @@ import {MigrationSuiteService} from '../src/migration/application/migration-suit
 import {reuseModelContext} from '../src/migration/infrastructure/migration-reuse-context.js';
 import type {ReusePlannerTelemetry} from '../src/migration/domain/migration-reuse-telemetry.js';
 import {OpenAiCompatibleModelAdapter} from '../src/openai-compatible-model.js';
+import {ModelCompletionError} from '../src/openai-compatible-model.js';
 import {MigrationGenerationService} from '../src/migration/application/migration-generation-service.js';
 import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-execution-contract.js';
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
 const sourceFiles={'SKILL.md':SKILL_MD,'scripts/lookup.py':'def lookup(account_id): return {"amount": 10}\n'};
+it.each(['MODEL_NETWORK_ERROR','MODEL_HTTP_ERROR','MODEL_OUTPUT_TRUNCATED','MODEL_EMPTY_RESPONSE'] as const)('preserves safe review failure classification %s without retry or private details',async code=>{
+  const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+  const complete=vi.fn(async()=>{throw new ModelCompletionError(code,'PRIVATE_PROVIDER_DETAILS')});
+  const traces:ReusePlannerTelemetry[]=[];
+  const planner=createReusePlanner({adapterId:'test',complete},{providerId:'test',modelId:'test',parameters:{}},undefined,async trace=>{traces.push(trace)});
+  const failure=await planner({mode:'REVIEW',sourceFiles,candidateFiles:sourceFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design}).catch(error=>error);
+  expect(failure.failure).toMatchObject({phase:'PLAN_REVIEW',code,recoverable:true});
+  expect(failure.message).not.toContain('PRIVATE_PROVIDER_DETAILS');
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(traces.at(-1)?.failureCode).toBe(code);
+  expect(JSON.stringify(traces)).not.toContain('PRIVATE_PROVIDER_DETAILS');
+});
 function context(planner:MigrationReusePlanner=reusePlannerFixture){
   const inspection=inspectionFixture([toolFixture({name:'lookup',sourcePaths:['scripts/lookup.py'],portability:'PORTABLE_SCRIPT',kind:'SCRIPT'})],'source');
   inspection.assetDigest='a'.repeat(64);

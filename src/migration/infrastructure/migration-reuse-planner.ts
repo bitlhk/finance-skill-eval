@@ -12,6 +12,7 @@ import {writeJsonAtomic} from '../../service/file-store.js';
 import {reuseModelContext} from './migration-reuse-context.js';
 import type {ReusePlannerTelemetry} from '../domain/migration-reuse-telemetry.js';
 import {MigrationGenerationError} from '../domain/migration-generation-progress.js';
+import {ModelCompletionError} from '../../openai-compatible-model.js';
 
 // Select the declared result branch before validating it. A plain union hides
 // nested errors behind "Invalid input", leaving format correction unactionable.
@@ -75,8 +76,14 @@ export function createReusePlanner(adapter:ModelAdapter,model:ModelRef,signal?:A
   try{const result=await buildReusePlanner(tracked,model,signal,retry,validationFields)(input);
     trace.status='COMPLETED';trace.finishedAt=new Date().toISOString();await publish();
     return {...result as Record<string,unknown>,telemetry:structuredClone(trace)};
-  }catch(error){trace.status='FAILED';trace.failureCode=signal?.aborted?'TIME_LIMIT':'PLANNER_FAILED';
-    trace.finishedAt=new Date().toISOString();await publish();throw error;}
+  }catch(error){trace.status='FAILED';
+    const labels={MODEL_HTTP_ERROR:'模型服务请求失败',MODEL_OUTPUT_TRUNCATED:'模型输出达到长度上限，未形成完整结果',MODEL_EMPTY_RESPONSE:'模型没有返回最终答案',MODEL_NETWORK_ERROR:'模型服务网络请求失败'} as const;
+    const modelCode=error instanceof ModelCompletionError&&Object.hasOwn(labels,error.code)?error.code:undefined;
+    trace.failureCode=signal?.aborted?'TIME_LIMIT':modelCode??'PLANNER_FAILED';
+    trace.finishedAt=new Date().toISOString();await publish();
+    if(input.mode==='REVIEW'&&modelCode)throw new MigrationGenerationError({phase:'PLAN_REVIEW',code:modelCode,
+      message:`独立方案审查未完成：${labels[modelCode]}；候选已保存，可恢复未完成阶段`,recoverable:true});
+    throw error;}
 };}
 
 /** Evidence repair re-reads the same source; it never relaxes verification or approves a design. */

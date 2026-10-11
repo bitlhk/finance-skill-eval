@@ -13,8 +13,13 @@ const prior=JSON.parse(await readFile(path.join(original,'service.json'),'utf8')
 assert(prior.launcherBackend==='NATIVE_PACKAGE'&&prior.admitted?.length===2,'Requires two previously independently admitted deployments');
 const privateDelivery=JSON.parse(await readFile(path.join(original,'launcher/deliveries.json'),'utf8'));
 assert(privateDelivery.status==='READY'&&privateDelivery.records.length===2);
+const parentWork=process.env.CLOSEOUT_CONTINUE_DATA_WORK?path.resolve(process.env.CLOSEOUT_CONTINUE_DATA_WORK):original;
+const parent=parentWork===original?prior:JSON.parse(await readFile(path.join(parentWork,'service.json'),'utf8'));
+assert(parent.launcherBackend==='NATIVE_PACKAGE'&&parent.admitted?.length===2,'Data parent must preserve the admitted deployments');
+assert(JSON.stringify(parent.admitted)===JSON.stringify(prior.admitted),'Data and credential hosts must identify the same deployments');
+assert(path.resolve(parent.data)===path.join(parentWork,'data'),'Data must belong to the explicitly selected acceptance host');
 const work=await mkdtemp(path.join(os.tmpdir(),'continued-deployment-ui-')),data=path.join(work,'data');
-await cp(prior.data,data,{recursive:true,errorOnExist:true});
+await cp(parent.data,data,{recursive:true,errorOnExist:true});
 const trust=privateDelivery.records.map((r,i)=>{
  const credentialEnv=`CLOSEOUT_DEPLOYMENT_${i}_TOKEN`;process.env[credentialEnv]=r.connection.token;
  return {reference:`acceptance-${i}`,label:`验收部署 ${i+1}`,baseUrlPrefix:r.connection.baseUrl,credentialEnv};
@@ -31,7 +36,7 @@ const analyzerBudget={};
 for(const field of ['max_tokens','max_completion_tokens'])if(Number.isSafeInteger(defaults[field])&&defaults[field]>0)analyzerBudget[field]=defaults[field];
 if(['none','low','medium','high','max','minimal','xhigh'].includes(defaults.reasoning_effort))analyzerBudget.reasoning_effort=defaults.reasoning_effort;
 await writeFile(path.join(work,'service.json'),JSON.stringify({url,work,data,eval:git('rev-parse','HEAD'),builder:prior.builder,
- provenance:'CONTINUED_REAL_UI_DATA',originalEval:prior.eval,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted:prior.admitted,analyzerBudget},null,2));
+ provenance:'CONTINUED_REAL_UI_DATA',originalEval:prior.eval,parentEval:parent.eval,parentWork,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted:prior.admitted,analyzerBudget},null,2));
 console.log(JSON.stringify({url,work,status:'READY_FOR_CONTINUED_UI'}));
 let closed=false;async function close(){if(closed)return;closed=true;await app.close()}
 process.once('SIGINT',()=>void close());process.once('SIGTERM',()=>void close());

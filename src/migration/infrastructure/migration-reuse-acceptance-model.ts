@@ -1,7 +1,7 @@
 import {canonicalSha256} from '../../shared/json-canonicalization.js';
 import {configuredModelRole,modelTimeoutMs} from '../../service/config.js';
 import {correctModelOutput} from './model-output-correction.js';
-import {reuseAcceptancePlanSchema,coverageSchema,reuseAcceptanceVerdictsSchema,reuseAcceptanceReferenceIssues} from '../domain/migration-reuse-acceptance.js';
+import {reuseAcceptancePlanSchema,coverageSchema,reuseAcceptanceVerdictsSchema,reuseAcceptanceReferenceIssues,reuseAcceptanceTargetIssues,reuseRuntimeSelectionSchema} from '../domain/migration-reuse-acceptance.js';
 import type {MigrationReuseAcceptanceModel} from '../application/migration-reuse-acceptance-model.js';
 import {ReuseAcceptanceError} from '../domain/migration-reuse-failure.js';
 import {ModelCompletionError} from '../../openai-compatible-model.js';
@@ -44,11 +44,18 @@ export const runReuseAcceptanceModel:MigrationReuseAcceptanceModel=async({mode,c
   if(!result.ok)throw new ReuseAcceptanceError({phase:mode==='VERIFY'?'VERIFICATION':mode,code:'MODEL_OUTPUT_INVALID',message:'模型输出无法解析或字段不符合要求',fields});
   const design=(context as {design?:{acceptanceChecks?:Array<{id:string}>}}|null)?.design;
   const expected=design?.acceptanceChecks?.map(check=>check.id);
-  const references=mode==='PLAN'&&expected?reuseAcceptanceReferenceIssues(reuseAcceptancePlanSchema.parse(result.value),expected):[];
+  const rawTargets=(context as {availableRunTargets?:unknown[]}|null)?.availableRunTargets;
+  const targets=Array.isArray(rawTargets)?rawTargets.flatMap(value=>{
+    if(!value||typeof value!=='object')return [];
+    const {environmentId,modelId}=value as Record<string,unknown>,parsed=reuseRuntimeSelectionSchema.safeParse({environmentId,modelId});
+    return parsed.success?[parsed.data]:[];
+  }):[];
+  const references=mode==='PLAN'?[...(expected?reuseAcceptanceReferenceIssues(reuseAcceptancePlanSchema.parse(result.value),expected):[]),
+    ...reuseAcceptanceTargetIssues(reuseAcceptancePlanSchema.parse(result.value),targets)]:[];
   if(!references.length)return result.value;
   if(attempt===1)throw new ReuseAcceptanceError({phase:'PLAN',code:'MODEL_PLAN_REFERENCE_INVALID',message:'验收计划未完整对应原方案要求；一次重新规划后仍无法核实',fields:['checks (reference_mismatch)']});
   const feedback=JSON.stringify({previousPlan:result.value,validationErrors:references,
-    instruction:'依据上方同一份已确认方案重新生成完整执行计划；只能使用原 acceptanceChecks id，不增删原要求或缩小 scope。补充案例应关联实际原要求；无法覆盖的真实要求保留在 unresolvedQuestions，不编造可执行能力或证据。'});
+    instruction:'依据上方同一份已确认方案重新生成完整执行计划；只能使用原 acceptanceChecks id，不增删原要求或缩小 scope。主部署和所有已选择附加部署必须实际出现在运行组中，不能删除用户选择来规避引用错误。补充案例应关联实际原要求；无法覆盖的真实要求保留在 unresolvedQuestions，不编造可执行能力或证据。'});
   if(content.length+feedback.length>600_000)throw new ReuseAcceptanceError({phase:'PLAN',code:'INPUT_TOO_LARGE',message:'计划重新规划输入超过容量，未截断源码或原要求'});
   messages.push({role:'user',content:feedback});
   }
