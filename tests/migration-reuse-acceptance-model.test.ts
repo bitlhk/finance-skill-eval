@@ -3,6 +3,20 @@ const complete=vi.hoisted(()=>vi.fn());
 vi.mock('../src/service/config.js',()=>({configuredModelRole:()=>({adapter:{complete},model:{providerId:'unit',modelId:'unit'}}),modelTimeoutMs:()=>10000}));
 import {runReuseAcceptanceModel} from '../src/migration/infrastructure/migration-reuse-acceptance-model.js';
 beforeEach(()=>{complete.mockReset();});
+it('separates pre-execution evidence collectability from actual post-execution proof',async()=>{
+ complete.mockResolvedValueOnce({content:JSON.stringify({status:'INCOMPLETE',reasons:['Unsupported original requirement']})});
+ await runReuseAcceptanceModel({mode:'COVERAGE',context:{availableRunTargets:[{toolProcessEvidence:true}]}});
+ const planningPrompt=complete.mock.calls[0]![0].messages[0].content;
+ expect(planningPrompt).toContain('不要求先执行才能批准计划');
+ expect(planningPrompt).toContain('不能仅因此返回 INCOMPLETE');
+ expect(planningPrompt).toContain('case.criteria 越界或承诺超出回执能力仍须 INCOMPLETE');
+ complete.mockResolvedValueOnce({content:JSON.stringify({checks:[{checkId:'original',status:'INDETERMINATE',reason:'Missing actual receipts',caseIds:['case']}]})});
+ await runReuseAcceptanceModel({mode:'VERIFY',context:{}});
+ const verificationPrompt=complete.mock.calls[1]![0].messages[0].content;
+ expect(verificationPrompt).toContain('都不能代替本次记录');
+ expect(verificationPrompt).not.toContain('不要求先执行才能批准计划');
+ expect(complete).toHaveBeenCalledTimes(2);
+});
 it('reports invalid fields and phase without returning model output',async()=>{
  complete.mockResolvedValue({content:JSON.stringify({checks:'PRIVATE_MODEL_OUTPUT'})});
  try{await runReuseAcceptanceModel({mode:'VERIFY',context:{}});throw new Error('must reject');}
