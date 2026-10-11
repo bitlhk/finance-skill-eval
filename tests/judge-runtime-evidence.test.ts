@@ -4,6 +4,21 @@ import {judgeRuntimeEvidence} from '../src/judge-runtime-evidence.js';
 import {workspaceFilesDigest} from '../src/contracts.js';
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
+it.each(['match','mismatch','unavailable','wrong-ordinal','failed','unverified','unfinished','inconsistent','extra-field'] as const)('projects only valid, associated actual MCP result-channel receipts: %s',change=>{
+ const receipt:Record<string,unknown>={schemaVersion:'finance.runtime-mcp-result-channels.v1',status:change==='mismatch'?'MISMATCH':'MATCH',
+  textJsonDigest:'a'.repeat(64),structuredContentDigest:change==='mismatch'?'b'.repeat(64):'a'.repeat(64)};
+ if(change==='unavailable'){receipt.status='UNAVAILABLE';delete receipt.textJsonDigest;delete receipt.structuredContentDigest;}
+ if(change==='inconsistent')receipt.structuredContentDigest='b'.repeat(64);
+ if(change==='extra-field')receipt.rawText='PRIVATE_CHANNEL_BODY';
+ const evidence={status:'completed',runtimeIdentityVerified:change!=='unverified',streamCompleted:change!=='unfinished',
+  toolCalls:[{name:change==='wrong-ordinal'?'other':'lookup',status:change==='failed'?'failed':'completed'}],
+  metadata:{toolEvidence:[{tool:'lookup',status:change==='failed'?'failed':'completed',result:{amount:'100.00'},mcpResultChannels:receipt}]}};
+ const proof=judgeRuntimeEvidence(evidence as never);
+ expect(proof.mcpResultChannels).toHaveLength(['match','mismatch','unavailable'].includes(change)?1:0);
+ if(change==='match')expect(proof.mcpResultChannels[0]).toMatchObject({tool:'lookup',callIndex:0,status:'MATCH'});
+ expect(proof.sourceFacts[0]).not.toHaveProperty('mcpResultChannels');expect(JSON.stringify(proof)).not.toContain('PRIVATE_CHANNEL_BODY');
+});
+
 it.each(['match','extra-argument','changed-value','missing-field','omitted-result','failed-source','failed-consumer','wrong-ordinal','unverified','unfinished','no-schema'] as const)('matches authorized earlier tool results to full consumer argument digests: %s',change=>{
  const values={subtotal:'PRIVATE_AMOUNT',tax_rate:'0.13'};
  const payload={...values,...(change==='extra-argument'?{other:'x'}:{}),...(change==='changed-value'?{tax_rate:'0.00'}:{})};

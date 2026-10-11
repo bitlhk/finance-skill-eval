@@ -7,16 +7,17 @@ import {createHash} from 'node:crypto';
 import {unzipSync,strFromU8} from 'fflate';
 import {simpleMigrationSuiteSchema} from '../src/migration/domain/simple-migration-suite.js';
 
-it('freezes an explicitly separate v8 cohort and refuses silently relabeling v5/v6/v7, preserving baseline and cases',async()=>{
+it('freezes an explicitly separate v9 cohort and refuses silently relabeling v5/v6/v7/v8, preserving baseline and cases',async()=>{
   const root=await mkdtemp(join(tmpdir(),'fact-attribution-'));
   const output=join(root,'frozen');
   try{
     expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output],{stdio:'pipe'})).toThrow(/Judge changed/);
     expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v6'],{stdio:'pipe'})).toThrow(/Judge changed/);
     expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v7'],{stdio:'pipe'})).toThrow(/Judge evidence module changed/);
-    execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v8']);
+    expect(()=>execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v8'],{stdio:'pipe'})).toThrow(/Judge evidence module changed/);
+    execFileSync(process.execPath,['examples/fact-check-attribution-v011/freeze.mjs',output,'fact-provenance-v9']);
     const manifest=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));
-    expect(manifest.judge.policy).toBe('fact-provenance-v8');
+    expect(manifest.judge.policy).toBe('fact-provenance-v9');
     for(const [file,hash]of Object.entries(manifest.judge.evidenceSources)){
       expect(createHash('sha256').update((await readFile(file,'utf8')).replace(/\r\n/g,'\n')).digest('hex')).toBe(hash);
     }

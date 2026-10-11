@@ -60,6 +60,8 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),
     multiTurn:z.boolean().optional(),
     toolProcessEvidence:z.boolean().optional(),
+    mcpResultChannels:z.boolean().optional(),
+    mcpPrepare:z.boolean().optional(),
   }),
   limits: z.strictObject({
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),

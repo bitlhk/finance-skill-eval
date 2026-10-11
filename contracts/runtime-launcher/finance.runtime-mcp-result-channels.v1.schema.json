@@ -1,0 +1,19 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"finance.runtime-mcp-result-channels.v1",
+  "title":"Actual MCP result channel comparison",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["schemaVersion","status"],
+  "properties":{
+    "schemaVersion":{"const":"finance.runtime-mcp-result-channels.v1"},
+    "status":{"enum":["MATCH","MISMATCH","UNAVAILABLE"]},
+    "textJsonDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "structuredContentDigest":{"type":"string","pattern":"^[a-f0-9]{64}$"}
+  },
+  "allOf":[{
+    "if":{"properties":{"status":{"enum":["MATCH","MISMATCH"]}}},
+    "then":{"required":["textJsonDigest","structuredContentDigest"]},
+    "else":{"not":{"anyOf":[{"required":["textJsonDigest"]},{"required":["structuredContentDigest"]}]}}
+  }]
+}

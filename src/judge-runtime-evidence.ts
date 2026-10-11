@@ -90,6 +90,22 @@ export const runtimeSupportEvidenceGuidance='runtimeSupportToolCalls 也是真�
  +'sourceFacts 的 result 可以是 JSON 文本，表示实际工具返回内容的获授权脱敏投影，不是模型回答摘要。只有 status=completed 的事实可证明成功结果；failed 的结果只能解释失败。resultDigest 只标识结果，不能反推出金额、名称或时间。resultOmitted 或 sourceFactsCollection 的 DISABLED/PARTIAL 表示对应结果或字段无法核验，不证明工具未调用或缺失字段不存在；CAPTURED 只覆盖已观察的工具结果，不保证全部调用或全部字段。必须核对回答与实际可见结果，不得因 completed 状态就推定数值正确。工具返回的 asOf、数据更新时间或快照时间与宿主 businessDate 是不同概念：除非任务或工具合同明确要求相同，否则不能因两者不同判错，也不能将数据时点改称本次查询执行时间。Skill 要求展示“返回的”信息时，只要求展示工具实际返回且可核验的信息或说明无法获取；不得凭空增加工具未返回的账户类型、名称等字段要求。';
 
 /** Retain proof of native capability use without disclosing workspace contents. */
+function mcpResultChannels(evidence:RuntimeExecutionEvidence){
+ if(evidence.status!=='completed'||!evidence.runtimeIdentityVerified||!evidence.streamCompleted)return [];
+ const facts=Array.isArray(evidence.metadata.toolEvidence)?evidence.metadata.toolEvidence:[];
+ return facts.flatMap((fact,index)=>{
+  const call=evidence.toolCalls[index];
+  if(!fact||typeof fact!=='object'||fact.status!=='completed'||!call||call.status!=='completed'||fact.tool!==call.name)return [];
+  const receipt=fact.mcpResultChannels;
+  if(!receipt||typeof receipt!=='object'||Array.isArray(receipt)||receipt.schemaVersion!=='finance.runtime-mcp-result-channels.v1')return [];
+  if(receipt.status==='UNAVAILABLE'&&Object.keys(receipt).every(key=>['schemaVersion','status'].includes(key)))return [{tool:call.name,callIndex:index,status:'UNAVAILABLE'}];
+  if(!['MATCH','MISMATCH'].includes(receipt.status)||Object.keys(receipt).some(key=>!['schemaVersion','status','textJsonDigest','structuredContentDigest'].includes(key))
+   ||![receipt.textJsonDigest,receipt.structuredContentDigest].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/u.test(value))
+   ||(receipt.status==='MATCH')!==(receipt.textJsonDigest===receipt.structuredContentDigest))return [];
+  return [{tool:call.name,callIndex:index,status:receipt.status,textJsonDigest:receipt.textJsonDigest,structuredContentDigest:receipt.structuredContentDigest}];
+ });
+}
+
 export function judgeRuntimeEvidence(evidence:RuntimeExecutionEvidence,input:JudgeInputEvidence={}){
   const conversation=evidence.metadata.conversation as {turns?:Array<{index:number;status:string;queryDigest:string;outputDigest:string;output:string;toolNames:string[]}>}|undefined;
   return {
@@ -98,11 +114,14 @@ export function judgeRuntimeEvidence(evidence:RuntimeExecutionEvidence,input:Jud
     toolCalls:evidence.toolCalls.filter(call=>!supportTools.has(call.name)),
     runtimeSupportToolCalls:evidence.toolCalls.filter(call=>supportTools.has(call.name)).map(({name,status})=>({name,status})),
     sourceFacts:Array.isArray(evidence.metadata.toolEvidence)
-      ?evidence.metadata.toolEvidence.filter((item:unknown)=>item&&typeof item==='object'&&'tool' in item&&typeof item.tool==='string'&&!supportTools.has(item.tool)):[],
+      ?evidence.metadata.toolEvidence.filter((item:unknown)=>item&&typeof item==='object'&&'tool' in item&&typeof item.tool==='string'&&!supportTools.has(item.tool))
+        .map(({mcpResultChannels:_,...item})=>item):[],
     ...(conversation&&Array.isArray(conversation.turns)?{conversation:{turns:conversation.turns.map(({index,status,queryDigest,outputDigest,output,toolNames})=>({index,status,queryDigest,outputDigest,output,toolNames}))}}:{}),
     ...(evidence.metadata.workspaceFilesMounted===true?{workspaceFilesMounted:true,workspaceFilesDigest:evidence.metadata.workspaceFilesDigest}:{}),
     workspaceInputMatches:workspaceInputMatches(evidence,input),
     toolResultInputMatches:toolResultInputMatches(evidence,input),
     skillFileReads:skillFileReads(evidence,input),
+    mcpResultChannels:mcpResultChannels(evidence),
+    mcpResultChannelsScope:'仅关联实际 completed MCP 工具调用的两通道 JSON 摘要比较。MATCH 证明本次 text JSON 与 structuredContent 内容相等，不证明业务正确、全部调用已采集或内部状态；MISMATCH 表示实际不一致，UNAVAILABLE 或无记录不能推断一致。',
   };
 }

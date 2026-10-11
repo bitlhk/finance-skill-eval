@@ -99,6 +99,7 @@ export class MigrationReuseAcceptanceService{
     const availableRunTargets=await Promise.all([binding,...(binding.additionalRuntimes??[])].map(async({environmentId,modelId,deploymentId})=>{
       const target=(await migrationRuntimeCapabilities(this.d.environments,environmentId)).capabilities;
       return {environmentId,modelId,deploymentId,toolProcessEvidence:target.features.toolProcessEvidence===true,
+        mcpResultChannels:target.features.mcpResultChannels===true,
         ...(target.executionEnvironment?{executionEnvironment:target.executionEnvironment}:{})};
     }));
     const artifactEvidence=await this.artifactEvidence(project.candidate!.assetId);
@@ -114,6 +115,7 @@ export class MigrationReuseAcceptanceService{
       runtimeCapabilities:capabilities,availableRunTargets,executionSemantics:'group=fresh Runtime instance at the frozen group.runtime target (default primary); distinct deployments require distinct admitted deployment identities, not just fresh instances; case=fresh native session/workspace/MCP scope; turns=preserved native session/workspace/MCP scope',
       evaluatorEvidence:{caseJudge:{available:['当前案例实际查询、分轮输出及成功/失败工具调用','已采集且获授权的 sourceFacts 结果投影；不保证包含内部判定原因','工作区挂载摘要；不等于文件内容或成功读取','可选 workspaceInputMatches：仅匹配成功 read_file 调用及满足实际摘要核对条件的字段；无记录不能推断'],unavailable:['原生实例/会话/工作区身份标识与其他案例或运行组的事实','workspaceFiles 正文、目录完整清单、未挂载文件不存在的证明','工具原始实参与脚本内部读取、规则执行原因；argumentsDigest 不可逆','交付源码、业务规则与 Skill 文档原文']},checkJudge:{available:['关联案例输出、评测、实际采集的调用和输入匹配','跨案例实例/会话/工作区身份比较','当前绑定的真实 candidateFiles，可检查源码、文档和规则事实'],rule:'原承诺不能删减；源码/规则、宿主与跨案例事实放 checks.criteria。case.criteria 仅验证当前案例实际可见证据；将规则推导当成工具可见结果、将挂载当读取，或将结果错误当目录证明，都应返回 INCOMPLETE 并要求修正判据层级'}},
       evidenceSemantics:'Per-case Judge receives actual turn queries, per-turn native output/tool-name receipts, overall tool calls, and authorized redacted business result projections. Original tool arguments are not exposed; hashes do not let Judge reconstruct them. Eval can exactly match read_file argument/result hashes to mounted case files, and Script input hashes to a JSON object projection using its declared inputSchema; these optional workspaceInputMatches prove value equality, not causal program data flow. Missing matches cannot be assumed. Instance/session/workspace identity comparisons belong to check-level verification across cases, not one-case criteria. Do not introduce unobservable criteria absent from original requirements; requirements genuinely depending on unavailable evidence remain uncovered.'};
+    context.evaluatorEvidence.caseJudge.available.push('可选 mcpResultChannels：实际成功 MCP 调用的两通道摘要比较回执；仅声明支持的部署可提供，无回执不推断一致');
     const output=parsed.plan??await this.d.model({mode:'PLAN',context,signal}),checkedPlan=reuseAcceptancePlanSchema.safeParse(output);
     if(!checkedPlan.success)throw new ReuseAcceptanceError({phase:'PLAN',code:parsed.plan===undefined?'MODEL_OUTPUT_INVALID':'PLAN_INPUT_INVALID',message:'验收计划字段不符合要求，请检查标出的字段',fields:checkedPlan.error.issues.slice(0,16).map(issue=>`${issue.path.join('.').slice(0,150)||'root'} (${issue.code})`)});
     const plan=checkedPlan.data;
@@ -262,6 +264,7 @@ export class MigrationReuseAcceptanceService{
           toolCalls:evidence.toolCalls,toolEvidence:evidence.metadata.toolEvidence,
           inputBindings:resolved.receipts.filter(receipt=>receipt.targetCaseId===result.caseId),
           toolProcessEvidence:verifiedToolProcessEvidence(evidence),
+          mcpResultChannels:judgeRuntimeEvidence(evidence).mcpResultChannels,
           workspaceInputMatches:judgeRuntimeEvidence(evidence,{workspaceFiles:definition.workspaceFiles,tools:project.inspection?.tools}).workspaceInputMatches,
           toolResultInputMatches:judgeRuntimeEvidence(evidence,{tools:project.inspection?.tools.map(tool=>({...tool,inputSchema:migrationScriptInputSchema(project,tool)}))}).toolResultInputMatches,
           assessment:result.judge?.goalAssessment});

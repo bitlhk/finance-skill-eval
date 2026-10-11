@@ -58,7 +58,7 @@ it('returns model goal checks with grounded evidence and no dimension scores',as
  expect(result.dimensions).toEqual([]);expect(result.goalAssessment?.verdict).toBe('PASS');expect(result.goalAssessment?.checks[0]!.criterion).toBe('服务费为2.5元');
  const payload=JSON.parse((requests[0] as any).messages[1].content);expect(payload.answer).toBe(evidence.output);expect(payload.criteria).toEqual([{criterionIndex:0,description:'服务费为2.5元'},{criterionIndex:1,description:'说明尚未扣费'}]);expect(payload.requiredCriterionIndices).toEqual([0,1]);
  expect(JSON.stringify(requests[0])).not.toContain('JUDGE_MUST_NOT_SEE_THIS');
- expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[],toolResultInputMatches:[],skillFileReads:[],businessTime:{status:'NOT_VERIFIED'},caseFiles:{status:'NOT_VERIFIED',reason:'UNVERIFIED_CASE_RUNTIME'}});
+ expect(payload.runtimeEvidence).toEqual({status:'completed',streamCompleted:true,toolCalls:[],runtimeSupportToolCalls:[],sourceFacts:[],workspaceInputMatches:[],toolResultInputMatches:[],skillFileReads:[],mcpResultChannels:[],mcpResultChannelsScope:expect.any(String),businessTime:{status:'NOT_VERIFIED'},caseFiles:{status:'NOT_VERIFIED',reason:'UNVERIFIED_CASE_RUNTIME'}});
  expect(assessMigrationAcceptance({cases:[{caseId:'fee-001',right:evidence,judge:result,judgeError:null}]} as any,[definition],true).status).toBe('PASSED');
 });
 it('gives the goal judge authoritative Runtime tool evidence instead of requiring tool narration in the answer',async()=>{

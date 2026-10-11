@@ -109,6 +109,32 @@ Framework-specific consumers must use `native` data explicitly. Portable consume
 
 ## Files
 
+### Optional MCP result-channel observations (additive v1)
+
+`features.mcpResultChannels: true` advertises comparison of the actual MCP
+`tools/call` response text JSON and `structuredContent`. Each completed MCP call
+may put `mcpResultChannels` in its corresponding `metadata.toolEvidence` entry,
+following `finance.runtime-mcp-result-channels.v1.schema.json`. The entry must
+correlate with the successful tool call's ordinal and name. `MATCH` means equal
+canonical JSON SHA-256 digests; `MISMATCH` means unequal digests. Receivers must
+enforce this cross-field relation in addition to the JSON Schema. `UNAVAILABLE`
+has no digests: either channel was missing, non-JSON, too large, or unsuitable
+for comparison. Never include raw channel bodies or credentials in the receipt.
+
+Eval exposes only valid receipts from completed, identity-verified, finished
+executions. Omitted/invalid receipts remain unknown; source code, a result
+projection or a model's assertion cannot replace actual channel observations.
+These are authenticated Launcher assertions about those calls, not proof of
+business correctness, all unobserved calls, or internal memory behavior. Ordinary
+business evaluation does not require this optional extension. A reuse promise
+explicitly requiring channel consistency needs actual comparable observations.
+
+`features.mcpPrepare: true` separately advertises support for the Launcher's
+bounded prepare contract. It does not authorize arbitrary shell execution or
+guarantee any specific package is installed. Both flags must be probed from the
+actual deployed worker; an older worker cannot inherit flags from its host's
+source tree. Update strict receiver schemas before enabling these v1 additions.
+
 ### Optional Script process observations (additive v1)
 
 `features.toolProcessEvidence: true` advertises actual subprocess start/exit

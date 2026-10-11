@@ -120,6 +120,7 @@ runtimeCapabilities 单独列出，提供源码或明确宿主契约对原生能
 contract 明确 inputSchema、outputSchema、errorSchema、semantics；constraints 明确 permissions、sideEffects、isolation，consumerTools 只列直接消费该能力的业务工具，宿主自身能力可以为空。根据已读源码或宿主契约填写，不明项保留 null 并说明缺失，平台会要求补齐；不要用默认空权限或隔离假设伪造完整合同。
 字段类型必须严格遵守：contract 的 inputSchema/outputSchema/errorSchema 都是 JSON Schema 对象（不是数组），semantics 是非空字符串；constraints.permissions 是非空字符串组成的数组，constraints.sideEffects 是单个字符串枚举 "none"、"read" 或 "write"（绝不能输出 ["read"] 这样的数组），constraints.isolation 是非空字符串。合同或约束缺少必要证据时整项保留 null，不用错误类型或默认值补齐。
 owner 按方法的实际职责判断，不按变量或 SDK 名字判断。Tool 可以解析、校验、使用鉴权信息，但不建立、选择或切换执行身份。
+归属与动作必须相容：TOOL 只能 KEEP；RUNTIME 只能 INJECT 或 MOVE_TO_RUNTIME；无法确认归属时 UNKNOWN，不能给矛盾组合写 KNOWN。上述源框架胶水规则不适用于候选中承载可复用业务 MCP/Script 服务的目标协议 SDK。工具服务自己 import、使用并随包声明的目标协议/返回值 SDK 属于 TOOL + KEEP，不是需要 Builder 新增的宿主能力，也不能仅因为用于启动服务就标为 RUNTIME。保留实际 import 与依赖声明证据；传递依赖须引用实际声明或发行关系证据，不能编造直接声明、安装状态或执行成功。
 SDK 依赖必须填写 library：标准库 STANDARD_LIBRARY 不需要用户上传实现，引用真实 import 原文且一个模块一个依赖；第三方 PACKAGE 填实际模块名、发行包名及 pyproject.toml/requirements.txt/PEP723/package.json 等声明路径，并在 resolutionEvidence 引用真实依赖声明；不能将“包已声明”说成已安装或已通过测试。企业自定义 SDK 为 CUSTOM_SDK，缺实现且影响迁移时要求补充；无法区分为 UNKNOWN，不猜标准库。Python 标准模块由平台基于实际解释器模块清单验证，本地同名实现不能当标准库。
 依赖 references.toolName 必须是 tools 列出的业务工具名，即使引用 helper 文件，也填写实际消费此 helper 的业务工具，不把 request_json 等内部 helper 当业务工具。多个业务工具共用时列出每个消费者的引用。
 library 仅用于 SDK 类型依赖；DATA/CONFIG/RESOURCE 没有库元数据时省略 library 或填 null，不要输出 language/module 为 null 的占位对象。
@@ -156,7 +157,7 @@ async def run(body: dict) -> None:
     from openjiuwen.core.sys_operation.sys_operation import SysOperationCard
     from openjiuwen.harness.subagents.explore_agent import create_explore_agent
 
-    from model_config import resolve_model, request_settings
+    from model_config import resolve_model, request_settings, bind_agent_request_extensions
 
     started = time.monotonic()
     config = json.loads(Path(os.environ["FINANCE_RUNTIME_CONFIG"]).read_text(encoding="utf-8"))
@@ -204,6 +205,7 @@ async def run(body: dict) -> None:
             max_tokens=int(body.get("maxTokens", 32000)),
             timeout=int(body.get("modelTimeoutMs", 600_000)) / 1000,
         )
+        model = bind_agent_request_extensions(model, settings, "ANALYZER")
         agent = create_explore_agent(
             model=model,
             system_prompt=SYSTEM_PROMPT_TEMPLATE.replace("@@WORKSPACE_ROOT@@", str(workspace)),

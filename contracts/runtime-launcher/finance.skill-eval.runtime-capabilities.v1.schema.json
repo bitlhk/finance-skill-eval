@@ -75,7 +75,9 @@
         "externalMcp": { "type": "boolean" },
         "inlineSecrets": { "type": "boolean" },
         "multiTurn": { "type": "boolean", "description": "Distinct native Agent invocations in one isolated case, retaining session, workspace and MCP lifecycle; omitted means unsupported." },
-        "toolProcessEvidence": { "type": "boolean", "description": "Optional correlated Launcher-managed Script subprocess start/exit receipts; not OS isolation or internal memory attestation." }
+        "toolProcessEvidence": { "type": "boolean", "description": "Optional correlated Launcher-managed Script subprocess start/exit receipts; not OS isolation or internal memory attestation." },
+        "mcpResultChannels": { "type": "boolean", "description": "Optional actual MCP text JSON and structuredContent digest comparison receipts; not business correctness." },
+        "mcpPrepare": { "type": "boolean", "description": "Optional bounded pinned-registry dependency/version preparation probes; not arbitrary install or shell commands." }
       }
     },
     "limits": {

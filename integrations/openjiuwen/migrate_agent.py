@@ -166,7 +166,7 @@ async def run(body: dict) -> None:
         EditFileTool, GlobTool, ListDirTool, WriteFileTool,
     )
 
-    from model_config import resolve_model, request_settings
+    from model_config import resolve_model, request_settings, bind_agent_request_extensions
 
     started = time.monotonic()
     config = json.loads(Path(os.environ["FINANCE_RUNTIME_CONFIG"]).read_text(encoding="utf-8"))
@@ -214,6 +214,7 @@ async def run(body: dict) -> None:
             max_tokens=int(body.get("maxTokens", 32000)),
             timeout=int(body.get("modelTimeoutMs", 300_000)) / 1000,
         )
+        model = bind_agent_request_extensions(model, settings, "MIGRATION")
         agent = create_code_agent(
             model=model,
             system_prompt=SYSTEM_PROMPT.replace("@@WORKSPACE_ROOT@@", str(workspace)),
