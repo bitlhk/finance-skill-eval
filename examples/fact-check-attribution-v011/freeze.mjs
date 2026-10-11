@@ -8,9 +8,9 @@ import {zipSync} from 'fflate';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const destination=process.argv[2];
-assert(destination,'Usage: node examples/fact-check-attribution-v011/freeze.mjs NEW_OUTPUT_DIRECTORY [fact-provenance-v5|fact-provenance-v6|fact-provenance-v7]');
+assert(destination,'Usage: node examples/fact-check-attribution-v011/freeze.mjs NEW_OUTPUT_DIRECTORY [fact-provenance-v5|fact-provenance-v6|fact-provenance-v7|fact-provenance-v8]');
 const policy=process.argv[3]??'fact-provenance-v5';
-assert(['fact-provenance-v5','fact-provenance-v6','fact-provenance-v7'].includes(policy),'Unsupported Judge cohort');
+assert(['fact-provenance-v5','fact-provenance-v6','fact-provenance-v7','fact-provenance-v8'].includes(policy),'Unsupported Judge cohort');
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const read=path=>readFile(resolve(root,path));
 const baseline=await read('examples/fact-check-demo/SKILL.md');
@@ -20,7 +20,7 @@ assert.equal(digest(baseline),'526e1088b4f4b2eb859c0ce5901fbf8103e31c2729c52ebb4
 const judge=Buffer.from((await read('src/goal-judge.ts')).toString('utf8').replace(/\r\n/g,'\n'));
 assert.equal(digest(judge),policy==='fact-provenance-v5'?'dcf63a1a7eb4300114f3dd9f9c84865467d699c2e67b15e6b59b64fc94562920':policy==='fact-provenance-v6'?'f5ed283b93e0826d64bc3feef3272055e0a2c4ca55fe514f0587fc15899e2a75':'cc4e4fdae1627fbc0ed1d184f59dc141e6d2f5ba1bcd8dfa7334d719531ca65d','Judge changed: do not silently mix policies');
 const evidenceSources={
-  'src/judge-runtime-evidence.ts':policy==='fact-provenance-v5'?'54740e85b5353d9ec0b96b6953d141c9ab31ce6ba9a351081ce8c52ef138269a':policy==='fact-provenance-v6'?'f3be1a43428310a8561fc424575c98724f1ecc67604f2d41e0803beef818a4dc':'5d0f65f3a96462d878988c7f501d122db506698adbc07c21ec79deebb027ce82',
+  'src/judge-runtime-evidence.ts':policy==='fact-provenance-v5'?'54740e85b5353d9ec0b96b6953d141c9ab31ce6ba9a351081ce8c52ef138269a':policy==='fact-provenance-v6'?'f3be1a43428310a8561fc424575c98724f1ecc67604f2d41e0803beef818a4dc':policy==='fact-provenance-v7'?'5d0f65f3a96462d878988c7f501d122db506698adbc07c21ec79deebb027ce82':'af3b37ef9cc6ff6e796a313e6bdaf0cb39bb8be021999ef6d74e2a348cbdb51b',
   'src/judge-case-files.ts':'23f7510eb548c9f2a4cb27a48a660536c7b97d67ff8af40dd0dc4a7739a699ca',
 };
 for(const [file,expected]of Object.entries(evidenceSources)){

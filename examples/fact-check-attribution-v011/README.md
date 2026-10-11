@@ -8,8 +8,10 @@
 
 当前已进一步演进为独立的 `fact-provenance-v7`：对既有 `skill_tool` 资源读取入口同样核对目标、相对路径与完整返回内容摘要，保留真实工具名。v6 源码摘要和失败结果继续保留，当前源码不能冒充 v5/v6 批次；需要显式选择 v7。
 
+当前新增工具结果到后续输入的摘要匹配证据，冻结批次使用 `fact-provenance-v8`。它只证明按输入合同选取的值与实际参数一致，不证明内部因果或内存状态；v7 的固定源码摘要及历史结果不改写，当前源码不能冒充 v7。Skill 与测试题保持不变，批次版本不属于 Runtime 接口版本。
+
 ```sh
-node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v7 fact-provenance-v7
+node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v8 fact-provenance-v8
 ```
 
 输出两个可上传ZIP、同一份8题测试集及96条执行计划。输出目录必须不存在；同名目录不能被覆盖。脚本检查旧Skill和Judge源文件摘要，**不执行模型**。
