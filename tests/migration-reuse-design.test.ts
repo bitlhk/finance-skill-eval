@@ -245,6 +245,19 @@ it('does not retry a semantic rejection into approval and records cancellation w
   await expect(createReusePlanner(adapter,model,AbortSignal.abort(),async trace=>{traces.push(trace)})(input)).rejects.toThrow();
   expect(complete).not.toHaveBeenCalled();expect(traces.at(-1)).toMatchObject({status:'FAILED',failureCode:'TIME_LIMIT',calls:[]});
 });
+it('preserves every structured negative finding without re-reviewing it into approval',async()=>{
+  const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+  const input={mode:'REVIEW' as const,sourceFiles,candidateFiles:sourceFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design};
+  const rejected=await reusePlannerFixture(input) as any;
+  const finding={reason:'Behavior drift',evidence:[{path:'scripts/lookup.py',snippet:'def lookup'}],extra:{retained:true}};
+  rejected.review.semanticIssues=[finding];rejected.review.unexpectedDependencies=[{name:'undeclared',reason:'Not approved'}];
+  const complete=vi.fn(async()=>({content:JSON.stringify(rejected),modelId:'test'}));
+  const result=await createReusePlanner({adapterId:'test',complete},{providerId:'test',modelId:'test',parameters:{}})(input) as any;
+  expect(JSON.parse(result.review.semanticIssues[0])).toEqual(finding);
+  expect(JSON.parse(result.review.unexpectedDependencies[0])).toEqual(rejected.review.unexpectedDependencies[0]);
+  expect(complete).toHaveBeenCalledTimes(1);
+  expect(reuseReviewIssues(result.review,proposal.design,sourceFiles)).not.toEqual([]);
+});
 
 it('preserves proposal-only shared format repair through the telemetry wrapper',async()=>{
   const ctx=context(),input={mode:'PROPOSE' as const,sourceFiles,inspection:ctx.get().inspection!,toolPlan:projectMigrationPlan(ctx.get())!};

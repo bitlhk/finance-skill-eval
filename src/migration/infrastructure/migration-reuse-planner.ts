@@ -26,6 +26,13 @@ const arrayFields=new Set(['preservedBehavior','sourceCouplings','changes','depe
   'acceptanceChecks','toolNames','evidence','unexpectedDependencies','semanticIssues']);
 /** Single-item arrays and enum casing are representation differences, not new facts. */
 export function normalizeReuseRepresentation(value:unknown,key=''):unknown{
+  // Preserve structured negative findings verbatim as JSON text. Re-running a
+  // review just to flatten its findings could erase an already negative verdict.
+  if(['semanticIssues','unexpectedDependencies'].includes(key)&&value!==undefined){
+    if(typeof value==='string'&&!value.trim())return [];
+    const items=Array.isArray(value)?value:[value];
+    return items.map(item=>item&&typeof item==='object'&&!Array.isArray(item)?JSON.stringify(item):item);
+  }
   if(Array.isArray(value))return value.map(item=>normalizeReuseRepresentation(item));
   let normalized:unknown=value;
   if(value&&typeof value==='object')normalized=Object.fromEntries(Object.entries(value).map(([name,item])=>[name,normalizeReuseRepresentation(item,name)]));
