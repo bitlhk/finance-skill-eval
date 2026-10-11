@@ -52,6 +52,19 @@ it('does not infer missing, unrelated, secret, runtime-owned or ambiguously name
  }
  expect(analyzeDependencies(raw,inspection,{...files,'ASSETS/RULES.JSON':'duplicate'},[],0,'digest',root).dependencies[0]?.availability).not.toBe('AVAILABLE');
 });
+it('accepts an explicit bundled resource path verified by schema content, even if the load-site citation is in code',()=>{
+ const root='C:/Temp/current',inspection=inspectionFixture([toolFixture({name:'check',sourcePaths:['scripts/check.py']})]);
+ const raw=payload(root) as any,dep=raw.dependencyAnalysis.dependencies[0];
+ Object.assign(dep,{key:'assets/rules.json',kind:'RESOURCE',sensitive:false,resolvedPaths:['assets/rules.json'],
+  resolutionEvidence:[{path:'scripts/check.py',snippet:'rules = load_rules()'}],schemaEvidence:[{path:'assets/rules.json',snippet:'"mealLimit":"150.00"'}]});
+ raw.dependencyAnalysis.chains[0].nodes[0].dependencyKeys=['assets/rules.json'];
+ for(const availability of ['AVAILABLE','UNKNOWN','MISSING']){
+  dep.availability=availability;
+  expect(analyzeDependencies(raw,inspection,files,[],0,'digest',root)).toMatchObject({status:'COMPLETE',dependencies:[{availability:'AVAILABLE',resolvedPaths:['assets/rules.json']}]});
+ }
+ dep.schemaEvidence=[{path:'assets/rules.json',snippet:'invented content'}];
+ expect(analyzeDependencies(raw,inspection,files,[],0,'digest',root).status).toBe('PARTIAL');
+});
 it('passes invocation metadata through the service and does not trust a workspaceRoot inside the model judgement',async()=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'dependency-path-store-')),root='C:/Temp/current';
  let trust=true;const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:dir,accessToken:'test',publicDemo:false,migrationAnalyzer:async()=>({status:'PRODUCED',payload:{...payload(root),workspaceRoot:root},...(trust?{workspaceRoot:root}:{}),scanner:{scannerDigest:'a'.repeat(64),coverage:Object.keys(files).map(path=>({path,status:'TEXT_INSPECTED'}))}})});

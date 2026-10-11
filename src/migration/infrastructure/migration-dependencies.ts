@@ -73,16 +73,19 @@ export function analyzeDependencies(payload:unknown,inspection:ProjectInspection
   // that representation omission only from an exact inventory key AND a verified
   // citation in that file. Do not guess basenames, resolve runtime/secret contracts,
   // or override an explicitly supplied invalid path.
-  const bundledResource=item.kind==='RESOURCE'&&item.owner==='TOOL'&&item.action==='KEEP'&&!item.sensitive&&!item.resolvedPaths.length
+  const bundledResource=item.kind==='RESOURCE'&&item.owner==='TOOL'&&item.action==='KEEP'&&!item.sensitive
    ?resolveDependencyPath(item.key,files,workspaceRoot):undefined;
-  const inferredPaths=bundledResource&&'path' in bundledResource&&[...refs.map(ref=>ref.e),...schemaEvidence,...resolutions].some(e=>e.path===bundledResource.path)?[bundledResource.path]:[];
+  const bundledEvidence=[...refs.map(ref=>ref.e),...schemaEvidence,...resolutions];
+  const verifiedResource=bundledResource&&'path' in bundledResource&&bundledEvidence.some(e=>e.path===bundledResource.path)?bundledResource.path:undefined;
+  const inferredPaths=!item.resolvedPaths.length&&verifiedResource?[verifiedResource]:[];
   const pathResults=[...item.resolvedPaths,...inferredPaths].map(p=>resolveDependencyPath(p,files,workspaceRoot));
   const pathErrors=pathResults.flatMap(r=>'error' in r?[r.error]:[]);
-  const resolvedPaths=[...new Set(pathResults.flatMap(r=>'path' in r&&(inferredPaths.includes(r.path)||[...refs.map(ref=>ref.e),...resolutions].some(e=>e.path===r.path))?[r.path]:[]))];
+  const resolvedPaths=[...new Set(pathResults.flatMap(r=>'path' in r&&(r.path===verifiedResource||[...refs.map(ref=>ref.e),...resolutions].some(e=>e.path===r.path))?[r.path]:[]))];
   const library=item.kind==='SDK'?verifyDependencyLibrary(item.library?{...item.library,declarationPaths:item.library.declarationPaths.flatMap(p=>{const result=resolveDependencyPath(p,files,workspaceRoot);return 'path' in result?[result.path]:[]})}:undefined,[...refs.map(ref=>ref.e),...resolutions],files,libraryInventory):undefined;
   let availability=item.availability;if(availability==='AVAILABLE'&&!resolvedPaths.length&&!library?.verified)availability='UNKNOWN';
   if(library?.verified)availability='AVAILABLE';
   if(inferredPaths.length)availability='AVAILABLE';
+  if(verifiedResource&&resolvedPaths.includes(verifiedResource)&&!pathErrors.length)availability='AVAILABLE';
   let status:Dependency['provided']=provided?'PENDING':'NONE',issue:string|undefined=pathErrors.length?[...new Set(pathErrors)].join('；'):undefined;
   if(provided?.files&&item.availability==='AVAILABLE'&&resolvedPaths.some(p=>p in provided.files!)){status='CONFIRMED';availability='AVAILABLE'}
   if(provided&&'value' in provided){const errors=validateDependencyData(provided.value,schema);if(errors.length){status='INVALID';issue=errors.join('；')}else if(schema&&completeness==='COMPLETE'){status='CONFIRMED';availability='AVAILABLE'}else{issue='数据已提供，完整类型仍待确认';availability='UNKNOWN'}}
