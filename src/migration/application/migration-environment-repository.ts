@@ -4,6 +4,7 @@ import type {MigrationProject} from '../domain/migration-project.js';
 import {currentRuntimeReuse,runtimeReuseIssues} from '../domain/migration-runtime-reuse.js';
 import {currentRuntimeRequirements} from '../domain/migration-runtime-requirements.js';
 import {canonicalSha256} from '../../shared/json-canonicalization.js';
+import {runtimeLauncherBindingSchema} from '../../shared/contracts/environment.js';
 
 export interface MigrationEnvironmentRepository {
   get(environmentId:string):Promise<EnvironmentRecord|null>;
@@ -34,7 +35,22 @@ export async function verifyRuntimeReuse(project:MigrationProject,repository:Mig
     if(project.runtimeReuse&&currentRuntimeRequirements(project))throw Object.assign(new Error('能力需求已变化，请重新核对 Runtime'),{statusCode:409});
     return;
   }
-  if(reuse.environmentId!==environmentId)throw Object.assign(new Error('请选择已核对能力的 Runtime，切换后需重新检查'),{statusCode:409});
+  if(reuse.environmentId!==environmentId){
+    // Another deployment is usable only through its own current operator admission,
+    // never by borrowing the primary deployment's capability confirmation.
+    if(!await resolveMigrationEnvironment(repository,environmentId))throw Object.assign(new Error('请选择已核对能力的 Runtime，切换后需重新检查'),{statusCode:409});
+    const live=await migrationRuntimeCapabilities(repository,environmentId);
+    const accepted=runtimeLauncherBindingSchema.safeParse(project.runtimeDeliveries?.[live.launcher.environmentId]);
+    const requirements=currentRuntimeRequirements(project,live.launcher.runtimeType);
+    if(accepted.success&&requirements&&'requirementsDigest' in requirements
+      &&accepted.data.requirementsDigest===requirements.requirementsDigest&&accepted.data.requestId===requirements.requestId
+      &&accepted.data.environmentId===live.launcher.environmentId&&live.launcher.delivery){
+      const {environmentId:_id,...delivery}=accepted.data;
+      if(canonicalSha256(delivery)===canonicalSha256(live.launcher.delivery)
+        &&(delivery.expiresAt===null||Date.parse(delivery.expiresAt)>Date.now()))return;
+    }
+    throw Object.assign(new Error('请选择已核对能力的 Runtime，切换后需重新检查；其他部署需独立准入'),{statusCode:409});
+  }
   const live=await migrationRuntimeCapabilities(repository,environmentId),requirements=currentRuntimeRequirements(project)!;
   if(live.launcher.environmentId!==reuse.launcherEnvironmentId||live.launcher.updatedAt!==reuse.environmentUpdatedAt
     ||canonicalSha256(live.capabilities)!==reuse.capabilitiesDigest||runtimeReuseIssues(requirements,live.capabilities).length)

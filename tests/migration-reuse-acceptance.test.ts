@@ -12,6 +12,7 @@ import {mkdtemp,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {zipSync,strToU8} from 'fflate';
+import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
 function fixture(){
  const inspection=inspectionFixture([]),source={assetId:inspection.assetId,artifactSha256:'a'.repeat(64)},candidate={assetId:'candidate',artifactSha256:'b'.repeat(64),skillId:'fixture',version:'1'};
@@ -27,12 +28,64 @@ function fixture(){
  const execution=vi.fn(async()=>{const jobId=`job-${jobs.size}`,instanceId=`instance-${jobs.size}`;const job={jobId,status:'completed',report:{cases:suite.cases.map((c:any)=>({caseId:c.id,right:{status:'completed',runtimeIdentityVerified:true,streamCompleted:true,output:c.input,toolCalls:[],metadata:{skillArtifactSha256:candidate.artifactSha256,instanceId,caseScopeId:c.id}},judge:{goalAssessment:{verdict:'PASS'}}}))}};jobs.set(jobId,job);return {job}});
  const cancel=vi.fn(async()=>undefined);
  const readArchive=vi.fn(async():Promise<Record<string,Uint8Array>>=>({'SKILL.md':strToU8('Actual delivered workflow')}));
- const service=new MigrationReuseAcceptanceService({projects:projects as never,configs:{get:async()=>config} as never,skills:{readArchive} as never,environments:{get:async(id:string)=>(id==='selected'?selected:launcher) as never,preflight:async()=>({status:'ready',capabilities:capabilities as never})},
+ const environmentRecords=new Map<string,unknown>([['selected',selected],['launcher',launcher]]);
+ const environments={get:async(id:string)=>(environmentRecords.get(id)??null) as never,preflight:async()=>({status:'ready',capabilities:capabilities as never})};
+ const service=new MigrationReuseAcceptanceService({projects:projects as never,configs:{get:async()=>config} as never,skills:{readArchive} as never,environments,
  suites:{importSimple:async(_id:string,value:any)=>{suite=value;return {preparationId:'suite'}}} as never,execution:{validateReuseAcceptance:execution} as never,jobs:{get:(id:string)=>jobs.get(id)},runs:{cancel} as never,model});
  async function approve(){const saved=await service.propose(project.id,{environmentId:'selected',modelId:'model'});await service.approve(project.id,{planId:saved.planId,inputDigest:saved.inputDigest});return saved;}
  async function finish(){await vi.waitFor(()=>expect(project.reuseAcceptanceResults?.at(-1)?.status).not.toBe('RUNNING'));return service.summary(project.id);}
- return {project,plan,launcher,capabilities,config,jobs,service,model,execution,cancel,readArchive,approve,finish};
+ return {project,plan,launcher,capabilities,config,jobs,service,model,execution,cancel,readArchive,approve,finish,environmentRecords,environments};
 }
+
+function deploymentFixture(){
+ const f=fixture();
+ const delivery=(deploymentId:string)=>({schemaVersion:'finance.runtime-launcher-delivery-record.v1',buildId:'build',requestId:'request',deploymentId,
+  artifactSha256:'d'.repeat(64),capabilitiesDigest:canonicalSha256(f.capabilities),resultDigest:'e'.repeat(64),builder:{name:'external',version:'1'},
+  acceptedAt:new Date().toISOString(),expiresAt:null,evalConformance:{status:'PASSED',testedAt:new Date().toISOString(),checks:['capabilities','create','status','execute','evidence','delete']}});
+ Object.assign(f.launcher,{delivery:delivery('deployment-primary')});
+ const other={...f.launcher,environmentId:'other',baseUrl:'http://127.0.0.1:19002/',delivery:delivery('deployment-other')};
+ f.environmentRecords.set('other',other);
+ const plan=reuseAcceptancePlanSchema.parse(f.plan);plan.groups[1]!.runtime={environmentId:'other',modelId:'model'};
+ const choice={environmentId:'selected',modelId:'model',additionalRuntimes:[{environmentId:'other',modelId:'model'}],plan};
+ return {...f,other,choice};
+}
+
+it('executes separate frozen admitted deployments, not aliases or merely fresh instances',async()=>{
+ const f=deploymentFixture(),p=await f.service.propose(f.project.id,f.choice);
+ expect(p.coverage.status).toBe('COVERED');expect(p.binding.additionalRuntimes?.[0]).toMatchObject({deploymentId:'deployment-other',environmentId:'other'});
+ await f.service.approve(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
+ expect((await f.finish()).status).toBe('PASSED');
+ expect(f.execution.mock.calls.map((args:any)=>args[1].configuration.runtime.environmentId)).toEqual(['selected','other']);
+ const verified=(f.model.mock.calls.find(c=>c[0].mode==='VERIFY')![0] as any).context.observed;
+ expect(new Set(verified.map((c:any)=>c.deploymentId))).toEqual(new Set(['deployment-primary','deployment-other']));
+ expect(JSON.stringify(verified)).not.toContain('127.0.0.1');await f.service.shutdown();
+});
+it.each(['alias-endpoint','alias-deployment','unadmitted','expired','capability-drift','wrong-model'] as const)('rejects invalid cross-deployment admission: %s',async change=>{
+ const f=deploymentFixture();if(change==='alias-endpoint')f.other.baseUrl=f.launcher.baseUrl;
+ if(change==='alias-deployment')f.other.delivery.deploymentId='deployment-primary';
+ if(change==='unadmitted')delete (f.other as any).delivery;
+ if(change==='expired')(f.other.delivery as any).expiresAt='2020-01-01T00:00:00.000Z';
+ if(change==='capability-drift')f.other.delivery.capabilitiesDigest='f'.repeat(64);
+ if(change==='wrong-model')f.choice.additionalRuntimes[0]!.modelId='unknown';
+ await expect(f.service.propose(f.project.id,f.choice)).rejects.toThrow();expect(f.model).not.toHaveBeenCalled();expect(f.execution).not.toHaveBeenCalled();
+});
+it.each(['unselected-target','unused-target','missing-primary'] as const)('keeps incomplete deployment topology unapproved: %s',async change=>{
+ const f=deploymentFixture();if(change==='unselected-target')f.choice.plan.groups[1]!.runtime={environmentId:'unknown',modelId:'model'};
+ if(change==='unused-target')delete f.choice.plan.groups[1]!.runtime;
+ if(change==='missing-primary')f.choice.plan.groups[0]!.runtime={environmentId:'other',modelId:'model'};
+ const p=await f.service.propose(f.project.id,f.choice);expect(p.coverage.status).toBe('INCOMPLETE');expect(f.model).not.toHaveBeenCalled();
+ await expect(f.service.approve(f.project.id,{planId:p.planId,inputDigest:p.inputDigest})).rejects.toThrow('完整覆盖');
+});
+it('invalidates approval if a secondary deployment changes, including refresh',async()=>{
+ const f=deploymentFixture(),p=await f.service.propose(f.project.id,f.choice);await f.service.approve(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
+ f.other.updatedAt='changed';expect((await f.service.summary(f.project.id)).current).toBe(false);
+ await expect(f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest})).rejects.toThrow('失效');expect(f.execution).not.toHaveBeenCalled();
+});
+it('treats instance ids as Launcher-scoped while still rejecting same-Launcher shared instances',async()=>{
+ const f=deploymentFixture(),p=await f.service.propose(f.project.id,f.choice);await f.service.approve(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});
+ const original=f.execution.getMockImplementation()!;f.execution.mockImplementation(async()=>{const r=await original();for(const c of r.job.report.cases)c.right.metadata.instanceId='launcher-local-id';return r});
+ await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});expect((await f.finish()).status).toBe('PASSED');await f.service.shutdown();
+});
 
 it('executes frozen groups through existing suite/runtime/Judge pipeline and binds the result',async()=>{
  const f=fixture(),p=await f.approve();await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});

@@ -5,11 +5,12 @@ import {currentReuseProposal} from './migration-reuse-design.js';
 import type {ReuseAcceptanceFailure,ReuseAcceptancePhase} from './migration-reuse-failure.js';
 
 const id=z.string().trim().min(1).max(100);
+export const reuseRuntimeSelectionSchema=z.strictObject({environmentId:z.string().min(1),modelId:z.string().min(1)});
 /** General execution topology, not a menu of business migration strategies.
  * Each group creates fresh Runtime instances; cases are isolated; turns share one native session. */
 export const reuseAcceptancePlanSchema=z.strictObject({
   name:z.string().trim().min(1).max(200),
-  groups:z.array(z.strictObject({id,cases:z.array(simpleMigrationCaseSchema).min(1).max(8)})).min(1).max(4),
+  groups:z.array(z.strictObject({id,runtime:reuseRuntimeSelectionSchema.optional(),cases:z.array(simpleMigrationCaseSchema).min(1).max(8)})).min(1).max(4),
   checks:z.array(z.strictObject({checkId:id,caseIds:z.array(id).min(1).max(32),criteria:z.array(z.string().trim().min(1).max(2000)).min(1).max(20)})).min(1).max(32),
   unresolvedQuestions:z.array(z.string().trim().min(1).max(2000)).max(32),
 });
@@ -17,8 +18,10 @@ export type ReuseAcceptanceExecutionPlan=z.infer<typeof reuseAcceptancePlanSchem
 export const coverageSchema=z.strictObject({status:z.enum(['COVERED','INCOMPLETE']),reasons:z.array(z.string().min(1)).max(64)});
 export const reuseAcceptanceVerdictsSchema=z.strictObject({checks:z.array(z.strictObject({checkId:z.string().min(1),
   status:z.enum(['PASSED','FAILED','INDETERMINATE']),reason:z.string().min(1),caseIds:z.array(z.string().min(1)).min(1)})).min(1).max(32)});
-export type ReuseAcceptanceBinding={proposalId:string;proposalDigest:string;candidateDigest:string;inspectionDigest:string;configurationDigest:string;
-  environmentId:string;launcherId:string;environmentDigest:string;capabilitiesDigest:string;modelId:string};
+export type ReuseAcceptanceRuntimeBinding={environmentId:string;launcherId:string;environmentDigest:string;capabilitiesDigest:string;modelId:string;
+  endpointDigest?:string;deploymentId?:string;deliveryDigest?:string};
+export type ReuseAcceptanceBinding=ReuseAcceptanceRuntimeBinding&{proposalId:string;proposalDigest:string;candidateDigest:string;inspectionDigest:string;configurationDigest:string;
+  additionalRuntimes?:ReuseAcceptanceRuntimeBinding[]};
 export type ReuseAcceptancePlan={planId:string;createdAt:string;approvedAt?:string;inputDigest:string;binding:ReuseAcceptanceBinding;plan:ReuseAcceptanceExecutionPlan;
   coverage:{status:'COVERED'|'INCOMPLETE';reasons:string[]}};
 export type ReuseAcceptanceResult={taskId:string;planId:string;planDigest:string;binding:ReuseAcceptanceBinding;startedAt:string;finishedAt?:string;
