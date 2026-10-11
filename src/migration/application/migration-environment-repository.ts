@@ -47,6 +47,8 @@ export async function verifyRuntimeReuse(project:MigrationProject,repository:Mig
       &&accepted.data.environmentId===live.launcher.environmentId&&live.launcher.delivery){
       const {environmentId:_id,...delivery}=accepted.data;
       if(canonicalSha256(delivery)===canonicalSha256(live.launcher.delivery)
+        &&delivery.capabilitiesDigest===canonicalSha256(live.capabilities)
+        &&runtimeReuseIssues(requirements,live.capabilities).length===0
         &&(delivery.expiresAt===null||Date.parse(delivery.expiresAt)>Date.now()))return;
     }
     throw Object.assign(new Error('请选择已核对能力的 Runtime，切换后需重新检查；其他部署需独立准入'),{statusCode:409});

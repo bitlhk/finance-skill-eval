@@ -75,6 +75,21 @@ it('does not use reuse to bypass incomplete requirements or an explicit rebuild'
  await expect(f.service.reuseRuntime(f.project.id,{environmentId:f.launcher.environmentId})).rejects.toThrow('完善能力诊断');
 });
 
+it('independently guards an admitted alternate deployment against live capability drift',async()=>{
+ const f=fixture();await f.service.reuseRuntime(f.project.id,{environmentId:f.launcher.environmentId});
+ const delivery={schemaVersion:'finance.runtime-launcher-delivery-record.v1' as const,buildId:'build',requestId:f.requirements.requestId,
+  requirementsDigest:f.requirements.requirementsDigest,deploymentId:'deployment-other',artifactSha256:'d'.repeat(64),
+  capabilitiesDigest:canonicalSha256(f.capabilities),resultDigest:'e'.repeat(64),builder:{name:'builder',version:'1'},
+  acceptedAt:new Date().toISOString(),expiresAt:null,evalConformance:{status:'PASSED' as const,testedAt:new Date().toISOString(),
+   checks:['capabilities','create','status','execute','evidence','delete'] as ['capabilities','create','status','execute','evidence','delete']}};
+ const other={...f.launcher,environmentId:'other',delivery};
+ f.project.runtimeDeliveries={other:{...delivery,environmentId:'other'}};
+ f.environments.get.mockImplementation(async id=>id==='other'?other:id===f.launcher.environmentId?f.launcher:null);
+ await expect(verifyRuntimeReuse(f.project,f.environments,'other')).resolves.toBeUndefined();
+ f.capabilities.nativeCapabilities![0]!.constraints.isolation='shared';
+ await expect(verifyRuntimeReuse(f.project,f.environments,'other')).rejects.toThrow('独立准入');
+});
+
 it('rejects unknown environments, failed discovery and mutating an active task binding',async()=>{
  const f=fixture();
  await expect(f.service.reuseRuntime(f.project.id,{environmentId:'unregistered'})).rejects.toThrow('已登记');
