@@ -349,7 +349,7 @@ export class MigrationImprovementTaskService{
       }
       await this.event(id,task,'PLANNING','正在根据开发集证据定位问题');
       const plan=await this.d.planner.propose(id,{jobId:task.bestJobId},task.bestCandidate,
-        task.iterations.map(({layer,outcome,passed,total})=>({layer,outcome,passed,total})),signal);
+        task.iterations.map(({layer,outcome,passed,total})=>({layer,outcome,passed,total})),signal,task.iterations.length===0);
       await this.guard(id,task,signal);
       if(plan.status==='ABSTAINED'||!plan.hypothesis){task.status='FAILED';task.reason=plan.abstainReason??'证据不足，未修改候选';await this.event(id,task,'STOPPED',task.reason);return;}
       const layer=plan.hypothesis.layer;

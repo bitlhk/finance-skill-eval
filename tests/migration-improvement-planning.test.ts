@@ -32,6 +32,19 @@ it('proposes an evidence-grounded layer without exposing holdout cases to the mo
   expect(project.improvementPlans).toHaveLength(1);
   expect(plan.developmentCaseIds).toEqual(['dev-1']);
 });
+it('reuses only an unexecuted first hypothesis bound to the exact development run and solution',async()=>{
+ const {project,projects,jobs}=fixture();
+ const planner=vi.fn(async()=>({status:'PROPOSED',hypothesis:{layer:'HARNESS',issue:'budget',expectedBehavior:'complete',evidenceCaseIds:['dev-1'],validation:'frozen cases',risk:'cost',confidence:'HIGH'}}));
+ const service=new MigrationImprovementPlanningService(projects,jobs,planner,()=> 'fixture-model');
+ const first=await service.propose(project.id,{jobId:'job-1'});
+ expect((await service.propose(project.id,{jobId:'job-1'},undefined,[],undefined,true)).planId).toBe(first.planId);
+ expect(planner).toHaveBeenCalledTimes(1);expect(project.improvementPlans).toHaveLength(1);
+ first.baseSolutionRevisionId='c'.repeat(64);
+ await service.propose(project.id,{jobId:'job-1'},undefined,[],undefined,true);
+ expect(planner).toHaveBeenCalledTimes(2);
+ await service.propose(project.id,{jobId:'job-1'},undefined,[{layer:'HARNESS',outcome:'RETAINED'}],undefined,true);
+ expect(planner).toHaveBeenCalledTimes(3);
+});
 it('allows Harness contracts to cite actual line-addressable development telemetry without inventing Skill source',async()=>{
   const {project,projects,jobs,job}=fixture();
   job.report.cases[0]!.right.status='failed';

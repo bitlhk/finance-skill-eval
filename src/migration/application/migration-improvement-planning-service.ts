@@ -53,7 +53,7 @@ export class MigrationImprovementPlanningService {
     private readonly planner:ImprovementPlanner,private readonly modelId:()=>string,
     private readonly runtimeConfigs?:MigrationRuntimeConfigurationRepository,private readonly skills?:MigrationSkillRepository){}
 
-  async propose(id:string,input:unknown,experimentCandidate?:SkillAssetRecord,previousExperiments?:ImprovementPlanningInput['previousExperiments'],signal?:AbortSignal):Promise<MigrationImprovementPlan>{
+  async propose(id:string,input:unknown,experimentCandidate?:SkillAssetRecord,previousExperiments?:ImprovementPlanningInput['previousExperiments'],signal?:AbortSignal,reuseUnexecuted=false):Promise<MigrationImprovementPlan>{
     signal?.throwIfAborted();
     const {jobId}=z.strictObject({jobId:z.string().min(1)}).parse(input);
     const stored=await this.projects.get(id),project={...stored,candidate:experimentCandidate??stored.candidate};
@@ -63,14 +63,24 @@ export class MigrationImprovementPlanningService {
       ||job?.status!=='completed'||!job.report?.cases.length||!run.suiteSnapshot)return conflict('请先对当前候选完成可追溯的开发集评测');
     if(run.reuseAcceptanceTaskId)return conflict('复用验收运行不能作为自动改进的开发集');
     if(run.declaredPlan?.configuration.includeHoldout)return conflict('最终留出集不能作为改进规划依据');
-    if((project.improvementPlans??[]).filter(item=>item.candidateDigest===project.candidate?.artifactSha256).length>=MAX_PLANS_PER_CANDIDATE)
-      return conflict('当前候选已达到改进规划次数上限；请先验证或处理已有假设');
     const holdoutIds=new Set((run.suiteSnapshot.holdoutCases??[]).map(item=>item.caseId));
     const allowed=new Set(run.suiteSnapshot.cases.filter(item=>!holdoutIds.has(item.caseId)).map(item=>item.caseId));
     const selected=run.declaredPlan?.configuration.selectedCaseIds??[];
     const cases=job.report.cases.filter(item=>allowed.has(item.caseId)&&(!selected.length||selected.includes(item.caseId)));
     if(!cases.length)return conflict('本轮没有可用于改进规划的开发案例；留出题不会发送给规划模型');
     const modelId=this.modelId(),baseSolutionRevisionId=run.solutionRevisions.right.revisionId;
+    // The workbench already offers explicit analysis. Its first task iteration may use that
+    // exact, unexecuted development hypothesis instead of repeating the same model request.
+    // New experiments, changed solution revisions and previously dispatched actions must replan.
+    if(reuseUnexecuted&&!previousExperiments?.length){
+      const existing=[...(project.improvementPlans??[])].reverse().find(plan=>plan.status==='PROPOSED'&&plan.hypothesis
+        &&!(plan as MigrationImprovementPlan&{action?:unknown}).action&&plan.sourceJobId===jobId&&plan.candidateDigest===project.candidate!.artifactSha256
+        &&plan.baseSolutionRevisionId===baseSolutionRevisionId
+        &&JSON.stringify(plan.developmentCaseIds)===JSON.stringify(cases.map(item=>item.caseId)));
+      if(existing)return structuredClone(existing);
+    }
+    if((project.improvementPlans??[]).filter(item=>item.candidateDigest===project.candidate?.artifactSha256).length>=MAX_PLANS_PER_CANDIDATE)
+      return conflict('当前候选已达到改进规划次数上限；请先验证或处理已有假设');
     const codeEvidence:NonNullable<ImprovementPlanningInput['codeEvidence']>=[];let remaining=80000;
     if(this.skills){
       for(const [origin,asset,inspection] of [['candidate',project.candidate,project.inspection],['source',project.source,project.sourceInspection]] as const){
