@@ -25,8 +25,13 @@ for(const suffix of ['PROVIDER','BASE_URL','API_KEY','MODEL','REQUEST_DEFAULTS',
 process.env.FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS='1';process.env.FINANCE_EVAL_AGENT_DUMP=path.join(work,'agent-logs');
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),publicDemo:false,accessToken:'cross-deployment-ui',launcherTrust:trust});
 app.log.level='error';const url=await app.listen({host:'127.0.0.1',port:0});
+const defaults=JSON.parse(process.env.FINANCE_EVAL_ANALYZER_REQUEST_DEFAULTS??'{}');
+// Whitelist only non-secret operator budgets, never dump arbitrary provider defaults.
+const analyzerBudget={};
+for(const field of ['max_tokens','max_completion_tokens'])if(Number.isSafeInteger(defaults[field])&&defaults[field]>0)analyzerBudget[field]=defaults[field];
+if(['none','low','medium','high','max','minimal','xhigh'].includes(defaults.reasoning_effort))analyzerBudget.reasoning_effort=defaults.reasoning_effort;
 await writeFile(path.join(work,'service.json'),JSON.stringify({url,work,data,eval:git('rev-parse','HEAD'),builder:prior.builder,
- provenance:'CONTINUED_REAL_UI_DATA',originalEval:prior.eval,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted:prior.admitted},null,2));
+ provenance:'CONTINUED_REAL_UI_DATA',originalEval:prior.eval,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted:prior.admitted,analyzerBudget},null,2));
 console.log(JSON.stringify({url,work,status:'READY_FOR_CONTINUED_UI'}));
 let closed=false;async function close(){if(closed)return;closed=true;await app.close()}
 process.once('SIGINT',()=>void close());process.once('SIGTERM',()=>void close());
