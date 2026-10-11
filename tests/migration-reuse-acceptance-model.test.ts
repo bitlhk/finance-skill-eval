@@ -3,6 +3,20 @@ const complete=vi.hoisted(()=>vi.fn());
 vi.mock('../src/service/config.js',()=>({configuredModelRole:()=>({adapter:{complete},model:{providerId:'unit',modelId:'unit'}}),modelTimeoutMs:()=>10000}));
 import {runReuseAcceptanceModel} from '../src/migration/infrastructure/migration-reuse-acceptance-model.js';
 beforeEach(()=>{complete.mockReset();});
+it('treats configured external IT fixtures as execution prerequisites, never Skill delivery or post-execution proof',async()=>{
+ complete.mockResolvedValueOnce({content:JSON.stringify({status:'COVERED',reasons:[]})});
+ await runReuseAcceptanceModel({mode:'COVERAGE',context:{}});
+ const before=complete.mock.calls[0]![0].messages[0].content;
+ expect(before).toContain('外部测试服务属于运行前提，不是迁移交付物');
+ expect(before).toContain('仅写 workspaceFiles 或声称执行器自动启动服务不属于已提供资源');
+ expect(before).toContain('未提供的资源、故障注入或鉴权切换能力仍是缺口');
+ complete.mockResolvedValueOnce({content:JSON.stringify({checks:[{checkId:'original',status:'INDETERMINATE',reason:'Missing actual results',caseIds:['case']}]})});
+ await runReuseAcceptanceModel({mode:'VERIFY',context:{}});
+ const after=complete.mock.calls[1]![0].messages[0].content;
+ expect(after).toContain('外部测试资源声明不是执行证据');
+ expect(after).not.toContain('可作为计划的外部前提');
+ expect(complete).toHaveBeenCalledTimes(2);
+});
 it.each(['PLAN','COVERAGE','VERIFY'] as const)('does not add universal implementation constraints during %s or relax approved ones',async mode=>{
  complete.mockResolvedValue({content:JSON.stringify(mode==='PLAN'?plan():mode==='COVERAGE'?{status:'INCOMPLETE',reasons:['Explicit requirement not covered']}:{checks:[{checkId:'original',status:'INDETERMINATE',reason:'Missing evidence',caseIds:['case']}]})});
  await runReuseAcceptanceModel({mode,context});

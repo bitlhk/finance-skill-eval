@@ -245,6 +245,10 @@ Eval `806e01f5f3a740d9b9c1b4fb409a437ee0991c9c` 通过 UI 运行：开发 `run-c
 
 #### 实际续测结果及第二个执行器缺口
 
+#### 外部测试资源与迁移交付边界
+
+真实退款 COVERAGE 曾要求将合成 HTTP 测试服务源码或地址提供到候选包/模型材料，尽管确认方案已要求部署方预先提供服务。这是验收层级错误：外部 IT 服务不属于 Skill 迁移交付物。现明确 PLAN/COVERAGE 可按方案或提交计划中明确的、已配置的外部接口及测试数据核对执行前提，不要求服务源码、地址或凭证进入 Skill；仅挂载 JSON、未提供的故障注入/鉴权切换仍拒绝。VERIFY 必须读取本次实际业务结果，不以资源声明当成功证据。全量 1066 项通过、0 失败、2 跳过，类型检查和核心构建通过，报告 `reports/runtime-rebuild-ui/regression-external-resource-boundary.json`。
+
 固定 Eval `c818968a394e81d33f76648ef29a7b386464b471` / Builder `da5a1a30a856f1200fff4a59d794b8619997249d` 后，两份真实新部署均独立准入。退款修复候选 `67b845d7fcd5739fb3c59684ea4983240cd579d1b3cca4226cf599b1a81cd767`（2.0.0-migration.2-api.1）真实独立诊断及方案审查通过，后者 17 秒一次调用；前端采纳，旧候选和失败保留。实际 MCP 试运行通过。
 
 应收新计划 `reuse-plan-5b271b33-5be4-4a44-b51d-93f5d6d3aa1e` 经真实覆盖审查通过。第一组运行 `run-81e9321e-7f3b-47db-aa04-77d20ac74c6b` 的 3 案例全部通过；后续组准备因 INPUT_BINDING_UNAVAILABLE 停止，未冒充跨部署通过。原因是实际 MCP 仅返回单个 text JSON 内容块，授权结果投影为 JSON 编码的内容块数组；原绑定器仅识别对象/对象 JSON。现支持准确解码唯一 text JSON，不接受多内容、图片、非 JSON 或猜测字段，原结果和摘要不改变。88 项相关回归、全量 1065 通过/0 失败/2 跳过及类型检查通过；报告 `reports/runtime-rebuild-ui/regression-mcp-text-input-binding.json`。
