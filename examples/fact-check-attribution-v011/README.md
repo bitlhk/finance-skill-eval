@@ -6,8 +6,10 @@
 
 既有 `fact-provenance-v5` 批次在 v4 之上区分工作区读取收据和格式引文恢复；该批次及旧结果保留。当前策略为独立的 `fact-provenance-v6`：增加已绑定 Skill 制品内文件的精确读取摘要匹配，不暴露正文、不降低证据要求。脚本固定策略源码及证据模块的 LF 摘要，必须显式选择 v6 新批次；默认 v5 在当前源码下拒绝冻结，不能悄悄重标旧记录。Skill 两版与案例内容没有变更。使用旧 manifest 时必须检出它绑定的源码，不能拿当前评分覆盖旧结果。这是证据策略批次，不是 Runtime 或 Builder 协议升级。
 
+当前已进一步演进为独立的 `fact-provenance-v7`：对既有 `skill_tool` 资源读取入口同样核对目标、相对路径与完整返回内容摘要，保留真实工具名。v6 源码摘要和失败结果继续保留，当前源码不能冒充 v5/v6 批次；需要显式选择 v7。
+
 ```sh
-node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v6 fact-provenance-v6
+node examples/fact-check-attribution-v011/freeze.mjs /tmp/fact-attribution-cohort-v7 fact-provenance-v7
 ```
 
 输出两个可上传ZIP、同一份8题测试集及96条执行计划。输出目录必须不存在；同名目录不能被覆盖。脚本检查旧Skill和Judge源文件摘要，**不执行模型**。

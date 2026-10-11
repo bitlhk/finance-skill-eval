@@ -43,3 +43,15 @@ it.each(['match','unverified','different-artifact','different-content','workspac
  expect(JSON.stringify(result)).not.toContain(content);
  expect(result.workspaceInputMatches).toEqual([]);
 });
+
+it.each(['match','without-name','wrong-target','wrong-path','wrong-content','failed','unknown-tool'] as const)('matches the existing Skill-loader entrypoint only with exact receipts: %s',change=>{
+ const path='references/policy.md',content='PRIVATE_SKILL_CONTENT',artifact='a'.repeat(64);
+ const tool=change==='unknown-tool'?'other_loader':'skill_tool';
+ const argumentsValue={...(change==='without-name'?{}:{skill_name:change==='wrong-target'?'other-skill':'target-skill'}),relative_file_path:change==='wrong-path'?'other.md':path};
+ const result=judgeRuntimeEvidence({runtimeIdentityVerified:true,status:'completed',streamCompleted:true,
+  toolCalls:[{name:tool,status:change==='failed'?'failed':'completed'}],metadata:{skillArtifactSha256:artifact,
+  toolEvidence:[{tool,status:change==='failed'?'failed':'completed',argumentsDigest:canonicalSha256(argumentsValue),resultDigest:canonicalSha256({path,content:change==='wrong-content'?'different':content})}]}} as never,
+  {skillPackage:{artifactSha256:artifact,files:{[path]:content}}});
+ expect(result.skillFileReads).toEqual(['match','without-name'].includes(change)?[{tool:'skill_tool',path,scope:'skill',kind:'FILE_READ'}]:[]);
+ expect(JSON.stringify(result)).not.toContain(content);
+});
