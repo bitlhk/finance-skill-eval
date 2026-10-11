@@ -231,6 +231,14 @@ Eval `806e01f5f3a740d9b9c1b4fb409a437ee0991c9c` 通过 UI 运行：开发 `run-c
 
 退款重新规划的三个真实调用并非源码引用失败，而是方案遗漏原诊断的两项依赖标识 `business_service_url`、`auth_token`。旧日志将全部设计问题记为 SOURCE_EVIDENCE，现区分 DESIGN_CONTRACT，并将必须覆盖的原始 dependency.key 显式传入规划上下文与修复反馈。仍拒绝缺项或别名，不自动映射或修改原方案；最终错误文字也区分契约和源码问题。全量回归 1013 通过、0 失败、2 跳过，报告 `reports/runtime-rebuild-ui/regression-design-contract.json`；类型检查和构建通过。真实模型修复后续测另行记录，不把回归当作新迁移通过。
 
+### 真实续测发现的执行阻塞与候选修复入口
+
+退款按精确依赖标识重新规划后，真实模型产出方案 `reuse-9bcdeda6-26cc-4265-bd28-a1ea4e0b934c`，前端批准并生成候选 `fb930e6fc1b0ad92f51d6f89bb4049e31b955d77dc1ab077c1b31aba3802e0a0`，独立分析和方案落实审查通过。实际 MCP 调用失败：模型错误使用 Python `ToolResult(structuredContent=...)`；当前 FastMCP 2.14.7 的实际参数是 `structured_content`。原候选和失败结果保留。指导模板现明确区分 Python 参数与 wire 字段；Python 模板真实 HTTP tools/call 验证文本 JSON 与 structuredContent 相等，不能以启动/list 通过代替调用通过。
+
+同时修复手工候选导入：已生成候选的独立修复包需新版本、同一 Skill 身份、完整声明文件，并先按冻结方案执行独立候选分析及落实审查。失败不替换旧候选；成功保留启动/准备/绑定声明及工具身份映射，不沿用旧执行声明或旧分析指纹。历史运行按旧摘要保留，新候选必须重新执行技术、业务和复用验收。页面不再用普通诊断覆盖已完成的方案审查。新增 8 项回归，全量 1048 通过、0 失败、2 跳过；类型检查及构建通过，报告 `reports/runtime-rebuild-ui/regression-manual-candidate-revision.json`。修复包的真实 UI 采用结果另记，不把实现测试记为候选通过。
+
+应收计划的真实独立 COVERAGE 已通过，并由前端启动三组、五案例验收；运行 `run-04f30960-b10e-4ae5-8b86-beab69def03d` 在实例准备时被 Builder 92ddec1 以 `MCP_PREPARE_UNSUPPORTED` 拒绝，未执行任何业务案例或实际引用绑定。候选声明的是 uv 依赖版本准备命令，问题属于 Launcher 支持边界，不是 Judge 失败；保留 INDETERMINATE，后续须使用实现兼容合同且重新独立准入的部署，不能删改记录或静默丢弃准备步骤。
+
 ### 通用跨运行组真实结果绑定
 
 复用验收计划增加可选 `inputBindings`：指定更早运行组的来源案例、当前候选业务工具、成功调用序号及授权结果字段路径，以 `{{reuse:id}}` 替换后续查询模板。只允许短标识符、有限数值或布尔值；不传秘密、文件、完整大结果或模型指令，不改变判据。来源必须已完成、Runtime 身份已核实、流已完成且工具真实成功；未采集、省略、缺字段或不匹配时停止后续组，不使用随机引用或模型回答代替。来源和消费案例必须映射到同一原验收要求。

@@ -126,7 +126,7 @@ export function createMigrationServices(options:MigrationCompositionOptions){
     runtimeConfigurationService:new MigrationRuntimeConfigurationService(projects,runtimeConfigs,supplements,new HttpMigrationBusinessConnectionProbe()),
     supplementService:new MigrationSupplementService(projects,supplements),
     suiteService,
-    candidateService:new MigrationCandidateService(projects,skills,diagnostics),
+    candidateService:new MigrationCandidateService(projects,skills,diagnostics,candidateInspection),
     generationService:new MigrationGenerationService(projects,skills,supplements,new PortableCandidatePackager(),implementationService,candidateInspection),
     technicalValidation,
     evaluationService,

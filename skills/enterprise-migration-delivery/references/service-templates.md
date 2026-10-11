@@ -50,7 +50,11 @@ server = FastMCP("<skill>-mcp")
 
 @server.tool(name="<tool>")
 async def lookup(id: str) -> ToolResult:
-    return ToolResult(content=[TextContent(type="text", text=json.dumps({"received": {"id": id}}))])
+    result = {"received": {"id": id}}
+    return ToolResult(
+        content=[TextContent(type="text", text=json.dumps(result))],
+        structured_content=result,
+    )
 
 if __name__ == "__main__":
     server.run(transport="http", host="0.0.0.0", port=int(os.environ.get("PORT", "8080")), path="/mcp", stateless_http=True)
@@ -107,6 +111,20 @@ if __name__ == "__main__":
 ```
 
 要按项目结构管理依赖时同时给 `pyproject.toml`，**两处依赖列表必须一致**。
+
+### 结构化返回的 Python API 与协议字段
+
+原工具有结构化业务结果，或已确认方案要求文本与结构化结果并存时，应由同一个业务结果同时生成两个通道，不改业务字段。FastMCP 2.14.7 的 Python `ToolResult` 构造参数为 `structured_content`，不是 MCP JSON 协议字段 `structuredContent`。框架在传输时转换命名；用 camelCase 调用 Python 构造函数会在真实业务返回时抛出 TypeError，编译与 tools/list 成功不能证明这条路径可运行。
+
+```python
+result = business_result
+return ToolResult(
+    content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
+    structured_content=result,
+)
+```
+
+在实际声明的依赖环境验证构造 API，再对真实 `tools/call` 返回的文本 JSON 与 `structuredContent` 作比较。业务依赖不可用时，应如实标记尚未验证，不用空返回或伪造业务响应宣称业务通过。
 
 Header 按当前调用读取，不能保存在共享实例或全局可变身份中；只选择声明需要的 Header，不无差别转发。`include_all=True` 不代表全部透传。使用 FastMCP 不要求启用它的 auth 功能：企业凭证获取和刷新属于 Runtime Provider，Tool 可以按下游契约解析、消费凭证。stateless HTTP 是本平台普通请求型工具的默认方式，确需会话能力时按业务语义实现并验证调用隔离。
 
