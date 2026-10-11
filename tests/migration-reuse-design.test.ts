@@ -110,6 +110,16 @@ it('rejects invented source evidence instead of accepting the model reuse assert
   await expect(ctx.service.propose('migration-fixture')).rejects.toThrow('无法定位');
 });
 
+it('separates optional delivery capabilities from actual Skill dependencies and unresolved blockers',async()=>{
+  const ctx=context(),input={mode:'PROPOSE' as const,sourceFiles,inspection:ctx.get().inspection!,toolPlan:projectMigrationPlan(ctx.get())!};
+  const correct=await reusePlannerFixture(input);
+  let instruction='';
+  const planner=createReusePlanner({adapterId:'test',complete:async request=>{instruction=request.messages[0]!.content;return {content:JSON.stringify(correct),modelId:'test'}}},{providerId:'test',modelId:'test',parameters:{}});
+  await planner(input);
+  expect(instruction).toContain('不代表所有 Script 都需要该 Header');
+  expect(instruction).toContain('JSON stdin/stdout 契约');
+  expect(instruction).toContain('确有新增宿主能力或契约缺口仍须如实阻塞');
+});
 it('resolves unique Skill-root citations but rejects ambiguous files and invented snippets',()=>{
   const evidence=[{path:'assets/rules.json',snippet:'{"limit":100}'}];
   expect(evidenceIssues(evidence,{'skill/assets/rules.json':'{"limit":100}'})).toEqual([]);
