@@ -36,6 +36,7 @@ it('asks for compact plans without omitting deployment topology, turns or origin
  await runReuseAcceptanceModel({mode:'PLAN',context});
  const prompt=complete.mock.calls[0]![0].messages[0].content;
  expect(prompt).toContain('返回紧凑 JSON');expect(prompt).toContain('不能因此删减要求、跨部署运行或真实多轮');
+ expect(prompt).toContain('group.runtime 的完整合法结构只有');expect(prompt).toContain('不能复制进 group.runtime');
  expect(complete.mock.calls[0]![0].messages[1].content).toBe(JSON.stringify(context));
  expect(complete).toHaveBeenCalledTimes(1);
 });

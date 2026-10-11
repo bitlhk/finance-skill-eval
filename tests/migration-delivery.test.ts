@@ -1,6 +1,6 @@
 import {afterEach,it,expect,vi} from 'vitest';
 import {strToU8,unzipSync} from 'fflate';
-import {agentDocumentDeliveryIssues,runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
+import {agentDocumentDeliveryIssues,portableDeliveryContract,runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
 import {inspectionFixture,toolFixture,SKILL_MD} from './analysis-fixture.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
 import {generatePortableCandidate} from '../src/migration/infrastructure/migration-candidate-packager.js';
@@ -12,6 +12,13 @@ import {GenerationStatus,generatedCallState} from '../web/src/GenerationStatus.j
 import {MigrationExportService} from '../src/migration/application/migration-export-service.js';
 
 afterEach(()=>vi.unstubAllEnvs());
+it('exposes platform metadata and supporting README placement before layout planning',()=>{
+ const {inspection,decisions}=fixture();
+ const mcp=portableDeliveryContract(inspection,decisions);
+ expect(mcp.platformGeneratedFiles.runtimeDependencies.path).toBe('runtime-dependencies.json');
+ expect(mcp.skillDocumentation.serviceReadme).toContain('may therefore appear in the final Skill package');
+ expect(portableDeliveryContract(inspection,decisions.map(d=>({...d,form:'SCRIPT'}))).platformGeneratedFiles.runtimeDependencies.path).toBe('scripts/runtime-dependencies.json');
+});
 
 function fixture(){
  const tool=toolFixture({name:'balance',sourcePaths:['balance.mjs'],language:'Node'}),inspection=inspectionFixture([tool]);

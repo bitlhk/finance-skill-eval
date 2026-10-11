@@ -7,7 +7,7 @@ export function portableDeliveryContract(inspection:ProjectInspection,decisions:
  return {
   skillDocumentation:{sourceSkillFile,manifestPathsRelativeToSkillRoot:true,
    manifestSourceDirectory:'migration-skill/',manifestTargets:['SKILL.md','references/<name>.md|mdx|txt'],
-   serviceReadme:'Declare deployment README in tools[].files, not skillDelivery.files',
+   serviceReadme:'Declare tool deployment README in tools[].files, not skillDelivery.files. Script supporting files retain their declared Skill-relative layout; a tool README may therefore appear in the final Skill package, but it does not replace SKILL.md.',
    purpose:'SKILL.md remains the model-executed business workflow, including scope, inputs, tool order, branches, stop conditions and outputs; deployment notes cannot replace it'},
   script:{execution:'COMMAND',cwd:'WORKSPACE',entrypoint:'RUNTIME_PROVIDED_ABSOLUTE_PATH',packageResources:'RELATIVE_TO_SCRIPT',runtimeInjection:false,
    deliveryLayout:'Keep the contract-tested Skill-relative scripts/, assets/ and references/ layout. If files are authored under migration-skill/, declare all Script files under that same root; packaging removes only migration-skill/ uniformly, without moving files into an extra module directory.'},
@@ -20,6 +20,10 @@ export function portableDeliveryContract(inspection:ProjectInspection,decisions:
    pythonFramework:{package:'fastmcp',version:'2.14.7',import:'from fastmcp import FastMCP',
     supportedResultImports:['fastmcp.tools.tool.ToolResult','mcp.types.TextContent']}},
   runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions),
+  platformGeneratedFiles:{runtimeDependencies:{when:'inspection.dependencyAnalysis.dependencies is nonempty',
+   path:decisions.some(decision=>decision.form==='MCP')?'runtime-dependencies.json':'scripts/runtime-dependencies.json',
+   purpose:'Eval-generated runtime INJECT dependency declarations for deployment configuration; tools may have empty dependency arrays. This file is not agent-authored business logic or a new business dependency.'},
+   planning:'Account for this conditional metadata and declared tool supporting files when promising package layout. Do not promise an exclusive layout that conflicts with delivery; actual extra business dependencies and semantic drift still require review.'},
  };
 }
 
