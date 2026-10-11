@@ -16,6 +16,7 @@ import type { MigrationCommandResolver } from './migration-command-resolver.js';
 import type {MigrationProject} from '../domain/migration-project.js';
 import type {MigrationExperimentContext} from './migration-evaluation-service.js';
 import type {TechnicalValidation} from '../domain/migration-model.js';
+import {migrationScriptInputSchema} from '../domain/migration-script-contract.js';
 
 /** Builds managed launcher bindings; the legacy class name remains API-compatible. */
 export class MigrationOpenJiuwenService {
@@ -81,9 +82,10 @@ export class MigrationOpenJiuwenService {
         // Skill root: resources may be siblings, and need not be JSON/code files.
         const skillFile=asset.skillFile??'SKILL.md',root=skillFile.includes('/')?skillFile.slice(0,skillFile.lastIndexOf('/')+1):'';
         const filePaths=Object.keys(archive).filter(name=>name.startsWith(root));
+        const inputSchema=migrationScriptInputSchema(value,tool);
         return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,
           launch:this.commands.resolve(archive,entry,tool.entrypoint!.kind),
-          ...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
+          ...(inputSchema?{inputSchema}:{})};});
     const services:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environmentReference?:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string}}>=[];
     for(const generation of value.portableGenerations??[]){
       if(generation.form!=='MCP')continue;

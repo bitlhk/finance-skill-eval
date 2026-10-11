@@ -40,7 +40,7 @@ const child=spawn(process.env.CLOSEOUT_BUILDER_PYTHON??path.join(builder,'../.ve
  ['-B','engineering/verify_eval_runtime_construction.py','--state-root',state,'--python',process.env.CLOSEOUT_PACKAGE_PYTHON??'C:/fb-pkg-py317/Scripts/python.exe',
   '--codex',codex,'--input-rate','0','--output-rate','0','--model-base',model.baseUrl,'--model-name',model.upstreamModelId,
   '--model-key-env','CLOSEOUT_RUNTIME_MODEL_KEY','--await-eval-request','--source-file',sourceFile,
-  '--baseline-port',String(baselinePort),'--release-port',String(releasePort),'--serve'],
+  '--baseline-port',String(baselinePort),'--release-port',String(releasePort),'--serve','--review-command-approvals'],
  {cwd:pinned,windowsHide:true,env:{...process.env,PYTHONUTF8:'1',CLOSEOUT_RUNTIME_MODEL_KEY:model.apiKey},stdio:['ignore','pipe','pipe']});
 let stdout='',stderr='';
 child.stdout.on('data',b=>{stdout=(stdout+b).slice(-200000)});
