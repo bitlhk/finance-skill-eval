@@ -27,7 +27,7 @@ function PlanRevision({proposal}:{proposal:MigrationReuseProposal}){
 function ReviewTiming({telemetry}:{telemetry?:ReusePlannerTelemetry}){
   if(!telemetry)return null;
   return <details className="stage-detail"><summary>审查耗时 {Math.round(telemetry.elapsedMs/1000)} 秒 · {telemetry.calls.length} 次模型调用</summary>
-    {telemetry.calls.map((call,i)=><p key={`${call.requestId}-${i}`}>第 {i+1} 次：{Math.round(call.elapsedMs/1000)} 秒{call.usage?.totalTokens!==undefined?`，${call.usage.totalTokens} tokens`:''}{call.retryReason?`；${call.retryReason==='OUTPUT_FORMAT'?'输出格式未通过检查':'源码引用未通过检查'}，已重试`:''}</p>)}
+    {telemetry.calls.map((call,i)=><p key={`${call.requestId}-${i}`}>第 {i+1} 次：{Math.round(call.elapsedMs/1000)} 秒{call.usage?.totalTokens!==undefined?`，${call.usage.totalTokens} tokens`:''}{call.retryReason?`；${call.retryReason==='OUTPUT_FORMAT'?'输出格式未通过检查':call.retryReason==='DESIGN_CONTRACT'?'方案契约未通过检查':'源码引用未通过检查'}，已重试`:''}</p>)}
   </details>;
 }
 

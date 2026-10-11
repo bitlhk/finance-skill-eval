@@ -13,7 +13,8 @@ function inspectionFacts(value:ProjectInspection){
 /** Focus the review on changed files without hiding surrounding code or new dependencies.
  * Exact shared content is sent once with both path sets; nothing is truncated or guessed. */
 export function reuseModelContext(input:Parameters<MigrationReusePlanner>[0]){
-  if(input.mode==='PROPOSE')return input;
+  if(input.mode==='PROPOSE')return {...input,requiredRuntimeDependencyKeys:(input.inspection.dependencyAnalysis?.dependencies??[])
+    .filter(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT').map(dependency=>dependency.key)};
   const shared=new Map<string,{sourcePaths:string[];candidatePaths:string[];content:string}>();
   for(const [path,content] of Object.entries(input.sourceFiles)){
     const group=shared.get(content)??{sourcePaths:[],candidatePaths:[],content};group.sourcePaths.push(path);shared.set(content,group);

@@ -4,6 +4,6 @@ export type ReusePlannerTelemetry={
   status:'RUNNING'|'COMPLETED'|'FAILED';inputCharacters:number;originalInputCharacters:number;
   failureCode?:'TIME_LIMIT'|'PLANNER_FAILED'|'MODEL_HTTP_ERROR'|'MODEL_OUTPUT_TRUNCATED'|'MODEL_EMPTY_RESPONSE'|'MODEL_NETWORK_ERROR';
   calls:Array<{requestId:string;startedAt:string;elapsedMs:number;inputCharacters:number;outputCharacters?:number;status:'RUNNING'|'COMPLETED'|'FAILED';
-    modelId:string;retryReason?:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE';issueCount?:number;validationFields?:string[];
+    modelId:string;retryReason?:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE'|'DESIGN_CONTRACT';issueCount?:number;validationFields?:string[];
     usage?:{inputTokens?:number;outputTokens?:number;totalTokens?:number}}>;
 };

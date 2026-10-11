@@ -223,6 +223,27 @@ it('separates optional delivery capabilities from actual Skill dependencies and 
   expect(instruction).toContain('确有新增宿主能力或契约缺口仍须如实阻塞');
   expect(instruction).toContain('挂载 workspaceFiles 只提供文件，不会自动启动 HTTP/MCP 服务');
   expect(instruction).toContain('示例编号和金额不能冒充固定业务要求');
+  expect(instruction).toContain('不改成 dependency.id');
+});
+
+it('separates missing dependency keys from source citations and gives exact repair references without remapping them',async()=>{
+ const ctx=context(),toolPlan=projectMigrationPlan(ctx.get())!,inspection=ctx.get().inspection!;
+ inspection.dependencyAnalysis!.dependencies=[{id:'dep-display-id',key:'runtime:business-address',name:'Business endpoint',owner:'RUNTIME',action:'INJECT'}] as any;
+ const input={mode:'PROPOSE' as const,sourceFiles,inspection,toolPlan};
+ expect(reuseModelContext(input)).toHaveProperty('requiredRuntimeDependencyKeys',['runtime:business-address']);
+ const valid=await reusePlannerFixture(input) as any;
+ valid.design.dependencies=[{key:'runtime:business-address',name:'Business endpoint',contract:'Known service address',configuration:'Provided by deployment'}];
+ const wrong=structuredClone(valid);wrong.design.dependencies.at(-1).key='dep-display-id';
+ const requests:any[]=[],traces:ReusePlannerTelemetry[]=[];
+ const planner=createReusePlanner({adapterId:'test',complete:async request=>{requests.push(request);return {content:JSON.stringify(requests.length===1?wrong:valid),modelId:'test'}}},{providerId:'test',modelId:'test',parameters:{}},undefined,async trace=>{traces.push(trace)});
+ const result=await planner(input) as any;
+ expect(result.design.dependencies.at(-1).key).toBe('runtime:business-address');
+ expect(requests).toHaveLength(2);
+ expect(JSON.parse(requests[1].messages.at(-1).content).requiredRuntimeDependencyKeys).toEqual(['runtime:business-address']);
+ expect(traces.at(-1)!.calls[0]!.retryReason).toBe('DESIGN_CONTRACT');
+ expect(wrong.design.dependencies.at(-1).key).toBe('dep-display-id');
+ const failing=createReusePlanner({adapterId:'test',complete:async()=>({content:JSON.stringify(wrong),modelId:'test'})},{providerId:'test',modelId:'test',parameters:{}});
+ await expect(failing(input)).rejects.toThrow('迁移方案契约未通过检查：方案遗漏运行依赖：Business endpoint');
 });
 it('resolves unique Skill-root citations but rejects ambiguous files and invented snippets',()=>{
   const evidence=[{path:'assets/rules.json',snippet:'{"limit":100}'}];

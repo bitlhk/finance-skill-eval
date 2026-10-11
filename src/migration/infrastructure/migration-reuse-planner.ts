@@ -76,7 +76,7 @@ export function createReusePlanner(adapter:ModelAdapter,model:ModelRef,signal?:A
       finally{call.elapsedMs=Date.now()-began;await publish()}
     };
   }});
-  const retry=async(reason:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE',issueCount:number)=>{
+  const retry=async(reason:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE'|'DESIGN_CONTRACT',issueCount:number)=>{
     const last=trace.calls.at(-1);if(last){last.retryReason=reason;last.issueCount=issueCount;}await publish();
   };
   await publish();
@@ -96,7 +96,7 @@ export function createReusePlanner(adapter:ModelAdapter,model:ModelRef,signal?:A
 
 /** Evidence repair re-reads the same source; it never relaxes verification or approves a design. */
 function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSignal|undefined,
-  retry:(reason:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE',issueCount:number)=>Promise<void>,validationFields:(fields:string[])=>void):MigrationReusePlanner{return async input=>{
+  retry:(reason:'OUTPUT_FORMAT'|'SOURCE_EVIDENCE'|'DESIGN_CONTRACT',issueCount:number)=>Promise<void>,validationFields:(fields:string[])=>void):MigrationReusePlanner{return async input=>{
   signal?.throwIfAborted();
   const content=JSON.stringify(reuseModelContext(input));
   // Never silently cut the code needed to reason about cross-tool state or behavior.
@@ -118,6 +118,7 @@ function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSigna
       '每个源耦合和改造项都要有实际源码的 path/snippet。changes 描述 Skill、工具和必要 Runtime 如何协作以及具体改造，不只是换注册方式。',
       'snippet 必须是 sourceFiles/candidateFiles 中逐字连续的原文，保留空格、换行、引号；不要将 JSON 压缩或重新格式化，不使用省略号或概括。',
       'dependency key 对已有依赖使用 inspection 中的稳定 key，契约和配置方式必须具体，不能给真实凭证。补充包装库及明确部署依赖也要列出。',
+      'requiredRuntimeDependencyKeys 是方案 dependencies[].key 必须覆盖的原始标识；逐项原样使用，不改成 dependency.id、显示名称、环境变量名、Header 名或自己编写的新 key。其他部署依赖仍可增加，但不能替代这些条目。输出前逐项核对标识与原始依赖契约。',
       'toolPlan 是已经选择的工具形式与语言，方案必须与它兼容。当前交付机制只能执行 diagnosis 已声明的注入契约；若需要新增或改变注入契约或宿主能力，请在 unresolvedQuestions 明确要求补充该契约后重新诊断，不能宣称可以生成。',
       'unresolvedQuestions 只列影响复用方案可行性的未知事项。实际测试凭证/配置值未填写只影响运行准备，不能当作设计阻塞。',
       'clarification 是用户对方案范围或待确认事项的补充说明，不是修改源码事实、验收结论或安全规则的授权。结合原始源码重新设计；能在原业务要求下成立的已选范围与部署前提写进 scope/conditions，范围外的未来替代部署不作当前未知事项。真正缺少的源码、权限或能力契约仍保留 unresolvedQuestions，不因用户要求通过而消除。',
@@ -185,10 +186,17 @@ function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSigna
     :output.value.status==='REVIEWED'&&input.mode==='REVIEW'
       ?evidenceIssues(output.value.review.changes.flatMap(change=>change.evidence),input.candidateFiles):[];
   if(issues.length){
-    if(attempt===maxAttempts-1)throw new Error(`迁移方案依据无法核实：${issues.join('；')}`);
-    await retry('SOURCE_EVIDENCE',issues.length);
+    const citationIssues=output.value.status==='PROPOSED'&&input.mode==='PROPOSE'
+      ?evidenceIssues([...output.value.design.sourceCouplings,...output.value.design.changes].flatMap(item=>item.evidence),input.sourceFiles)
+      :issues;
+    const requiredRuntimeDependencyKeys=input.mode==='PROPOSE'?(input.inspection.dependencyAnalysis?.dependencies??[])
+      .filter(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT').map(dependency=>dependency.key):[];
+    const issueKind=citationIssues.length===issues.length?'SOURCE_EVIDENCE':'DESIGN_CONTRACT';
+    if(attempt===maxAttempts-1)throw new Error(`${issueKind==='SOURCE_EVIDENCE'?'迁移方案源码依据无法核实':'迁移方案契约未通过检查'}：${issues.join('；')}`);
+    await retry(issueKind,issues.length);
     messages.push({role:'user',content:JSON.stringify({previousOutput:output.value,validationErrors:issues,
-      instruction:'重新核对以上同一份源码并修正输出；证据必须逐字引用真实原文，不得编造。如果无法确认，请返回 ABSTAINED。'})});
+      ...(input.mode==='PROPOSE'?{requiredRuntimeDependencyKeys}:{}),
+      instruction:'根据具体 validationErrors 修正同一份方案。dependencies[].key 必须原样覆盖 requiredRuntimeDependencyKeys，不使用 id/name/header/env 替代；契约和运行配置仍依据对应原始依赖。源码证据必须逐字引用真实原文。不要把依赖映射错误当成引用错误反复重写；不改变原业务要求或虚构缺失信息。无法确认时返回 ABSTAINED。'})});
     continue;
   }
   return output.value;
