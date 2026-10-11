@@ -10,6 +10,13 @@ const design:ReuseDesign={scope:'在声明依赖的 Runtime 上复用',preserved
   dependencies:[],conditions:['提供工作区'],unresolvedQuestions:[],
   acceptanceChecks:[{id:'isolation',purpose:'请求不串扰',requirement:'不同业务请求不得读取对方的数据',procedure:'执行不同请求',expectedResult:'各自得到正确结果'}]};
 const proposal:MigrationReuseProposal={proposalId:'new',inputDigest:'digest',sourceDigest:'source',createdAt:'now',design};
+it('offers explicit clarification rather than letting unresolved proposals bypass confirmation',()=>{
+ const html=renderToStaticMarkup(createElement(MigrationReusePlan,{proposal:{...proposal,clarification:'本次仅限任务范围',
+  design:{...design,unresolvedQuestions:['部署范围待确认']}},clarify:()=>{}}));
+ expect(html).toContain('方案补充说明');expect(html).toContain('补充说明并重新规划');
+ expect(html).toContain('部署范围待确认');expect(html).toContain('本次仅限任务范围');
+ expect(html).toContain('重新规划后仍需核对并确认方案');
+});
 it('does not present historical candidate passes as readiness for a revised plan',()=>{
   const html=renderToStaticMarkup(createElement(CandidateStep,{project:{candidate:{displayName:'旧产物',version:'1'},inspection:{reuseConformance:{proposalId:'old'}},portableGenerations:[]},
     report:{workflow:{stage:'GENERATE'},migrationPlan:{reuseProposal:proposal,generationAllowed:true,items:[],skillBlockingReasons:[]},technicalValidations:[]},

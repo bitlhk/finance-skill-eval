@@ -117,7 +117,7 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   app.put<{ Params: { id: string; toolId: string } }>("/api/migrations/:id/tools/:toolId/decision", request =>
     migrations.decide(request.params.id, request.params.toolId, request.body));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/plan", request => migrations.plan(request.params.id));
-  app.post<{ Params: { id: string } }>("/api/migrations/:id/plan/proposal", request => migrations.proposeMigrationPlan(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/migrations/:id/plan/proposal", request => migrations.proposeMigrationPlan(request.params.id,request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/plan/approval", request => migrations.approveMigrationPlan(request.params.id,request.body));
   app.post<{ Params: { id: string } }>("/api/migrations/:id/generate", request => migrations.generate(request.params.id, request.body));
   app.get<{ Params: { id: string } }>("/api/migrations/:id/generation-progress", request => migrations.generationProgress(request.params.id));

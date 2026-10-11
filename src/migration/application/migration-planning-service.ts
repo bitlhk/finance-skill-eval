@@ -64,7 +64,8 @@ export class MigrationPlanningService {
     return projectMigrationPlan(value);
   }
 
-  async propose(id:string){
+  async propose(id:string,input:unknown={}){
+    const {clarification}=z.strictObject({clarification:z.string().trim().min(1).max(4000).optional()}).parse(input??{});
     return this.projects.runExclusive(id,async()=>{
       const project=await this.projects.get(id);
       if(project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，不能替换已确认方案');
@@ -84,7 +85,8 @@ export class MigrationPlanningService {
       const sourceFiles:Record<string,string>={};
       for(const [name,bytes] of Object.entries(archive)){try{sourceFiles[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{}}
       const output=await this.reusePlanner({mode:'PROPOSE',sourceFiles,inspection,toolPlan,
-        deliveryContract:portableDeliveryContract(inspection,decisions,project.source.skillFile),executionContract:reuseExecutionContract}) as {status?:string;design?:unknown;reason?:string;telemetry?:ReusePlannerTelemetry};
+        deliveryContract:portableDeliveryContract(inspection,decisions,project.source.skillFile),executionContract:reuseExecutionContract,
+        ...(clarification?{clarification}:{})}) as {status?:string;design?:unknown;reason?:string;telemetry?:ReusePlannerTelemetry};
       if(output?.status!=='PROPOSED')return conflict(`迁移方案无法确认：${output?.reason??'模型未提供方案'}`);
       const parsed=reuseDesignSchema.safeParse(output.design);
       if(!parsed.success)return conflict('迁移方案结构不完整，请重新生成');
@@ -95,7 +97,7 @@ export class MigrationPlanningService {
       project.reuseProposal={proposalId:`reuse-${randomUUID()}`,sourceDigest:project.source.artifactSha256,
         inputDigest:reuseInputDigest(inspection,decisions,project.source.artifactSha256),createdAt:new Date().toISOString(),design:parsed.data,
         ...(previous?{previousProposalId:previous.proposalId,previousDesign:structuredClone(previous.design)}:{}),
-        ...(output.telemetry?{telemetry:output.telemetry}:{})};
+        ...(clarification?{clarification}:{}),...(output.telemetry?{telemetry:output.telemetry}:{})};
       await this.projects.save(project);
       return project.reuseProposal;
     });

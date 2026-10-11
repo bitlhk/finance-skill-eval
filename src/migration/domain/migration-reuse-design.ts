@@ -21,6 +21,7 @@ export const reuseDesignSchema=z.object({
 });
 export type ReuseDesign=z.infer<typeof reuseDesignSchema>;
 export type MigrationReuseProposal={proposalId:string;inputDigest:string;sourceDigest:string;createdAt:string;design:ReuseDesign;approvedAt?:string;
+  clarification?:string;
   previousProposalId?:string;
   previousDesign?:ReuseDesign;
   telemetry?:import('./migration-reuse-telemetry.js').ReusePlannerTelemetry};

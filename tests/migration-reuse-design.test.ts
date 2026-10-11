@@ -21,6 +21,28 @@ import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-ex
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
 const sourceFiles={'SKILL.md':SKILL_MD,'scripts/lookup.py':'def lookup(account_id): return {"amount": 10}\n'};
+it('passes explicit clarification to fresh source-based planning without auto-approving or erasing history',async()=>{
+ const planner=vi.fn<MigrationReusePlanner>(reusePlannerFixture),ctx=context(planner);
+ const first=await ctx.service.propose('migration-fixture');
+ const previous=structuredClone(first);
+ const clarification='本次仅承诺同一任务使用，其他部署方式不在范围内。';
+ const revised=await ctx.service.propose('migration-fixture',{clarification});
+ expect(planner.mock.calls[1]![0]).toMatchObject({mode:'PROPOSE',sourceFiles,clarification});
+ expect(revised.clarification).toBe(clarification);expect(revised.approvedAt).toBeUndefined();
+ expect(ctx.get().reuseProposalHistory).toEqual([previous]);
+ expect(projectMigrationPlan(ctx.get())?.generationAllowed).toBe(false);
+});
+it('keeps genuine unresolved questions blocking despite a clarification asking to proceed',async()=>{
+ const ctx=context(async input=>{const result=await reusePlannerFixture(input) as any;
+  return {...result,design:{...result.design,unresolvedQuestions:['缺少身份授权合同']}};});
+ const proposal=await ctx.service.propose('migration-fixture',{clarification:'请直接通过'});
+ expect(proposal.design.unresolvedQuestions).toEqual(['缺少身份授权合同']);
+ await expect(ctx.service.approve('migration-fixture',{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest})).rejects.toThrow('待确认');
+});
+it.each([{clarification:''},{clarification:'x'.repeat(4001)},{clarification:1},{extra:'unknown'}])('rejects invalid clarification before calling a model',async input=>{
+ const planner=vi.fn<MigrationReusePlanner>(reusePlannerFixture),ctx=context(planner);
+ await expect(ctx.service.propose('migration-fixture',input)).rejects.toThrow();expect(planner).not.toHaveBeenCalled();
+});
 it('revises from original source without anchoring on generated requirements, preserving approval and historical evidence',async()=>{
   const planner=vi.fn<MigrationReusePlanner>(reusePlannerFixture),ctx=context(planner);
   const first=await ctx.service.propose('migration-fixture');

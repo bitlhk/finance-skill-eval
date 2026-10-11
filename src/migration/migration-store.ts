@@ -33,7 +33,7 @@ export class MigrationStore {
   async inspection(id:string){return this.services.inspectionService.inspection(id);}
   async decide(id:string,toolId:string,input:unknown){return this.services.planningService.decide(id,toolId,input);}
   async plan(id:string){return this.services.planningService.plan(id);}
-  async proposeMigrationPlan(id:string){return this.services.planningService.propose(id);}
+  async proposeMigrationPlan(id:string,input?:unknown){return this.services.planningService.propose(id,input);}
   async approveMigrationPlan(id:string,input:unknown){return this.services.planningService.approve(id,input);}
   async runtimeRequirements(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirements(id,runtimeType);}
   async proposeRuntimeRebuild(id:string,input:unknown){return this.services.runtimeRebuildService.propose(id,input);}

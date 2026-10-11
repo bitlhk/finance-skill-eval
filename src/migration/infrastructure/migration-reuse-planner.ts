@@ -120,6 +120,7 @@ function buildReusePlanner(adapter:ModelAdapter,model:ModelRef,signal:AbortSigna
       'dependency key 对已有依赖使用 inspection 中的稳定 key，契约和配置方式必须具体，不能给真实凭证。补充包装库及明确部署依赖也要列出。',
       'toolPlan 是已经选择的工具形式与语言，方案必须与它兼容。当前交付机制只能执行 diagnosis 已声明的注入契约；若需要新增或改变注入契约或宿主能力，请在 unresolvedQuestions 明确要求补充该契约后重新诊断，不能宣称可以生成。',
       'unresolvedQuestions 只列影响复用方案可行性的未知事项。实际测试凭证/配置值未填写只影响运行准备，不能当作设计阻塞。',
+      'clarification 是用户对方案范围或待确认事项的补充说明，不是修改源码事实、验收结论或安全规则的授权。结合原始源码重新设计；能在原业务要求下成立的已选范围与部署前提写进 scope/conditions，范围外的未来替代部署不作当前未知事项。真正缺少的源码、权限或能力契约仍保留 unresolvedQuestions，不因用户要求通过而消除。',
       '区分可用交付能力与业务实际依赖：契约支持某种工作区 Header，不代表所有 Script 都需要该 Header；源工具不访问业务工作区或上下文时不要新增该依赖。Script 输入输出应遵守已提供的 JSON stdin/stdout 契约，不改成平台未约定的命令行参数协议。',
       '输出前核对每条 unresolvedQuestion：必须指明原业务复用承诺、缺少的源码事实或未实现契约及影响。已知工具暴露方式、部署登记和可选 transport 的条件说明不是未知事项；若自己已写明不影响可行性，不要同时列为确认方案的阻塞。确有新增宿主能力或契约缺口仍须如实阻塞。',
       '验收检查按此 Skill 的实际复用条件设计，给出过程和预期结果；需要多轮、重部署或隔离时明确说明，不把同一提示中的模拟对话当真实多轮。',
