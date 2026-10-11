@@ -5,6 +5,21 @@ import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import {createEvaluationService} from '../dist/service/server.js';
+import {OpenAiCompatibleModelAdapter} from '../dist/openai-compatible-model.js';
+import {parseFirstJsonObject} from '../dist/json-response.js';
+// Structural diagnostics only: keep raw responses, business content and credentials private.
+const modelComplete=OpenAiCompatibleModelAdapter.prototype.complete;
+OpenAiCompatibleModelAdapter.prototype.complete=async function(request){
+ const result=await modelComplete.call(this,request);
+ if(request.requestId?.startsWith('reuse-acceptance')){
+  let questionType='invalid-json';
+  try{const value=parseFirstJsonObject(result.content).unresolvedQuestions;
+   questionType=value===null?'null':Array.isArray(value)?'array':typeof value;
+  }catch{}
+  console.log(JSON.stringify({event:'MODEL_RESPONSE_SHAPE',requestId:request.requestId,characters:result.content.length,unresolvedQuestionsType:questionType}));
+ }
+ return result;
+};
 const root=process.cwd(),git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',windowsHide:true}).trim();
 assert(!git('status','--porcelain'),'Commit implementation before acceptance');
 const original=path.resolve(process.env.CLOSEOUT_CONTINUE_WORK??'');

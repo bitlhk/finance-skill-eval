@@ -7,6 +7,14 @@ import {ReuseAcceptanceError} from '../domain/migration-reuse-failure.js';
 import {ModelCompletionError} from '../../openai-compatible-model.js';
 import {reuseVerificationPolicy} from '../domain/migration-reuse-policy.js';
 
+/** Only a singleton/empty question list representation; never invent missing facts. */
+export function reusePlanRepresentation(value:unknown):unknown{
+  if(!value||typeof value!=='object'||Array.isArray(value))return value;
+  const plan=value as Record<string,unknown>;
+  if(typeof plan.unresolvedQuestions!=='string')return value;
+  return {...plan,unresolvedQuestions:plan.unresolvedQuestions.trim()?[plan.unresolvedQuestions]:[]};
+}
+
 export const runReuseAcceptanceModel:MigrationReuseAcceptanceModel=async({mode,context,signal})=>{
   const roleName=mode==='VERIFY'?'JUDGE':'ANALYZER',phase=mode==='VERIFY'?'VERIFICATION':mode;
   let role;try{role=configuredModelRole(roleName)}catch{throw new ReuseAcceptanceError({phase,code:'MODEL_CONFIGURATION_INVALID',message:'模型配置无法读取，请检查所选分析或评测模型配置'});}
@@ -49,8 +57,8 @@ export const runReuseAcceptanceModel:MigrationReuseAcceptanceModel=async({mode,c
   let fields:string[]=[];
   let result;
   try{result=await correctModelOutput({raw:response.content,adapter:role.adapter,model:role.model,signal:combined,requestId:'reuse-acceptance',maxRepairs:mode==='PLAN'?1:0,
-    preserve:(original,repaired)=>canonicalSha256(original)===canonicalSha256(repaired),
-    check:value=>{const parsed=schema.safeParse(value);if(parsed.success)return {ok:true,value:parsed.data};fields=parsed.error.issues.slice(0,16).map(issue=>`${issue.path.join('.').slice(0,150)||'root'} (${issue.code})`);
+    preserve:(original,repaired)=>canonicalSha256(mode==='PLAN'?reusePlanRepresentation(original):original)===canonicalSha256(mode==='PLAN'?reusePlanRepresentation(repaired):repaired),
+    check:value=>{const parsed=schema.safeParse(mode==='PLAN'?reusePlanRepresentation(value):value);if(parsed.success)return {ok:true,value:parsed.data};fields=parsed.error.issues.slice(0,16).map(issue=>`${issue.path.join('.').slice(0,150)||'root'} (${issue.code})`);
       // Fixed vocabulary only: structural diagnostics must not leak arbitrary
       // model keys, response text, reasons, credentials or provider data.
       if(mode==='VERIFY'&&value&&typeof value==='object'&&!Array.isArray(value)){

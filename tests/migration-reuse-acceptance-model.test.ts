@@ -98,6 +98,26 @@ it('retains genuine unresolved requirements rather than retrying them away',asyn
  const unresolved={...plan(),unresolvedQuestions:['Original requirement needs a new deployment']};complete.mockResolvedValue({content:JSON.stringify(unresolved)});
  expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual(unresolved);expect(complete).toHaveBeenCalledTimes(1);
 });
+it('preserves a single unresolved question represented as a string',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify({...plan(),unresolvedQuestions:'Needs an unsupported deployment'})});
+ expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual({...plan(),unresolvedQuestions:['Needs an unsupported deployment']});
+ expect(complete).toHaveBeenCalledTimes(1);
+});
+it('normalizes an explicitly empty question string without inventing checks or approval',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify({...plan(),unresolvedQuestions:''})});
+ expect(await runReuseAcceptanceModel({mode:'PLAN',context})).toEqual(plan());expect(complete).toHaveBeenCalledTimes(1);
+});
+it.each([null,{},undefined])('does not treat an unknown/missing question list as no gaps (%j)',async unresolvedQuestions=>{
+ complete.mockResolvedValue({content:JSON.stringify({...plan(),unresolvedQuestions})});
+ await expect(runReuseAcceptanceModel({mode:'PLAN',context})).rejects.toMatchObject({failure:{code:'MODEL_OUTPUT_INVALID'}});
+ expect(complete).toHaveBeenCalledTimes(1);
+});
+it('does not normalize a malformed substantive criteria list',async()=>{
+ const invalid=plan();(invalid.checks[0] as any).criteria='Original requirement';
+ complete.mockResolvedValue({content:JSON.stringify(invalid)});
+ await expect(runReuseAcceptanceModel({mode:'PLAN',context})).rejects.toMatchObject({failure:{code:'MODEL_OUTPUT_INVALID'}});
+ expect(complete).toHaveBeenCalledTimes(1);
+});
 it('never regenerates a business verdict because references are incorrect',async()=>{
  const verdict={checks:[{checkId:'invented',status:'PASSED',reason:'A claim',caseIds:['case']}]};complete.mockResolvedValue({content:JSON.stringify(verdict)});
  expect(await runReuseAcceptanceModel({mode:'VERIFY',context})).toEqual(verdict);expect(complete).toHaveBeenCalledTimes(1);
