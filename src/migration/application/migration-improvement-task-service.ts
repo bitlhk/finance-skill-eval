@@ -24,6 +24,7 @@ import type {MigrationRuntimeRebuildService} from './migration-runtime-rebuild-s
 import {currentRuntimeRequirements} from '../domain/migration-runtime-requirements.js';
 import {modelRefSchema,fingerprint} from '../../contracts.js';
 import {currentReuseProposal} from '../domain/migration-reuse-design.js';
+import {ModelCompletionError} from '../../openai-compatible-model.js';
 
 type Dependencies={projects:MigrationProjectStore;jobs:MigrationEvaluationJobReader;runs:MigrationEvaluationRunner;
   configs:MigrationRuntimeConfigurationRepository;planner:MigrationImprovementPlanningService;
@@ -186,7 +187,9 @@ export class MigrationImprovementTaskService{
       if(task.status==='INTERRUPTED')task.reason='服务已停止，任务已中断；不会自动重放未确认的动作';
       if(!controller.signal.aborted){
         // Never persist arbitrary provider errors: URLs, headers or credentials may be embedded.
-        const detail=error instanceof z.ZodError?`模型或请求字段不符合约定：${error.issues.map(issue=>issue.path.join('.')).slice(0,8).join('、')}`
+        const modelLabels={MODEL_HTTP_ERROR:'模型服务请求失败',MODEL_NETWORK_ERROR:'模型服务网络请求失败',MODEL_OUTPUT_TRUNCATED:'模型输出达到长度上限',MODEL_EMPTY_RESPONSE:'模型未返回最终答案'} as const;
+        const modelCode=error instanceof ModelCompletionError&&Object.hasOwn(modelLabels,error.code)?error.code:undefined;
+        const detail=modelCode?`${modelLabels[modelCode]}（${modelCode}）`:error instanceof z.ZodError?`模型或请求字段不符合约定：${error.issues.map(issue=>issue.path.join('.')).slice(0,8).join('、')}`
           :error instanceof Error&&(error as {statusCode?:number}).statusCode===409?error.message:'模型或验证步骤未完成';
         task.reason+=`。${detail}`;
         task.events.push({sequence:task.events.length+1,at:new Date().toISOString(),stage:'STOPPED',message:task.reason});

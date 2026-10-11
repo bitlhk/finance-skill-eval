@@ -15,6 +15,13 @@ export const improvementJudgementSchema=z.discriminatedUnion('status',[
   z.strictObject({status:z.literal('ABSTAINED'),reason:z.string().min(1).max(2000)}),
 ]);
 export type ImprovementJudgement=z.infer<typeof improvementJudgementSchema>;
+/** Safe planning diagnostics; never carries raw model output or provider text. */
+export class ImprovementPlanningError extends Error{
+  readonly statusCode=409;
+  constructor(readonly fields:string[],readonly code:'MODEL_OUTPUT_INVALID'|'MODEL_CORRECTION_CHANGED_FACTS'='MODEL_OUTPUT_INVALID'){
+    super(`${code==='MODEL_CORRECTION_CHANGED_FACTS'?'纠错结果改变了原始判断或证据':'优化规划结果不符合约定'}（${code}）${fields.length?`：${fields.join('；')}`:''}`);
+  }
+}
 export type ImprovementPlanningInput={
   modelId:string;
   sourceJobId:string;

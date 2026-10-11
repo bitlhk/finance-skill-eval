@@ -1,4 +1,5 @@
 import {expect,it,vi} from 'vitest';
+import {ModelCompletionError} from '../src/openai-compatible-model.js';
 import {MigrationImprovementTaskService} from '../src/migration/application/migration-improvement-task-service.js';
 import {executionConfigurationDigest} from '../src/execution-configuration/execution-configuration.js';
 import {currentReuseProposal,reuseInputDigest} from '../src/migration/domain/migration-reuse-design.js';
@@ -53,6 +54,12 @@ function setup(options:{layer?:string;layers?:string[];devIds?:string[];roundPas
   return {service,d,base,trial,jobs,config,project:()=>project,terminal};
 }
 
+it.each(['MODEL_NETWORK_ERROR','MODEL_HTTP_ERROR','MODEL_OUTPUT_TRUNCATED','MODEL_EMPTY_RESPONSE'] as const)('records safe optimizer failure %s without consuming holdout or rewriting',async code=>{
+  const f=setup();f.d.planner.propose.mockRejectedValue(new ModelCompletionError(code,'PRIVATE_PROVIDER_DETAILS'));
+  await f.service.start('migration-1234',{jobId:'baseline'});const task=await f.terminal();
+  expect(task.status).toBe('FAILED');expect(task.reason).toContain(code);expect(task.reason).not.toContain('PRIVATE_PROVIDER_DETAILS');
+  expect(task.finalConsumed).toBe(false);expect(f.d.planner.propose).toHaveBeenCalledTimes(1);expect(f.d.tools.propose).not.toHaveBeenCalled();
+});
 it('runs an isolated Tool candidate, checks frozen holdout once, and requires explicit adoption',async()=>{
   const f=setup();await f.service.start('migration-1234',{jobId:'baseline'});
   const task=await f.terminal();

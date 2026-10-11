@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import { configuredModelRole } from '../../service/config.js';
 import type { ImprovementPlanner } from '../application/migration-improvement-planning-service.js';
-import {improvementJudgementSchema} from '../application/migration-improvement-planning-service.js';
+import {improvementJudgementSchema,ImprovementPlanningError} from '../application/migration-improvement-planning-service.js';
 import {correctModelOutput,type OutputCheck} from './model-output-correction.js';
 import {normalizeCapabilityConstraints} from '../../shared/contracts/runtime-capability.js';
 
@@ -23,7 +23,7 @@ function normalizeRepresentation(value:unknown):unknown{
 function checkJudgement(value:unknown):OutputCheck<unknown>{
   const parsed=improvementJudgementSchema.safeParse(normalizeRepresentation(value));
   return parsed.success?{ok:true,value:parsed.data}:{ok:false,errors:parsed.error.issues.map(issue=>
-    `${issue.path.join('.')||'$'}: ${issue.message}`)};
+    `${issue.path.join('.').slice(0,150)||'$'} (${issue.code})`)};
 }
 
 function preservesProposal(original:unknown,repaired:unknown):boolean{
@@ -64,9 +64,12 @@ export const planMigrationImprovement:ImprovementPlanner=async (input,signal)=>{
       '若选择 HARNESS，可附 hypothesis.requiredCapabilities：复用输入 runtimeRequirements 的合同，或仅根据源码和实际开发集证据提出新合同。每项需 id,name,required,reason,contract:{inputSchema,outputSchema,errorSchema,semantics},constraints:{permissions,sideEffects,isolation},preferredTargetCapability,consumerTools,evidence:[{path,line,detail}]。不得伪造来源，不确定时 ABSTAINED。',
       '只返回 JSON：{status:"PROPOSED",hypothesis:{layer,issue,expectedBehavior,evidenceCaseIds,validation,risk,confidence,toolIds?}} 或 {status:"ABSTAINED",reason}。',
     ].join('\n')},{role:'user',content:JSON.stringify(input)}]});
-  const corrected=await correctModelOutput({raw:completion.content,check:checkJudgement,adapter:role.adapter,
+  let validationFields:string[]=[];
+  const corrected=await correctModelOutput({raw:completion.content,check:value=>{
+    const checked=checkJudgement(value);if(!checked.ok)validationFields=checked.errors.slice(0,16);return checked;
+  },adapter:role.adapter,
     model:role.model,requestId:`improvement-${input.sourceJobId}`,signal,preserve:preservesProposal});
-  if(!corrected.ok)throw new Error(`优化规划模型结果未通过校验：${corrected.error}`);
+  if(!corrected.ok)throw new ImprovementPlanningError(validationFields,corrected.error==='纠错结果改变了原始判断或证据'?'MODEL_CORRECTION_CHANGED_FACTS':'MODEL_OUTPUT_INVALID');
   const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
   return {judgement:corrected.value,outputCorrection:{attempts:corrected.repairs,
     originalDigest:digest(completion.content),acceptedDigest:digest(JSON.stringify(corrected.value))}};

@@ -41,6 +41,14 @@ it('normalizes an unambiguous enum representation without another model call',as
     expect(requests).toHaveLength(1);
   });
 });
+it('reports safe invalid field categories without retaining arbitrary model values',async()=>{
+  const invalid=JSON.stringify({status:'PROPOSED',hypothesis:{...hypothesis,layer:'PRIVATE_MODEL_VALUE'}});
+  await serve([invalid,invalid,invalid],async()=>{
+    const error=await planMigrationImprovement(input).catch(error=>error);
+    expect(error.message).toContain('MODEL_OUTPUT_INVALID');expect(error.fields).toContain('hypothesis.layer (invalid_enum_value)');
+    expect(error.message).not.toContain('PRIVATE_MODEL_VALUE');
+  });
+});
 
 it('repairs an extra output field while preserving the model hypothesis',async()=>{
   await serve([JSON.stringify({status:'PROPOSED',hypothesis,commentary:'extra'}),
