@@ -219,3 +219,18 @@ it('distinguishes verified Runtime model failures from raw SDK exceptions',async
  f.execution.mockImplementation(async()=>{const result=await original();result.job.report.cases[0].right.status='failed';result.job.report.cases[0].right.error='EVAL_PACKAGE_MODEL_CALL_FAILED';return result});
  await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});expect((await f.finish()).result?.failure).toMatchObject({code:'RUNTIME_MODEL_FAILED',caseId:'one'});await f.service.shutdown();
 });
+it.each(['fresh','repeated'] as const)('checks Launcher-scoped Script process receipts before the model verdict: %s',async kind=>{
+ const f=fixture(),p=await f.approve(),original=f.execution.getMockImplementation()!;
+ f.execution.mockImplementation(async()=>{const result=await original();for(const c of result.job.report.cases){
+  const fact={tool:'lookup',status:'completed',argumentsDigest:'a'.repeat(64),resultDigest:'b'.repeat(64)};
+  c.right.toolCalls=[{name:'lookup',status:'completed'}];c.right.metadata.toolEvidence=[fact];
+  c.right.metadata.toolProcessEvidence={schemaVersion:'finance.runtime-tool-process-evidence.v1',scope:'LAUNCHER_MANAGED_SCRIPT_CALLS',
+   caseScopeId:c.right.metadata.caseScopeId,records:[{...fact,callIndex:0,processScopeId:kind==='fresh'?`process-${c.caseId}`:'same-process',
+    startedAt:'2026-10-11T08:00:00.000Z',exitedAt:'2026-10-11T08:00:01.000Z',exitCode:0}]};
+  // The wire receipt contains only its strict fields, not a duplicated fact status.
+  delete c.right.metadata.toolProcessEvidence.records[0].status;
+ }return result;});
+ await f.service.start(f.project.id,{planId:p.planId,inputDigest:p.inputDigest});const summary=await f.finish();
+ expect(summary.status).toBe(kind==='fresh'?'PASSED':'INDETERMINATE');
+ expect(f.model.mock.calls.some(c=>c[0].mode==='VERIFY')).toBe(kind==='fresh');await f.service.shutdown();
+});

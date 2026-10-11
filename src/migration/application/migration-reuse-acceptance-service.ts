@@ -17,6 +17,7 @@ import {migrationConflict as conflict} from './migration-errors.js';
 import {ReuseAcceptanceError} from '../domain/migration-reuse-failure.js';
 import {judgeRuntimeEvidence} from '../../judge-runtime-evidence.js';
 import {reuseExecutionContract} from '../domain/migration-reuse-execution-contract.js';
+import {verifiedToolProcessEvidence} from '../../runtime-tool-process-evidence.js';
 import {runtimeLauncherDeliverySchema} from '../../shared/contracts/environment.js';
 import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 
@@ -92,9 +93,11 @@ export class MigrationReuseAcceptanceService{
     const project=await this.d.projects.get(id),proposal=currentReuseProposal(project)!;
     if(project.improvementTasks?.some(task=>activeStatuses.includes(task.status))||project.reuseAcceptanceResults?.some(task=>task.status==='RUNNING'))return conflict('请先完成或停止当前任务');
     const capabilities=(await migrationRuntimeCapabilities(this.d.environments,parsed.environmentId)).capabilities;
+    const availableRunTargets=await Promise.all([binding,...(binding.additionalRuntimes??[])].map(async({environmentId,modelId,deploymentId})=>({
+      environmentId,modelId,deploymentId,toolProcessEvidence:(await migrationRuntimeCapabilities(this.d.environments,environmentId)).capabilities.features.toolProcessEvidence===true})));
     const artifactEvidence=await this.artifactEvidence(project.candidate!.assetId);
     const context={executionContract:reuseExecutionContract,design:proposal.design,...artifactEvidence,candidateReview:project.inspection!.reuseConformance,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:tool.inputSchema,outputSchema:tool.outputSchema,samples:tool.samples})),
-      runtimeCapabilities:capabilities,availableRunTargets:[binding,...(binding.additionalRuntimes??[])].map(({environmentId,modelId,deploymentId})=>({environmentId,modelId,deploymentId})),executionSemantics:'group=fresh Runtime instance at the frozen group.runtime target (default primary); distinct deployments require distinct admitted deployment identities, not just fresh instances; case=fresh native session/workspace/MCP scope; turns=preserved native session/workspace/MCP scope',
+      runtimeCapabilities:capabilities,availableRunTargets,executionSemantics:'group=fresh Runtime instance at the frozen group.runtime target (default primary); distinct deployments require distinct admitted deployment identities, not just fresh instances; case=fresh native session/workspace/MCP scope; turns=preserved native session/workspace/MCP scope',
       evaluatorEvidence:{caseJudge:{available:['当前案例实际查询、分轮输出及成功/失败工具调用','已采集且获授权的 sourceFacts 结果投影；不保证包含内部判定原因','工作区挂载摘要；不等于文件内容或成功读取','可选 workspaceInputMatches：仅匹配成功 read_file 调用及满足实际摘要核对条件的字段；无记录不能推断'],unavailable:['原生实例/会话/工作区身份标识与其他案例或运行组的事实','workspaceFiles 正文、目录完整清单、未挂载文件不存在的证明','工具原始实参与脚本内部读取、规则执行原因；argumentsDigest 不可逆','交付源码、业务规则与 Skill 文档原文']},checkJudge:{available:['关联案例输出、评测、实际采集的调用和输入匹配','跨案例实例/会话/工作区身份比较','当前绑定的真实 candidateFiles，可检查源码、文档和规则事实'],rule:'原承诺不能删减；源码/规则、宿主与跨案例事实放 checks.criteria。case.criteria 仅验证当前案例实际可见证据；将规则推导当成工具可见结果、将挂载当读取，或将结果错误当目录证明，都应返回 INCOMPLETE 并要求修正判据层级'}},
       evidenceSemantics:'Per-case Judge receives actual turn queries, per-turn native output/tool-name receipts, overall tool calls, and authorized redacted business result projections. Original tool arguments are not exposed; hashes do not let Judge reconstruct them. Eval can exactly match read_file argument/result hashes to mounted case files, and Script input hashes to a JSON object projection using its declared inputSchema; these optional workspaceInputMatches prove value equality, not causal program data flow. Missing matches cannot be assumed. Instance/session/workspace identity comparisons belong to check-level verification across cases, not one-case criteria. Do not introduce unobservable criteria absent from original requirements; requirements genuinely depending on unavailable evidence remain uncovered.'};
     const output=parsed.plan??await this.d.model({mode:'PLAN',context,signal}),checkedPlan=reuseAcceptancePlanSchema.safeParse(output);
@@ -237,6 +240,7 @@ export class MigrationReuseAcceptanceService{
           launcherId:target.launcherId,
           instanceId:evidence.metadata.instanceId,caseScopeId:evidence.metadata.caseScopeId,conversation:evidence.metadata.conversation,
           toolCalls:evidence.toolCalls,toolEvidence:evidence.metadata.toolEvidence,
+          toolProcessEvidence:verifiedToolProcessEvidence(evidence),
           workspaceInputMatches:judgeRuntimeEvidence(evidence,{workspaceFiles:definition.workspaceFiles,tools:project.inspection?.tools}).workspaceInputMatches,
           assessment:result.judge?.goalAssessment});
       }
@@ -250,6 +254,11 @@ export class MigrationReuseAcceptanceService{
     if(new Set(conversations.map(c=>scope(c,c.sessionId))).size!==conversations.length||new Set(conversations.map(c=>scope(c,c.workspaceId))).size!==conversations.length)return conflict('独立案例复用了会话或工作区');
     const groupInstances=plan.groups.map(group=>[...new Set(observed.filter(c=>c.groupId===group.id).map(c=>scope(c,c.instanceId)))]);
     if(groupInstances.some(ids=>ids.length!==1)||new Set(groupInstances.flat()).size!==plan.groups.length)return conflict('新运行组没有使用独立 Runtime 实例');
+    const processScopes=observed.flatMap(c=>{
+      const proof=c.toolProcessEvidence as ReturnType<typeof verifiedToolProcessEvidence>;
+      return proof.status==='CORRELATED'?proof.records.map(r=>scope(c,r.processScopeId)):[];
+    });
+    if(new Set(processScopes).size!==processScopes.length)return conflict('独立 Script 调用复用了进程标识，不能证明新进程生命周期');
     const design=currentReuseProposal(await this.d.projects.get(id))!.design;
     // Static document/code checks and dynamic behavior checks have different
     // evidence. Re-read this bound artifact, not an uploaded workspace copy or a

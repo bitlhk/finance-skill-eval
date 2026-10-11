@@ -98,6 +98,31 @@ Framework-specific consumers must use `native` data explicitly. Portable consume
 
 ## Files
 
+### Optional Script process observations (additive v1)
+
+`features.toolProcessEvidence: true` advertises actual subprocess start/exit
+observations for Launcher-managed Script calls. Terminal
+`metadata.toolProcessEvidence` follows
+`finance.runtime-tool-process-evidence.v1.schema.json`. Omission means unknown,
+not evidence that a process was independent. The extension is optional for
+ordinary business evaluation; a reuse requirement explicitly promising process
+lifecycle needs this evidence or another independently verified observation.
+
+Each record's `callIndex` references the same zero-based entry in `toolCalls` and
+`metadata.toolEvidence`; tool name, completed status, argument/result digests and
+case scope must agree. Emit only after the actual child has exited with code zero.
+Use a fresh opaque process-scope ID per created process, never an OS PID, executable
+path, environment, command line or raw input/output. Start must precede exit.
+Eval treats invalid correlations as INVALID, not positive lifecycle evidence.
+These are authenticated Launcher assertions about its managed Script processes,
+not independent OS sandbox attestation, global resource release or an audit of
+internal memory. Static source and business no-cross-talk tests remain separate.
+MCP/remote/native tools must not acquire fabricated Script-process receipts.
+
+This extends the existing terminal evidence metadata, without imposing framework
+callback names or introducing registration v2. Strict clients must be upgraded
+before the optional capabilities flag is enabled.
+
 ### Native multi-turn execution (additive v1)
 
 `features.multiTurn: true` advertises distinct native Agent calls with preserved session,

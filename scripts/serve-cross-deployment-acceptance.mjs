@@ -1,7 +1,7 @@
 /** Isolated real Builder admission; browser drives all migration operations. */
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
-import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,cp} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {pinnedBuilderSource} from './lib/pinned-builder-source.mjs';
@@ -21,7 +21,16 @@ const attempt={schemaVersion:1,startedAt:new Date().toISOString(),eval:git('rev-
  launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,status:'STARTING',admitted:[]};
 await writeFile(path.join(work,'attempt.json'),JSON.stringify(attempt,null,2));
 const pinned=await pinnedBuilderSource({project:builder,commit:builderCommit,destination:work});
-const data=path.join(work,'data');await mkdir(data);
+const data=path.join(work,'data');
+let continuation;
+if(process.env.CLOSEOUT_SEED_DATA_WORK){
+ const parentWork=path.resolve(process.env.CLOSEOUT_SEED_DATA_WORK);
+ const parent=JSON.parse(await readFile(path.join(parentWork,'service.json'),'utf8'));
+ assert(path.resolve(parent.data)===path.join(parentWork,'data'),'Explicit data owner required');
+ assert(parent.launcherBackend==='NATIVE_PACKAGE','Only native acceptance data can be continued');
+ await cp(parent.data,data,{recursive:true,errorOnExist:true});
+ continuation={provenance:'CONTINUED_REAL_UI_DATA_NEW_DEPLOYMENTS',parentWork,parentEval:parent.eval};
+}else await mkdir(data);
 const skills=new SkillStore(data);await skills.initialize();
 // Setup-only lifecycle probe. This does not seed a migration or a passing test.
 const asset=await skills.uploadMigrationZip(await readFile(path.join(root,'acceptance/enterprise-migration-examples/01-expense/source.zip')));
@@ -52,7 +61,7 @@ try{
  const environments=new EnvironmentStore(data,trust);await environments.initialize();const admitted=[];
  for(const [i,r] of delivery.records.entries()){
   const accepted=await environments.acceptBuilderDelivery({requirements:r.requirements,result:r.result,trustReference:trust[i].reference,
-   name:`复用验收部署 ${i+1}`,conformance:{skill,requiredTools:[]}});
+   name:`${continuation?'新进程回执验收部署':'复用验收部署'} ${i+1}`,conformance:{skill,requiredTools:[]}});
   admitted.push({environmentId:accepted.environment.environmentId,deploymentId:accepted.environment.delivery.deploymentId,
    artifactSha256:accepted.environment.delivery.artifactSha256,capabilitiesDigest:accepted.environment.delivery.capabilitiesDigest,
    evalConformance:accepted.environment.delivery.evalConformance});
@@ -62,7 +71,7 @@ try{
  app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),publicDemo:false,
   accessToken:'cross-deployment-ui',launcherTrust:trust});app.log.level='error';
  const url=await app.listen({host:'127.0.0.1',port:0});
- const metadata={url,work,data,eval:attempt.eval,builder:builderCommit,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted};
+ const metadata={url,work,data,eval:attempt.eval,builder:builderCommit,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted,...continuation};
  await writeFile(path.join(work,'service.json'),JSON.stringify(metadata,null,2));console.log(JSON.stringify({url,work,admittedDeployments:admitted.length}));
  attempt.status='READY_FOR_UI';await writeFile(path.join(work,'attempt.json'),JSON.stringify(attempt,null,2));
  process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
