@@ -23,6 +23,14 @@ it('reports invalid fields and phase without returning model output',async()=>{
  catch(error:any){expect(error.failure).toMatchObject({phase:'VERIFICATION',code:'MODEL_OUTPUT_INVALID',fields:['checks (invalid_type)']});expect(JSON.stringify(error.failure)).not.toContain('PRIVATE_MODEL_OUTPUT');}
  expect(complete).toHaveBeenCalledTimes(1);
 });
+it('guides per-check indeterminate verdicts and exposes only fixed structural diagnostics',async()=>{
+ complete.mockResolvedValue({content:JSON.stringify({status:'ABSTAINED',reason:'PRIVATE_RESPONSE',PRIVATE_KEY:'secret'})});
+ try{await runReuseAcceptanceModel({mode:'VERIFY',context:{}});throw new Error('must reject');}
+ catch(error:any){expect(error.failure.fields).toContain('root.status (unexpected_output_shape)');expect(JSON.stringify(error.failure)).not.toMatch(/PRIVATE_RESPONSE|PRIVATE_KEY|secret/);}
+ const prompt=complete.mock.calls[0]![0].messages[0].content;
+ expect(prompt).toContain('不返回统一 ABSTAINED 对象');expect(prompt).toContain('对应 check 的 status 写 INDETERMINATE');
+ expect(complete).toHaveBeenCalledTimes(1);
+});
 it('redacts provider failure while retaining model stage',async()=>{
  complete.mockRejectedValue(new Error('https://private.host/?api_key=PRIVATE_SECRET'));
  await expect(runReuseAcceptanceModel({mode:'COVERAGE',context:{}})).rejects.toMatchObject({failure:{phase:'COVERAGE',code:'MODEL_REQUEST_FAILED'}});
@@ -32,7 +40,6 @@ it('does not reinterpret incomplete coverage as PASS or retry the verdict',async
  complete.mockResolvedValue({content:JSON.stringify({status:'INCOMPLETE',reasons:['Original requirement needs actual deployment switching']})});
  expect(await runReuseAcceptanceModel({mode:'COVERAGE',context:{}})).toMatchObject({status:'INCOMPLETE'});expect(complete).toHaveBeenCalledTimes(1);
 });
-
 it('uses valid enum values in coverage and verdict JSON examples, with alternatives outside JSON',async()=>{
  complete.mockResolvedValueOnce({content:JSON.stringify({status:'INCOMPLETE',reasons:['Need evidence']})});
  await runReuseAcceptanceModel({mode:'COVERAGE',context:{}});
