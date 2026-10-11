@@ -27,6 +27,7 @@ export type MigrationAnalyzer = (input: {
   files: Record<string, Uint8Array>;
   supplements?: AnalysisSupplement[];
   targetRuntime?:import('../../shared/contracts/runtime-launcher.js').RuntimeLauncherCapabilities;
+  deliveryContract?:Record<string,unknown>;
 }) => Promise<MigrationAnalysis | null>;
 
 export type MigrationImplementation =

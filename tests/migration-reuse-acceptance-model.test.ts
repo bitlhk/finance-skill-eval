@@ -9,6 +9,8 @@ it.each(['PLAN','COVERAGE','VERIFY'] as const)('does not add universal implement
  const prompt=complete.mock.calls[0]![0].messages[0].content;
  expect(prompt).toContain('可选证据能力不构成新的必测项');expect(prompt).toContain('不能在测试阶段自行删除、弱化或换义');
  expect(prompt).toContain('声明的状态和宿主依赖不自动判为不复用');
+ expect(prompt).toContain('重复提供业务 ID 本身不构成无状态工具或错误分支验收缺口');
+ expect(prompt).toContain('toolResultInputMatches');
  expect(prompt).not.toContain('组内每个 case 使用独立会话/工作区/业务工具进程');
  expect(complete).toHaveBeenCalledTimes(1);
 });

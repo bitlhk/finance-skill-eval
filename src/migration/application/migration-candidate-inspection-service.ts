@@ -75,7 +75,8 @@ export class MigrationCandidateInspectionService {
     if(!inspection){
     await input.onPhase?.('CANDIDATE_ANALYSIS');
     if(!checkpoint.analysis){
-    const actual=await this.analysis.analyzer({assetDigest:input.candidate.artifactSha256,runId:`${input.candidate.assetId}-verify`,files:input.files});
+    const actual=await this.analysis.analyzer({assetDigest:input.candidate.artifactSha256,runId:`${input.candidate.assetId}-verify`,files:input.files,
+      deliveryContract:portableDeliveryContract(input.sourceInspection??input.inspection,input.decisions.filter(d=>d.baseAssetId===input.baseAssetId),input.sourceSkillFile)});
     if(actual?.status==='ABSTAINED')return blocked('CANDIDATE_ANALYSIS','ANALYSIS_ABSTAINED','候选分析明确无法确认实际能力与依赖，请补充依据或修改产物');
     if(actual?.status!=='PRODUCED')return conflict('生成候选的实际能力与依赖未能重新确认，请查看分析记录');
     inspection=this.analysis.results.inspection({payload:actual.payload,assetId:input.candidate.assetId,

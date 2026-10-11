@@ -3,7 +3,7 @@ import {MigrationReuseAcceptanceService} from '../src/migration/application/migr
 import {reuseAcceptancePlanSchema,reuseAcceptancePlanIssues} from '../src/migration/domain/migration-reuse-acceptance.js';
 import {reuseInputDigest} from '../src/migration/domain/migration-reuse-design.js';
 import {simpleMigrationCases,simpleMigrationSuiteSchema,normalizeOriginalServiceSuite} from '../src/migration/domain/simple-migration-suite.js';
-import {inspectionFixture} from './analysis-fixture.js';
+import {inspectionFixture,toolFixture} from './analysis-fixture.js';
 import type {MigrationProject} from '../src/migration/domain/migration-project.js';
 import {ReuseAcceptanceError} from '../src/migration/domain/migration-reuse-failure.js';
 import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-execution-contract.js';
@@ -49,6 +49,24 @@ function deploymentFixture(){
  const choice={environmentId:'selected',modelId:'model',additionalRuntimes:[{environmentId:'other',modelId:'model'}],plan};
  return {...f,other,choice};
 }
+
+it('uses the same preserved Script input contract for binding, planning and final check context',async()=>{
+ const f=fixture(),schema={type:'object',properties:{subtotal:{type:'string'},tax_rate:{type:'string'}},required:['subtotal','tax_rate']};
+ const tool=toolFixture({name:'calculate',sourcePaths:['scripts/calculate.py'],kind:'SCRIPT',inputSchema:null,entrypoint:{kind:'PYTHON',path:'scripts/calculate.py'}});
+ f.project.sourceInspection!.tools=[{...tool,inputSchema:schema}];
+ f.project.inspection!.tools=[tool];f.project.inspection!.assetDigest=f.project.candidate!.artifactSha256;
+ f.project.portableGenerations=[{toolId:tool.toolId,toolName:tool.name,form:'SCRIPT',entrypoint:tool.entrypoint!.path} as never];
+ f.project.reuseProposal!.design.changes=[{id:'portable'} as never];
+ f.project.inspection!.reuseConformance!.review={changes:[{changeId:'portable',status:'CONFORMING'} as never],unexpectedDependencies:[],semanticIssues:[]};
+ f.project.reuseProposal!.inputDigest=reuseInputDigest(f.project.sourceInspection!,[],f.project.source.artifactSha256);
+ const saved=await f.approve();
+ const planning=(f.model.mock.calls.find(c=>c[0].mode==='PLAN')![0] as any).context;
+ expect(planning.tools[0].inputSchema).toEqual(schema);expect(f.project.inspection!.tools[0]!.inputSchema).toBeNull();
+ await f.service.start(f.project.id,{planId:saved.planId,inputDigest:saved.inputDigest});await f.finish();
+ const verification=(f.model.mock.calls.find(c=>c[0].mode==='VERIFY')![0] as any).context;
+ expect(verification.tools[0].inputSchema).toEqual(schema);
+ await f.service.shutdown();
+});
 
 it('executes separate frozen admitted deployments, not aliases or merely fresh instances',async()=>{
  const f=deploymentFixture(),p=await f.service.propose(f.project.id,f.choice);

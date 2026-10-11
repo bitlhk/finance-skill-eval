@@ -4,6 +4,19 @@ import {judgeRuntimeEvidence} from '../src/judge-runtime-evidence.js';
 import {workspaceFilesDigest} from '../src/contracts.js';
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
+it.each(['match','extra-argument','changed-value','missing-field','omitted-result','failed-source','failed-consumer','wrong-ordinal','unverified','unfinished','no-schema'] as const)('matches authorized earlier tool results to full consumer argument digests: %s',change=>{
+ const values={subtotal:'PRIVATE_AMOUNT',tax_rate:'0.13'};
+ const payload={...values,...(change==='extra-argument'?{other:'x'}:{}),...(change==='changed-value'?{tax_rate:'0.00'}:{})};
+ const source={tool:'lookup',status:change==='failed-source'?'failed':'completed',result:JSON.stringify(change==='missing-field'?{subtotal:values.subtotal}:values),...(change==='omitted-result'?{resultOmitted:true}:{})};
+ const consumer={tool:'calculate',status:change==='failed-consumer'?'failed':'completed',argumentsDigest:canonicalSha256(payload)};
+ const evidence={runtimeIdentityVerified:change!=='unverified',streamCompleted:change!=='unfinished',status:'completed',
+  toolCalls:[{name:change==='wrong-ordinal'?'other':'lookup',status:source.status},{name:'calculate',status:consumer.status}],metadata:{toolEvidence:[source,consumer]}};
+ const result=judgeRuntimeEvidence(evidence as never,{tools:change==='no-schema'?[]:[{name:'calculate',inputSchema:{type:'object',properties:{subtotal:{type:'string'},tax_rate:{type:'string'}},required:['subtotal','tax_rate']}}]});
+ expect(result.toolResultInputMatches).toEqual(change==='match'?[{sourceTool:'lookup',sourceCallIndex:0,tool:'calculate',callIndex:1,fields:['subtotal','tax_rate']}]:[]);
+ expect(JSON.stringify(result.toolResultInputMatches)).not.toContain('PRIVATE_AMOUNT');
+ expect(JSON.stringify(result.toolResultInputMatches)).not.toContain('0.13');
+});
+
 it('preserves native execution proof without workspace contents, paths or source digests',()=>{
   const evidence=runtimeExecutionEvidenceSchema.parse({runId:'r',caseId:'c',side:'right',status:'completed',modelId:'m',skillVersion:null,output:'answer',elapsedMs:1,runtimeIdentityVerified:true,streamCompleted:true,error:null,
     toolCalls:[{name:'read_file',status:'completed'},{name:'read_file',status:'failed'},{name:'list_files',status:'completed'},{name:'balance',status:'completed'}],

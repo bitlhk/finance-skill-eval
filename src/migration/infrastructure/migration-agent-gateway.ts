@@ -48,6 +48,7 @@ export async function analyzeWithAgent(input:{
   files:Record<string,Uint8Array>;
   supplements?:import('../domain/migration-dependency.js').AnalysisSupplement[];
   targetRuntime?:import('../../shared/contracts/runtime-launcher.js').RuntimeLauncherCapabilities;
+  deliveryContract?:Record<string,unknown>;
 },options:MigrationAgentOptions):Promise<MigrationAnalysis|null>{
   if(!migrationAgentEnabled())return null;
   let result:AgentResult<{reason?:string;missing?:string[]}>;

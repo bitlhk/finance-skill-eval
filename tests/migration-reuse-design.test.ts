@@ -370,7 +370,13 @@ it('requires every approved change to have candidate evidence and preserves actu
   source.dependencyAnalysis!.dependencies.push({key:'old-identity-sdk',action:'MOVE_TO_RUNTIME'} as any);
   const diagnose=vi.fn(async()=>({digest:candidate.artifactSha256,status:'COMPLETE',coverage:[],findings:[],ai:{status:'NOT_REQUESTED'},scannerDigest:'c'.repeat(64)}));
   const inspectionService=new MigrationCandidateInspectionService({diagnose} as any,{
-    analyzer:async()=>({status:'PRODUCED',payload:{}}),results:{inspection:()=>structuredClone(actual)} as any,
+    analyzer:async input=>{
+      expect(input.deliveryContract).toHaveProperty('mcp.launcher.portEnvironment','PORT');
+      expect(input.deliveryContract).toHaveProperty('mcp.launcher.defaultPort',8080);
+      expect(input.deliveryContract).toHaveProperty('mcp.contextTransport','HTTP_HEADER');
+      expect(input.deliveryContract).toHaveProperty('mcp.serviceConfigurationTransport','SERVICE_ENV');
+      return {status:'PRODUCED',payload:{}};
+    },results:{inspection:()=>structuredClone(actual)} as any,
     dependencies:{analyze:()=>structuredClone(actual.dependencyAnalysis!)},reusePlanner:async input=>{
       if(input.mode==='REVIEW')expect(reuseModelContext(input)).toHaveProperty('deliveryContract.mcp.launcher.portEnvironment','PORT');
       return reusePlannerFixture(input);

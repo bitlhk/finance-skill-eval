@@ -19,6 +19,7 @@ import {judgeRuntimeEvidence} from '../../judge-runtime-evidence.js';
 import {reuseExecutionContract} from '../domain/migration-reuse-execution-contract.js';
 import {verifiedToolProcessEvidence} from '../../runtime-tool-process-evidence.js';
 import {runtimeLauncherDeliverySchema} from '../../shared/contracts/environment.js';
+import {migrationScriptInputSchema} from '../domain/migration-script-contract.js';
 import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 
 const digest=(value:unknown)=>canonicalSha256(JSON.parse(JSON.stringify(value)));
@@ -83,7 +84,7 @@ export class MigrationReuseAcceptanceService{
         return conflict('跨部署验收需要不同的已准入 Launcher 部署，不能使用同部署别名或仅创建新实例');
     }
     return {proposalId:proposal.proposalId,proposalDigest:digest({inputDigest:proposal.inputDigest,design:proposal.design}),candidateDigest:project.candidate.artifactSha256,
-      inspectionDigest:digest({tools:project.inspection.tools,skill:project.inspection.skill,dependencies:project.inspection.dependencyAnalysis,capabilities:project.inspection.runtimeCapabilities,review:project.inspection.reuseConformance.review}),
+      inspectionDigest:digest({tools:project.inspection.tools.map(tool=>({...tool,inputSchema:migrationScriptInputSchema(project,tool)})),skill:project.inspection.skill,dependencies:project.inspection.dependencyAnalysis,capabilities:project.inspection.runtimeCapabilities,review:project.inspection.reuseConformance.review}),
       configurationDigest:executionConfigurationDigest(await this.d.configs.get(id),project.sourceInspection?.dependencyAnalysis?.dependencies),
       ...primary,...(additional.length?{additionalRuntimes:additional}: {})};
   }
@@ -105,7 +106,7 @@ export class MigrationReuseAcceptanceService{
     const planningFeedback=parsed.plan===undefined&&previous&&planIntact(previous)
       &&digest(previous.binding)===digest(binding)&&previous.coverage.status==='INCOMPLETE'
       ?{previousPlan:previous.plan,coverage:previous.coverage}:undefined;
-    const context={...(planningFeedback?{planningFeedback}:{}),executionContract:reuseExecutionContract,design:proposal.design,...artifactEvidence,candidateReview:project.inspection!.reuseConformance,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:tool.inputSchema,outputSchema:tool.outputSchema,samples:tool.samples})),
+    const context={...(planningFeedback?{planningFeedback}:{}),executionContract:reuseExecutionContract,design:proposal.design,...artifactEvidence,candidateReview:project.inspection!.reuseConformance,tools:project.inspection!.tools.map(tool=>({name:tool.name,inputSchema:migrationScriptInputSchema(project,tool),outputSchema:tool.outputSchema,samples:tool.samples})),
       runtimeCapabilities:capabilities,availableRunTargets,executionSemantics:'group=fresh Runtime instance at the frozen group.runtime target (default primary); distinct deployments require distinct admitted deployment identities, not just fresh instances; case=fresh native session/workspace/MCP scope; turns=preserved native session/workspace/MCP scope',
       evaluatorEvidence:{caseJudge:{available:['当前案例实际查询、分轮输出及成功/失败工具调用','已采集且获授权的 sourceFacts 结果投影；不保证包含内部判定原因','工作区挂载摘要；不等于文件内容或成功读取','可选 workspaceInputMatches：仅匹配成功 read_file 调用及满足实际摘要核对条件的字段；无记录不能推断'],unavailable:['原生实例/会话/工作区身份标识与其他案例或运行组的事实','workspaceFiles 正文、目录完整清单、未挂载文件不存在的证明','工具原始实参与脚本内部读取、规则执行原因；argumentsDigest 不可逆','交付源码、业务规则与 Skill 文档原文']},checkJudge:{available:['关联案例输出、评测、实际采集的调用和输入匹配','跨案例实例/会话/工作区身份比较','当前绑定的真实 candidateFiles，可检查源码、文档和规则事实'],rule:'原承诺不能删减；源码/规则、宿主与跨案例事实放 checks.criteria。case.criteria 仅验证当前案例实际可见证据；将规则推导当成工具可见结果、将挂载当读取，或将结果错误当目录证明，都应返回 INCOMPLETE 并要求修正判据层级'}},
       evidenceSemantics:'Per-case Judge receives actual turn queries, per-turn native output/tool-name receipts, overall tool calls, and authorized redacted business result projections. Original tool arguments are not exposed; hashes do not let Judge reconstruct them. Eval can exactly match read_file argument/result hashes to mounted case files, and Script input hashes to a JSON object projection using its declared inputSchema; these optional workspaceInputMatches prove value equality, not causal program data flow. Missing matches cannot be assumed. Instance/session/workspace identity comparisons belong to check-level verification across cases, not one-case criteria. Do not introduce unobservable criteria absent from original requirements; requirements genuinely depending on unavailable evidence remain uncovered.'};
@@ -251,6 +252,7 @@ export class MigrationReuseAcceptanceService{
           toolCalls:evidence.toolCalls,toolEvidence:evidence.metadata.toolEvidence,
           toolProcessEvidence:verifiedToolProcessEvidence(evidence),
           workspaceInputMatches:judgeRuntimeEvidence(evidence,{workspaceFiles:definition.workspaceFiles,tools:project.inspection?.tools}).workspaceInputMatches,
+          toolResultInputMatches:judgeRuntimeEvidence(evidence,{tools:project.inspection?.tools.map(tool=>({...tool,inputSchema:migrationScriptInputSchema(project,tool)}))}).toolResultInputMatches,
           assessment:result.judge?.goalAssessment});
       }
     }
@@ -280,7 +282,7 @@ export class MigrationReuseAcceptanceService{
     })));
     await this.guard(id,task,signal);
     const verdicts=reuseAcceptanceVerdictsSchema.parse(await this.d.model({mode:'VERIFY',context:{scope:design.scope,conditions:design.conditions,requirements:design.acceptanceChecks,plan,observed,
-      ...artifactEvidence,executionEnvironments,candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
+      ...artifactEvidence,executionEnvironments,tools:current.inspection?.tools.map(tool=>({name:tool.name,inputSchema:migrationScriptInputSchema(current,tool),outputSchema:tool.outputSchema})),candidateReview:current.inspection?.reuseConformance,artifactDigest:task.binding.candidateDigest},signal}));
     if(verdicts.checks.length!==plan.checks.length||new Set(verdicts.checks.map(c=>c.checkId)).size!==plan.checks.length)return conflict('复用验收判定未完整覆盖要求');
     for(const result of verdicts.checks){const expected=plan.checks.find(c=>c.checkId===result.checkId);
       if(!expected||new Set(result.caseIds).size!==result.caseIds.length||result.caseIds.some(c=>!expected.caseIds.includes(c))
