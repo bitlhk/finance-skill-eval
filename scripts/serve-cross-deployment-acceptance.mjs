@@ -17,6 +17,9 @@ assert(!git('status','--porcelain'),'Commit acceptance implementation before tes
 const builder=process.env.CLOSEOUT_BUILDER_ROOT??path.resolve(root,'../agent-store-builder-dev-wo-fork/community/finance/builder/finance-solution-builder');
 const builderCommit=process.env.CLOSEOUT_BUILDER_COMMIT;
 assert(builderCommit,'Explicit immutable Builder commit required');
+const attempt={schemaVersion:1,startedAt:new Date().toISOString(),eval:git('rev-parse','HEAD'),builder:builderCommit,
+ launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,status:'STARTING',admitted:[]};
+await writeFile(path.join(work,'attempt.json'),JSON.stringify(attempt,null,2));
 const pinned=await pinnedBuilderSource({project:builder,commit:builderCommit,destination:work});
 const data=path.join(work,'data');await mkdir(data);
 const skills=new SkillStore(data);await skills.initialize();
@@ -53,12 +56,22 @@ try{
   admitted.push({environmentId:accepted.environment.environmentId,deploymentId:accepted.environment.delivery.deploymentId,
    artifactSha256:accepted.environment.delivery.artifactSha256,capabilitiesDigest:accepted.environment.delivery.capabilitiesDigest,
    evalConformance:accepted.environment.delivery.evalConformance});
+  attempt.admitted=admitted;attempt.status='ADMITTING';
+  await writeFile(path.join(work,'attempt.json'),JSON.stringify(attempt,null,2));
  }
  app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),publicDemo:false,
   accessToken:'cross-deployment-ui',launcherTrust:trust});app.log.level='error';
  const url=await app.listen({host:'127.0.0.1',port:0});
- const metadata={url,work,data,eval:git('rev-parse','HEAD'),builder:builderCommit,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted};
+ const metadata={url,work,data,eval:attempt.eval,builder:builderCommit,launcherBackend:'NATIVE_PACKAGE',harnessExecuted:false,admitted};
  await writeFile(path.join(work,'service.json'),JSON.stringify(metadata,null,2));console.log(JSON.stringify({url,work,admittedDeployments:admitted.length}));
+ attempt.status='READY_FOR_UI';await writeFile(path.join(work,'attempt.json'),JSON.stringify(attempt,null,2));
  process.once('SIGINT',()=>void shutdown());process.once('SIGTERM',()=>void shutdown());
  while(!closed){assert.equal(child.exitCode,null,'Private deployment host stopped');try{await readFile(path.join(work,'stop'));await shutdown()}catch(e){if(e.code!=='ENOENT')throw e}await new Promise(r=>setTimeout(r,500));}
+}catch(error){
+ attempt.status='FAILED';attempt.failedAt=new Date().toISOString();
+ // Copy only stable codes, never arbitrary provider text, URLs or connection info.
+ attempt.failureCode=String(error?.message??'').match(/\bEVAL_[A-Z0-9_]{1,80}\b/u)?.[0]??'ACCEPTANCE_HOST_FAILED';
+ attempt.modelFailures=[...stderr.matchAll(/Package model call failed: category=(AUTH|RATE_LIMIT|UPSTREAM|REQUEST|TIMEOUT|TRANSPORT|RESPONSE|UNKNOWN) httpStatus=(None|[45][0-9]{2})/gu)]
+  .map(m=>({category:m[1],...(m[2]==='None'?{}:{httpStatus:Number(m[2])})}));
+ await writeFile(path.join(work,'attempt.json'),JSON.stringify(attempt,null,2));throw error;
 }finally{await shutdown();if(stderr)await writeFile(path.join(work,'launcher-private.log'),stderr);}
