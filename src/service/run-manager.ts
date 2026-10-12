@@ -229,7 +229,8 @@ export class EvaluationRunManager {
       if (variant.mode !== "skill_version") return null;
       const matches = assets.filter(item => item.skillId === variant.skillId && item.version === variant.version
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
-      const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
+      const asset = matches.find(item => item.assetId === assetId)
+        ?? (matches.length===1&&(!strict||Boolean(assetId||variant.artifactSha256))?matches[0]:null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
       let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined,archiveBase64:string|undefined,archiveSha256:string|undefined;
       const files=await this.options.skills.readFiles(asset.assetId);
@@ -313,6 +314,7 @@ export class EvaluationRunManager {
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
     if(configuration.runtime.type==='runtime_launcher'){
+      const resolveLauncherSkill=await this.skillResolver(configuration.skillAssetId,true,false,[],true);
       const selectedEnvironment=await this.options.environments.requireAvailable(configuration.runtime.environmentId);
       if(!selectedEnvironment)throw new Error('所选执行环境不可用');
       const launcher=(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
@@ -323,7 +325,7 @@ export class EvaluationRunManager {
         &&pack.variants.left.mode==='without_target_skill'&&pack.variants.right.mode==='skill_version';
       for(const side of (bareModelComparison?['right'] as const:['left','right'] as const))if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
       const makeSide=async(side:'left'|'right')=>{
-        const skill=await resolveSkill(pack.variants[side]);
+        const skill=await resolveLauncherSkill(pack.variants[side]);
         const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
         const descriptor=await this.environmentDescriptor(selectedEnvironment,required,[],[],false,configuration.runtimeHarnessTools,true);
         if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
