@@ -105,5 +105,6 @@ describe("DirectModelRuntimeAdapter", () => {
       installedToolInventory:{status:'COMPLETE',tools:[]},toolAttemptEvidence:{status:'COMPLETE',zeroCalls:true},
       configuredModelId:'upstream-model',comparisonModelId:'same-model'});
     expect(model.complete).toHaveBeenLastCalledWith(expect.objectContaining({model:expect.objectContaining({modelId:'upstream-model',parameters:{temperature:0}})}));
+    expect(runtime.finalizationEvidence()).toEqual({status:'NOT_APPLICABLE',reason:'DIRECT_MODEL_DOES_NOT_CREATE_RUNTIME_INSTANCE'});
   });
 });

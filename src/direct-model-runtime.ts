@@ -34,6 +34,10 @@ export class DirectModelRuntimeAdapter implements RuntimeAdapter {
     this.adapterId = options.adapterId ?? "direct-model-skill-runtime-v1";
   }
 
+  finalizationEvidence():Record<string,unknown>{
+    return {status:"NOT_APPLICABLE",reason:"DIRECT_MODEL_DOES_NOT_CREATE_RUNTIME_INSTANCE"};
+  }
+
   async execute(request: RuntimeExecutionRequest): Promise<RuntimeExecutionEvidence> {
     if (request.evalCase.requiredTools.length > 0
       && !(this.options.allowToollessBaseline && request.variant.mode === "without_target_skill")) {
