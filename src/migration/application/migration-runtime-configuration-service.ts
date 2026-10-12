@@ -13,7 +13,7 @@ const MANAGED_PROCUREMENT_SERVICE = 'managed://procurement-review-v1';
 
 function resolveManagedServiceAddress(environment:Record<string,string>):Record<string,string>{
   if(environment.BUSINESS_SERVICE_URL!==MANAGED_PROCUREMENT_SERVICE)return environment;
-  const address=process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL?.trim();
+  const address=(process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL??process.env.MIGRATION_MANAGED_PROCUREMENT_URL)?.trim();
   if(!address)throw conflict('合成采购业务服务当前不可用，请联系维护者检查受管服务配置');
   return {...environment,BUSINESS_SERVICE_URL:address};
 }
