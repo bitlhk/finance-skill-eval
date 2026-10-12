@@ -37,6 +37,10 @@ jobs:
       - run: python -m unittest discover -s scripts -p test_retained_launcher_evidence.py
       - run: python -m unittest discover -s scripts -p test_managed_release_capacity.py
       - run: pnpm build
+      - name: Verify migration container isolation and cleanup
+        run: |
+          docker build -f deploy/Dockerfile.migration-sandbox -t finance-migration-sandbox .
+          FINANCE_EVAL_TEST_SANDBOX_IMAGE=$(docker image inspect finance-migration-sandbox --format '{{.Id}}') pnpm exec vitest run tests/container-migration-validator.test.ts
       - name: Run the MCP skeletons the skill package hands the agent
         env:
           FINANCE_EVAL_MIGRATION_PYTHON: integrations/openjiuwen/.venv/bin/python

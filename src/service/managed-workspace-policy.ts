@@ -1,9 +1,10 @@
 import type {RunConfiguration} from './contracts.js';
 
-export function managedWorkspaceOperation(method:string,route:string){
+export function managedWorkspaceOperation(method:string,route:string,isolatedTrials=false){
   if(['GET','HEAD','OPTIONS'].includes(method))return true;
   if(route==='/api/environments'||/^\/api\/environments\/[^/]+$/u.test(route))return false;
-  return !/^\/api\/migrations\/[^/]+\/(check-business-connection|validate\/technical)$/u.test(route);
+  if(method==='POST'&&/^\/api\/migrations\/[^/]+\/validate\/technical$/u.test(route))return isolatedTrials;
+  return !/^\/api\/migrations\/[^/]+\/check-business-connection$/u.test(route);
 }
 
 export function requireManagedRun(configuration:RunConfiguration){

@@ -34,6 +34,12 @@ describe("per-completion deadline", () => {
 });
 
 describe("Builder Launcher admission",()=>{
+  it("loads operator-owned container trials with networking disabled by default",()=>{
+    vi.stubEnv("FINANCE_EVAL_MIGRATION_SANDBOX_JSON",JSON.stringify({image:'sha256:'+'a'.repeat(64)}));
+    expect(loadServiceConfig().migrationSandbox).toMatchObject({network:'none',maxConcurrent:1});
+    vi.stubEnv("FINANCE_EVAL_MIGRATION_SANDBOX_JSON",JSON.stringify({image:'sha256:'+'a'.repeat(64),network:'host'}));
+    expect(()=>loadServiceConfig()).toThrow();
+  });
   it("normalizes operator-managed targets and rejects insecure remote prefixes",()=>{
     vi.stubEnv("FINANCE_EVAL_LAUNCHER_TRUST_JSON",JSON.stringify([{reference:"builder-local",label:"Local Builder",baseUrlPrefix:"http://127.0.0.1:9000/launchers",credentialEnv:null}]));
     expect(loadServiceConfig().launcherTrust).toEqual([{reference:"builder-local",label:"Local Builder",baseUrlPrefix:"http://127.0.0.1:9000/launchers/",credentialEnv:null}]);

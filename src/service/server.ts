@@ -28,6 +28,7 @@ import type { MigrationSuiteGenerator } from '../migration/application/migration
 import { runConfigurationSchema } from "./contracts.js";
 import {createAccountWorkspaces} from './account-workspaces.js';
 import {managedWorkspaceOperation} from './managed-workspace-policy.js';
+import {ContainerMigrationValidationRunner} from '../migration/infrastructure/container-migration-validator.js';
 import {EvaluationRunBudget} from './evaluation-run-budget.js';
 
 function markdownReport(report: EvaluationReport): string {
@@ -68,13 +69,14 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;runBudget?:EvaluationRunBudget} = {},
+  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;runBudget?:EvaluationRunBudget;migrationValidationRunner?:ContainerMigrationValidationRunner} = {},
 ): Promise<FastifyInstance> {
-  const {migrationAnalyzer,migrationImplementer,migrationSuite,runBudget,...configOverrides}=overrides;
+  const {migrationAnalyzer,migrationImplementer,migrationSuite,runBudget,migrationValidationRunner,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
+  const validationRunner=migrationValidationRunner??(config.migrationSandbox?new ContainerMigrationValidationRunner(config.migrationSandbox):undefined);
   if(config.workspaceMode==='account'){
     const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
-    const app=await createAccountWorkspaces(config,child=>createEvaluationService({...overrides,...child,runBudget:sharedBudget}));
+    const app=await createAccountWorkspaces(config,child=>createEvaluationService({...overrides,...child,runBudget:sharedBudget,migrationValidationRunner:validationRunner}));
     await registerWeb(app,config);
     return app;
   }
@@ -114,9 +116,9 @@ export async function createEvaluationService(
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();});
+  app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();await validationRunner?.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
-    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
+    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,validationRunner});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
   registerMigrationRoutes(app, {
     migrations,
@@ -153,7 +155,13 @@ export async function createEvaluationService(
     }
   });
   app.addHook("preValidation", async (request, reply) => {
-    if(config.managedWorkspace&&!managedWorkspaceOperation(request.method,request.routeOptions.url??request.url))
+    const policyRoute=request.routeOptions.url??request.url;
+    if(config.managedWorkspace&&policyRoute==='/api/migrations/:id/validate/technical'){
+      if(!validationRunner)return reply.code(503).send({error:'MIGRATION_SANDBOX_REQUIRED',message:'尚未配置隔离试运行环境，请联系管理员启用后重试。'});
+      const body=request.body as {endpoint?:unknown}|null;
+      if(body?.endpoint)return reply.code(400).send({error:'EXTERNAL_MCP_NOT_SUPPORTED',message:'隔离试运行仅启动候选包中的 MCP，不连接外部 MCP 地址。'});
+    }
+    if(config.managedWorkspace&&!managedWorkspaceOperation(request.method,policyRoute,Boolean(validationRunner)))
       return reply.code(403).send({error:'MANAGED_CONFIGURATION_REQUIRED',message:'此入口使用平台已配置的执行环境；新增接口或代码需由维护者审核接入。'});
     if(!config.publicDemo || !request.url.startsWith('/api/') || request.method==='GET') return;
     demo.identity(request.headers['x-demo-user']);
@@ -214,6 +222,9 @@ export async function createEvaluationService(
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
       publicDemo: Boolean(config.publicDemo),
       managedWorkspace:Boolean(config.managedWorkspace),
+      migrationToolValidation:{available:!config.managedWorkspace||Boolean(validationRunner),
+        mode:validationRunner?'ISOLATED_CONTAINER':'LOCAL_TRUSTED',
+        reason:config.managedWorkspace&&!validationRunner?'尚未配置隔离试运行环境，请联系管理员启用后重试。':null},
       featuredSkills: catalog.listFeaturedSkills(onlineRuntimeReady).map(skill => ({ ...skill,
         evaluationStatus: skill.evaluationStatus === "pack_required" ? "pack_required" :
           onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),

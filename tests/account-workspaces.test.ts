@@ -1,4 +1,4 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,mkdir,readFile,rm,symlink,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
@@ -9,19 +9,22 @@ import {createEvaluationService} from '../src/service/server.js';
 import {createAccountWorkspaces,readWorkspaceSeed} from '../src/service/account-workspaces.js';
 import {requireManagedRun,managedWorkspaceOperation} from '../src/service/managed-workspace-policy.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
+import {ContainerMigrationValidationRunner} from '../src/migration/infrastructure/container-migration-validator.js';
+import {MigrationProjectRepository} from '../src/migration/infrastructure/migration-project-repository.js';
+import {inspectionFixture,toolFixture} from './analysis-fixture.js';
 
 const roots:string[]=[],apps:FastifyInstance[]=[];
 const hash=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
 const origin='https://eval.example.test';
 const headers=(subject:string)=>({authorization:'Bearer synthetic-ingress','x-demo-user':subject,origin});
-afterEach(async()=>{await Promise.all(apps.splice(0).map(app=>app.close()));await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
-async function setup(maximum=64){
+afterEach(async()=>{vi.restoreAllMocks();await Promise.all(apps.splice(0).map(app=>app.close()));await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+async function setup(maximum=64,sandbox=false){
   const root=await mkdtemp(path.join(tmpdir(),'account-eval-'));roots.push(root);
   const seed=path.join(root,'seed');await mkdir(seed);
   const config={rootDirectory:path.resolve('.'),dataDirectory:path.join(root,'data'),accessToken:'synthetic-ingress',
     publicDemo:false,workspaceOrigin:origin,workspaceSubject:'studio_2',workspaceMode:'account' as const,
     workspaceSeedDirectory:seed,workspaceSeedSha256:hash('[]'),workspaceMaxAccounts:maximum};
-  const app=await createEvaluationService(config);apps.push(app);return {root,seed,config,app};
+  const app=await createEvaluationService({...config,...(sandbox?{migrationSandbox:{image:'sha256:'+'a'.repeat(64),network:'none',timeoutMs:1000,maxConcurrent:1}}:{})});apps.push(app);return {root,seed,config,app};
 }
 const archive=()=>Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: private-marker\nversion: 1.0.0\ndescription: synthetic\n---\nPRIVATE_ACCOUNT_MARKER_951\n')}));
 
@@ -41,6 +44,7 @@ it('authenticates every account without an administrator whitelist and isolates 
   expect(other.json().uploadedSkills).toEqual([]);
   expect(other.body).not.toContain(id);
   expect(other.json().managedWorkspace).toBe(true);
+  expect(other.json().migrationToolValidation.available).toBe(false);
   expect((await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers('studio_bob'),origin:'https://attacker.test','content-type':'application/zip'},payload:archive()})).statusCode).toBe(403);
 });
 
@@ -83,7 +87,56 @@ it('blocks arbitrary environment credentials and enforces workspace capacity',as
   expect(reply.statusCode).toBe(403);expect(reply.json().error).toBe('MANAGED_CONFIGURATION_REQUIRED');
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/check-business-connection')).toBe(false);
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/validate/technical')).toBe(false);
+  expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/validate/technical',true)).toBe(true);
+  expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/check-business-connection',true)).toBe(false);
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/native-candidate')).toBe(true);
+});
+
+it('explains missing isolation instead of implying per-project approval',async()=>{
+  const {app}=await setup();
+  const reply=await app.inject({method:'POST',url:'/api/migrations/migration-a/validate/technical',headers:headers('studio_a'),payload:{}});
+  expect(reply.statusCode).toBe(503);expect(reply.json().error).toBe('MIGRATION_SANDBOX_REQUIRED');
+});
+
+it('allows isolated trial admission but preserves account ownership and environment restrictions',async()=>{
+  const {app}=await setup(64,true);
+  const catalog=await app.inject({url:'/api/catalog',headers:headers('studio_alice')});
+  expect(catalog.json().migrationToolValidation).toMatchObject({available:true,mode:'ISOLATED_CONTAINER'});
+  const uploaded=await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers('studio_alice'),'content-type':'application/zip'},payload:archive()});
+  const created=await app.inject({method:'POST',url:'/api/migrations',headers:headers('studio_alice'),payload:{sourceAssetId:uploaded.json().assetId,name:'trial'}});
+  expect(created.statusCode,created.body).toBe(200);
+  const project=created.json(),url=`/api/migrations/${project.id}/validate/technical`;
+  const payload={toolId:'synthetic',baseAssetId:uploaded.json().assetId};
+  const own=await app.inject({method:'POST',url,headers:headers('studio_alice'),payload});
+  expect(own.statusCode,own.body).toBe(409);expect(own.body).toContain('Tool 检查');
+  const other=await app.inject({method:'POST',url,headers:headers('studio_bob'),payload});
+  expect(other.statusCode,other.body).toBe(404);
+  const external=await app.inject({method:'POST',url,headers:headers('studio_alice'),payload:{...payload,endpoint:'http://127.0.0.1:9999/mcp'}});
+  expect(external.statusCode).toBe(400);expect(external.json().error).toBe('EXTERNAL_MCP_NOT_SUPPORTED');
+  const registration=await app.inject({method:'POST',url:'/api/environments',headers:headers('studio_alice'),payload:{}});
+  expect(registration.statusCode).toBe(403);
+});
+
+it('persists an isolated trial result through the managed route and rejects stale assets',async()=>{
+  const {app,config}=await setup(64,true);
+  const uploaded=await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers('studio_alice'),'content-type':'application/zip'},payload:archive()});
+  const asset=uploaded.json();
+  const created=await app.inject({method:'POST',url:'/api/migrations',headers:headers('studio_alice'),payload:{sourceAssetId:asset.assetId,name:'trial'}});
+  const project=created.json(),tool=toolFixture({name:'trial',kind:'SCRIPT',sourcePaths:['run.mjs'],entrypoint:{kind:'NODE',path:'run.mjs'}});
+  const repository=new MigrationProjectRepository(path.join(config.dataDirectory,'account-workspaces',hash('studio_alice')));
+  project.inspection=inspectionFixture([tool],asset.assetId);await repository.save(project);
+  const runner=vi.spyOn(ContainerMigrationValidationRunner.prototype,'validateScript').mockResolvedValue({
+    validationId:'technical-synthetic',toolId:tool.toolId,assetId:asset.assetId,assetDigest:asset.artifactSha256,
+    implementationDigest:'a'.repeat(64),casesDigest:'b'.repeat(64),mode:'ISOLATED_CONTAINER',status:'PASSED',
+    startedAt:'2026-10-12T00:00:00Z',finishedAt:'2026-10-12T00:00:01Z',stages:[{name:'PROCESS',passed:true,message:'ok'}],error:null,
+  });
+  const url=`/api/migrations/${project.id}/validate/technical`,payload={toolId:tool.toolId,baseAssetId:asset.assetId,request:{value:1}};
+  const reply=await app.inject({method:'POST',url,headers:headers('studio_alice'),payload});
+  expect(reply.statusCode,reply.body).toBe(200);expect(reply.json().mode).toBe('ISOLATED_CONTAINER');
+  expect((await repository.get(project.id)).technicalValidations).toHaveLength(1);
+  expect(runner).toHaveBeenCalledOnce();expect(runner.mock.calls[0]![0].request).toEqual({value:1});
+  const stale=await app.inject({method:'POST',url,headers:headers('studio_alice'),payload:{...payload,baseAssetId:'asset-stale'}});
+  expect(stale.statusCode).toBe(409);expect(runner).toHaveBeenCalledOnce();
 });
 
 it('refuses seed history, wrong digests and symlinks',async()=>{

@@ -7,6 +7,7 @@ import type { ModelRef } from "../contracts.js";
 import { OpenAiCompatibleModelAdapter } from "../openai-compatible-model.js";
 import { runtimeLauncherBaseUrlSchema } from "../shared/contracts/runtime-launcher.js";
 import type {WorkspaceRequestLimits} from './workspace-request-budget.js';
+import {migrationSandboxSchema,type MigrationSandbox} from '../migration/infrastructure/container-migration-validator.js';
 
 export type ServiceConfig = {
   rootDirectory: string;
@@ -27,6 +28,7 @@ export type ServiceConfig = {
   workspacePreflightLimits?: WorkspaceRequestLimits;
   /** Internal account-service policy; not a browser-selected option. */
   managedWorkspace?: boolean;
+  migrationSandbox?:MigrationSandbox;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
 };
 
@@ -61,6 +63,8 @@ export function loadServiceConfig(): ServiceConfig {
     workspaceSubject: process.env.FINANCE_EVAL_WORKSPACE_SUBJECT?.trim() || undefined,
     workspaceOrigin: process.env.FINANCE_EVAL_WORKSPACE_ORIGIN?.trim() || undefined,
     workspaceMode,
+    migrationSandbox:process.env.FINANCE_EVAL_MIGRATION_SANDBOX_JSON?.trim()
+      ?migrationSandboxSchema.parse(JSON.parse(process.env.FINANCE_EVAL_MIGRATION_SANDBOX_JSON)):undefined,
     workspaceSeedDirectory:process.env.FINANCE_EVAL_WORKSPACE_SEED_DIRECTORY?.trim()||undefined,
     workspaceSeedSha256:process.env.FINANCE_EVAL_WORKSPACE_SEED_SHA256?.trim()||undefined,
     workspaceMaxAccounts:Number(process.env.FINANCE_EVAL_WORKSPACE_MAX_ACCOUNTS??64),

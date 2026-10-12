@@ -59,6 +59,14 @@ uses a staging directory and rename; existing account content is not overwritten
 when a seed changes. A stale `.initializing-*` directory after a crash fails
 closed; inspect it offline before retrying, rather than deleting user data.
 
+## Isolated tool trials
+
+Configure the container executor once to let accounts trial generated MCP and
+Script tools without per-project approval. See [migration-isolated-trials.md](migration-isolated-trials.md)
+for the immutable worker image, resource bounds and business-network setup.
+Without an executor, the UI explains the missing setup before a trial can start.
+This does not enable arbitrary host execution or change managed business-evaluation policy.
+
 ## Reviewed seed
 
 Build the seed in a clean temporary workspace using the existing asset import,
@@ -83,8 +91,9 @@ silently change a running service. Preserve the manifest with release evidence.
 ## Managed execution and capacity
 
 Accounts select approved environments, but cannot register arbitrary URLs or
-server credential names through the environment APIs. Direct uploaded script/MCP
-execution and arbitrary original-service connections are rejected. Static Skill
+server credential names through the environment APIs. Direct host script/MCP
+execution and arbitrary original-service connections are rejected. Isolated
+technical trials are available when the container executor is configured. Static Skill
 inspection, migration and native-tool binding remain available; unknown tools
 still need managed admission. These controls are enforced in the service, not
 only by hiding buttons.
