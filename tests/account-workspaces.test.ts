@@ -83,6 +83,7 @@ it('blocks arbitrary environment credentials and enforces workspace capacity',as
   expect(reply.statusCode).toBe(403);expect(reply.json().error).toBe('MANAGED_CONFIGURATION_REQUIRED');
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/check-business-connection')).toBe(false);
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/validate/technical')).toBe(false);
+  expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/validate/technical',{migrationSandboxEnabled:true})).toBe(true);
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/native-candidate')).toBe(true);
 });
 

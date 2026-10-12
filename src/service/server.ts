@@ -116,7 +116,7 @@ export async function createEvaluationService(
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
   app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
-    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
+    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,sandboxImage:config.migrationSandboxImage});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
   registerMigrationRoutes(app, {
     migrations,
@@ -153,7 +153,7 @@ export async function createEvaluationService(
     }
   });
   app.addHook("preValidation", async (request, reply) => {
-    if(config.managedWorkspace&&!managedWorkspaceOperation(request.method,request.routeOptions.url??request.url))
+    if(config.managedWorkspace&&!managedWorkspaceOperation(request.method,request.routeOptions.url??request.url,{migrationSandboxEnabled:Boolean(config.migrationSandboxImage)}))
       return reply.code(403).send({error:'MANAGED_CONFIGURATION_REQUIRED',message:'此入口使用平台已配置的执行环境；新增接口或代码需由维护者审核接入。'});
     if(!config.publicDemo || !request.url.startsWith('/api/') || request.method==='GET') return;
     demo.identity(request.headers['x-demo-user']);
@@ -214,6 +214,11 @@ export async function createEvaluationService(
       serviceVersion: FINANCE_SKILL_EVAL_VERSION,
       publicDemo: Boolean(config.publicDemo),
       managedWorkspace:Boolean(config.managedWorkspace),
+      migrationTechnicalValidation:{
+        status:config.migrationSandboxImage?'ready':'configuration_required',
+        mode:config.migrationSandboxImage?'isolated_container':'unavailable',
+        description:config.migrationSandboxImage?'上传工具在无外网、受资源限制的临时容器中试运行。':'当前部署未配置隔离工具试运行环境。',
+      },
       featuredSkills: catalog.listFeaturedSkills(onlineRuntimeReady).map(skill => ({ ...skill,
         evaluationStatus: skill.evaluationStatus === "pack_required" ? "pack_required" :
           onlineRuntimeReady && uploadedSkills.some(a => a.skillId === skill.skillId) ? "ready" : "environment_required" })),

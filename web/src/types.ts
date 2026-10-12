@@ -123,6 +123,11 @@ export type MigrationRuntime = {
 export type Catalog = {
   publicDemo?: boolean;
   managedWorkspace?: boolean;
+  migrationTechnicalValidation?:{
+    status:'ready'|'configuration_required';
+    mode:'isolated_container'|'unavailable';
+    description:string;
+  };
   serviceVersion: string;
   featuredSkills: FeaturedSkill[];
   evalPacks: EvalPackSummary[];
