@@ -72,7 +72,8 @@ describe("per-run AI questions", () => {
     const resolveLauncher = vi.fn(async (record:unknown) => { expect(record).toEqual(environment); return {launcher:environment,mcpEnvironmentIds:[],defaultModelId:null}; });
     const manager = new EvaluationRunManager({ jobs, maxConcurrentRuns: 1,
       catalog: { get: () => structuredClone(pack) } as never, preparations: {} as never,
-      skills: { list: async () => [asset], readSource: async () => skill.instructions, readFiles: async () => skill.files } as never,
+      skills: { list: async () => [asset], readSource: async () => skill.instructions, readFiles: async () => skill.files,
+        readArchive:async()=>Object.fromEntries([['SKILL.md',skill.instructions],...Object.entries(skill.files)].map(([name,value])=>[name,Buffer.from(value)])) } as never,
       environments: {
         get: async (id:string) => { expect(id).toBe(environment.environmentId); return environment; },
         requireAvailable,
@@ -89,7 +90,7 @@ describe("per-run AI questions", () => {
     const frozen = jobs.get(first.jobId)!.questionSet!;
     expect(frozen.cases[0]?.caseId).toBe("dynamic-one");
     const retry = await manager.retry(first.jobId);
-    await vi.waitFor(() => expect(jobs.get(retry.jobId)?.status).toBe("completed"));
+    await vi.waitFor(() => {const current=jobs.get(retry.jobId);if(current?.status==='failed')throw new Error(JSON.stringify(current.error));expect(current?.status).toBe("completed");});
     expect(mocks.complete).toHaveBeenCalledTimes(1);
     expect(jobs.get(retry.jobId)?.questionSet).toEqual(frozen);
     expect(mocks.run.mock.calls[0]![0].pack.cases).toEqual(mocks.run.mock.calls[1]![0].pack.cases);

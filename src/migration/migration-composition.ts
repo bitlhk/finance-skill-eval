@@ -41,6 +41,7 @@ import {YamlMigrationHarnessSerializer} from './infrastructure/migration-harness
 import {MigrationSupplements} from './infrastructure/migration-supplements.js';
 import {generateSuiteWithAnalyzer} from './infrastructure/migration-suite-generator.js';
 import {LocalMigrationCommandResolver,LocalMigrationValidationRunner} from './infrastructure/migration-technical-validator.js';
+import {DockerMigrationValidationRunner} from './infrastructure/docker-migration-validation-runner.js';
 
 export type MigrationCompositionOptions={
   root:string;
@@ -57,6 +58,7 @@ export type MigrationCompositionOptions={
   suiteGenerator?:MigrationSuiteGenerator;
   projects?:MigrationProjectStore;
   validationRunner?:MigrationValidationRunner;
+  sandboxImage?:string;
 };
 
 /** Creates the migration feature graph. The store itself remains a thin compatibility facade. */
@@ -74,7 +76,9 @@ export function createMigrationServices(options:MigrationCompositionOptions){
   const suiteGenerator=options.suiteGenerator??((input)=>generateSuiteWithAnalyzer(input,()=>configuredModelRole('ANALYZER')));
   const runtimeConfigs=new FileExecutionConfigurationRepository<ConnectionCheck>(root,'migration-runtime-config',id=>/^migration-[a-f0-9-]+$/u.test(id));
   const commandResolver=new LocalMigrationCommandResolver();
-  const validationRunner=options.validationRunner??new LocalMigrationValidationRunner(undefined,commandResolver);
+  const validationRunner=options.validationRunner??(options.sandboxImage
+    ?new DockerMigrationValidationRunner(options.sandboxImage)
+    :new LocalMigrationValidationRunner(undefined,commandResolver));
   const technicalValidation=new MigrationTechnicalValidationWorkflow(projects,skills,runtimeConfigs,validationRunner);
   const supplements=new MigrationSupplements(root);
   const agentResults=new AgentResultMapper();

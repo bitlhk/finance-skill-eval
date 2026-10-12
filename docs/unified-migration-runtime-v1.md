@@ -114,6 +114,31 @@ Eval then runs its own lifecycle admission using the actual candidate Skill.
 These implementations do not close Issue 38 without the remaining release gates.
 Existing approved banking tools do not require arbitrary MCP or script execution.
 
+### Managed migration trial sandbox
+
+Account workspaces keep direct local execution and arbitrary MCP endpoints blocked.
+An operator may enable the narrower trial path by building `sandbox/Dockerfile`
+and setting `FINANCE_EVAL_MIGRATION_SANDBOX_IMAGE` to the pinned local image.
+Only Python/Node scripts and package-contained Python/Node MCP services are admitted.
+Each trial uses a read-only, capability-free, resource-limited container. Scripts
+have no network; MCP services use a per-trial internal Docker network that has no
+external route. The service records the image reference and confirms deletion of
+the container, network and temporary workspace before reporting success.
+
+The sandbox does not install candidate dependencies, accept candidate-supplied
+environment variables, connect to a user-provided endpoint, or support Java.
+Candidates requiring a bank/API credential must bind an operator-managed test
+connection in a separately admitted execution environment. Upload and code
+generation still do not grant execution admission.
+
+```sh
+docker build -f sandbox/Dockerfile -t finance-eval-migration-sandbox:0.1.0 .
+FINANCE_EVAL_MIGRATION_SANDBOX_IMAGE=finance-eval-migration-sandbox:0.1.0 pnpm serve
+RUN_DOCKER_MIGRATION_SANDBOX_TESTS=1 \
+  FINANCE_EVAL_MIGRATION_SANDBOX_IMAGE=finance-eval-migration-sandbox:0.1.0 \
+  pnpm exec vitest run tests/docker-migration-validation-runner.test.ts
+```
+
 The native binding path reuses operator-admitted tool contracts instead of
 generating MCP wrappers for existing tools. The source diagnosis, every declared
 tool, target catalog, input/output contract and constraints must agree. A missing

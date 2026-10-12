@@ -16,6 +16,8 @@ import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
+import {MigrationTechnicalValidationWorkflow} from '../src/migration/application/migration-technical-validation-service.js';
+import {MigrationRuntimeConfigurationService} from '../src/migration/application/migration-runtime-configuration-service.js';
 
 function fixture(name='BUSINESS_SERVICE_URL'){
  const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);
@@ -52,6 +54,23 @@ it('rejects reserved environment names, non-scalar values and conflicting shared
  expect(serviceEnvironment([{...dep,schema:{type:'integer'},binding:{kind:'SERVICE_ENV',name:'BUSINESS_TIMEOUT_MS'}}],{[dep.id]:3000})).toEqual({BUSINESS_TIMEOUT_MS:'3000'});
 });
 
+it('reports missing service configuration as a conflict before starting the validation runner',async()=>{
+ const {tool,inspection}=fixture();
+ const source={assetId:'source',skillId:'fixture',version:'1.0.0',displayName:'Fixture',description:'Fixture',sourceType:'uploaded',
+  artifactSha256:'a'.repeat(64),skillFile:'SKILL.md',fileCount:2,createdAt:'2026-10-12T00:00:00.000Z'};
+ const project={id:'migration-1234',source,candidate:null,inspection,sourceInspection:inspection};
+ const runner={validateMcp:vi.fn(),validateScript:vi.fn()};
+ const workflow=new MigrationTechnicalValidationWorkflow(
+  {runExclusive:async(_id:string,action:()=>Promise<unknown>)=>await action(),get:async()=>project,save:vi.fn()} as never,
+  {readArchive:async()=>({'SKILL.md':strToU8('fixture')})} as never,
+  {get:async()=>({revision:0,values:{}})} as never,
+  runner as never,
+ );
+ await expect(workflow.validate(project.id,{toolId:tool.toolId,baseAssetId:source.assetId,arguments:{}}))
+  .rejects.toMatchObject({statusCode:409,message:expect.stringContaining('请先填写服务配置')});
+ expect(runner.validateMcp).not.toHaveBeenCalled();
+});
+
 it('resolves a revision-bound reference for selected tools and rejects changed configuration',async()=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'service-env-reference-'));
  const {inspection,dep,deps}=fixture(),id='migration-1234',assetDigest='a'.repeat(64);
@@ -70,6 +89,22 @@ it('resolves a revision-bound reference for selected tools and rejects changed c
   expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(false);
   await expect(store.resolveServiceEnvironment(ref,['lookup'])).rejects.toThrow('已变化');
  }finally{await rm(root,{recursive:true,force:true})}
+});
+
+it('resolves the managed procurement marker only from operator configuration',async()=>{
+  const previous=process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL;
+  process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL='http://127.0.0.1:19142';
+  try{
+    const {inspection,deps,dep}=fixture(),candidate={artifactSha256:'a'.repeat(64)};
+    const projects={get:async()=>({candidate,sourceInspection:inspection,inspection})};
+    const configs={get:async()=>({revision:1,values:{[dep.id]:'managed://procurement-review-v1'},checks:[]})};
+    const service=new MigrationRuntimeConfigurationService(projects as never,configs as never,{} as never,{} as never);
+    const digest=configurationDigest(await configs.get(),deps);
+    await expect(service.resolveServiceEnvironment({migrationId:'migration-a',revision:1,assetDigest:candidate.artifactSha256,configurationDigest:digest},['lookup']))
+      .resolves.toEqual({configuration:{BUSINESS_SERVICE_URL:'http://127.0.0.1:19142'},secrets:{}});
+  }finally{
+    if(previous===undefined)delete process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL;else process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL=previous;
+  }
 });
 
 it('resolves environment values only in the trusted Runtime transport, keeping the run configuration value-free',async()=>{

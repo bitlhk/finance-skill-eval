@@ -229,7 +229,8 @@ export class EvaluationRunManager {
       if (variant.mode !== "skill_version") return null;
       const matches = assets.filter(item => item.skillId === variant.skillId && item.version === variant.version
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
-      const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
+      const asset = matches.find(item => item.assetId === assetId)
+        ?? (matches.length===1&&(!strict||Boolean(assetId||variant.artifactSha256))?matches[0]:null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
       let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined,archiveBase64:string|undefined,archiveSha256:string|undefined;
       const files=await this.options.skills.readFiles(asset.assetId);
@@ -313,15 +314,18 @@ export class EvaluationRunManager {
       return new DirectModelRuntimeAdapter({ modelAdapter: execution.adapter, resolveSkill });
     }
     if(configuration.runtime.type==='runtime_launcher'){
+      const resolveLauncherSkill=await this.skillResolver(configuration.skillAssetId,true,false,[],true);
       const selectedEnvironment=await this.options.environments.requireAvailable(configuration.runtime.environmentId);
       if(!selectedEnvironment)throw new Error('所选执行环境不可用');
       const launcher=(await this.options.environments.resolveLauncher(selectedEnvironment)).launcher;
       const inspection=await this.options.environments.inspect(selectedEnvironment);
       if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
       const available=new Set(inspection.capabilities.models.map(model=>model.modelId));
-      for(const side of ['left','right'] as const)if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
+      const bareModelComparison=configuration.evaluationMode==='pairwise'
+        &&pack.variants.left.mode==='without_target_skill'&&pack.variants.right.mode==='skill_version';
+      for(const side of (bareModelComparison?['right'] as const:['left','right'] as const))if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
       const makeSide=async(side:'left'|'right')=>{
-        const skill=await resolveSkill(pack.variants[side]);
+        const skill=await resolveLauncherSkill(pack.variants[side]);
         const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
         const descriptor=await this.environmentDescriptor(selectedEnvironment,required,[],[],false,configuration.runtimeHarnessTools,true);
         if(configuration.runtimeToolConfig)descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
@@ -330,6 +334,19 @@ export class EvaluationRunManager {
         model:pack.models.execution[side],variant:pack.variants[side],skill,
         environment:structuredClone(descriptor),timeoutMs:configuration.timeoutMs,
       })};
+      if(bareModelComparison){
+        const direct=configuredModelRole("EXECUTION");
+        if(!direct.adapter)throw new Error('裸模型基线执行服务未配置');
+        const rightModel=inspection.capabilities.models.find(model=>model.modelId===pack.models.execution.right.modelId);
+        if(!rightModel||(rightModel.upstreamModelId??rightModel.modelId)!==direct.model.modelId
+          ||pack.models.execution.left.modelId!==pack.models.execution.right.modelId
+          ||fingerprint(pack.models.execution.left.parameters)!==fingerprint(pack.models.execution.right.parameters)){
+          throw new Error('裸模型与 Skill Agent 必须使用同一上游模型和生成参数');
+        }
+        const baseline=new DirectModelRuntimeAdapter({adapterId:'bare-model-baseline-v1',modelAdapter:direct.adapter,
+          resolveSkill:async()=>null,allowToollessBaseline:true,executionModel:direct.model});
+        return new SideRuntimeAdapter({left:baseline,right:await makeSide('right')});
+      }
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
     throw new Error(`Unsupported runtime type: ${configuration.runtime satisfies never}`);

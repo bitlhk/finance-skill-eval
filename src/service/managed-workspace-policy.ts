@@ -1,9 +1,10 @@
 import type {RunConfiguration} from './contracts.js';
 
-export function managedWorkspaceOperation(method:string,route:string){
+export function managedWorkspaceOperation(method:string,route:string,options:{migrationSandboxEnabled?:boolean}={}){
   if(['GET','HEAD','OPTIONS'].includes(method))return true;
   if(route==='/api/environments'||/^\/api\/environments\/[^/]+$/u.test(route))return false;
-  return !/^\/api\/migrations\/[^/]+\/(check-business-connection|validate\/technical)$/u.test(route);
+  if(/^\/api\/migrations\/[^/]+\/validate\/technical$/u.test(route))return Boolean(options.migrationSandboxEnabled);
+  return !/^\/api\/migrations\/[^/]+\/check-business-connection$/u.test(route);
 }
 
 export function requireManagedRun(configuration:RunConfiguration){

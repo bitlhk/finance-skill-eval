@@ -40,7 +40,7 @@ export type TechnicalValidation={
   inputFields?:string[];
   validationId:string;toolId:string;assetId:string;assetDigest:string;implementationDigest:string;
   casesDigest:string;
-  mode:'LOCAL_TRUSTED'|'MCP_HTTP';status:'PASSED'|'FAILED';startedAt:string;finishedAt:string;
+  mode:'LOCAL_TRUSTED'|'MCP_HTTP'|'SANDBOXED';status:'PASSED'|'FAILED';startedAt:string;finishedAt:string;
   stages:Array<{name:string;passed:boolean;message:string}>;error:string|null;
 };
 

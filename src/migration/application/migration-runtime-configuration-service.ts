@@ -9,6 +9,15 @@ import type {MigrationProjectStore} from './migration-project-store.js';
 import type {MigrationRuntimeConfigurationRepository} from './migration-runtime-configuration-repository.js';
 import type {MigrationSupplementRepository} from './migration-supplement-repository.js';
 
+const MANAGED_PROCUREMENT_SERVICE = 'managed://procurement-review-v1';
+
+function resolveManagedServiceAddress(environment:Record<string,string>):Record<string,string>{
+  if(environment.BUSINESS_SERVICE_URL!==MANAGED_PROCUREMENT_SERVICE)return environment;
+  const address=(process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL??process.env.MIGRATION_MANAGED_PROCUREMENT_URL)?.trim();
+  if(!address)throw conflict('合成采购业务服务当前不可用，请联系维护者检查受管服务配置');
+  return {...environment,BUSINESS_SERVICE_URL:address};
+}
+
 export type MigrationRuntimeReference = {
   migrationId:string;
   revision:number;
@@ -92,7 +101,7 @@ export class MigrationRuntimeConfigurationService {
     if(toolNames.some(name=>!tools.some(tool=>tool.name===name)))return conflict("服务配置关联了未知工具");
     const toolIds=tools.filter(tool=>toolNames.includes(tool.name)).map(tool=>tool.toolId);
     const selected=dependencies.filter(dependency=>dependency.toolIds.some(toolId=>toolIds.includes(toolId)));
-    const resolved=serviceEnvironment(selected,config.values);
+    const resolved=resolveManagedServiceAddress(serviceEnvironment(selected,config.values));
     const secretNames=new Set(selected.filter(dependency=>dependency.sensitive&&dependency.binding?.kind==="SERVICE_ENV")
       .map(dependency=>dependency.binding!.name));
     return {

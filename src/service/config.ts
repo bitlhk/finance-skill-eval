@@ -27,6 +27,8 @@ export type ServiceConfig = {
   workspacePreflightLimits?: WorkspaceRequestLimits;
   /** Internal account-service policy; not a browser-selected option. */
   managedWorkspace?: boolean;
+  /** Operator-pinned OCI image used for untrusted migration tool validation. */
+  migrationSandboxImage?: string;
   launcherTrust?:Array<{reference:string;label:string;baseUrlPrefix:string;credentialEnv:string|null}>;
 };
 
@@ -74,6 +76,7 @@ export function loadServiceConfig(): ServiceConfig {
       global:Number(process.env.FINANCE_EVAL_WORKSPACE_PREFLIGHTS_GLOBAL??240),
       windowSeconds:Number(process.env.FINANCE_EVAL_WORKSPACE_REQUEST_WINDOW_SECONDS??60),
     },
+    migrationSandboxImage:process.env.FINANCE_EVAL_MIGRATION_SANDBOX_IMAGE?.trim()||undefined,
     launcherTrust:launcherTrustConfiguration(),
     maxConcurrentRuns: Math.max(
       1,

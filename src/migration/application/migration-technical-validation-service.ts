@@ -100,7 +100,12 @@ export class MigrationTechnicalValidationWorkflow {
         .map(generation => generation.toolId);
       const serviceDependencies = project.sourceInspection?.dependencyAnalysis?.dependencies
         .filter(dependency => dependency.toolIds.some(toolId => [tool.toolId, ...groupIds].includes(toolId))) ?? runtimeDependencies;
-      const environment = serviceEnvironment(serviceDependencies, runtimeConfig.values);
+      let environment:Record<string,string>;
+      try {
+        environment = serviceEnvironment(serviceDependencies, runtimeConfig.values);
+      } catch (error) {
+        return conflict(error instanceof Error ? error.message : "试运行服务配置无效");
+      }
       const injection = runtimeInjection(runtimeDependencies, runtimeConfig.values, tool.kind === "MCP" ? "HTTP_HEADER" : "SCRIPT_CONTEXT");
       if (injection.missing.length) return conflict(`工具试运行缺少测试配置：${injection.missing.join("、")}`);
       const migrated = Boolean(generated?.start?.length) || Boolean(generated && tool.kind === "MCP");
