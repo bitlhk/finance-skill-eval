@@ -21,6 +21,41 @@ import {reuseExecutionContract} from '../src/migration/domain/migration-reuse-ex
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 
 const sourceFiles={'SKILL.md':SKILL_MD,'scripts/lookup.py':'def lookup(account_id): return {"amount": 10}\n'};
+it('guides both proposal and independent review by actual Skill/tool execution responsibility',async()=>{
+ const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+ for(const mode of ['PROPOSE','REVIEW'] as const){
+  const input=mode==='PROPOSE'
+   ?{mode,sourceFiles,inspection:ctx.get().inspection!,toolPlan:projectMigrationPlan(ctx.get())!}
+   :{mode,sourceFiles,candidateFiles:sourceFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design};
+  const complete=vi.fn(async()=>({content:JSON.stringify(await reusePlannerFixture(input)),modelId:'test'}));
+  await createReusePlanner({adapterId:'test',complete},{providerId:'test',modelId:'test',parameters:{}})(input);
+  const prompt=(complete.mock.calls[0] as unknown as [{messages:Array<{content:string}>}])[0].messages[0]!.content;
+  expect(prompt).toContain('工具代码负责已经封装的内部实现');
+  expect(prompt).toContain('模型确实需要协调多个工具');
+  expect(prompt).toContain('不要把一个工具内部的 HTTP 请求顺序');
+  expect(prompt).toContain('Script 的调用入口、输入格式与资源读取方式');
+  expect(prompt).toContain('不能依据示例擅自补字符');
+  expect(prompt).toContain('不是交付后的关键词过滤');
+  if(mode==='REVIEW')expect(prompt).toContain('单纯解释必要的业务含义不等于职责混淆');
+ }
+});
+
+it('preserves a model boundary rejection and candidate bytes without retrying or filtering the document',async()=>{
+ const ctx=context(),proposal=await ctx.service.propose('migration-fixture');
+ const candidateFiles={...sourceFiles,'SKILL.md':SKILL_MD+'模型先调用订单 HTTP 接口，再计算退款金额。\n'};
+ const before=structuredClone(candidateFiles);
+ const input={mode:'REVIEW' as const,sourceFiles,candidateFiles,sourceInspection:ctx.get().inspection!,candidateInspection:ctx.get().inspection!,design:proposal.design};
+ const rejected=await reusePlannerFixture(input) as any;
+ rejected.review.changes[0].status='NEEDS_CHANGES';
+ rejected.review.semanticIssues=['实际工具已封装查询与计算，候选指令要求模型重复执行，改变了调用责任。'];
+ const complete=vi.fn(async()=>({content:JSON.stringify(rejected),modelId:'test'}));
+ const result=await createReusePlanner({adapterId:'test',complete},{providerId:'test',modelId:'test',parameters:{}})(input) as any;
+ expect(result.review.semanticIssues).toEqual(rejected.review.semanticIssues);
+ expect(result.review.changes[0].status).toBe('NEEDS_CHANGES');
+ expect(complete).toHaveBeenCalledTimes(1);expect(candidateFiles).toEqual(before);
+ expect(reuseReviewIssues(result.review,proposal.design,candidateFiles)).not.toEqual([]);
+});
+
 it('passes explicit clarification to fresh source-based planning without auto-approving or erasing history',async()=>{
  const planner=vi.fn<MigrationReusePlanner>(reusePlannerFixture),ctx=context(planner);
  const first=await ctx.service.propose('migration-fixture');

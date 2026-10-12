@@ -6,6 +6,25 @@ const root=process.cwd();
 const agents=['analyze_agent.py','migrate_agent.py'] as const;
 const source=async(file:string)=>await readFile(path.join(root,'integrations','openjiuwen',file),'utf8');
 
+it('aligns A4 generation and its delivery skill on model versus encapsulated tool responsibilities',async()=>{
+ const code=await source('migrate_agent.py');
+ const prompt=code.match(/SYSTEM_PROMPT = """([\s\S]*?)"""/)?.[1];
+ expect(prompt).toBeDefined();
+ const delivery=await readFile(path.join(root,'skills','enterprise-migration-delivery','SKILL.md'),'utf8');
+ for(const text of [prompt!,delivery]){
+  expect(text).toContain('HTTP 请求顺序、鉴权');
+  expect(text).toContain('工具工程 README 或配置模板');
+  expect(text).toContain('资源读取方式');
+  expect(text).toContain('不依据示例补字符');
+  expect(text).toContain('不改变工具 Schema');
+ }
+ expect(prompt).toContain('模型确实负责多工具协调');
+ expect(prompt).toContain('模型要重复执行的步骤');
+ expect(delivery).toContain('不展开成模型的执行步骤');
+ expect(prompt).toContain('不会用关键词过滤');
+ expect(delivery).toContain('不按标题、HTTP 或公式等关键词机械删除');
+});
+
 /**
  * Which tools the two agents are handed, read off their source.
  *
