@@ -16,6 +16,7 @@ import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
+import {MigrationTechnicalValidationWorkflow} from '../src/migration/application/migration-technical-validation-service.js';
 
 function fixture(name='BUSINESS_SERVICE_URL'){
  const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);
@@ -50,6 +51,23 @@ it('rejects reserved environment names, non-scalar values and conflicting shared
  expect(()=>serviceEnvironment(deps,{[dep.id]:{url:'x'}})).toThrow('格式不合法');
  expect(()=>serviceEnvironment([...deps,{...dep,id:'another'}],{[dep.id]:'first',another:'second'})).toThrow('冲突');
  expect(serviceEnvironment([{...dep,schema:{type:'integer'},binding:{kind:'SERVICE_ENV',name:'BUSINESS_TIMEOUT_MS'}}],{[dep.id]:3000})).toEqual({BUSINESS_TIMEOUT_MS:'3000'});
+});
+
+it('reports missing service configuration as a conflict before starting the validation runner',async()=>{
+ const {tool,inspection}=fixture();
+ const source={assetId:'source',skillId:'fixture',version:'1.0.0',displayName:'Fixture',description:'Fixture',sourceType:'uploaded',
+  artifactSha256:'a'.repeat(64),skillFile:'SKILL.md',fileCount:2,createdAt:'2026-10-12T00:00:00.000Z'};
+ const project={id:'migration-1234',source,candidate:null,inspection,sourceInspection:inspection};
+ const runner={validateMcp:vi.fn(),validateScript:vi.fn()};
+ const workflow=new MigrationTechnicalValidationWorkflow(
+  {runExclusive:async(_id:string,action:()=>Promise<unknown>)=>await action(),get:async()=>project,save:vi.fn()} as never,
+  {readArchive:async()=>({'SKILL.md':strToU8('fixture')})} as never,
+  {get:async()=>({revision:0,values:{}})} as never,
+  runner as never,
+ );
+ await expect(workflow.validate(project.id,{toolId:tool.toolId,baseAssetId:source.assetId,arguments:{}}))
+  .rejects.toMatchObject({statusCode:409,message:expect.stringContaining('请先填写服务配置')});
+ expect(runner.validateMcp).not.toHaveBeenCalled();
 });
 
 it('resolves a revision-bound reference for selected tools and rejects changed configuration',async()=>{
