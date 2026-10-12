@@ -22,6 +22,8 @@ it('aligns A4 generation and its delivery skill on model versus encapsulated too
  expect(prompt).toContain('模型要重复执行的步骤');
  expect(delivery).toContain('不展开成模型的执行步骤');
  expect(prompt).toContain('不会用关键词过滤');
+ expect(prompt).toContain('即使加了“工具内部完成、模型不用执行”的标签也不应展开');
+ expect(delivery).toContain('标签不能代替文档职责整理');
  expect(delivery).toContain('不按标题、HTTP 或公式等关键词机械删除');
 });
 

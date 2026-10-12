@@ -36,6 +36,7 @@ it('guides both proposal and independent review by actual Skill/tool execution r
   expect(prompt).toContain('Script 的调用入口、输入格式与资源读取方式');
   expect(prompt).toContain('不能依据示例擅自补字符');
   expect(prompt).toContain('不是交付后的关键词过滤');
+  expect(prompt).toContain('标注“工具内部完成、模型不用执行”不能代替文档职责整理');
   if(mode==='REVIEW')expect(prompt).toContain('单纯解释必要的业务含义不等于职责混淆');
  }
 });
