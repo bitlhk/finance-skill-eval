@@ -133,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
 ThreadingHTTPServer(("0.0.0.0", 8081), Handler).serve_forever()
 `;
 
-/** Resolves only operator-owned fixtures. Arbitrary uploaded URLs remain blocked. */
+/** Keeps uploaded code isolated while routing one declared public HTTPS service through a constrained relay. */
 export function managedMigrationTestService(environment: Record<string, string>): ManagedMigrationTestService | null {
   const configured = Object.entries(environment);
   if (!configured.length) return null;

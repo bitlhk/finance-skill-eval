@@ -17,6 +17,7 @@ import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {MigrationTechnicalValidationWorkflow} from '../src/migration/application/migration-technical-validation-service.js';
+import {MigrationRuntimeConfigurationService} from '../src/migration/application/migration-runtime-configuration-service.js';
 
 function fixture(name='BUSINESS_SERVICE_URL'){
  const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);
@@ -88,6 +89,22 @@ it('resolves a revision-bound reference for selected tools and rejects changed c
   expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(false);
   await expect(store.resolveServiceEnvironment(ref,['lookup'])).rejects.toThrow('已变化');
  }finally{await rm(root,{recursive:true,force:true})}
+});
+
+it('resolves the managed procurement marker only from operator configuration',async()=>{
+  const previous=process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL;
+  process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL='http://127.0.0.1:19142';
+  try{
+    const {inspection,deps,dep}=fixture(),candidate={artifactSha256:'a'.repeat(64)};
+    const projects={get:async()=>({candidate,sourceInspection:inspection,inspection})};
+    const configs={get:async()=>({revision:1,values:{[dep.id]:'managed://procurement-review-v1'},checks:[]})};
+    const service=new MigrationRuntimeConfigurationService(projects as never,configs as never,{} as never,{} as never);
+    const digest=configurationDigest(await configs.get(),deps);
+    await expect(service.resolveServiceEnvironment({migrationId:'migration-a',revision:1,assetDigest:candidate.artifactSha256,configurationDigest:digest},['lookup']))
+      .resolves.toEqual({configuration:{BUSINESS_SERVICE_URL:'http://127.0.0.1:19142'},secrets:{}});
+  }finally{
+    if(previous===undefined)delete process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL;else process.env.FINANCE_EVAL_MANAGED_PROCUREMENT_URL=previous;
+  }
 });
 
 it('resolves environment values only in the trusted Runtime transport, keeping the run configuration value-free',async()=>{
