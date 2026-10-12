@@ -292,3 +292,20 @@ Eval 发布可选 v1 字段及严格比较回执 schema：成功调用序号、�
 
 前端交付页实际显示：方案落实审查通过、复用验收通过、业务评测不通过；包名仍为 `refund-eligibility-unverified.zip`。未自动采用失败任务，也未重放已消费的留出集。截图为 `reports/runtime-rebuild-ui/05-refund-reuse-passed.jpg`、`reports/runtime-rebuild-ui/05-refund-delivery-not-overridden.jpg`。
 本轮相关回归 101 项通过（计划指导、结果绑定、改进任务、交付状态）。至此，主 Harness 重建与交付链已完成，应收授权结果绑定和真实跨部署复用已完成，退款迁移复用已完成；退款当前候选留出失败单独保留，不能宣称所有样例都已签收。
+
+### 生成文档职责边界修正后的真实重新生成验证
+
+用户要求修正迁移工具的生成机制，而非手工改退款文档。Eval `84a3ef9` 增加规划、A4 生成和独立审查的职责指导；第一次实际生成候选 `d8371460ba057c897a4a71cd28501edf9bb3bea9a4b871d4a1ad55067d79aa4d`（2.0.0-migration.3）虽通过原审查，但仍以“工具内部完成”标签列出完整内部请求链，不视为文档目标已解决。
+Eval `8be04c4` 进一步明确：保留业务语义不等于照抄实现说明，已由单个工具封装的内部链不进入 Skill 的执行步骤；必要业务含义和真正的多工具协作仍保留。不实施交付后关键词过滤或机械删文。
+
+主工作区出现其他任务的两处未提交修改，本轮保留它们，在 `8be04c4` 的独立工作区完成验证。Builder 仍为 `da5a1a30a856f1200fff4a59d794b8619997249d`，未改造 Builder 或 Java Harness。
+独立工作区首次在模型启动前因缺少本地 Python 环境和私有 Runtime 配置停止，原记录保留；接回原有环境后由前端恢复同一生成任务。
+
+- 真实生成任务 `generation-54ca9708-ab0b-4f9d-a241-5cf4fb8fcfbc`，候选 `b099a364b3da598aec41f1dc89a395785017f771d020414fcb8ff95d324f8adf`、版本 `2.0.0-migration.4`。新文档不再列内部 HTTP 接口及请求链、鉴权 Header、部署变量或依赖安装；保留一次工具调用、返回分支、停止条件与必要业务含义，明确订单号原样传递。没有手工修改产物。
+- 独立候选分析及原方案落实审查通过；后者为一次真实模型调用、27 秒。前端以 RF001 完成一次实际成功业务试运行，不以 tools/list 或缺失订单的错误返回冒充成功路径。
+- 新计划 `reuse-plan-df76f777-560d-41fe-8951-55cc7625c0c4` 经独立 COVERAGE 后由前端确认；任务 `reuse-test-a9a73e45-17f8-44e3-a82e-fa5a31e85db4`、运行 `run-47acc268-ef02-4a2e-bf87-eb383e8a8e1c`：真实四轮 RF001 → RF002 → RF001 → RF404，5/5 原要求 PASSED，四次 MCP 双通道回执 MATCH。
+- 明确标为“含已知失败题、非留出集”的四条业务回归，前端运行 `run-6f0448a3-b051-4874-9869-ea13dbb5e7f1` 为 4/4，Judge 无服务错误。包含曾失败的 RF002 题：实际工具结果 order_id=RF002、STATUS_NOT_REFUNDABLE，不再改成 RF-002。这是已知问题回归，不冒充未见留出集、旧任务最终复核或重新采用；此前 4/5 的 FAILED 记录不改判。
+- 前端交付页三项自动检查通过，实际下载 `refund-eligibility.zip`。下载包的全部 9 文件与当前不可变候选逐文件逐字节相同，未携带测试记录或凭证。归档条目顺序不同会改变顺序相关的上传指纹，因此此处以完整文件集合和字节核对，不把顺序相关的 ZIP 重算指纹当成内容漂移。
+
+截图 `reports/runtime-rebuild-ui/06-refund-regenerated-verified.jpg`；最新指导的全量回归 1069 通过、0 失败、2 跳过，报告 `reports/runtime-rebuild-ui/regression-skill-document-boundary.json`。
+本轮完成重新生成、文档职责核验、技术调用、业务回归、复用验收和实际下载验证；没有宣称新候选完成独立留出验收或生产授权。
