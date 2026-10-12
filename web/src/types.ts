@@ -185,6 +185,8 @@ export type EvaluationJob = {
     judgeMode: string;
     evaluationMode?: 'pairwise' | 'candidate_assessment' | 'service_comparison' | 'candidate_runtime_comparison';
     caseSource?: "fixed" | "ai_generated";
+    leftVariant?:SkillVariant;
+    rightVariant?:SkillVariant;
   };
   pack: { targetSkillId: string; targetSkillVersion: string; caseCount: number } | null;
   progress: { completedRuns: number; totalRuns: number; caseId?: string; side?: string };

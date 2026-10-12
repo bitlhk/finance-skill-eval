@@ -3,7 +3,7 @@ import type {
   RuntimeAdapter,
   RuntimeExecutionRequest,
 } from "./adapters.js";
-import { fingerprint, type RuntimeExecutionEvidence } from "./contracts.js";
+import { fingerprint, type ModelRef, type RuntimeExecutionEvidence } from "./contracts.js";
 
 export type ResolvedSkillSource = {
   skillId: string;
@@ -20,6 +20,8 @@ export type DirectModelRuntimeOptions = {
   adapterId?: string;
   modelAdapter: ModelAdapter;
   resolveSkill(variant: RuntimeExecutionRequest["variant"]): Promise<ResolvedSkillSource | null>;
+  allowToollessBaseline?: boolean;
+  executionModel?:ModelRef;
 };
 
 /**
@@ -33,7 +35,8 @@ export class DirectModelRuntimeAdapter implements RuntimeAdapter {
   }
 
   async execute(request: RuntimeExecutionRequest): Promise<RuntimeExecutionEvidence> {
-    if (request.evalCase.requiredTools.length > 0) {
+    if (request.evalCase.requiredTools.length > 0
+      && !(this.options.allowToollessBaseline && request.variant.mode === "without_target_skill")) {
       throw new Error(
         `Direct model runtime cannot execute required tools: ${request.evalCase.requiredTools.join(", ")}`,
       );
@@ -45,9 +48,12 @@ export class DirectModelRuntimeAdapter implements RuntimeAdapter {
         `Skill artifact is unavailable: ${request.variant.skillId}@${request.variant.version}`,
       );
     }
+    const executionModel=this.options.executionModel
+      ? {...this.options.executionModel,parameters:request.model.parameters}
+      : request.model;
     const completion = await this.options.modelAdapter.complete({
       requestId: `${request.runId}-${request.side}-${request.evalCase.caseId}`,
-      model: request.model,
+      model: executionModel,
       signal: request.signal,
       messages: [
         {
@@ -57,7 +63,9 @@ export class DirectModelRuntimeAdapter implements RuntimeAdapter {
             "输出应体现专业判断、业务完整性、清晰度和可执行性。",
             skill
               ? `以下是本轮已装配并必须遵循的 Skill：\n<skill>\n${skill.instructions}\n</skill>`
-              : "本轮不装配目标 Skill，按模型自身能力完成任务。",
+              : this.options.allowToollessBaseline
+                ? "本轮是裸模型基线：未装配目标 Skill，也没有注册任何业务工具。若任务依赖外部数据，必须明确说明无法核验，不得编造工具结果。"
+                : "本轮不装配目标 Skill，按模型自身能力完成任务。",
           ].join("\n\n"),
         },
         { role: "user", content: request.evalCase.prompt },
@@ -90,8 +98,16 @@ export class DirectModelRuntimeAdapter implements RuntimeAdapter {
       traceFingerprint: fingerprint(body),
       metadata: {
         executionMode: "direct-model",
+        runtime:{type:"direct_model",version:"service-config"},
         skillArtifactSha256: skill?.artifactSha256 ?? null,
         toolExecutionSupported: false,
+        installedToolInventory:{status:"COMPLETE",tools:[]},
+        toolAttemptEvidence:{status:"COMPLETE",zeroCalls:true,scope:"DIRECT_MODEL_HAS_NO_TOOL_INTERFACE"},
+        resourceLifecycle:{status:"NOT_APPLICABLE",reason:"DIRECT_MODEL_DOES_NOT_CREATE_RUNTIME_INSTANCE"},
+        declaredModelParameters:request.model.parameters??{},
+        configuredModelId:executionModel.modelId,
+        comparisonModelId:request.model.modelId,
+        modelParametersVerified:false,
       },
     };
   }

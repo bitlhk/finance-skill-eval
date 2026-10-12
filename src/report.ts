@@ -192,7 +192,7 @@ function escapeHtml(value: string): string {
 }
 
 function variantLabel(variant: EvalPack["variants"]["left"]): string {
-  return variant.mode === "without_target_skill" ? "不装配目标 Skill" : `${variant.skillId}@${variant.version}`;
+  return variant.mode === "without_target_skill" ? "裸模型基线（无 Skill、无工具、无 Runtime 实例）" : `${variant.skillId}@${variant.version}`;
 }
 
 function formatOutput(value: string): string {
@@ -238,8 +238,8 @@ export function renderHtmlReport(report: EvaluationReport): string {
       <p class="goal">${escapeHtml(item.evaluationGoal)}</p>
       <details><summary>本轮题目</summary><pre>${escapeHtml(item.prompt)}</pre></details>
       <div class="columns">
-        <article><h3>${isService?'原服务':'左侧'}</h3><pre>${escapeHtml(formatOutput(item.left.output || item.left.error || '未记录回答'))}</pre>${evidenceScope(item.left)}</article>
-        <article><h3>${isService?'迁移后 Skill':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output || item.right.error || '未记录回答'))}</pre>${evidenceScope(item.right)}</article>
+        <article><h3>${isService?'原服务':report.variants.left.mode==='without_target_skill'?'裸模型基线':'左侧 Skill Agent'}</h3><pre>${escapeHtml(formatOutput(item.left.output || item.left.error || '未记录回答'))}</pre>${evidenceScope(item.left)}</article>
+        <article><h3>${isService?'迁移后 Skill':report.variants.right.mode==='skill_version'?'Skill Agent':'右侧'}</h3><pre>${escapeHtml(formatOutput(item.right.output || item.right.error || '未记录回答'))}</pre>${evidenceScope(item.right)}</article>
       </div>
       <div class="judge">
         <h3>${runtimeMode?'同候选跨 Runtime 目标评估':isService?'原服务对比':judge?.goalAssessment?'业务目标评估':'金融专业评价'}</h3>

@@ -271,13 +271,16 @@ export function App() {
     const option=catalog.executionRuntimes.find(item=>item.runtimeId===runtimeEnvironmentId);
     if(!option)return;
     if(option.runtimeId!==runtimeEnvironmentId)setRuntimeEnvironmentId(option.runtimeId);
-    const preferred=option.models.find(model=>model.modelId===option.defaultModelId)??option.models[0];
+    const compatible=leftVariantSelection==='without_target_skill'
+      ?option.models.filter(model=>(model.upstreamModelId??model.modelId)===directExecutionRole(catalog).model.modelId)
+      :option.models;
+    const preferred=compatible.find(model=>model.modelId===option.defaultModelId)??compatible[0];
     if(preferred){
-      const keys=new Set(option.models.map(modelKey));
+      const keys=new Set(compatible.map(modelKey));
       setLeftModelKey(current=>keys.has(current)?current:modelKey(preferred));
       setRightModelKey(current=>keys.has(current)?current:modelKey(preferred));
     }
-  },[runtime,runtimeEnvironmentId,catalog]);
+  },[runtime,runtimeEnvironmentId,leftVariantSelection,catalog]);
 
   const inspectEnvironment = async (environmentId: string) => {
     const sequence = ++inspectionSequence.current;
@@ -363,10 +366,12 @@ export function App() {
   const rightRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.right);
   const pairedRuntimeModels=(leftRuntimeOption?.models??[]).filter(left=>rightRuntimeOption?.models.some(right=>
     right.modelId===left.modelId&&(!left.upstreamModelId||!right.upstreamModelId||right.upstreamModelId===left.upstreamModelId)));
-  const runtimeModels=runtime==='dual_runtime'?pairedRuntimeModels:runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[]):[];
+  const directModelId=catalog?directExecutionRole(catalog).model.modelId:'';
+  const runtimeModels=runtime==='dual_runtime'?pairedRuntimeModels:runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[])
+    .filter(model=>leftVariantSelection!=='without_target_skill'||(model.upstreamModelId??model.modelId)===directModelId):[];
   const runtimeDefaultModel=runtime==='dual_runtime'
     ? pairedRuntimeModels.find(item=>item.modelId===leftRuntimeOption?.defaultModelId)??pairedRuntimeModels[0]
-    : selectedRuntimeOption?.models.find(item=>item.modelId===selectedRuntimeOption.defaultModelId)??selectedRuntimeOption?.models[0];
+    : runtimeModels.find(item=>item.modelId===selectedRuntimeOption?.defaultModelId)??runtimeModels[0];
   const selectedLeftModel = runtime === "direct_model" && catalog ? directExecutionRole(catalog).model : runtimeModels.find(item => modelKey(item) === leftModelKey)
     ?? (runtime==='runtime_launcher'||runtime==='dual_runtime'?runtimeDefaultModel:undefined)
     ?? selectedPack?.models.execution.left
@@ -474,7 +479,7 @@ export function App() {
     setError("");
     try {
       const dualRuntime=runtime==="dual_runtime";
-      const targetOnlyAssessment=runtime==="runtime_launcher"&&leftVariantSelection==="without_target_skill";
+      const bareModelComparison=runtime==="runtime_launcher"&&leftVariantSelection==="without_target_skill";
       const boundAsset=(value:string)=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]);
       const leftAsset=boundAsset(leftVariantSelection),rightAsset=boundAsset(rightVariantSelection);
       if(dualRuntime&&(!leftAsset||!rightAsset||leftAsset.assetId!==rightAsset.assetId||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要同一份已导入 Skill 和相同模型");
@@ -488,11 +493,14 @@ export function App() {
               ? { type: runtime, environmentId: runtimeEnvironmentId }
             : { type: runtime },
           judgeMode,
-          evaluationMode: targetOnlyAssessment ? "candidate_assessment" : "pairwise",
+          evaluationMode: "pairwise",
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
           ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation),
             runtimeBindings:{left:{environmentId:launcherPair.left,skillAssetId:leftAsset!.assetId},right:{environmentId:launcherPair.right,skillAssetId:rightAsset!.assetId}}}
+            : bareModelComparison&&selectedRightModel ? {executionModel:{...executionReference(selectedRightModel),parameters:structuredClone(generation)},
+              leftExecutionModel:{...executionReference(selectedRightModel),parameters:structuredClone(generation)},
+              rightExecutionModel:{...executionReference(selectedRightModel),parameters:structuredClone(generation)}}
             : {...(selectedLeftModel ? { leftExecutionModel: executionReference(selectedLeftModel) } : {}),
                ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {})}),
           caseSource: dynamicQuestions ? "ai_generated" : "fixed",
@@ -560,6 +568,11 @@ export function App() {
       && Number.isFinite(generation.temperature)&&generation.temperature>=0&&generation.temperature<=2
       && Number.isFinite(generation.top_p)&&generation.top_p>0&&generation.top_p<=1
       && Number.isInteger(generation.max_tokens)&&generation.max_tokens>=1&&generation.max_tokens<=32768)
+    && (runtime!=="runtime_launcher"||leftVariantSelection!=="without_target_skill"||(
+      selectedLeftModel?.modelId===selectedRightModel?.modelId
+      &&Number.isFinite(generation.temperature)&&generation.temperature>=0&&generation.temperature<=2
+      &&Number.isFinite(generation.top_p)&&generation.top_p>0&&generation.top_p<=1
+      &&Number.isInteger(generation.max_tokens)&&generation.max_tokens>=1&&generation.max_tokens<=32768))
     && !(runtime === "direct_model" && (!catalog || !directExecutionRole(catalog).configured))
     && !(judgeMode === "model" && !catalog?.modelRoles.judge.configured)
     && !sameConfiguration
@@ -796,7 +809,7 @@ function EvaluationView(props: {
   const active = props.job && !TERMINAL.has(props.job.status);
   const replayLocked = props.runtime === "replay" || Boolean(active);
   const dynamic = props.caseSource === "ai_generated";
-  const targetOnlyAssessment=props.runtime==="runtime_launcher"&&props.leftVariantSelection==="without_target_skill";
+  const bareModelComparison=props.runtime==="runtime_launcher"&&props.leftVariantSelection==="without_target_skill";
   const questions = dynamic ? props.job?.questionSet?.cases ?? [] : props.cases;
   const runtimeEnvironment = props.catalog.environments.find(item => item.environmentId === props.runtimeEnvironmentId);
   const runtimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.runtimeEnvironmentId);
@@ -817,7 +830,7 @@ function EvaluationView(props: {
     : props.runtime === 'dual_runtime'
       ? pairedRuntimeModels
     : props.runtime === 'runtime_launcher'
-      ? runtimeOption?.models??[]
+      ? (runtimeOption?.models??[]).filter(model=>!bareModelComparison||(model.upstreamModelId??model.modelId)===directExecutionRole(props.catalog).model.modelId)
       : target && 'models' in target
         ? [target.models.execution.left,target.models.execution.right].filter((model,index,all)=>all.findIndex(item=>modelKey(item)===modelKey(model))===index)
         : [];
@@ -872,12 +885,16 @@ function EvaluationView(props: {
           {(["temperature","top_p","max_tokens"] as const).map(name=><label className="field" key={name}><span>{name}</span><input type="number" disabled={Boolean(active)} min={name==="top_p"?0.01:name==="max_tokens"?1:0} max={name==="temperature"?2:name==="top_p"?1:32768} step={name==="max_tokens"?1:0.01} value={Number.isFinite(props.generation[name])?props.generation[name]:""} onChange={event=>props.setGeneration({...props.generation,[name]:event.target.value===""?NaN:Number(event.target.value)})}/></label>)}
           <label className="field"><span>思考模式</span><select disabled={Boolean(active)} value={props.generation.thinking?.type??'default'} onChange={event=>{const {thinking,...base}=props.generation;props.setGeneration(event.target.value==='disabled'?{...base,thinking:{type:'disabled'}}:base)}}><option value="default">模型默认</option><option value="disabled">关闭（需受管连接支持）</option></select></label>
         </div><p role="status">{props.launcherStatus}</p></>:null}
+        {bareModelComparison?<div className="environment-controls" aria-label="共同生成参数">
+          {(["temperature","top_p","max_tokens"] as const).map(name=><label className="field" key={name}><span>{name}</span><input type="number" disabled={Boolean(active)} min={name==="top_p"?0.01:name==="max_tokens"?1:0} max={name==="temperature"?2:name==="top_p"?1:32768} step={name==="max_tokens"?1:0.01} value={Number.isFinite(props.generation[name])?props.generation[name]:""} onChange={event=>props.setGeneration({...props.generation,[name]:event.target.value===""?NaN:Number(event.target.value)})}/></label>)}
+          <label className="field"><span>思考模式</span><select disabled={Boolean(active)} value={props.generation.thinking?.type??'default'} onChange={event=>{const {thinking,...base}=props.generation;props.setGeneration(event.target.value==='disabled'?{...base,thinking:{type:'disabled'}}:base)}}><option value="default">模型默认</option><option value="disabled">关闭（两侧共同使用）</option></select></label>
+        </div>:null}
         <details className="environment-details"><summary>工具依赖与未匹配原因</summary>
           <p>{requiredTools.length?requiredTools.join('、'):'本轮未声明工具依赖'}</p>
           {props.environmentMatches.filter(item=>item.issues.length).map(item=><p key={item.runtime.runtimeId}><strong>{item.runtime.name}</strong>：{item.issues.join('；')}</p>)}
           {!props.runtimeEnvironmentId&&props.runtime==='runtime_launcher'&&props.environmentMatches.filter(item=>item.runtime.runtimeType===props.runtimeFamily&&!item.issues.length).length>1?<p>存在多个兼容数据环境，请确认要使用的来源。</p>:null}
         </details>
-        {['runtime_launcher','dual_runtime'].includes(props.runtime)?<p className="runtime-lifecycle"><Activity size={15}/>临时 Agent · 按本次评测构建 · 每题独立会话 · 结束后自动发起回收</p>:null}
+        {['runtime_launcher','dual_runtime'].includes(props.runtime)?<p className="runtime-lifecycle"><Activity size={15}/>{bareModelComparison?'右侧临时 Skill Agent · 左侧裸模型无实例':'临时 Agent · 按本次评测构建'} · 每题独立会话 · 结束后自动发起回收</p>:null}
         {props.runtime==="dual_runtime"?null:props.runtime === "replay" ? <div className="environment-readiness replay"><Archive size={16} /><span><strong>冻结证据已就绪</strong>本轮复核固化的真实或受控输出；左右版本与模型保持锁定。</span></div> : props.runtime === "direct_model" ? <div className="environment-readiness ready"><CircleCheck size={16} /><span><strong>文本执行环境</strong>适用于不依赖工具的上传 Skill，本轮不连接 MCP。</span></div> : <div className={`environment-readiness ${props.environmentChecking ? "checking" : props.environmentInspection?.status ?? "waiting"}`}>
           {props.environmentChecking ? <RefreshCw className="spin" size={16} /> : props.environmentInspection?.status === "ready" ? <CircleCheck size={16} /> : <CircleAlert size={16} />}
           <span><strong>{props.environmentChecking ? "正在自动准备环境" : props.environmentInspection?.status === "ready" ? "在线环境已就绪" : props.environmentInspection?.error ?? "请选择执行环境"}</strong>{runtimeOption ? `${runtimeTypeLabel(runtimeOption.runtimeType)} · ${runtimeOption.mcpEnvironmentIds.length} 个 MCP · ${props.environmentInspection?.status === 'ready' ? `已发现 ${props.environmentInspection.toolCount} 个工具` : '工具待确认'} · 本轮需要 ${requiredTools.length} 项` : runtimeEnvironment ? `${runtimeTypeLabel(runtimeEnvironment.runtimeType)} · ${linkedMcp.length} 个 MCP 已绑定 · ${props.environmentInspection?.status === 'ready' ? `已发现 ${props.environmentInspection.toolCount} 个工具` : '工具待确认'} · 本轮需要 ${requiredTools.length} 项` : "评测开始前将自动检查 Runtime 与关联 MCP。"}</span>
@@ -885,15 +902,16 @@ function EvaluationView(props: {
       </section>
 
       <div className="comparison-grid">
-        {targetOnlyAssessment ? <section className="comparison-panel configurable">
-          <div className="comparison-panel-head"><div className="side-badge">A</div><div><span>无 Skill 基线</span><strong>本轮不执行</strong></div></div>
-          <div className="comparison-foot"><span>受管动态 Runtime 只启动已装配的真实 Skill。本轮按同一题集评估目标 Skill，不生成或伪装无 Skill Agent。</span></div>
+        {bareModelComparison ? <section className="comparison-panel configurable">
+          <div className="comparison-panel-head"><div className="side-badge">A</div><div><span>裸模型基线</span><strong>Direct Model</strong></div></div>
+          <div className="comparison-fields"><div className="field"><span>Skill</span><strong>不加载</strong></div><div className="field"><span>工具</span><strong>不注册</strong></div><div className="field"><span>实例</span><strong>无需创建</strong></div></div>
+          <div className="comparison-foot"><span>与右侧使用同一上游模型、生成参数和测试题；需要外部数据时只能说明无法核验。</span></div>
         </section> : <ComparisonConfigurator side="A" title="对照组" runtimeName={props.runtime==='dual_runtime'?leftRuntimeOption?.name:runtimeOption?.name} selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />}
         <div className="comparison-arrow"><ArrowRight size={20} /></div>
         <ComparisonConfigurator side="B" title="目标组" runtimeName={props.runtime==='dual_runtime'?rightRuntimeOption?.name:runtimeOption?.name} selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
       </div>
 
-      {targetOnlyAssessment ? <div className="comparison-warning info">当前只有一个可执行 Skill 版本，本轮进行单项质量评测；如需版本对比，请先导入另一份真实版本。</div> : null}
+      {bareModelComparison ? <div className="comparison-warning info">左侧是无 Skill、无工具的裸模型，右侧是完整 Skill Agent；工具型任务比较的是完整方案收益，不是单独比较提示词。</div> : null}
 
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
       {props.comparisonMode==='model'&&comparisonModels.length<2?<p className="comparison-warning warning">当前环境只有一个可用模型，暂无第二个模型可比较。</p>:null}
@@ -1022,6 +1040,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
   const publicDemo = useContext(PublicDemoContext);
   const report = job.report!;
   const runtimeComparison = job.configuration.evaluationMode==='candidate_runtime_comparison' || report.cases.some(item=>item.judge?.runtimeComparison);
+  const bareModelComparison=job.configuration.leftVariant?.mode==='without_target_skill'&&job.configuration.rightVariant?.mode==='skill_version';
   return <div className="report-result">
     {report.cases.some(c => c.right.metadata?.dataMode?.includes("synthetic")) ? <div className="evidence-notice">数据来源：只读模拟业务快照；模型与 MCP 工具本轮实际执行，不代表真实客户业务验收。</div> : null}
     <div className={`score-strip${runtimeComparison ? ' runtime-goal-strip' : ''}`}>
@@ -1031,7 +1050,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
     {runtimeComparison ? null : <ResultCharts report={report} />}
     {report.cases.map(item => <section className="result-case" key={item.caseId}>
       <header><div><span>{item.caseId}</span><h3>{item.name}</h3></div><strong className={`winner winner-${item.judge?.winner ?? "none"}`}>{runtimeComparison ? '逐侧验收' : item.judge?.winner === "right" ? "B 更优" : item.judge?.winner === "left" ? "A 更优" : item.judge ? "持平" : "未评阅"}</strong></header>
-      <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
+      <div className="answer-grid"><article><span>A · {bareModelComparison?'裸模型基线 · 无 Skill/工具':item.left.skillVersion ? `Skill v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {bareModelComparison?`Skill Agent${item.right.skillVersion?` · v${item.right.skillVersion}`:''}`:item.right.skillVersion ? `Skill v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
       {runtimeComparison ? <RuntimeGoalResults item={item}/> : <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>}
     </section>)}
     <details className="question-receipt"><summary>运行结束与回收证据</summary>

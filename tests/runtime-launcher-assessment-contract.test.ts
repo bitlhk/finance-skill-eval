@@ -5,16 +5,26 @@ const target={mode:'skill_version' as const,skillId:'wealth-manager-assistant',v
 const baseline={mode:'without_target_skill' as const,skillId:'wealth-manager-assistant'};
 
 describe('managed Runtime Skill assessment contract',()=>{
-  it('rejects a pairwise request that the Launcher cannot materialize',()=>{
+  it('accepts a bare-model baseline against a real Skill Agent when model inputs match',()=>{
     const result=runConfigurationSchema.safeParse({
       packId:'wealth',runtime:{type:'runtime_launcher',environmentId:'openjiuwen'},
       evaluationMode:'pairwise',leftVariant:baseline,rightVariant:target,
+      leftExecutionModel:{providerId:'runtime',modelId:'same',parameters:{temperature:0,top_p:1,max_tokens:2000}},
+      rightExecutionModel:{providerId:'runtime',modelId:'same',parameters:{temperature:0,top_p:1,max_tokens:2000}},
     });
-    expect(result.success).toBe(false);
-    if(!result.success)expect(result.error.issues.map(issue=>issue.message).join('\n')).toContain('不执行无 Skill 基线');
+    expect(result.success).toBe(true);
   });
 
-  it('accepts target-only assessment and a comparison between real versions',()=>{
+  it('rejects a baseline comparison when model parameters differ',()=>{
+    const result=runConfigurationSchema.safeParse({packId:'wealth',runtime:{type:'runtime_launcher',environmentId:'openjiuwen'},
+      evaluationMode:'pairwise',leftVariant:baseline,rightVariant:target,
+      leftExecutionModel:{providerId:'runtime',modelId:'same',parameters:{temperature:0}},
+      rightExecutionModel:{providerId:'runtime',modelId:'same',parameters:{temperature:0.2}}});
+    expect(result.success).toBe(false);
+    if(!result.success)expect(result.error.issues.map(issue=>issue.message).join('\n')).toContain('同一模型和生成参数');
+  });
+
+  it('keeps target-only assessment and comparison between real versions compatible',()=>{
     expect(runConfigurationSchema.safeParse({
       packId:'wealth',runtime:{type:'runtime_launcher',environmentId:'openjiuwen'},
       evaluationMode:'candidate_assessment',leftVariant:baseline,rightVariant:target,

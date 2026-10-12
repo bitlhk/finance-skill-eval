@@ -319,7 +319,9 @@ export class EvaluationRunManager {
       const inspection=await this.options.environments.inspect(selectedEnvironment);
       if(inspection.status!=='ready'||!inspection.capabilities)throw new Error(inspection.error??'执行环境预检失败');
       const available=new Set(inspection.capabilities.models.map(model=>model.modelId));
-      for(const side of ['left','right'] as const)if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
+      const bareModelComparison=configuration.evaluationMode==='pairwise'
+        &&pack.variants.left.mode==='without_target_skill'&&pack.variants.right.mode==='skill_version';
+      for(const side of (bareModelComparison?['right'] as const:['left','right'] as const))if(!available.has(pack.models.execution[side].modelId))throw new Error(`所选 ${side==='left'?'左侧':'右侧'} 模型不属于这个执行环境`);
       const makeSide=async(side:'left'|'right')=>{
         const skill=await resolveSkill(pack.variants[side]);
         const required=await this.launcherToolRequirements(selectedEnvironment,skill?.instructions,pack.cases.flatMap(c=>c.requiredTools));
@@ -330,6 +332,19 @@ export class EvaluationRunManager {
         model:pack.models.execution[side],variant:pack.variants[side],skill,
         environment:structuredClone(descriptor),timeoutMs:configuration.timeoutMs,
       })};
+      if(bareModelComparison){
+        const direct=configuredModelRole("EXECUTION");
+        if(!direct.adapter)throw new Error('裸模型基线执行服务未配置');
+        const rightModel=inspection.capabilities.models.find(model=>model.modelId===pack.models.execution.right.modelId);
+        if(!rightModel||(rightModel.upstreamModelId??rightModel.modelId)!==direct.model.modelId
+          ||pack.models.execution.left.modelId!==pack.models.execution.right.modelId
+          ||fingerprint(pack.models.execution.left.parameters)!==fingerprint(pack.models.execution.right.parameters)){
+          throw new Error('裸模型与 Skill Agent 必须使用同一上游模型和生成参数');
+        }
+        const baseline=new DirectModelRuntimeAdapter({adapterId:'bare-model-baseline-v1',modelAdapter:direct.adapter,
+          resolveSkill:async()=>null,allowToollessBaseline:true,executionModel:direct.model});
+        return new SideRuntimeAdapter({left:baseline,right:await makeSide('right')});
+      }
       return new SideRuntimeAdapter({left:await makeSide('left'),right:await makeSide('right')});
     }
     throw new Error(`Unsupported runtime type: ${configuration.runtime satisfies never}`);

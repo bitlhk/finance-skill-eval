@@ -67,3 +67,10 @@ it('does not turn missing or partial token accounting into zero consumption',()=
   expect(report([known,unknown]).summary.totalTokens).toEqual({left:null,right:null});
   expect(report([]).summary.totalTokens).toEqual({left:null,right:null});
 });
+
+it('labels a no-Skill comparison as a bare-model baseline versus a Skill Agent',()=>{
+  const html=renderHtmlReport(buildReport({pack,reportId:'baseline-labels',runtimeAdapterId:'side-runtime:bare-model-baseline-v1|launcher',judgeId:'model-pairwise:test',cases:[row('PASS','PASS')]}));
+  expect(html).toContain('裸模型基线（无 Skill、无工具、无 Runtime 实例）');
+  expect(html).toContain('<h3>裸模型基线</h3>');
+  expect(html).toContain('<h3>Skill Agent</h3>');
+});
