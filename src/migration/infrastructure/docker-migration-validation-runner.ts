@@ -8,6 +8,7 @@ import type {SkillAssetRecord} from '../../shared/contracts/skill-asset.js';
 import {validateMcpTool} from '../../mcp-preflight.js';
 import type {MigrationValidationRunner} from '../application/migration-technical-validator.js';
 import type {TechnicalValidation,ToolInspection} from '../domain/migration-model.js';
+import {managedMigrationTestService} from './managed-migration-test-service.js';
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const safeName=(value:string)=>value.replace(/[^a-z0-9_.-]+/giu,'-').slice(0,48);
@@ -99,19 +100,32 @@ export class DockerMigrationValidationRunner implements MigrationValidationRunne
     const validationId=`technical-${randomUUID()}`,startedAt=new Date().toISOString(),implementationDigest=digest([input.tool.sourcePaths,input.service??null]),casesDigest=digest(input.arguments??{});
     if(!input.service||!input.archive)return this.result(input.asset,input.tool,validationId,implementationDigest,casesDigest,startedAt,[],'受管工作区只试运行当前候选包内的 MCP 服务，不连接用户填写的任意地址。');
     if(input.service.prepare?.length)return this.result(input.asset,input.tool,validationId,implementationDigest,casesDigest,startedAt,[],'候选声明了在线安装依赖；隔离试运行不开放软件源，请将依赖锁定到平台准入的沙箱镜像。');
-    if(Object.keys(input.environment??{}).length)return this.result(input.asset,input.tool,validationId,implementationDigest,casesDigest,startedAt,[],'候选需要外部服务配置；请先绑定受管测试连接，隔离容器不会获得任意外网访问。');
-    let workspace:string|null=null,container:string|null=null,network:string|null=null;
+    let managedService;
+    try{managedService=managedMigrationTestService(input.environment??{});}
+    catch(error){return this.result(input.asset,input.tool,validationId,implementationDigest,casesDigest,startedAt,[],error instanceof Error?error.message:String(error));}
+    let workspace:string|null=null,fixtureWorkspace:string|null=null,container:string|null=null,fixtureContainer:string|null=null,network:string|null=null;
     let validation:TechnicalValidation;
     try{
       workspace=await materialize(input.archive);const command=serviceCommand(input.service.start,input.archive),suffix=randomUUID().replaceAll('-','').slice(0,12);container=`finance-eval-mcp-${suffix}`;network=`finance-eval-isolated-${suffix}`;
       const created=await run(this.docker,['network','create','--internal',network],{timeoutMs:15_000,signal:input.signal});if(created.exitCode!==0)throw new Error('Cannot create isolated sandbox network');
-      const args=['run','--detach','--rm','--name',container,'--network',network,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','64','--memory','384m','--cpus','1','--tmpfs','/tmp:rw,nosuid,nodev,size=64m','--user',`${process.getuid?.()??1000}:${process.getgid?.()??1000}`,'--mount',`type=bind,src=${workspace},dst=/workspace,readonly`,'--workdir','/workspace','--env','PORT=8080',this.image,...command];
+      if(managedService){
+        fixtureWorkspace=await materialize(Object.fromEntries(Object.entries(managedService.files).map(([name,value])=>[name,Buffer.from(value)])));
+        fixtureContainer=`finance-eval-fixture-${suffix}`;
+        const fixtureArgs=['run','--detach','--rm','--name',fixtureContainer,'--network',network,'--network-alias',managedService.networkAlias,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','32','--memory','128m','--cpus','0.5','--tmpfs','/tmp:rw,nosuid,nodev,size=16m','--user',`${process.getuid?.()??1000}:${process.getgid?.()??1000}`,'--mount',`type=bind,src=${fixtureWorkspace},dst=/fixture,readonly`,'--workdir','/fixture',this.image,...managedService.command];
+        const fixtureStarted=await run(this.docker,fixtureArgs,{timeoutMs:30_000,signal:input.signal});if(fixtureStarted.exitCode!==0)throw new Error((fixtureStarted.stderr||'Managed test service failed to start').slice(0,800));
+        const fixtureInspected=await run(this.docker,['inspect','--format','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',fixtureContainer],{timeoutMs:15_000,signal:input.signal});
+        const fixtureHost=fixtureInspected.stdout.trim();if(fixtureInspected.exitCode!==0||!/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(fixtureHost))throw new Error('Cannot resolve managed test service address');
+        await waitForPort(fixtureHost,managedService.port,15_000,input.signal);
+      }
+      const environment=managedService?.environment??{};
+      const args=['run','--detach','--rm','--name',container,'--network',network,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','64','--memory','384m','--cpus','1','--tmpfs','/tmp:rw,nosuid,nodev,size=64m','--user',`${process.getuid?.()??1000}:${process.getgid?.()??1000}`,'--mount',`type=bind,src=${workspace},dst=/workspace,readonly`,'--workdir','/workspace','--env','PORT=8080',...Object.entries(environment).flatMap(([name,value])=>['--env',`${name}=${value}`]),this.image,...command];
       const started=await run(this.docker,args,{timeoutMs:30_000,signal:input.signal});if(started.exitCode!==0)throw new Error((started.stderr||'Sandbox MCP service failed to start').slice(0,800));
       const inspected=await run(this.docker,['inspect','--format','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',container],{timeoutMs:15_000,signal:input.signal});
       const sandboxHost=inspected.stdout.trim();if(inspected.exitCode!==0||!/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(sandboxHost))throw new Error('Cannot resolve isolated sandbox address');
       await waitForPort(sandboxHost,8080,30_000,input.signal);
       const checked=await validateMcpTool({endpoint:`http://${sandboxHost}:8080/mcp`,toolName:input.tool.name,arguments:input.arguments,headers:input.headers,signal:input.signal});
       const observed=checked.tools.find(tool=>tool.name===input.tool.name),stages:TechnicalValidation['stages']=[{name:'SANDBOX',passed:true,message:`临时容器 ${this.image} 使用独立内部网络，不能访问宿主和外网`},
+        ...(managedService?[{name:'MANAGED_TEST_SERVICE',passed:true,message:`已绑定${managedService.name}；该服务仅在本次隔离网络中可见`}]:[]),
         {name:'INITIALIZE_AND_LIST',passed:Boolean(observed),message:observed?`发现 ${checked.tools.length} 个 Tool`:checked.error??'初始化失败'},
         {name:'INPUT_SCHEMA',passed:Boolean(observed?.inputSchema&&typeof observed.inputSchema==='object'),message:observed?.inputSchema?'tools/list 返回了输入 Schema':'目标 Tool 没有可验证的输入 Schema'},
         {name:'TOOLS_CALL',passed:checked.status==='ready'&&checked.callResult!==null,message:checked.status==='ready'&&checked.callResult!==null?'Tool 调用成功':checked.error??'Tool 调用未完成'}];
@@ -123,12 +137,15 @@ export class DockerMigrationValidationRunner implements MigrationValidationRunne
     }
     finally{
       if(container)await run(this.docker,['rm','--force',container],{timeoutMs:15_000}).catch(()=>undefined);
+      if(fixtureContainer)await run(this.docker,['rm','--force',fixtureContainer],{timeoutMs:15_000}).catch(()=>undefined);
       if(network)await run(this.docker,['network','rm',network],{timeoutMs:15_000}).catch(()=>undefined);
       const containerGone=!container||(await run(this.docker,['container','inspect',container],{timeoutMs:15_000}).catch(()=>null))?.exitCode!==0;
+      const fixtureGone=!fixtureContainer||(await run(this.docker,['container','inspect',fixtureContainer],{timeoutMs:15_000}).catch(()=>null))?.exitCode!==0;
       const networkGone=!network||(await run(this.docker,['network','inspect',network],{timeoutMs:15_000}).catch(()=>null))?.exitCode!==0;
       let workspaceGone=true;
       if(workspace)try{await rm(workspace,{recursive:true,force:true});}catch{workspaceGone=false;}
-      const disposed=containerGone&&networkGone&&workspaceGone;
+      if(fixtureWorkspace)try{await rm(fixtureWorkspace,{recursive:true,force:true});}catch{workspaceGone=false;}
+      const disposed=containerGone&&fixtureGone&&networkGone&&workspaceGone;
       validation!.stages.push({name:'SANDBOX_DISPOSED',passed:disposed,message:disposed?'容器、隔离网络和临时文件已删除':'隔离资源未能完整确认删除'});
       validation!.finishedAt=new Date().toISOString();
       if(!disposed){validation!.status='FAILED';validation!.error=validation!.error??'隔离资源未能完整确认删除';}

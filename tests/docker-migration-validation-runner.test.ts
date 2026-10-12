@@ -2,6 +2,7 @@ import {expect,it} from 'vitest';
 import {DockerMigrationValidationRunner} from '../src/migration/infrastructure/docker-migration-validation-runner.js';
 import type {SkillAssetRecord} from '../src/shared/contracts/skill-asset.js';
 import {archiveOf,toolFixture} from './analysis-fixture.js';
+import {PROCUREMENT_TEST_SERVICE} from '../src/migration/infrastructure/managed-migration-test-service.js';
 
 const dockerTests=process.env.RUN_DOCKER_MIGRATION_SANDBOX_TESTS==='1';
 const asset:SkillAssetRecord={schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'asset-sandbox',skillId:'sandbox-fixture',version:'1.0.0',
@@ -37,6 +38,31 @@ it.runIf(dockerTests)('runs a packaged FastMCP tool and confirms container and n
   ].join('\n')});
   const result=await runner.validateMcp({asset,archive,service:{start:['python3','mcp/server.py']},arguments:{value:'ok'},tool:toolFixture({name:'lookup',sourcePaths:['mcp/server.py'],kind:'MCP',portability:'PORTABLE_MCP',recommendedForm:'MCP'})});
   expect(result.status,result.error??'').toBe('PASSED');
+  expect(result.stages).toContainEqual(expect.objectContaining({name:'TOOLS_CALL',passed:true}));
+  expect(result.stages).toContainEqual(expect.objectContaining({name:'SANDBOX_DISPOSED',passed:true}));
+});
+
+it.runIf(dockerTests)('calls the pinned procurement service inside the isolated network and disposes both containers',async()=>{
+  const runner=new DockerMigrationValidationRunner(process.env.FINANCE_EVAL_MIGRATION_SANDBOX_IMAGE!);
+  const archive=archiveOf({'SKILL.md':'fixture','mcp/server.py':[
+    'import json, os',
+    'from urllib.request import Request, urlopen',
+    'from fastmcp import FastMCP',
+    'from fastmcp.server.dependencies import get_http_headers',
+    'mcp=FastMCP("procurement")',
+    '@mcp.tool',
+    'def get_request(request_id: str) -> dict:',
+    '    auth=get_http_headers(include_all=True).get("authorization")',
+    '    request=Request(os.environ["BUSINESS_SERVICE_URL"]+"/business/request", data=json.dumps({"request_id":request_id}).encode(), headers={"Content-Type":"application/json","Authorization":auth})',
+    '    with urlopen(request, timeout=5) as response: return json.load(response)',
+    'if __name__ == "__main__":',
+    '    mcp.run(transport="http", host="0.0.0.0", port=int(os.environ["PORT"]), path="/mcp", stateless_http=True)',
+  ].join('\n')});
+  const result=await runner.validateMcp({asset,archive,service:{start:['python3','mcp/server.py']},arguments:{request_id:'PO-001'},
+    headers:{Authorization:'Bearer synthetic-procurement-e2e'},environment:{BUSINESS_SERVICE_URL:PROCUREMENT_TEST_SERVICE},
+    tool:toolFixture({name:'get_request',sourcePaths:['mcp/server.py'],kind:'MCP',portability:'PORTABLE_MCP',recommendedForm:'MCP'})});
+  expect(result.status,result.error??'').toBe('PASSED');
+  expect(result.stages).toContainEqual(expect.objectContaining({name:'MANAGED_TEST_SERVICE',passed:true}));
   expect(result.stages).toContainEqual(expect.objectContaining({name:'TOOLS_CALL',passed:true}));
   expect(result.stages).toContainEqual(expect.objectContaining({name:'SANDBOX_DISPOSED',passed:true}));
 });
