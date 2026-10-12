@@ -51,7 +51,7 @@ async function materialize(archive:Record<string,Uint8Array>){
 function containerBase(image:string,name:string,workspace:string,network:string){
   return ['run','--rm','--interactive','--name',name,'--network',network,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
     '--pids-limit','64','--memory','384m','--cpus','1','--tmpfs','/tmp:rw,nosuid,nodev,size=64m','--user',`${process.getuid?.()??1000}:${process.getgid?.()??1000}`,
-    '--mount',`type=bind,src=${workspace},dst=/workspace`,'--workdir','/workspace',image];
+    '--mount',`type=bind,src=${workspace},dst=/workspace,readonly`,'--workdir','/workspace',image];
 }
 
 function scriptCommand(tool:ToolInspection,archive:Record<string,Uint8Array>){
@@ -105,7 +105,7 @@ export class DockerMigrationValidationRunner implements MigrationValidationRunne
     try{
       workspace=await materialize(input.archive);const command=serviceCommand(input.service.start,input.archive),suffix=randomUUID().replaceAll('-','').slice(0,12);container=`finance-eval-mcp-${suffix}`;network=`finance-eval-isolated-${suffix}`;
       const created=await run(this.docker,['network','create','--internal',network],{timeoutMs:15_000,signal:input.signal});if(created.exitCode!==0)throw new Error('Cannot create isolated sandbox network');
-      const args=['run','--detach','--rm','--name',container,'--network',network,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','64','--memory','384m','--cpus','1','--tmpfs','/tmp:rw,nosuid,nodev,size=64m','--user',`${process.getuid?.()??1000}:${process.getgid?.()??1000}`,'--mount',`type=bind,src=${workspace},dst=/workspace`,'--workdir','/workspace','--env','PORT=8080',this.image,...command];
+      const args=['run','--detach','--rm','--name',container,'--network',network,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','64','--memory','384m','--cpus','1','--tmpfs','/tmp:rw,nosuid,nodev,size=64m','--user',`${process.getuid?.()??1000}:${process.getgid?.()??1000}`,'--mount',`type=bind,src=${workspace},dst=/workspace,readonly`,'--workdir','/workspace','--env','PORT=8080',this.image,...command];
       const started=await run(this.docker,args,{timeoutMs:30_000,signal:input.signal});if(started.exitCode!==0)throw new Error((started.stderr||'Sandbox MCP service failed to start').slice(0,800));
       const inspected=await run(this.docker,['inspect','--format','{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',container],{timeoutMs:15_000,signal:input.signal});
       const sandboxHost=inspected.stdout.trim();if(inspected.exitCode!==0||!/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(sandboxHost))throw new Error('Cannot resolve isolated sandbox address');
