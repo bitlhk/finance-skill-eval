@@ -474,6 +474,7 @@ export function App() {
     setError("");
     try {
       const dualRuntime=runtime==="dual_runtime";
+      const targetOnlyAssessment=runtime==="runtime_launcher"&&leftVariantSelection==="without_target_skill";
       const boundAsset=(value:string)=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]);
       const leftAsset=boundAsset(leftVariantSelection),rightAsset=boundAsset(rightVariantSelection);
       if(dualRuntime&&(!leftAsset||!rightAsset||leftAsset.assetId!==rightAsset.assetId||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要同一份已导入 Skill 和相同模型");
@@ -487,6 +488,7 @@ export function App() {
               ? { type: runtime, environmentId: runtimeEnvironmentId }
             : { type: runtime },
           judgeMode,
+          evaluationMode: targetOnlyAssessment ? "candidate_assessment" : "pairwise",
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
           ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation),
@@ -794,6 +796,7 @@ function EvaluationView(props: {
   const active = props.job && !TERMINAL.has(props.job.status);
   const replayLocked = props.runtime === "replay" || Boolean(active);
   const dynamic = props.caseSource === "ai_generated";
+  const targetOnlyAssessment=props.runtime==="runtime_launcher"&&props.leftVariantSelection==="without_target_skill";
   const questions = dynamic ? props.job?.questionSet?.cases ?? [] : props.cases;
   const runtimeEnvironment = props.catalog.environments.find(item => item.environmentId === props.runtimeEnvironmentId);
   const runtimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.runtimeEnvironmentId);
@@ -837,7 +840,7 @@ function EvaluationView(props: {
 
       <section className="shared-environment">
         <div className="comparison-modes" role="group" aria-label="对比目标">
-          {([['skill','对比 Skill'],['model','对比模型'],['runtime','对比 Runtime']] as const).map(([mode,label])=><button key={mode} type="button" aria-pressed={props.comparisonMode===mode} disabled={Boolean(active)||(mode==='runtime'&&Boolean(props.catalog.publicDemo))} onClick={()=>props.onComparisonChange(mode)}>{label}</button>)}
+          {([['skill','Skill 评测'],['model','对比模型'],['runtime','对比 Runtime']] as const).map(([mode,label])=><button key={mode} type="button" aria-pressed={props.comparisonMode===mode} disabled={Boolean(active)||(mode==='runtime'&&Boolean(props.catalog.publicDemo))} onClick={()=>props.onComparisonChange(mode)}>{label}</button>)}
         </div>
         {props.declarationIssue?<p role="alert" className="comparison-warning warning">{props.declarationIssue}</p>:null}
         <div className="environment-match-summary" role="status">
@@ -882,10 +885,15 @@ function EvaluationView(props: {
       </section>
 
       <div className="comparison-grid">
-        <ComparisonConfigurator side="A" title="对照组" runtimeName={props.runtime==='dual_runtime'?leftRuntimeOption?.name:runtimeOption?.name} selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
+        {targetOnlyAssessment ? <section className="comparison-panel configurable">
+          <div className="comparison-panel-head"><div className="side-badge">A</div><div><span>无 Skill 基线</span><strong>本轮不执行</strong></div></div>
+          <div className="comparison-foot"><span>受管动态 Runtime 只启动已装配的真实 Skill。本轮按同一题集评估目标 Skill，不生成或伪装无 Skill Agent。</span></div>
+        </section> : <ComparisonConfigurator side="A" title="对照组" runtimeName={props.runtime==='dual_runtime'?leftRuntimeOption?.name:runtimeOption?.name} selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />}
         <div className="comparison-arrow"><ArrowRight size={20} /></div>
         <ComparisonConfigurator side="B" title="目标组" runtimeName={props.runtime==='dual_runtime'?rightRuntimeOption?.name:runtimeOption?.name} selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
       </div>
+
+      {targetOnlyAssessment ? <div className="comparison-warning info">当前只有一个可执行 Skill 版本，本轮进行单项质量评测；如需版本对比，请先导入另一份真实版本。</div> : null}
 
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
       {props.comparisonMode==='model'&&comparisonModels.length<2?<p className="comparison-warning warning">当前环境只有一个可用模型，暂无第二个模型可比较。</p>:null}

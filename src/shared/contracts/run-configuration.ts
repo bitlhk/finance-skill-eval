@@ -44,6 +44,10 @@ export const runConfigurationSchema = z.strictObject({
   if((value.evaluationMode==='service_comparison')!==Boolean(value.originalService))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比模式必须配置原服务，其他模式不能附带原服务配置'});
   const managedRuntime=value.runtime.type==='runtime_launcher';
   const runtimeComparison=value.evaluationMode==='candidate_runtime_comparison';
+  if(managedRuntime&&value.evaluationMode==='pairwise'
+    &&(value.leftVariant?.mode==='without_target_skill'||value.rightVariant?.mode==='without_target_skill')){
+    context.addIssue({code:z.ZodIssueCode.custom,message:'受管动态 Runtime 不执行无 Skill 基线；请使用单项质量评测，或选择两个真实 Skill 版本进行对比'});
+  }
   if(runtimeComparison && (!value.runtimeBindings || !managedRuntime || value.judgeMode!=='model'
     || !value.executionModel || !value.leftExecutionModel || !value.rightExecutionModel || !value.leftVariant || !value.rightVariant
     || fingerprint(value.executionModel)!==fingerprint(value.leftExecutionModel)
