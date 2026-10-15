@@ -25,12 +25,13 @@ protocol = sys.stdout
 sys.stdout = sys.stderr
 logging.disable(logging.INFO)
 
-from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump  # noqa: E402
+from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump, is_output_format_failure, collect_delivery_files  # noqa: E402
 from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_DELIVERY,
                            ToolTraceRail, skill_rail)  # noqa: E402
 from migration_tools import build_compile_tool, build_contract_suite_tool, build_contract_test_tool, build_grep_tool  # noqa: E402
 
 SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
+deliveryContract.approvedReuseProposal 是已确认的可复用迁移方案。逐项落实其中 changes，遵守 dependencies 与 conditions，并保留业务行为。它的 acceptanceChecks 是待验证要求，未执行的检查不得宣称通过。不得自行更换方案或添加隐藏状态、部署依赖、身份逻辑；发现方案不可实施时 ABSTAINED，说明需要重新确认的具体事项。
 
 工作区里是待迁移的源工程。你的任务是按给定的逐 Tool 决策，把每个 Tool 迁移成可以独立运行的形式，
 让它**通过编译和契约测试**，并交付整理后的 Skill 文档。
@@ -72,12 +73,16 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
   用具名业务函数、类型注解和必要的 Pydantic 约束定义工具，再实际 tools/list 核对基线 Schema；不要为了 Schema 回退到低层 Server。
   `tools/call` 返回的 JSON 文本与源业务结果一致；
   **工具名不改**。Schema 仅描述业务参数，隐式身份和凭证必须移出 Schema 并说明改动。当前 Java 验证工具只支持纯 JDK 17 源码：不得生成 pom.xml、不得导入 MCP SDK/Jetty/Jackson 等第三方类；调用 `compile_source(language="java")` 时省略 paths 自动发现全部 `.java` 文件。
-- 迁移适配只能改变注册、启动和依赖注入边界，不能重写业务协议或业务判断。源码里的接口路径片段、operation 字符串、HTTP method、请求 payload 字段、响应字段、状态值、错误码、金额计算和返回对象合并方式必须逐项原样保留；例如业务函数名 `get_request` 不等于它传给共享 HTTP helper 的 operation 字面量 `request`。不得从 Skill 的最终回答格式反推并改写底层 Tool 返回结构，也不得把 `enough/reserve` 改造成 `approved/reasons`。如果源码事实与文字说明冲突，以实际业务实现为迁移基线，并在 changes/drift 中报告，而不是自行改业务逻辑。
+- 按已确认方案改造原框架的注册、启动、依赖注入及跨工具/跨轮数据传递边界；状态处理变化必须满足已确认的所有权、隔离、寿命和部署条件。不能重写外部业务协议或业务判断。源码里的接口路径片段、operation 字符串、HTTP method、请求 payload 字段、响应字段、状态值、错误码、金额计算和返回对象合并方式必须逐项原样保留；例如业务函数名 `get_request` 不等于它传给共享 HTTP helper 的 operation 字面量 `request`。不得从 Skill 的最终回答格式反推并改写底层 Tool 返回结构，也不得把 `enough/reserve` 改造成 `approved/reasons`。如果源码事实与文字说明冲突，以实际业务实现为迁移基线，并在 changes/drift 中报告，而不是自行改业务逻辑。
 - **SCRIPT**：写出通过通用 command 执行的完整程序，首版业务输入仍从 stdin 读取 JSON、stdout 返回 JSON。它不是独立注册的业务工具。执行时 cwd 是独立 workspace，Skill 包可能位于其他目录；入口使用 Runtime 给出的绝对路径。包内资源基于 __file__（Node 使用 import.meta.url）定位，业务文件与相对输出路径基于 cwd。不能写死部署绝对路径，不能假设 cwd 是源工程或 Skill 根目录。
 - Tool 的 runtime 依赖与业务参数分开：SCRIPT 通过通用 command 执行，不注册为独立工具，也不支持额外 Runtime 注入；唯一例外是 binding.kind=SCRIPT_CONTEXT 且 name=workspace/cwd 的非敏感依赖，它直接使用执行进程 cwd，无需声明 runtimeBindings。其他需要 Runtime 上下文或凭证的实现必须使用 MCP，并从每次 HTTP 请求的声明 header 读取。不要把凭证或上下文加入模型输入 Schema，不建立或切换执行身份。
 - 把依赖执行 cwd 中业务文件的 Script 改为 MCP 时，服务进程 cwd 已不再是每条任务的 workspace。此时必须从当前 MCP HTTP 请求的 `X-Workspace-Root` Header 取得该案例的工作区绝对路径，再按源实现的相对路径读取；不得继续使用服务 cwd、不得写死生成或测试时路径、不得把 workspace 加进 Tool 输入 Schema。`X-Workspace-Root` 是目标 Runtime 为候选 MCP 自动提供的每请求执行上下文，不新增 migrationContract dependency，也不要为它返回 runtimeBindings。没有该 Header 时应明确报配置错误，不能静默读取其他目录。
-- 必须迁移 Skill 文档并明确交付最终结构。最终 `SKILL.md` 是模型要执行的业务工作流，不是 MCP 部署说明：保留或补足明确的触发范围、业务输入、工具职责、调用顺序、分支与停止条件、禁止编造的数据，以及最终输出字段、类型和错误代码。MCP Header、环境变量和配置模板只能作为简短附加说明，不能替代业务规则，也不要为每个工具重复“通过 MCP 调用同名工具”。只能依据源 Skill 与已读取的业务实现补充，不能确认的内容标为待确认，不得猜测。优先保持单一 `SKILL.md`；只有内容确实独立、低频、适合按需读取时才拆到 `references/`，不要按 Tool 或原目录机械拆分。500 行只是帮助判断可读性的参考，不是硬阈值。平台只校验你交付的结构，不会在完成后替你合并或拆分文档。`workspace/` 是运行期工作目录，不属于 Skill 包，禁止写入候选产物。
-- 本阶段只迁移业务 MCP/SCRIPT。真正的 Runtime Harness 改造需求会在进入 A4 前被平台阻止，并单独输出 Runtime Builder YAML；不得生成、打包或声明任何 Runtime 插件。
+- 必须迁移 Skill 文档并明确交付最终结构。最终 `SKILL.md` 是模型要执行的业务工作流：说明触发范围、输入来源、工具职责、模型实际承担的调用顺序与分支、结果解释、停止条件和最终回答约束。工具的输入输出及错误语义要清楚，但不要把工具内部的 HTTP 请求顺序、鉴权、重试、超时、SDK 调用或数值计算展开成模型要重复执行的步骤；这些实现依据留在工具代码、迁移方案和验收材料。模型确实负责多工具协调、业务选择或计算时，保留有源依据的规则，不因出现 HTTP、公式或某个标题机械删除。只能依据源 Skill 与已读取的业务实现补充，不能确认的内容标为待确认，不得猜测。
+- 部署地址、Header、环境变量、依赖安装和启动配置放工具工程 README 或配置模板，不交给模型配置；Skill 仅保留实际调用所需的入口、输入格式及资源读取方式，不为每个 MCP 工具重复无业务意义的协议说明。输入示例不是格式转换规则：业务标识符按用户输入或可信工具结果原样传递，不依据示例补字符、改格式或猜值；只有源业务契约明确要求的转换才保留，不改变工具 Schema、算法或错误码。
+- 保留源业务语义不等于照抄源正文的内部实现描述。若查询、校验与计算已封装在同一个工具中，Skill 写清一次调用及结果处理即可；不要再列内部 HTTP 路径、请求链或计算步骤，即使加了“工具内部完成、模型不用执行”的标签也不应展开。仅当细节确实影响模型的业务选择或输出解释时简要说明，并保留真实多工具协作步骤。源文档中的不准确规则不能扩散为新指令，需依据源码报告差异。
+- 优先保持单一 `SKILL.md`；只有内容确实独立、低频、适合按需读取时才拆到 `references/`，不要按 Tool 或原目录机械拆分。500 行只是帮助判断可读性的参考，不是硬阈值。平台只校验你交付的结构，不会在完成后替你合并或拆分文档，也不会用关键词过滤替你删正文。`workspace/` 是运行期工作目录，不属于 Skill 包，禁止写入候选产物。
+- 最终 `SKILL.md` 的 YAML frontmatter 必须可解析；`name` 和 `description` 必须是字符串。description 中有冒号、引号或换行时，用合法的 YAML 引号或 `|` 块标量，不要直接写成未引用的单行值。交付前自行解析一次，解析失败就修正再提交。
+- 本阶段实施已确认方案中的 Skill 文档及业务 MCP/SCRIPT。Runtime Harness 需求由单独的 Builder 接入环节处理；不得生成、打包或声明 Runtime 插件。即使业务 tools 为空，仍按已确认方案交付 Skill 文档；不要新增工具来填充列表。
 - tools 中 migrationContract.dependencies 给出源码诊断的契约、移出逻辑及注入方式，只包含声明，不包含真实测试值。保留 Tool 所需的鉴权解析与业务逻辑；Runtime 内部用于获取凭证的 user/SDK 不应整体成为 Tool 依赖。
 - 有必需的 Runtime 注入依赖时，run_contract_test 会明确标记实际调用待验证；仍需完成编译及可检查的接口契约，不索要真实凭证、不伪造值、不因测试值缺失弃权，也不宣称业务链路通过。
 - `blocking=false` 只表示不阻塞生成，不表示运行时不需要该值。A4 不接收真实 Runtime 注入值；只要存在 RUNTIME + INJECT，契约测试就只检查服务启动、工具发现与 Schema，并返回 callExecuted=false。绝不能为了让缺配置调用通过而改变 isError 或业务错误语义。
@@ -118,6 +123,8 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
 - **做不到就诚实弃权**：某个 Tool 无法忠实迁移时把它的 status 置为 ABSTAINED，
   写清 reason 和 missing，**不要编一个看起来对的实现**。
 - 不要原地修改源工程。Tool 实现写入新的交付路径；最终 Skill 文档写入 `migration-skill/`，并通过 `skillDelivery` 给出目标 Skill 内路径。
+- `skillDelivery.files` 只列 migration-skill/ 内的最终 SKILL.md 和 references/ 文档。服务部署 README 放在 tools[].files，不要再加入 skillDelivery；即使 SKILL.md 正确，错误的额外清单项也会拒绝整份交付。可复用的原模块必须显式列入 tools[].files，即使无需修改。
+- 原工程中不再需要的框架注册、返回包装等实现代码可在 `skillDelivery.retiredSources` 显式列出 `{path,reason}`。path 必须是输入原包的完整相对文件路径，reason 依据读过的源码和已确认迁移方案说明如何被替代。只影响候选包，不在工作区删除原文件。不得退役文档、业务资源、配置或仍被未迁移工具消费的共享代码；不要按 register.py 等文件名猜测。候选分析与独立方案一致性审查仍需核验移除后行为。
 
 最后**只输出一个 JSON 对象**，不要有其它文字：
 {
@@ -138,6 +145,7 @@ SYSTEM_PROMPT = """你是企业 Skill 迁移平台的代码迁移工程师。
   }],
   "skillDelivery": {
     "skillFile": "SKILL.md",
+    "retiredSources": [],
     "files": [
       {"source": "migration-skill/SKILL.md", "path": "SKILL.md"},
       {"source": "migration-skill/references/manual.md", "path": "references/manual.md"}
@@ -161,7 +169,7 @@ async def run(body: dict) -> None:
         EditFileTool, GlobTool, ListDirTool, WriteFileTool,
     )
 
-    from model_config import resolve_model, request_settings
+    from model_config import resolve_model, request_settings, bind_agent_request_extensions
 
     started = time.monotonic()
     config = json.loads(Path(os.environ["FINANCE_RUNTIME_CONFIG"]).read_text(encoding="utf-8"))
@@ -209,6 +217,7 @@ async def run(body: dict) -> None:
             max_tokens=int(body.get("maxTokens", 32000)),
             timeout=int(body.get("modelTimeoutMs", 300_000)) / 1000,
         )
+        model = bind_agent_request_extensions(model, settings, "MIGRATION")
         agent = create_code_agent(
             model=model,
             system_prompt=SYSTEM_PROMPT.replace("@@WORKSPACE_ROOT@@", str(workspace)),
@@ -244,9 +253,12 @@ async def run(body: dict) -> None:
         raw = str(result.get("output", ""))
         outcome_keys = sorted(result) if isinstance(result, dict) else []
         failure = ""
+        output_parse_failed = False
         try:
             parsed = parse_structured(raw)
-            status = "ABSTAINED" if str(parsed.get("status", "")).upper() == "ABSTAINED" else "PRODUCED"
+            status = str(parsed.get("status", "")).upper()
+            if status not in {"PRODUCED", "ABSTAINED"}:
+                raise ValueError("模型结果缺少有效的 status（PRODUCED 或 ABSTAINED）")
             payload = parsed
             suite_observations = [item for record in tool_trace if record.get("tool") == "run_mcp_contract_suite"
                                   for item in record.get("results", [])]
@@ -262,36 +274,12 @@ async def run(body: dict) -> None:
         except (ValueError, json.JSONDecodeError) as exc:
             status = "FAILED"
             payload = {}
-            raw = f"{raw}\n\n[parse failed: {exc}]"
+            output_parse_failed = is_output_format_failure(result)
             # Say it here: the platform can only report a reason the agent actually emitted.
             failure = not_json_reason(result, exc, budget)
 
         # The workspace afterwards is the delivery: collect what the agent actually wrote.
-        produced: dict[str, str] = {}
-        declared_skill_sources = {
-            str(item.get("source", "")).replace("\\", "/")
-            for item in ((payload.get("skillDelivery") or {}).get("files") or [])
-            if isinstance(item, dict)
-        }
-        for path in sorted(workspace.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(workspace).as_posix()
-            head = rel.split("/")[0]
-            # Skip the harness scaffold, and build artefacts left by the compile tool.
-            if head in {"agents", "coding_memory", "context", "memory", "messages", "skills", "todo"}:
-                continue
-            if rel in {"AGENT.md", "SOUL.md", "IDENTITY.md", "USER.md", "HEARTBEAT.md"}:
-                continue
-            if "__pycache__" in rel.split("/") or path.suffix in {".pyc", ".pyo", ".class"}:
-                continue
-            # A source file that came back unchanged is not part of the delivery --
-            # shipping the runtime-coupled original alongside its migration would be wrong.
-            written = path.read_bytes()
-            original = originals.get(rel)
-            if original is not None and original == written and rel not in declared_skill_sources:
-                continue
-            produced[rel] = base64.b64encode(written).decode()
+        produced = collect_delivery_files(workspace, originals, payload)
 
         emit(protocol, {"result": {
             "stage": "A4",
@@ -299,7 +287,9 @@ async def run(body: dict) -> None:
             "status": status,
             "payload": payload,
             "files": produced,
-            "rawOutput": raw[:20000],
+            "rawOutput": raw[:64000],
+            "rawOutputTruncated": len(raw) > 64000,
+            "outputParseFailed": output_parse_failed,
             "error": failure,
             "trace": {"rounds": tool_trace},
             "elapsedMs": round((time.monotonic() - started) * 1000),

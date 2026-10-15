@@ -8,6 +8,7 @@ Tools are the allowlist: an agent can only act through what it is handed here.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import json
 import os
 import re
@@ -306,10 +307,12 @@ def _parse_rpc_body(body: str) -> Any:
     return None
 
 
-def _mcp_post(url: str, payload: dict[str, Any], session_id: str | None = None, timeout: float = 30.0) -> tuple[str | None, Any]:
+def _mcp_post(url: str, payload: dict[str, Any], session_id: str | None = None, timeout: float = 30.0,
+              request_headers: dict[str, str] | None = None) -> tuple[str | None, Any]:
     import urllib.request
 
     headers = {"content-type": "application/json", "accept": "application/json, text/event-stream"}
+    headers.update(request_headers or {})
     if session_id:
         headers["mcp-session-id"] = session_id
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
@@ -449,18 +452,24 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any, exe
         )
     except OSError as exc:
         return {"passed": False, "error": f"SERVICE_FAILED_TO_START: 启动命令 {' '.join(start)} 无法执行：{exc}"}
+    execution_workspace = tempfile.TemporaryDirectory(prefix="migration-mcp-workspace-")
     try:
+        # Preserve fixture-relative paths while keeping the request cwd separate from the package.
+        fixture_directory = workspace / "workspace"
+        if fixture_directory.is_dir():
+            shutil.copytree(fixture_directory, Path(execution_workspace.name) / "workspace", dirs_exist_ok=True)
+        post = partial(_mcp_post, request_headers={"X-Workspace-Root": str(Path(execution_workspace.name).resolve())})
         if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
             await _terminate(proc)
             return {"passed": False, "error": "SERVICE_DID_NOT_START",
                     "stderr": f"启动命令 {' '.join(start)} 在 {int(_LAUNCH_TIMEOUT)}s 内没有监听 PORT={port}"}
         url = f"http://127.0.0.1:{port}/mcp"
-        session, _ = await asyncio.to_thread(_mcp_post, url, {
+        session, _ = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                        "clientInfo": {"name": "finance-skill-migration", "version": "0.1.0"}}})
-        await asyncio.to_thread(_mcp_post, url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
-        _, listed = await asyncio.to_thread(_mcp_post, url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, session)
+        await asyncio.to_thread(post, url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
+        _, listed = await asyncio.to_thread(post, url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, session)
         tools = ((listed or {}).get("result") or {}).get("tools") or []
         name = str(entry.get("toolName") or "")
         observed = next((tool for tool in tools if tool.get("name") == name), None)
@@ -473,7 +482,7 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any, exe
         if not execute_call:
             return {"passed": True, "callExecuted": False, "drift": drift,
                     "note": "服务启动与工具发现通过；实际业务调用待测试 Runtime 提供依赖后验证。"}
-        _, called = await asyncio.to_thread(_mcp_post, url, {
+        _, called = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": name, "arguments": sample}}, session)
         result = ((called or {}).get("result") or {})
@@ -494,6 +503,7 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any, exe
         return {"passed": False, "error": f"MCP_CONTRACT_FAILED: {type(error).__name__}: {error}"}
     finally:
         await _terminate(proc)
+        execution_workspace.cleanup()
 
 
 async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], start: list[str],
@@ -514,16 +524,22 @@ async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], star
             stderr=asyncio.subprocess.PIPE, env=env)
     except OSError as exc:
         return {"passed": False, "error": f"SERVICE_FAILED_TO_START: {exc}", "results": []}
+    execution_workspace = tempfile.TemporaryDirectory(prefix="migration-mcp-workspace-")
     try:
+        # Preserve fixture-relative paths while keeping the request cwd separate from the package.
+        fixture_directory = workspace / "workspace"
+        if fixture_directory.is_dir():
+            shutil.copytree(fixture_directory, Path(execution_workspace.name) / "workspace", dirs_exist_ok=True)
+        post = partial(_mcp_post, request_headers={"X-Workspace-Root": str(Path(execution_workspace.name).resolve())})
         if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
             return {"passed": False, "error": "SERVICE_DID_NOT_START", "results": []}
         url = f"http://127.0.0.1:{port}/mcp"
-        session, _ = await asyncio.to_thread(_mcp_post, url, {
+        session, _ = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                        "clientInfo": {"name": "finance-skill-migration", "version": "0.1.0"}}})
-        await asyncio.to_thread(_mcp_post, url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
-        _, listed = await asyncio.to_thread(_mcp_post, url, {
+        await asyncio.to_thread(post, url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session)
+        _, listed = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, session)
         advertised = ((listed or {}).get("result") or {}).get("tools") or []
         results = []
@@ -543,7 +559,7 @@ async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], star
                                 "contractPassed": True, "callExecuted": False,
                                 "runtimeDependenciesPending": case["runtimePending"], "drift": drift, "error": ""})
                 continue
-            _, called = await asyncio.to_thread(_mcp_post, url, {
+            _, called = await asyncio.to_thread(post, url, {
                 "jsonrpc": "2.0", "id": index, "method": "tools/call",
                 "params": {"name": entry.get("toolName"), "arguments": sample}}, session)
             result = ((called or {}).get("result") or {})
@@ -568,6 +584,7 @@ async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], star
         return {"passed": False, "error": f"MCP_CONTRACT_FAILED: {type(error).__name__}: {error}", "results": []}
     finally:
         await _terminate(proc)
+        execution_workspace.cleanup()
 
 
 async def _contract_suite(workspace: Path, contract: dict[str, Any], tool_ids: list[str],

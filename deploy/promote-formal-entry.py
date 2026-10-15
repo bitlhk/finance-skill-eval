@@ -95,7 +95,7 @@ def check_web(web):
         if path.is_symlink():
             raise ValueError('STATIC_SYMLINK')
         if path.is_file():
-            files[str(path.relative_to(web))] = config.digest(path.read_bytes())
+            files[path.relative_to(web).as_posix()] = config.digest(path.read_bytes())
     index = (web / 'index.html').read_text()
     if '/release-check/' in index or 'src="/assets/' not in index:
         raise ValueError('ROOT_BUILD_REQUIRED')

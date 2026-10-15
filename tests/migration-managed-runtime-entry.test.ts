@@ -42,13 +42,13 @@ function deliver(value:MigrationProject,environment:MigrationLauncher) {
   return delivery;
 }
 
-function services(value:MigrationProject,environment:MigrationLauncher,ready=true) {
+function services(value:MigrationProject,environment:MigrationLauncher,ready=true,archive:Record<string,Uint8Array>={}) {
   const projects={get:vi.fn(async()=>value)};
   const configs={get:vi.fn(async()=>({revision:0,values:{},checks:[]}))};
   const repo={get:vi.fn(async(id:string)=>id===environment.environmentId?environment:null)};
   const evaluate=vi.fn(async(_id:string,body:unknown)=>body);
   const report=new MigrationReportService(projects as never,{get:()=>null} as never,undefined,undefined,undefined,repo,configs as never);
-  const entry=new MigrationOpenJiuwenService(projects as never,{readArchive:async()=>({})} as never,
+  const entry=new MigrationOpenJiuwenService(projects as never,{readArchive:async()=>archive} as never,
     {currentState:async()=>({ready,reasons:['technical validation missing']})} as never,
     {validate:evaluate} as never,report,{resolve:vi.fn()} as never,repo,configs as never);
   return {entry,report,evaluate,repo};
@@ -64,9 +64,20 @@ it.each(['openjiuwen','agentscope'] as const)('admits registered %s Launchers wi
   expect(blocked.evaluate).not.toHaveBeenCalled();
 });
 
+it('mounts Script sibling resources without extension filtering or pulling an external MCP service into its Skill',async()=>{
+ const value=project(),environment=launcher();
+ Object.assign(value.candidate!,{skillFile:'skill/SKILL.md'});
+ value.inspection!.tools=[{name:'expense',kind:'SCRIPT',entrypoint:{kind:'PYTHON',path:'skill/scripts/expense.py'}}] as never;
+ const archive=Object.fromEntries(['skill/SKILL.md','skill/scripts/expense.py','skill/scripts/pyproject.toml','skill/assets/rules.json','skill/assets/data.csv','skill/references/rules.txt','mcp/server.py']
+  .map(path=>[path,new TextEncoder().encode('fixture')]));
+ const {entry}=services(value,environment,true,archive);
+ const result=await entry.validate(value.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:environment.environmentId}}}) as any;
+ expect(result.configuration.runtimeCommandBindings.right[0].filePaths).toEqual(Object.keys(archive).filter(path=>path.startsWith('skill/')));
+});
+
 it.each([
   ['ready','agentscope','2.0.3',true],['ready','openjiuwen','0.1.15',true],
-  ['ready','agentscope','unknown',false],['ready','ea','2.0.3',false],['failed','agentscope','2.0.3',false],
+  ['ready','agentscope','unknown',false],['ready','ea','2.0.3',true],['failed','agentscope','2.0.3',false],
 ] as const)('legacy generic requires capabilities proof: %s/%s/%s',async(status,type,version,allowed)=>{
   const environment=launcher('generic_http');
   const repo={get:async()=>environment,preflight:vi.fn(async()=>({status,capabilities:{runtime:{type,version}}}))};
@@ -83,7 +94,7 @@ it('checks both CC environments before forwarding without rewriting the comparis
     executionModel:{parameters:{temperature:0.25,top_p:0.8,max_tokens:1234}}}};
   expect(await entry.validate(value.id,body)).toMatchObject(body);
   evaluate.mockClear();
-  as.runtimeType='ea';
+  as.archived=true;
   await expect(entry.validate(value.id,body)).rejects.toThrow('OpenJiuwen 或 AgentScope');
   expect(evaluate).not.toHaveBeenCalled();
 });

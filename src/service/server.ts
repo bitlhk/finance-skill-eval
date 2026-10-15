@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import {describeSkillRuntimeRequirements} from './skill-runtime-requirements.js';
+import {describeSkillRuntimeRequirements} from '../shared/skill-runtime-requirements.js';
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import fastifyStatic from "@fastify/static";
@@ -25,6 +25,9 @@ import { MigrationStore } from '../migration/migration-store.js';
 import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
 import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
 import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
+import type { ImprovementPlanner } from '../migration/application/migration-improvement-planning-service.js';
+import type {ToolOptimizationProposer} from '../migration/application/migration-tool-optimization-service.js';
+import type {MigrationReusePlanner} from '../migration/application/migration-reuse-planner.js';
 import { runConfigurationSchema } from "./contracts.js";
 import {createAccountWorkspaces} from './account-workspaces.js';
 import {managedWorkspaceOperation} from './managed-workspace-policy.js';
@@ -68,9 +71,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;runBudget?:EvaluationRunBudget} = {},
+  overrides: Partial<ServiceConfig> & {runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
 ): Promise<FastifyInstance> {
-  const {migrationAnalyzer,migrationImplementer,migrationSuite,runBudget,...configOverrides}=overrides;
+  const {runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.workspaceMode==='account'){
     const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
@@ -116,8 +119,10 @@ export async function createEvaluationService(
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
   app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
-    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite});
+    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
+    toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
+  app.addHook('onClose',()=>migrations.shutdown());
   registerMigrationRoutes(app, {
     migrations,
     skills,
@@ -130,6 +135,7 @@ export async function createEvaluationService(
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
   app.get<{ Params: { id: string } }>("/api/optimizations/:id", async request => optimizations.get(request.params.id));
   app.post<{ Params: { id: string } }>("/api/optimizations/:id/reevaluate", async (request, reply) => reply.code(202).send(await optimizations.reevaluate(request.params.id)));
+  app.post<{ Params: { id: string } }>("/api/optimizations/:id/final-verify", async (request, reply) => reply.code(202).send(await optimizations.finalVerify(request.params.id)));
   app.post<{ Params: { id: string }; Body: { decision: string } }>("/api/optimizations/:id/decision", async request => {
     const decision = request.body?.decision;
     if (decision !== "adopt" && decision !== "retain" && decision !== "cancel") throw Object.assign(new Error("Invalid decision"), { statusCode: 400 });
@@ -200,7 +206,8 @@ export async function createEvaluationService(
       const defaultModelId=resolved.defaultModelId??inspection.capabilities.defaultModelId;
       return {runtimeId:environment.environmentId,launcherEnvironmentId:resolved.launcher.environmentId,name:environment.name,runtimeType:resolved.launcher.runtimeType,endpoint:resolved.launcher.baseUrl,
         mcpEnvironmentIds:resolved.mcpEnvironmentIds,toolCount:inspection.toolCount,inspection,
-        transport:'runtime_launcher' as const,defaultModelId,models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
+        transport:'runtime_launcher' as const,defaultModelId,supportedSkillModes:inspection.capabilities.supportedSkillModes,
+        models:inspection.capabilities.models.map(model=>({providerId:`runtime-launcher:${environment.environmentId}`,modelId:model.modelId,upstreamModelId:model.upstreamModelId,label:model.label??model.upstreamModelId,parameters:{},availability:'ready' as const,statusNote:'由 Runtime Launcher capabilities 提供'}))};
       } catch { return null; }
     }))).filter(item=>item!==null);
     const analyzer = configuredModelRole("ANALYZER");

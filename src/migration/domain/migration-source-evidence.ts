@@ -1,6 +1,21 @@
 /** A comparison-only view. Original asset bytes and hashes are never modified. */
 export function normalizeSourceNewlines(text:string):string {return text.replace(/\r\n?/gu,'\n')}
 
+/** Resolve a package-root or workspace-prefixed citation only when its suffix is unique. */
+export function sourceEvidencePath(target:string,files:Readonly<Record<string,unknown>>):string|null{
+  if(Object.prototype.hasOwnProperty.call(files,target))return target;
+  const flat=target.replaceAll('\\','/').replace(/^[A-Za-z]:/u,'').replace(/^\.\//u,'');
+  if(Object.prototype.hasOwnProperty.call(files,flat))return flat;
+  const segments=flat.split('/').filter(Boolean);
+  for(let index=0;index<segments.length;index++){
+    const tail=segments.slice(index).join('/');
+    const hits=Object.keys(files).filter(path=>path===tail||path.endsWith(`/${tail}`));
+    if(hits.length===1)return hits[0]!;
+    if(hits.length>1)return null;
+  }
+  return null;
+}
+
 /** Create once for each immutable source snapshot; normalized files are cached lazily. */
 export class SourceEvidenceValidator {
  private readonly files:Readonly<Record<string,string>>;

@@ -13,3 +13,16 @@ it('executes the assessed candidate once and reuses its evidence without changin
   expect(execute).toHaveBeenCalledOnce();expect(execute.mock.calls[0]?.[0]).toEqual(expect.objectContaining({side:'right',variant,model}));
   expect([left.side,right.side]).toEqual(['left','right']);expect(left.output).toBe(right.output);expect(left.metadata.candidateAssessmentReused).toBe(true);
 });
+
+it.each([false,true])('forwards finalization evidence after cleanup, including failure=%s',async failed=>{
+  const receipt={status:failed?'FAILED':'RELEASED',scope:'LAUNCHER_MANAGED_RESOURCES'};
+  const inner:RuntimeAdapter={adapterId:'fixture',execute:vi.fn(),cleanup:async()=>{if(failed)throw new Error('cleanup failed');},finalizationEvidence:()=>receipt};
+  const runtime=new CandidateAssessmentRuntimeAdapter(inner,{mode:'without_target_skill',skillId:'candidate'},{providerId:'fixture',modelId:'model'});
+  if(failed)await expect(runtime.cleanup()).rejects.toThrow('cleanup failed');else await runtime.cleanup();
+  expect(runtime.finalizationEvidence()).toEqual(receipt);
+});
+
+it('does not manufacture a release receipt for an adapter without observations',()=>{
+  const runtime=new CandidateAssessmentRuntimeAdapter({adapterId:'fixture',execute:vi.fn()},{mode:'without_target_skill',skillId:'candidate'},{providerId:'fixture',modelId:'model'});
+  expect(runtime.finalizationEvidence()).toEqual({status:'UNKNOWN',reason:'NO_FINALIZATION_RECEIPT'});
+});

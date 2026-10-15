@@ -10,6 +10,7 @@ import { createEvaluationService } from "../src/service/server.js";
 const directories: string[] = [];
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 async function fixture() {
@@ -23,6 +24,13 @@ const mcpInput = { name: "业务 MCP", type: "mcp_streamable_http", endpoint: "h
 const launcherInput = { name: "Runtime", type: "runtime_launcher", runtimeType: "openjiuwen", baseUrl: "http://localhost:5001/" };
 
 describe("environment registry", () => {
+  it('explains missing native qualification during environment preflight without leaking private fields',async()=>{
+    const {store}=await fixture();const launcher=await store.create(launcherInput);
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:'EVAL_RUNTIME_QUALIFICATION_REQUIRED',privatePath:'C:/secret',key:'canary'},{status:503})));
+    const inspection=await store.inspect(launcher);
+    expect(inspection.status).toBe('failed');expect(inspection.error).toContain('Builder 管理者');
+    expect(inspection.error).toContain('EVAL_RUNTIME_QUALIFICATION_REQUIRED');expect(inspection.error).not.toContain('canary');
+  });
   it('preserves obsolete fixed-endpoint Runtime records without offering them for new execution',async()=>{
     const directory=await mkdtemp(path.join(tmpdir(),'environment-legacy-'));directories.push(directory);
     const environments=path.join(directory,'environments');
@@ -66,11 +74,13 @@ describe("environment registry", () => {
   });
 
   it('discovers Runtime Launcher capabilities without pre-registering models or MCPs',async()=>{
+    const timeout=vi.spyOn(AbortSignal,'timeout');
     const {store}=await fixture();
     const launcher=await store.create({name:'Launcher',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://127.0.0.1:9000'});
-    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'deepseek-v4'}],defaultModelId:'execution',features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'deepseek-v4'}],defaultModelId:'execution',supportedSkillModes:['skill_version'],nativeToolNames:['account_balance_query'],features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
-    expect(await store.inspect(launcher)).toMatchObject({status:'ready',capabilities});
+    expect(await store.inspect(launcher)).toMatchObject({status:'ready',toolCount:1,tools:[{name:'account_balance_query'}],capabilities});
+    expect(timeout).toHaveBeenCalledWith(60_000);
     expect(createEnvironmentSchema.safeParse({name:'remote',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://runtime.example.com'}).success).toBe(false);
   });
 

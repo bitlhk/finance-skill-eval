@@ -14,3 +14,20 @@ it('retains conditional text and still checks edge endpoints',()=>{
 it('continues to reject conditions with a genuinely invalid type',()=>{
  for(const value of [42,false,{},[]])expect(analyzeDependencies(payload(value),inspection,files,[],0,'source').status).toBe('UNAVAILABLE');
 });
+it('merges equivalent tool entrypoint graphs without inventing transitions or duplicating shared nodes',()=>{
+ const p=payload(null),alternative=structuredClone(p.dependencyAnalysis.chains[0]!);
+ alternative.nodes[0]!.id='cli-entry';alternative.edges[0]!.from='cli-entry';
+ p.dependencyAnalysis.chains.push(alternative,structuredClone(alternative));
+ const result=analyzeDependencies(p,inspection,files,[],0,'source');
+ expect(result.status).toBe('COMPLETE');expect(result.rejectedClaims).toBe(0);expect(result.chains).toHaveLength(1);
+ expect(result.chains[0]!.nodes.map(n=>n.id)).toEqual(['entry','lookup','cli-entry']);
+ expect(result.chains[0]!.edges).toEqual([{from:'entry',to:'lookup'},{from:'cli-entry',to:'lookup'}]);
+});
+it('still rejects conflicting shared nodes and invalid edges across entrypoint graphs',()=>{
+ const p=payload(null),conflict=structuredClone(p.dependencyAnalysis.chains[0]!);
+ conflict.nodes[1]!.detail='Conflicting behavior';p.dependencyAnalysis.chains.push(conflict);
+ const rejected=analyzeDependencies(p,inspection,files,[],0,'source');
+ expect(rejected.status).toBe('PARTIAL');expect(rejected.chains[0]!.nodes[1]!.detail).toBe('Query value');
+ conflict.nodes[1]!.detail='Query value';conflict.edges[0]!.to='missing';
+ expect(analyzeDependencies(p,inspection,files,[],0,'source').status).toBe('PARTIAL');
+});

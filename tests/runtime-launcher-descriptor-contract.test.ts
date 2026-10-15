@@ -13,6 +13,22 @@ async function readExample(name: string): Promise<unknown> {
   return JSON.parse(await readFile(new URL(`../contracts/runtime-launcher/examples/${name}`, import.meta.url), "utf8"));
 }
 
+it('publishes optional MCP feature flags without requiring them from older Launchers',async()=>{
+  const original=await readExample('builder-capabilities.json') as Record<string,unknown>;
+  expect(()=>runtimeLauncherCapabilitiesSchema.parse(original)).not.toThrow();
+  const features={...(original.features as Record<string,unknown>),mcpResultChannels:true,mcpPrepare:true};
+  expect(runtimeLauncherCapabilitiesSchema.parse({...original,features}).features).toMatchObject({mcpResultChannels:true,mcpPrepare:true});
+  expect(()=>runtimeLauncherCapabilitiesSchema.parse({...original,features:{...features,mcpPrepare:'yes'}})).toThrow();
+  const schema=JSON.parse(await readFile(new URL('../contracts/runtime-launcher/finance.skill-eval.runtime-capabilities.v1.schema.json',import.meta.url),'utf8'));
+  for(const field of ['mcpResultChannels','mcpPrepare']){
+    expect(schema.properties.features.properties[field].type).toBe('boolean');
+    expect(schema.properties.features.required).not.toContain(field);
+  }
+  const receipt=JSON.parse(await readFile(new URL('../contracts/runtime-launcher/finance.runtime-mcp-result-channels.v1.schema.json',import.meta.url),'utf8'));
+  expect(receipt.additionalProperties).toBe(false);
+  expect(receipt.properties.schemaVersion.const).toBe('finance.runtime-mcp-result-channels.v1');
+});
+
 it("accepts a matching Builder-delivered Launcher descriptor and capabilities response", async () => {
   const descriptor = await readExample("launcher-descriptor.success.json");
   const capabilities = await readExample("builder-capabilities.json");

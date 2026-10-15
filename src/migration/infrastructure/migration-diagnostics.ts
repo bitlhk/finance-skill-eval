@@ -45,36 +45,53 @@ async function parsePython(root:string,files:Record<string,string>):Promise<Pick
 export class MigrationDiagnostics implements MigrationDiagnosisPort {
   private closing=false;
   private pending=new Map<string,Promise<Diagnosis>>();
+  private scans=new Map<string,Promise<Diagnosis>>();
   private explanations=new Map<string,Promise<void>>();
   private explanationTail:Promise<void>=Promise.resolve();
   constructor(private root:string,private data:string,private skills:MigrationSkillRepository,
     private model:()=>ConfiguredModelRole=()=>configuredModelRole('ANALYZER')){}
   private file(asset:SkillAssetRecord){return path.join(this.data,'migration-diagnostics',asset.artifactSha256+'.json');}
-  private async scannerDigest(){
-    return createHash('sha256').update(await readFile(path.join(this.root,'scripts/scan-migration.py'))).update(ANALYZER_SCHEMA_VERSION).digest('hex');
-  }
-  async readCurrent(asset:SkillAssetRecord):Promise<Diagnosis|null>{
+  /** Reports are reads: never start or await a model call merely to display project state. */
+  async peek(asset:SkillAssetRecord):Promise<Diagnosis|null>{
     let value:Diagnosis;
     try{value=await readJson<Diagnosis>(this.file(asset));}
     catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}
-    if(value.assetId!==asset.assetId||value.digest!==asset.artifactSha256
-      ||value.scannerDigest!==await this.scannerDigest())return null;
-    return value;
+    const scannerDigest=createHash('sha256').update(await readFile(path.join(this.root,'scripts/scan-migration.py'))).update(ANALYZER_SCHEMA_VERSION).digest('hex');
+    return value.digest===asset.artifactSha256&&value.scannerDigest===scannerDigest?value:null;
+  }
+  async diagnose(asset:SkillAssetRecord,retry=false,options:{explain?:boolean}={}):Promise<Diagnosis>{
+    if(this.closing)throw new Error('DIAGNOSTICS_CLOSING');
+    // Candidate inspection already runs independent A2. Static callers must not wait on
+    // a concurrent explanation or launch a second model analysis of the same package.
+    if(options.explain===false)return this.staticDiagnosis(asset);
+    const inflight=this.pending.get(asset.artifactSha256);if(inflight)return inflight;
+    const job=(async()=>{
+      const value=await this.staticDiagnosis(asset);
+      if(value.ai.status==='RUNNING'&&!this.explanations.has(asset.artifactSha256)){
+        value.ai={status:'FAILED',error:'AI_EXPLANATION_INTERRUPTED',retryable:true};await writeJsonAtomic(this.file(asset),value);
+      }
+      if(value.ai.status==='NOT_REQUESTED'||retry&&['FAILED','NOT_CONFIGURED'].includes(value.ai.status)){
+        const archive=await this.skills.readArchive(asset.assetId),files:Record<string,string>={};
+        for(const [name,bytes] of Object.entries(archive))if(bytes.length<=512000)
+          try{const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);if(!text.includes('\0'))files[name]=text}catch{}
+        await this.startAI(asset,value,files);
+      }
+      return value;
+    })();this.pending.set(asset.artifactSha256,job);
+    try{return await job;}finally{this.pending.delete(asset.artifactSha256);}
   }
   async close():Promise<void>{
     this.closing=true;
-    // Project creation starts diagnostics in the background; shutdown must await its final writes.
-    await Promise.allSettled([...this.pending.values()]);
+    await Promise.allSettled([...this.pending.values(),...this.scans.values()]);
     await Promise.allSettled([...this.explanations.values()]);
   }
-  async diagnose(asset:SkillAssetRecord,retry=false):Promise<Diagnosis>{
-    if(this.closing)throw new Error('DIAGNOSTICS_CLOSING');
-    const inflight=this.pending.get(asset.artifactSha256);if(inflight)return inflight;
-    const job=this.scan(asset,retry);this.pending.set(asset.artifactSha256,job);
-    try{return await job;}finally{this.pending.delete(asset.artifactSha256);}
+  private async staticDiagnosis(asset:SkillAssetRecord):Promise<Diagnosis>{
+    const inflight=this.scans.get(asset.artifactSha256);if(inflight)return inflight;
+    const job=this.scan(asset);this.scans.set(asset.artifactSha256,job);
+    try{return await job;}finally{this.scans.delete(asset.artifactSha256);}
   }
-  private async scan(asset:SkillAssetRecord,retry:boolean):Promise<Diagnosis>{
-    const scannerDigest=await this.scannerDigest();
+  private async scan(asset:SkillAssetRecord):Promise<Diagnosis>{
+    const scannerDigest=createHash('sha256').update(await readFile(path.join(this.root,'scripts/scan-migration.py'))).update(ANALYZER_SCHEMA_VERSION).digest('hex');
     const archive=await this.skills.readArchive(asset.assetId);
     const files:Record<string,string>={},skipped:Array<{path:string;status:string}>=[];
     for(const [name,bytes] of Object.entries(archive)){
@@ -86,13 +103,7 @@ export class MigrationDiagnostics implements MigrationDiagnosisPort {
     let existing:Diagnosis|undefined;
     try{existing=await readJson<Diagnosis>(this.file(asset));}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
     if(existing?.scannerDigest!==scannerDigest)existing=undefined;
-    if(existing){
-      if(existing.ai.status==='RUNNING'&&!this.explanations.has(asset.artifactSha256)){
-        existing.ai={status:'FAILED',error:'AI_EXPLANATION_INTERRUPTED',retryable:true};await writeJsonAtomic(this.file(asset),existing);
-      }
-      if(retry&&['FAILED','NOT_CONFIGURED'].includes(existing.ai.status))await this.startAI(asset,existing,files);
-      return existing;
-    }
+    if(existing)return existing;
     const parsed=await parsePython(this.root,files);
     for(const [file,source] of Object.entries(files).filter(([name])=>name.toLowerCase().endsWith('skill.md'))){
       for(const hit of source.matchAll(/自动注入|自动加载|auto.?inject/giu))if(!parsed.findings.some(f=>f.path===file&&f.dependencyType==='RESOURCE_INJECTION'))
@@ -109,8 +120,8 @@ export class MigrationDiagnostics implements MigrationDiagnosisPort {
       frameworks:[...new Set(parsed.findings.filter(f=>f.dependencyType==='SDK_IMPORT').map(f=>f.symbol?.includes('openjiuwen')?'OpenJiuwen':f.symbol?.includes('agentscope')?'AgentScope':f.symbol?.includes('langchain')?'LangChain':f.symbol?.includes('langgraph')?'LangGraph':'待确认'))],
       plan:[{category:'AUTOMATIC',findingIds:[],problem:'需要独立迁移版本',change:'生成版本化方法、工具声明与独立适配草稿',impact:'原包不变；不自动实现业务工具或改变业务口径'},
         ...parsed.findings.map(f=>({category:(f.layer==='FORMAT'?'AUTOMATIC':f.layer==='BUSINESS'?'OWNER_CONFIRMATION':'ENGINEERING') as 'AUTOMATIC'|'OWNER_CONFIRMATION'|'ENGINEERING',findingIds:[f.id],problem:f.reason,change:f.suggestion,impact:f.impact}))],
-      ai:{status:'NOT_CONFIGURED',retryable:true},scriptsExecuted:false,nativeExecution:'NOT_RUN',scannerDigest};
-    await writeJsonAtomic(this.file(asset),value);await this.startAI(asset,value,files);return value;
+      ai:{status:'NOT_REQUESTED',retryable:true},scriptsExecuted:false,nativeExecution:'NOT_RUN',scannerDigest};
+    await writeJsonAtomic(this.file(asset),value);return value;
   }
   private async startAI(asset:SkillAssetRecord,value:Diagnosis,files:Record<string,string>){
     let role:ConfiguredModelRole;

@@ -7,6 +7,7 @@ import type { MigrationPreparationRepository } from "./migration-preparation-rep
 import {
   normalizeOriginalServiceSuite,
   simpleMigrationCases,
+  simpleMigrationHoldoutCases,
   simpleMigrationSuiteSchema,
 } from "../domain/simple-migration-suite.js";
 import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
@@ -15,6 +16,7 @@ import { validateSkill } from "../domain/migration-skill-validator.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationAgentResultMapper } from './migration-agent-result-mapper.js';
+import {currentReuseProposal} from '../domain/migration-reuse-design.js';
 
 export class MigrationSuiteService {
   constructor(
@@ -56,6 +58,7 @@ export class MigrationSuiteService {
         skill: project.source,
         summary: parsed.name,
         cases: simpleMigrationCases(parsed),
+        holdoutCases:simpleMigrationHoldoutCases(parsed),
         source: "manual",
         assessmentMode: "natural_language",
         ...(comparisonOnly ? { comparisonOnly: true } : {}),
@@ -104,9 +107,10 @@ export class MigrationSuiteService {
       }
       if (sourceInspection.assetDigest !== source.artifactSha256) return conflict("缺少原始资产的冻结分析，请重新分析原始资产后生成测试集");
 
+      const reuseProposal=currentReuseProposal(project);
       const generated = await this.suiteGenerator({
         skillId: source.skillId,
-        skillSource: `${skillSource}\n\n${baselineBrief(sourceInspection)}`,
+        skillSource: `${skillSource}\n\n${baselineBrief(sourceInspection)}${reuseProposal?.approvedAt?`\n\n已确认迁移方案的验收要求（设计要求，不代表已经通过）：\n${JSON.stringify(reuseProposal.design.acceptanceChecks)}`:''}`,
         tools: sourceInspection.tools.map(tool => tool.name),
         documentedInputs: sourceInspection.tools.flatMap(tool =>
           tool.samples.slice(0, 2).map(sample => ({ toolName: tool.name, input: sample.input }))),

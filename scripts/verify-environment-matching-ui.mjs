@@ -13,10 +13,11 @@ const caps=(family,names,min)=>({runtime:{type:family,version:'fixture-only'},mo
 const environments=[];
 for(const [profile,tools,min] of [['account',['balance','read_case_file'],1],['review',['audit'],1],['plain',[],0]]){
   for(const family of ['openjiuwen','agentscope']){
+    const runtimeModel={...model,providerId:`launcher:${family}`,modelId:family==='agentscope'?'synthetic-as-alias':model.modelId};
     const id=`${profile}-${family}`,inspection={status:'ready',error:null,elapsedMs:1,toolCount:tools.length,
-      tools:tools.map(name=>({name})),mcpServers:[],capabilities:caps(family,tools,min)};
+      tools:tools.map(name=>({name})),mcpServers:[],capabilities:{...caps(family,tools,min),models:[runtimeModel],defaultModelId:runtimeModel.modelId}};
     environments.push({runtimeId:id,launcherEnvironmentId:id,name:`${profile} · ${family}`,runtimeType:family,
-      defaultModelId:model.modelId,models:[model],toolCount:tools.length,mcpEnvironmentIds:[],inspection});
+      defaultModelId:runtimeModel.modelId,models:[runtimeModel],toolCount:tools.length,mcpEnvironmentIds:[],inspection});
   }
 }
 const fixtures=[['bank','账户核验',['balance','read_case_file']],['audit','材料核验',['audit']],['plain','纯文本方法',[]],['missing','缺失工具方法',['unavailable_tool']]];
@@ -71,6 +72,9 @@ try{
   await expect(page.getByLabel('对照组 Runtime',{exact:true})).toHaveValue('account-openjiuwen');
   await expect(page.getByLabel('目标组 Runtime',{exact:true})).toHaveValue('account-agentscope');
   await expect(page.getByRole('button',{name:'开始测试',exact:true})).toBeEnabled();
+  await expect(page.locator('.comparison-panel').first().getByRole('combobox').first()).toHaveValue(`version:1@${'bank'.repeat(16)}`);
+  await expect(page.locator('.comparison-panel').last().getByRole('combobox').first()).toHaveValue(`version:1@${'bank'.repeat(16)}`);
+  await expect(page.locator('.comparison-panel').first().getByRole('combobox').first().locator('option:checked')).toHaveText('v1');
   for(const width of [1366,390,320]){
     await page.setViewportSize({width,height:960});
     await page.evaluate(()=>window.scrollTo(0,0));
@@ -84,6 +88,9 @@ try{
   assert.equal(report.capturedRuns[0].runtimeBindings.left.environmentId,'account-openjiuwen');
   assert.equal(report.capturedRuns[0].runtimeBindings.right.environmentId,'account-agentscope');
   assert.equal(report.capturedRuns[0].runtimeBindings.left.skillAssetId,report.capturedRuns[0].runtimeBindings.right.skillAssetId);
+  assert.equal(report.capturedRuns[0].leftExecutionModel.modelId,'synthetic-model');
+  assert.equal(report.capturedRuns[0].rightExecutionModel.modelId,'synthetic-as-alias');
+  assert.deepEqual(report.capturedRuns[0].leftExecutionModel.parameters,report.capturedRuns[0].rightExecutionModel.parameters);
   await page.getByRole('button',{name:'对比模型',exact:true}).click();
   await expect(page.getByText('当前环境只有一个可用模型，暂无第二个模型可比较。')).toBeVisible();
   await expect(page.getByRole('button',{name:'开始测试',exact:true})).toBeDisabled();

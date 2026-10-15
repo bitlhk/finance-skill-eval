@@ -2,8 +2,8 @@ import { zipSync } from 'fflate';
 import type { MigrationSkillRepository } from './migration-skill-repository.js';
 import type { MigrationProjectStore } from './migration-project-store.js';
 import { migrationConflict as conflict } from './migration-errors.js';
-import {createHash} from 'node:crypto';
-import YAML from 'yaml';
+import {runtimeSkillPackage} from '../../runtime-skill-package.js';
+import {skillRuntimeRequirements} from '../../shared/skill-runtime-requirements.js';
 
 export class MigrationExportService {
   constructor(
@@ -13,19 +13,16 @@ export class MigrationExportService {
 
   async conformanceCandidate(id:string) {
     const project=await this.projects.get(id),asset=project.candidate??project.source;
-    const archive=await this.skills.readArchive(asset.assetId),bytes=Buffer.from(zipSync(archive));
-    const instructions=await this.skills.readSource(asset.assetId);
-    const front=/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(instructions);
-    const declared=front?YAML.parse(front[1]!)?.['allowed-tools']:undefined;
-    const tools=Array.isArray(declared)?declared:typeof declared==='string'?declared.split(/[\s,]+/u).filter(Boolean):[];
-    if(tools.some(t=>typeof t!=='string'))return conflict('生命周期验收需要有效的工具声明');
-    return {requiredTools:[...new Set<string>(tools)],skill:{skillId:asset.skillId,version:asset.version,
-      artifactSha256:asset.artifactSha256,instructions,
-      files:Object.fromEntries(Object.entries(archive).map(([name,content])=>[name,new TextDecoder('utf-8',{fatal:true}).decode(content)])),
-      archiveBase64:bytes.toString('base64'),archiveSha256:createHash('sha256').update(bytes).digest('hex')}};
+    const archive=await this.skills.readArchive(asset.assetId);
+    const skill=runtimeSkillPackage({...asset,archive});
+    return {requiredTools:skillRuntimeRequirements(skill.instructions,[]),skill};
   }
 
   async exportCandidate(id:string) {
+    return (await this.exportPackage(id)).archive;
+  }
+
+  async exportPackage(id:string) {
     const value=await this.projects.get(id);
     if (!value.candidate) return conflict('请先生成候选');
     const archivedFiles=await this.skills.readArchive(value.candidate.assetId);
@@ -42,6 +39,6 @@ export class MigrationExportService {
       }
     }
     // The delivery archive contains only the Skill and its tools. Evidence remains in the report API.
-    return Buffer.from(zipSync(files));
+    return {archive:Buffer.from(zipSync(files)),candidateDigest:value.candidate.artifactSha256,skillId:value.candidate.skillId};
   }
 }

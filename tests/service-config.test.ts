@@ -80,7 +80,7 @@ describe("Codex Judge configuration", () => {
     expect(configuredModelRole("JUDGE").configured).toBe(true);
   });
 
-  it("checks service PATH and rejects directories or non-executable files", () => {
+  it.skipIf(process.platform==='win32')("checks POSIX service PATH and rejects directories or non-executable files", () => {
     const root = mkdtempSync(path.join(tmpdir(), "judge-readiness-"));
     try {
       vi.stubEnv("FINANCE_EVAL_JUDGE_PROVIDER", "codex_cli");

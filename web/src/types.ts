@@ -117,6 +117,7 @@ export type MigrationRuntime = {
   mcpEnvironmentIds:string[];
   toolCount:number;
   models: ModelRef[];
+  supportedSkillModes?:Array<"skill_version"|"without_target_skill">;
   transport:'runtime_launcher';
 };
 

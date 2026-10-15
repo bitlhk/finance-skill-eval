@@ -31,7 +31,10 @@ def replace(path, expected, new):
     fd, name = tempfile.mkstemp(prefix='.eval-budget-', dir=path.parent)
     try:
         with os.fdopen(fd, 'wb') as stream:
-            os.fchmod(stream.fileno(), mode)
+            if hasattr(os, 'fchmod'):
+                os.fchmod(stream.fileno(), mode)
+            else:
+                os.chmod(name, mode)
             stream.write(new); stream.flush(); os.fsync(stream.fileno())
         if path.read_bytes() != expected:
             raise RuntimeError('CONFIGURATION_CHANGED')

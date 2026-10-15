@@ -66,7 +66,7 @@ export class OptimizationManager {
     // A live task can finish while readJson is reading an older atomic snapshot.
     const wasActive = this.active.has(id);
     const item = await readJson<Optimization>(path.join(this.directory, `${id}.json`));
-    if (!wasActive && ["diagnosing", "validating", "reevaluating"].includes(item.status) && !this.active.has(id)) {
+    if (!wasActive && ["diagnosing", "validating", "reevaluating", "final_verifying"].includes(item.status) && !this.active.has(id)) {
       item.status = "failed"; item.error = "Service restarted; candidate was not adopted"; await this.save(item);
     }
     return item;
@@ -88,13 +88,18 @@ export class OptimizationManager {
   private async stage(item: Optimization, status: Optimization["status"]) {
     item.status = status; item.stages.push({ stage: status, at: new Date().toISOString() }); await this.save(item);
   }
-  async create(sourceJobId: string): Promise<Optimization> {
+  async propose(sourceJobId:string,constraints?:string):Promise<Optimization>{return this.create(sourceJobId,true,constraints);}
+  async create(sourceJobId: string,proposalOnly=false,constraints?:string): Promise<Optimization> {
     if (this.active.size) throw new Error("已有一轮 Skill 优化正在进行");
     const source = this.options.jobs.get(sourceJobId);
     if (!source?.report || source.status !== "completed" || source.configuration.runtime.type!=='runtime_launcher') throw new Error("请先使用 Runtime Launcher 完成一轮在线评测");
     if (!source.report.cases.length) throw new Error('评测没有实际执行案例，不启动优化');
     if (source.report.cases.some(c => c.left.status !== "completed" || c.right.status !== "completed" || !c.judge)) throw new Error("运行或阅卷不完整，应修复环境后重测，不能据此修改 Skill");
-    if (source.report.cases.some(c => [...c.left.toolCalls, ...c.right.toolCalls].some(t => t.status === "failed"))) throw new Error("存在工具失败，应先排查环境，不能将运行故障当作 Skill 缺陷");
+    if (source.report.cases.some(c => [...c.left.toolCalls, ...c.right.toolCalls].some(t => t.status === "failed")
+      && !(proposalOnly && source.configuration.evaluationMode==='candidate_assessment'
+        && !c.judgeError && c.judge?.goalAssessment?.verdict==='PASS'))) {
+      throw new Error("存在未通过验收的工具失败，应先排查运行证据，不能将运行故障当作 Skill 缺陷");
+    }
     const variant = source.report.variants.right;
     if (variant.mode !== "skill_version") throw new Error("右侧必须为已装配 Skill");
     const assets = await this.options.skills.list();
@@ -112,7 +117,8 @@ export class OptimizationManager {
     if (!optimizer.adapter) throw new Error("优化模型未配置");
     const now = new Date().toISOString();
     const item: Optimization = { optimizationId: `opt-${randomUUID()}`, sourceJobId, sourceAssetId: asset.assetId, createdAt: now, updatedAt: now,
-      status: "diagnosing", modelId: optimizer.model.modelId, summary: "", findings: [], changes: [], candidate: null, rerunJobId: null, error: null, stages: [{ stage: "diagnosing", at: now }] };
+      status: "diagnosing", modelId: optimizer.model.modelId, summary: "", findings: [], changes: [], candidate: null, rerunJobId: null, error: null, stages: [{ stage: "diagnosing", at: now }],...(proposalOnly?{proposalOnly:true}:{}) };
+    if(constraints)item.constraints=constraints;
     const controller = new AbortController(); this.active.set(item.optimizationId, controller);
     await this.save(item);
     void this.run(item, controller).finally(() => this.active.delete(item.optimizationId));
@@ -121,7 +127,8 @@ export class OptimizationManager {
   async reevaluate(id: string): Promise<Optimization> {
     if (this.active.size) throw new Error("已有一轮 Skill 优化正在进行");
     const item = await this.get(id);
-    if (!["review", "failed"].includes(item.status) || !item.candidate) throw new Error("当前没有可重新复测的候选");
+    if(item.proposalOnly)throw new Error('此候选由持续改进任务管理，请在该任务中查看复测结果');
+    if (!["review", "failed"].includes(item.status) || !item.candidate || item.holdoutJobId) throw new Error("最终留出集复核开始后不能继续用同一留出集迭代候选");
     if (item.rerunJobId) item.previousRerunJobIds = [...(item.previousRerunJobIds ?? []), item.rerunJobId];
     item.rerunJobId = null; item.error = null;
     const controller = new AbortController(); this.active.set(id, controller);
@@ -131,6 +138,21 @@ export class OptimizationManager {
       item.error = error instanceof Error ? error.message : String(error);
       await this.stage(item, controller.signal.aborted ? "cancelled" : "failed");
     }).finally(() => this.active.delete(id));
+    return item;
+  }
+  async finalVerify(id:string):Promise<Optimization> {
+    if (this.active.size) throw new Error('已有一轮 Skill 优化正在进行');
+    const item=await this.get(id);
+    if(item.proposalOnly)throw new Error('此候选由持续改进任务管理，不能单独解封留出题');
+    if(item.status!=='review'||!item.candidate||item.holdoutJobId) throw new Error('请先完成开发集复测；留出集只能对当前候选复核一次');
+    const controller=new AbortController();this.active.set(id,controller);
+    item.error=null;
+    await this.stage(item,'final_verifying');
+    void this.evaluate(item,controller,true).catch(async error=>{
+      if(item.holdoutJobId&&controller.signal.aborted) await this.options.runs.cancel(item.holdoutJobId);
+      item.error=error instanceof Error?error.message:String(error);
+      await this.stage(item,controller.signal.aborted?'cancelled':'failed');
+    }).finally(()=>this.active.delete(id));
     return item;
   }
   private async run(item: Optimization, controller: AbortController) {
@@ -144,8 +166,8 @@ export class OptimizationManager {
       const optimizer = configuredModelRole("OPTIMIZER");
       const developmentIds = new Set((source.questionSet?.cases ?? (await this.suite(source.configuration))!.cases).map(c => c.caseId));
       const completion = await optimizer.adapter!.complete({ requestId: item.optimizationId, model: optimizer.model, responseFormat: "json", signal: controller.signal,
-        messages: [{ role: "system", content: "你是金融岗位 Skill 编辑专家，不是本轮 Judge。只针对真实业务质量缺口进行小范围修改，保留工具名称、权限边界和事实约束。不要添加题目答案、客户编号、固定产品比例、评分关键词或评测特例，不修复环境故障，不保证改进。返回JSON: {summary, findings: string[], changes:[{path,content,reason}]}。content是修改后的完整文件，最多修改3个文件，只允许SKILL.md或references/*.md。不得访问文件和工具。" },
-          { role: "user", content: JSON.stringify({ files, developmentEvidence: source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => ({ task: c.prompt, answer: c.right.output, review: c.judge?.summary, dimensions: c.judge?.dimensions })) }) }] });
+        messages: [{ role: "system", content: "你是金融岗位 Skill 编辑专家，不是本轮 Judge。只针对真实业务质量缺口进行小范围修改，保留工具名称、权限边界和事实约束。若提供 constraints，遵守其中已确认的设计约束、业务行为与运行条件，不得暗中增加框架耦合或部署依赖。不要添加题目答案、客户编号、固定产品比例、评分关键词或评测特例，不修复环境故障，不保证改进。返回JSON: {summary, findings: string[], changes:[{path,content,reason}]}。content是修改后的完整文件，最多修改3个文件，只允许SKILL.md或references/*.md。不得访问文件和工具。" },
+          { role: "user", content: JSON.stringify({ constraints:item.constraints, files, developmentEvidence: source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => ({ task: c.prompt, answer: c.right.output, review: c.judge?.summary, dimensions: c.judge?.dimensions, goalAssessment: c.judge?.goalAssessment })) }) }] });
       controller.signal.throwIfAborted();
       const proposal = proposalSchema.parse(JSON.parse(completion.content.replace(/^```(?:json)?\s*|\s*```$/gu, "")));
       item.summary = proposal.summary; item.findings = proposal.findings;
@@ -161,23 +183,25 @@ export class OptimizationManager {
       }
       item.candidate = await this.options.skills.uploadZip(Buffer.from(zipSync(archive)));
       controller.signal.throwIfAborted();
-      await this.evaluate(item, controller);
+      if(item.proposalOnly)await this.stage(item,'review');
+      else await this.evaluate(item, controller);
     } catch (error) {
       if (item.rerunJobId && controller.signal.aborted) await this.options.runs.cancel(item.rerunJobId);
       item.error = error instanceof Error ? error.message : String(error);
       await this.stage(item, controller.signal.aborted ? "cancelled" : "failed");
     }
   }
-  private async evaluate(item: Optimization, controller: AbortController) {
+  private async evaluate(item: Optimization, controller: AbortController, final=false) {
       const source = this.options.jobs.get(item.sourceJobId)!;
       const original = await this.options.skills.get(item.sourceAssetId);
       const developmentIds = new Set((source.questionSet?.cases ?? (await this.suite(source.configuration))!.cases).map(c => c.caseId));
       const variant = (a: SkillAssetRecord) => ({ mode: "skill_version", skillId: a.skillId, version: a.version, artifactSha256: a.artifactSha256 });
       const rerun = await this.options.runs.create({ ...source.configuration, caseSource: "fixed", selectedCaseIds: source.questionSet ? [] : source.report!.cases.filter(c => developmentIds.has(c.caseId)).map(c => c.caseId),
         ...optimizationRerunBindings(source.configuration,original!,item.candidate!),
-        includeHoldout: true, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model",evaluationMode:"pairwise" }, source.questionSet);
-      item.rerunJobId = rerun.jobId;
-      await this.stage(item, "reevaluating");
+        includeHoldout: final, leftVariant: variant(original!), rightVariant: variant(item.candidate!), skillAssetId: item.candidate!.assetId, judgeMode: "model",evaluationMode:"pairwise" }, source.questionSet);
+      if(final)item.holdoutJobId=rerun.jobId;
+      else item.rerunJobId = rerun.jobId;
+      await this.stage(item, final?'final_verifying':"reevaluating");
       while (true) {
         controller.signal.throwIfAborted();
         const current = this.options.jobs.get(rerun.jobId)!;
@@ -189,12 +213,14 @@ export class OptimizationManager {
         }
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
+      if(final)item.holdoutVerified=true;
       await this.stage(item, "review");
   }
   async decide(id: string, decision: "adopt" | "retain" | "cancel") {
     const item = await this.get(id);
     if (decision === "cancel") { this.active.get(id)?.abort(); return item; }
     if (item.status !== "review") throw new Error("候选尚未完成复测");
+    if (decision==='adopt'&&!item.holdoutVerified) throw new Error('请先完成独立留出集复核，再决定采纳候选');
     await this.stage(item, decision === "adopt" ? "adopted" : "retained");
     // Adoption records a local decision only; originals and deployed Skills are immutable.
     return item;

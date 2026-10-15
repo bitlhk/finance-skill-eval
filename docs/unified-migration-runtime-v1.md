@@ -1,5 +1,9 @@
 # Unified migration and managed Runtime evaluation V1
 
+Integration note: [PR14/PR15 integration](pr14-pr15-integration.md) describes
+the current product boundary. The pinned Java targets below describe the
+original rollout cohort, not a restriction on generic reusable Skill migration.
+
 ## Baseline and scope
 
 Eval starts at main b7c37b74. Builder starts at finance 26759a1f.

@@ -42,3 +42,11 @@ it('keeps source/candidate experiments on one environment',async()=>{
   const {store,body}=await fixture();
   await expect(resolveMigrationRuntimeSelection({...body,pair:'AB'},store)).rejects.toThrow('同一执行环境');
 });
+it('supports other registered Launcher versions without pinning product logic to demo Java releases',async()=>{
+  const {store,body,caps}=await fixture();
+  vi.stubGlobal('fetch',vi.fn(async(url:URL|string)=>{
+    const value=caps(String(url).includes('18001')?'openjiuwen':'agentscope');
+    value.runtime.version='9.8.7';return Response.json(value);
+  }));
+  expect((await resolveMigrationRuntimeSelection(body,store)).configuration.leftExecutionModel.modelId).toBe('model');
+});

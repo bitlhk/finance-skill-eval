@@ -63,21 +63,23 @@ async function waitForPort(port: number, timeoutMs: number, alive: () => string 
 export async function terminate(child: ChildProcess): Promise<void> {
   const pid = child.pid;
   if (pid === undefined) return;
+  const alreadyExited=child.exitCode!==null||child.signalCode!==null;
   const closed = new Promise<void>(resolve => child.once('close', () => resolve()));
   if (process.platform === 'win32') {
     await new Promise<void>(resolve => {
-      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-      killer.once('close', () => resolve());
-      killer.once('error', () => resolve());
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide:true });
+      killer.once('close', code => {if(code!==0&&child.exitCode===null)child.kill('SIGKILL');resolve();});
+      killer.once('error', () => {if(child.exitCode===null)child.kill('SIGKILL');resolve();});
     });
   } else {
     try { process.kill(-pid, 'SIGKILL'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
   }
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  if(alreadyExited)return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([closed, new Promise<void>(resolve => { timer=setTimeout(resolve, STOP_TIMEOUT_MS); })]);
+    if(child.exitCode===null&&child.signalCode===null)throw new Error('SERVICE_STOP_TIMEOUT: 服务进程尚未确认退出');
   } finally { clearTimeout(timer); }
 }
 

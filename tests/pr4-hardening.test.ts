@@ -1,4 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import {spawn} from 'node:child_process';
+vi.mock('node:child_process',async importOriginal=>{
+  const actual=await importOriginal<typeof import('node:child_process')>();
+  return {...actual,spawn:vi.fn(actual.spawn)};
+});
 import { LocalWorker } from '../src/service/local-worker.js';
 import { validateMcpTool } from '../src/mcp-preflight.js';
 
@@ -14,9 +19,11 @@ it('does not forward service secrets to trusted scripts',async()=>{
   expect(JSON.parse(result.stdout).secret).toBeNull();
 });
 it('terminates excessive output immediately',async()=>{
+  vi.mocked(spawn).mockClear();
   vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const result=await new LocalWorker().run({...job('setInterval(()=>process.stdout.write("x".repeat(8192)),1)'),maxOutputBytes:1024,timeoutMs:3000});
   expect(result.outputTruncated).toBe(true);expect(result.timedOut).toBe(false);
+  expect(vi.mocked(spawn).mock.calls.filter(call=>call[0]==='taskkill')).toHaveLength(process.platform==='win32'?1:0);
 });
 it.skipIf(process.platform==='win32')('reaps descendants holding pipes on timeout',async()=>{
   vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');

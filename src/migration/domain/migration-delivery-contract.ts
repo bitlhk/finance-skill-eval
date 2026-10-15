@@ -1,6 +1,55 @@
 import {runtimeToolConfigSchema,type RuntimeToolConfig} from '../../runtime-tool-config.js';
 import {fingerprint} from '../../contracts.js';
 import {supportsImplicitScriptContext,type ProjectInspection,type ToolDecision} from './migration-model.js';
+import {parseRetiredSources} from './migration-source-retirement.js';
+
+/** The same delivery constraints guide planning and implementation; values remain deployment-local. */
+export function portableDeliveryContract(inspection:ProjectInspection,decisions:ToolDecision[],sourceSkillFile?:string){
+ return {
+  skillDocumentation:{sourceSkillFile,manifestPathsRelativeToSkillRoot:true,
+   ...(decisions.some(decision=>decision.form==='MCP')?{assembledLayout:'The delivery archive contains skill/SKILL.md and its skill-relative resources. MCP service source files retain their declared delivery-root-relative paths outside skill/. Do not cite scripts/<file> as a Skill-relative file when it is only delivered as external MCP service code. The model uses registered MCP tool names, not service source files.'}:{}),
+   manifestSourceDirectory:'migration-skill/',manifestTargets:['SKILL.md','references/<name>.md|mdx|txt'],
+   serviceReadme:'Declare tool deployment README in tools[].files, not skillDelivery.files. Script supporting files retain their declared Skill-relative layout; a tool README may therefore appear in the final Skill package, but it does not replace SKILL.md.',
+   sourceRetirement:'Optional skillDelivery.retiredSources=[{path,reason}] explicitly identifies original implementation code superseded by the approved migration (including framework registration glue). Exact original archive paths only; never delete or edit the upload. Do not retire business assets, documents, configuration, or code still needed by an unmigrated tool. Explain the replacement using inspected source evidence; candidate analysis and independent conformance review still decide whether the removal preserves the approved behavior.',
+   purpose:'SKILL.md remains the model-executed business workflow, including scope, inputs, tool order, branches, stop conditions and outputs; deployment notes cannot replace it'},
+  script:{execution:'COMMAND',cwd:'WORKSPACE',entrypoint:'RUNTIME_PROVIDED_ABSOLUTE_PATH',packageResources:'RELATIVE_TO_SCRIPT',runtimeInjection:false,
+   deliveryLayout:'Keep the contract-tested Skill-relative scripts/, assets/ and references/ layout. If files are authored under migration-skill/, declare all Script files under that same root; packaging removes only migration-skill/ uniformly, without moving files into an extra module directory.'},
+  mcp:{transport:'STREAMABLE_HTTP',contextTransport:'HTTP_HEADER',serviceConfigurationTransport:'SERVICE_ENV',businessArguments:'SEPARATE',
+   launcher:{portEnvironment:'PORT',defaultPort:8080,host:'0.0.0.0',path:'/mcp',
+    configurationOwner:'EVAL_SERVICE_LAUNCHER',requiresBusinessDependencyDeclaration:false},
+   workspaceContext:{header:'X-Workspace-Root',scope:'PER_REQUEST_WORKSPACE',rootMeaning:'ORIGINAL_EXECUTION_CWD',
+    relativeBusinessPaths:'PRESERVE_SOURCE_RELATIVE_PATHS_UNDER_WORKSPACE_ROOT',
+    suppliedBy:'TARGET_RUNTIME',requiresDependencyDeclaration:false,missing:'FAIL_CLOSED'},
+   pythonFramework:{package:'fastmcp',version:'2.14.7',import:'from fastmcp import FastMCP',
+    supportedResultImports:['fastmcp.tools.tool.ToolResult','mcp.types.TextContent']}},
+  runtimeToolConfigTemplate:runtimeToolConfigTemplate(inspection,decisions),
+  platformGeneratedFiles:{runtimeDependencies:{when:'inspection.dependencyAnalysis.dependencies is nonempty',
+   path:decisions.some(decision=>decision.form==='MCP')?'runtime-dependencies.json':'scripts/runtime-dependencies.json',
+   purpose:'Eval-generated runtime INJECT dependency declarations for deployment configuration; tools may have empty dependency arrays. This file is not agent-authored business logic or a new business dependency.'},
+   planning:'Account for this conditional metadata and declared tool supporting files when promising package layout. Do not promise an exclusive layout that conflicts with delivery; actual extra business dependencies and semantic drift still require review.'},
+ };
+}
+
+/** Diagnose the manifest before retrying; a wrong supporting entry is not a missing SKILL.md. */
+export function agentDocumentDeliveryIssues(payload:Record<string,unknown>,files:Record<string,string>):string[]{
+ const delivery=payload.skillDelivery as {skillFile?:unknown;files?:unknown;retiredSources?:unknown}|undefined;
+ if(!delivery||delivery.skillFile!=='SKILL.md'||!Array.isArray(delivery.files)||!delivery.files.length||delivery.files.length>100)
+  return ['skillDelivery 必须包含 skillFile=SKILL.md 和非空 files 清单（最多 100 项）'];
+ const issues:string[]=[],targets=new Set<string>();
+ if(parseRetiredSources(delivery.retiredSources)===null)issues.push('skillDelivery.retiredSources 必须是最多 100 项的 {path,reason} 清单，使用安全、唯一的原始相对路径及非空理由');
+ for(const entry of delivery.files){
+  const item=entry as {source?:unknown;path?:unknown}|null;
+  const source=typeof item?.source==='string'?item.source.replaceAll('\\','/').replace(/^\.\//u,''):'';
+  const target=typeof item?.path==='string'?item.path.replaceAll('\\','/').replace(/^\.\//u,''):'';
+  if(!source.startsWith('migration-skill/')||source.split('/').includes('..'))issues.push(`文档源 ${source||'(空)'} 必须在 migration-skill/ 内；服务 README 放 tools[].files，不放文档清单`);
+  if(target!=='SKILL.md'&&!/^references\/.+\.(?:md|mdx|txt)$/iu.test(target)||target.split('/').includes('..'))issues.push(`文档目标 ${target||'(空)'} 必须为 SKILL.md 或 references/ 下的 md/mdx/txt 文件`);
+  if(targets.has(target.toLowerCase()))issues.push(`文档目标重复：${target}`);
+  targets.add(target.toLowerCase());
+  if(typeof files[source]!=='string')issues.push(`文档清单声明的源文件未交付：${source}`);
+ }
+ if(!targets.has('skill.md'))issues.push('文档清单未声明目标 SKILL.md');
+ return issues;
+}
 
 export function runtimeToolConfigTemplate(inspection:ProjectInspection,decisions:ToolDecision[]){
  const runtimeToolConfig:RuntimeToolConfig={context:{},providers:{},tools:{}};

@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {skillRuntimeRequirements as tools} from '../src/service/skill-runtime-requirements.js';
+import {skillRuntimeRequirements as tools} from '../src/shared/skill-runtime-requirements.js';
 
 const skill=(header:string)=>`---\nname: sample\n${header}\n---\n# Method\n`;
 it('keeps declared installation dependencies when only one case or tool is selected',()=>{

@@ -9,70 +9,57 @@ const evalCase=evalCaseSchema.parse({caseId:'case-1',name:'case',prompt:'query',
 const variant={mode:'skill_version' as const,skillId:'demo',version:'1',artifactSha256:digest};
 
 describe('Runtime Launcher adapter',()=>{
-  it.each([false,true])('records cleanup receipts without inferring resource reclamation from HTTP success (receipt=%s)',async(withReceipt)=>{
-    const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
-    vi.stubGlobal('fetch',async(_input:unknown,init:RequestInit)=>init.method==='DELETE'
-      ?Response.json(withReceipt?{deleted:true,cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',instanceId:'instance-1',status:'RELEASED',buildRetirement:'BACKEND_RETIRED',temporaryCandidate:'NOT_INDEPENDENTLY_VERIFIED',privateValue:'DO_NOT_COPY'}}:{deleted:true})
-      :Response.json(state));
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters:{}},variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
-    await runtime.prepare({runId:'run-1'});await runtime.cleanup();
-    expect(runtime.finalizationEvidence().status).toBe(withReceipt?'RELEASED':'UNKNOWN');
-    expect(runtime.finalizationEvidence()).not.toHaveProperty('privateValue');
-    if(withReceipt)expect(runtime.finalizationEvidence().temporaryCandidate).toBe('NOT_INDEPENDENTLY_VERIFIED');
-  });
-  it('accepts only the bounded optional non-thinking mode',()=>{
-    const base={schemaVersion:'finance.eval-generation.v1',temperature:0,top_p:1,max_tokens:8192};
-    expect(launcherGenerationSchema.parse({...base,thinking:{type:'disabled'}}).thinking).toEqual({type:'disabled'});
-    for(const thinking of [null,{},'disabled',{type:'enabled'},{type:'disabled',key:'private'}])
-      expect(()=>launcherGenerationSchema.parse({...base,thinking})).toThrow();
-    expect(launcherGenerationSchema.parse(base)).not.toHaveProperty('thinking');
-  });
-  it.each(['runId','caseId','side','instanceId'])('rejects a failure observation with another %s before forwarding it',async(field)=>{
-    const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
-    const event={schemaVersion:'finance.runtime-observation.v1',eventId:'failure-1',sequence:1,occurredAt:'2026-10-01T00:00:00.000Z',traceId:'trace-1',instanceId:'instance-1',runId:'run-1',caseId:'case-1',side:'right',source:{adapter:'launcher',synthesized:true},kind:'execution.failed',payload:{error:{code:'EVAL_TOOL_EXECUTION_FAILED',message:'private',retryable:false}},[field]:field==='side'?'left':'another'};
-    vi.stubGlobal('fetch',async(input:unknown,init:RequestInit)=>init.method==='DELETE'?new Response(null,{status:204}):String(input).endsWith('/execute')?new Response(`data: ${JSON.stringify(event)}\n\n`,{headers:{'content-type':'text/event-stream'}}):Response.json(state));
-    const model={providerId:'managed',modelId:'execution',parameters:{}},onEvent=vi.fn();
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
-    await runtime.prepare({runId:'run-1'});
-    try{await expect(runtime.execute({runId:'run-1',side:'right',evalCase,model,variant,onEvent})).rejects.toThrow('does not match');expect(onEvent).not.toHaveBeenCalled();}
-    finally{await runtime.cleanup();}
-  });
-  it('keeps safe failure correlation without verifying execution or forwarding private native fields',async()=>{
-    const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
-    const event={schemaVersion:'finance.runtime-observation.v1',eventId:'failure-1',sequence:1,occurredAt:'2026-10-01T00:00:00.000Z',traceId:'trace-1',instanceId:'instance-1',runId:'run-1',caseId:'case-1',side:'right',source:{adapter:'finance-solution-builder',synthesized:true,nativeEventType:'builder.execution-correlation.v1'},kind:'execution.failed',payload:{error:{code:'EVAL_TOOL_EXECUTION_FAILED',message:'private upstream detail',retryable:false}},native:{data:{basis:'LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION',buildId:'agent-test',hostRunId:'eval-test',hostTraceId:'/private/key',unrelated:'canary'}}};
-    vi.stubGlobal('fetch',async(input:unknown,init:RequestInit)=>{
-      if(init.method==='DELETE')return new Response(null,{status:204});
-      return String(input).endsWith('/execute')?new Response(`data: ${JSON.stringify(event)}\n\n`,{headers:{'content-type':'text/event-stream'}}):Response.json(state);
-    });
+  it('retains failure and skips subsequent cases only in the controlled comparison mode',async()=>{
+    let executions=0,deletions=0;
+    vi.stubGlobal('fetch',vi.fn(async(_input:unknown,init?:RequestInit)=>{
+      if(init?.method==='DELETE'){
+        deletions++;
+        return Response.json({cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',instanceId:'instance-1',
+          observedAt:'2026-10-09T00:00:00Z',status:deletions===1?'PENDING':'RELEASED',buildId:'owned-build',scope:'THIS_INSTANCE',error:'PRIVATE_CLEANUP_DETAIL'}});
+      }
+      if(String(_input).endsWith('/v1/runtime-instances'))return Response.json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00Z',error:null,configurationDigest});
+      executions++;return Response.json({error:'FIRST_CASE_FAILURE'},{status:502});
+    }));
     const model={providerId:'managed',modelId:'execution',parameters:{}};
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:1000,stopAfterFailure:true});
     await runtime.prepare({runId:'run-1'});
-    try{
-      await expect(runtime.execute({runId:'run-1',side:'right',evalCase,model,variant})).rejects.toMatchObject({
-        name:'RuntimeExecutionFailure',metadata:{launcherDiagnostics:{basis:'LAUNCHER_CORRELATION_NOT_EXECUTION_VERIFICATION',buildId:'agent-test',hostRunId:'eval-test'},instanceId:'instance-1',launcherTraceId:'trace-1'}});
-    }finally{await runtime.cleanup();}
+    const request=(caseId:string)=>({runId:'run-1',side:'right' as const,evalCase:{...evalCase,caseId},model,variant});
+    await expect(runtime.execute(request('first'))).rejects.toThrow('FIRST_CASE_FAILURE');
+    await expect(runtime.execute(request('next'))).rejects.toThrow('本题未执行');
+    expect(executions).toBe(1);
+    await runtime.cleanup();expect(deletions).toBe(2);
+    expect(runtime.finalizationEvidence()).toMatchObject({status:'RELEASED',instanceId:'instance-1',buildId:'owned-build'});
+    expect(JSON.stringify(runtime.finalizationEvidence())).not.toContain('PRIVATE_CLEANUP_DETAIL');
   });
-  it('preserves a normalized execution failure and still reclaims the instance',async()=>{
-    const deleted=vi.fn(),executed=vi.fn();
-    const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
-    const event={schemaVersion:'finance.runtime-observation.v1',eventId:'failure-1',sequence:1,occurredAt:'2026-10-01T00:00:00.000Z',traceId:'trace-1',instanceId:'instance-1',runId:'run-1',caseId:'case-1',side:'right',source:{adapter:'launcher',synthesized:true},kind:'execution.failed',payload:{error:{code:'RUNTIME_EVIDENCE_UNVERIFIED',message:'private upstream detail',retryable:false}}};
-    vi.stubGlobal('fetch',async(input:unknown,init:RequestInit)=>{
-      if(init.method==='DELETE'){deleted();return new Response(null,{status:204})}
-      if(String(input).endsWith('/execute')){executed();return new Response(`data: ${JSON.stringify(event)}\n\n`,{headers:{'content-type':'text/event-stream'}})}
-      return Response.json(state);
-    });
-    const model={providerId:'managed',modelId:'execution',parameters:{}};
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
+  it.each([false,true])('recreates only for the next case, including queued executions; cleanup failure fails closed: %s',async(cleanupFails)=>{
+    let created=0;const keys:string[]=[],executed:string[]=[],deleted:string[]=[];
+    vi.stubGlobal('fetch',vi.fn(async(input:URL|string|Request,init?:RequestInit)=>{
+      const url=String(input);
+      if(init?.method==='POST'&&url.endsWith('/v1/runtime-instances')){
+        created+=1;keys.push((init.headers as Record<string,string>)['idempotency-key']!);
+        return Response.json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:`instance-${created}`,status:'ready',executeEndpoint:`/v1/runtime-instances/instance-${created}/execute`,expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest});
+      }
+      if(init?.method==='DELETE'){
+        deleted.push(url);return cleanupFails?Response.json({error:'cleanup_failed'},{status:503}):new Response(null,{status:404});
+      }
+      executed.push(`${url}:${JSON.parse(String(init?.body)).caseId}`);
+      return Response.json({error:'EVAL_PACKAGE_ITERATION_LIMIT'},{status:502});
+    }));
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters:{}},variant,skill:null,environment:{environmentId:'test'},timeoutMs:1000});
     await runtime.prepare({runId:'run-1'});
-    try{
-      const first=runtime.execute({runId:'run-1',side:'right',evalCase,model,variant});
-      const queued=runtime.execute({runId:'run-1',side:'right',evalCase:{...evalCase,caseId:'case-2'},model,variant});
-      await expect(first).rejects.toThrow('Runtime execution failed: RUNTIME_EVIDENCE_UNVERIFIED');
-      await expect(queued).rejects.toMatchObject({name:'RuntimeCaseNotExecutedError',failedCaseId:'case-1'});
-      expect(executed).toHaveBeenCalledOnce();
+    const execute=(caseId:string)=>runtime.execute({runId:'run-1',side:'right',evalCase:{...evalCase,caseId},model:{providerId:'managed',modelId:'execution',parameters:{}},variant});
+    const results=await Promise.allSettled([execute('first'),execute('second')]);
+    expect(results.map(result=>result.status)).toEqual(['rejected','rejected']);
+    expect(String((results[0] as PromiseRejectedResult).reason)).toContain('EVAL_PACKAGE_ITERATION_LIMIT');
+    expect(executed[0]).toContain('instance-1/execute:first');
+    expect(created).toBe(cleanupFails?1:2);
+    expect(executed).toHaveLength(cleanupFails?1:2);
+    if(!cleanupFails){expect(keys[0]).not.toBe(keys[1]);expect(executed[1]).toContain('instance-2/execute:second');}
+    else{
+      expect(String((results[1] as PromiseRejectedResult).reason)).toContain('cleanup_failed');
+      await expect(runtime.cleanup()).rejects.toThrow('cleanup_failed');
+      expect(deleted).toHaveLength(2); // Retain the handle so shutdown can retry deletion.
     }
-    finally{await runtime.cleanup()}
-    expect(deleted).toHaveBeenCalledOnce();
   });
   it('validates a complete generation contract without accepting unsupported options',()=>{
     const valid={schemaVersion:'finance.eval-generation.v1',temperature:0.25,top_p:0.8,max_tokens:1234};

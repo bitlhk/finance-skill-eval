@@ -1,5 +1,35 @@
 """Translate a trusted model binding without sending UI aliases to the provider."""
 
+from functools import partial
+import json
+import os
+
+
+def bind_agent_request_extensions(model, settings, role):
+    """Forward operator-owned provider extensions through the SDK's call API.
+
+    init_model has no extra_body argument. Bind the public invoke/stream methods,
+    retaining the SDK's original client, callbacks and streaming implementation.
+    Uploaded files and agent output never supply these defaults.
+    """
+    defaults = json.loads(os.environ.get(f"FINANCE_EVAL_{role}_REQUEST_DEFAULTS", "{}"))
+    if not isinstance(defaults, dict):
+        raise ValueError("Model request defaults must be an object")
+    extra = dict(settings.get("extra_body") or {})
+    nested = defaults.get("extra_body", {})
+    if not isinstance(nested, dict):
+        raise ValueError("Model extra_body must be an object")
+    # Standard request fields are already controlled by the agent's explicit
+    # model and budget configuration; never flatten them into provider extras.
+    reserved = {"model", "messages", "tools", "stream", "temperature", "top_p",
+                "max_tokens", "stop", "extra_body", "api_key", "base_url"}
+    extra.update(nested)
+    extra.update({key: value for key, value in defaults.items() if key not in reserved})
+    if extra:
+        model.invoke = partial(model.invoke, extra_body=extra)
+        model.stream = partial(model.stream, extra_body=extra)
+    return model
+
 
 def resolve_model(config, reference):
     model = config.get("models", {}).get(reference.get("modelId"))

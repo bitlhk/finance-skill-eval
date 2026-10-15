@@ -34,7 +34,7 @@ export type StageEnvelope<T> = {
   status: StageStatus;
   trace?: { rounds: Array<Record<string, unknown>> };
   /** Facts about producing it: which model, how long, and why if it did not. */
-  run?: { modelId?: string; elapsedMs?: number; error?: string };
+  run?: { modelId?: string; elapsedMs?: number; error?: string; outputCorrectionAttempts?: number };
   payload: T;
 };
 
@@ -50,7 +50,7 @@ export function stageEnvelope<T>(input: {
   payload: T;
   inputDigests?: Record<string, string>;
   trace?: { rounds: Array<Record<string, unknown>> };
-  run?: { modelId?: string; elapsedMs?: number; error?: string };
+  run?: { modelId?: string; elapsedMs?: number; error?: string; outputCorrectionAttempts?: number };
   producedAt?: string;
 }): StageEnvelope<T> {
   // A product that cannot say what it was built from cannot be invalidated when that changes, so

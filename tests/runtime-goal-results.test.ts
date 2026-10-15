@@ -5,7 +5,7 @@ import {RuntimeGoalResults, runtimeGoalCounts} from '../web/src/RuntimeGoalResul
 import type {EvaluationJob} from '../web/src/types';
 
 type Case = NonNullable<EvaluationJob['report']>['cases'][number];
-const item = (verdict: 'PASS' | 'FAIL' | 'INDETERMINATE'): Case => ({judge: {
+const item = (verdict: 'PASS' | 'FAIL' | 'INDETERMINATE'): Case => ({left:{status:'completed',error:null},right:{status:'failed',error:'Runtime failed'},judge: {
   runtimeComparison: {left: {status: 'assessed', assessment: {verdict, reason: 'Observed result', checks: [
     {criterion: 'Original requirement', verdict, reason: 'Insufficient facts', evidence: ''}]}},
     right: {status: 'unavailable', error: 'Runtime failed'}}, dimensions: [], summary: '', confidence: 'medium'},
@@ -21,4 +21,10 @@ it('does not label an indeterminate or unavailable side as a tie or a pass', () 
   expect(html).toContain('Original requirement');
   expect(html).not.toContain('持平');
   expect(html).not.toContain('更优');
+});
+it('does not display a quality PASS for a side whose execution failed',()=>{
+  const failed=item('PASS');failed.left.status='failed';failed.left.error='Execution stopped';
+  expect(runtimeGoalCounts([failed],'left')).toEqual({PASS:0,FAIL:0,INDETERMINATE:0,unavailable:1});
+  const html=renderToStaticMarkup(createElement(RuntimeGoalResults,{item:failed}));
+  expect(html).toContain('Execution stopped');expect(html).not.toContain('A · 通过');
 });

@@ -24,9 +24,10 @@ export type PortableGeneration = {
 
 export type PortableDiff = {
   path: string;
-  operation: 'ADD' | 'MODIFY';
+  operation: 'ADD' | 'MODIFY' | 'DELETE';
   before: string;
   after: string;
+  reason?:string;
 };
 
-export type SkillDocumentDelivery = { files: Record<string, string> };
+export type SkillDocumentDelivery = { files: Record<string, string>; retiredSources?:import('./migration-source-retirement.js').RetiredSource[] };

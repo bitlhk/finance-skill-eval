@@ -25,7 +25,7 @@ try {
   await expect(left.locator('option').filter({ hasText: 'Gemma 4' })).toHaveJSProperty('disabled', true);
   await left.selectOption('service-execution:glm-5.3');
   await right.selectOption('service-execution:glm-5.3-flash');
-  await panels.nth(0).getByRole('combobox').nth(0).selectOption('version:2.1.5');
+  await panels.nth(0).getByRole('combobox').nth(0).selectOption({label:'v2.1.5'});
   await page.locator('.case-row input').nth(1).uncheck();
   await expect(page.getByRole('button', { name: '开始测试', exact: true })).toBeEnabled();
   await page.screenshot({ path: `${out}/selection-desktop.png`, fullPage: true });

@@ -73,6 +73,7 @@ export type ModelCompletionRequest = {
   model: ModelRef;
   messages: ModelMessage[];
   responseFormat?: "text" | "json";
+  toolFree?:boolean;
   signal?: AbortSignal;
 };
 

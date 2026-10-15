@@ -12,6 +12,7 @@ import { migrationConflict as conflict } from "./migration-errors.js";
 import type { MigrationSupplementRepository } from './migration-supplement-repository.js';
 import type { MigrationDependencyAnalyzer } from './migration-dependency-analyzer.js';
 import type { MigrationAgentResultMapper } from './migration-agent-result-mapper.js';
+import {migrationRuntimeCapabilities,type MigrationEnvironmentRepository} from './migration-environment-repository.js';
 
 export class MigrationInspectionService {
   constructor(
@@ -21,11 +22,14 @@ export class MigrationInspectionService {
     private readonly supplements:MigrationSupplementRepository,
     private readonly dependencyAnalyzer:MigrationDependencyAnalyzer,
     private readonly agentResults:MigrationAgentResultMapper,
+    private readonly environments?:MigrationEnvironmentRepository,
   ) {}
 
-  async inspect(id: string, sourceOnly = false) {
+  async inspect(id: string, sourceOnly = false,environmentId?:string) {
     return this.projects.runExclusive(id, async () => {
       const value = await this.projects.get(id);
+      if(value.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))return conflict('改进任务进行中，不能替换其源码诊断');
+      const targetRuntime=environmentId?(await migrationRuntimeCapabilities(this.environments,environmentId)).capabilities:undefined;
       const asset = sourceOnly ? value.source : value.candidate ?? value.source;
       const archive = await this.skills.readArchive(asset.assetId);
       const originalFiles: Record<string, string> = {};
@@ -48,6 +52,7 @@ export class MigrationInspectionService {
         assetDigest: asset.artifactSha256,
         runId: id,
         files: archive,
+        ...(targetRuntime?{targetRuntime}:{}),
         supplements: supplementItems.map(item => ({
           dependencyId: item.dependencyId,
           key: currentDependencies.find(dependency => dependency.id === item.dependencyId)?.key ?? item.dependencyId,
@@ -119,6 +124,7 @@ export class MigrationInspectionService {
         status: agent?.status === "ABSTAINED" ? "ABSTAINED" : "PRODUCED",
         inputDigests: { supplements: this.supplements.digest(record) },
         payload: inspection,
+        ...(agent?.outputCorrectionAttempts?{run:{outputCorrectionAttempts:agent.outputCorrectionAttempts}}:{}),
       });
       value.decisions = (value.decisions ?? []).filter(decision =>
         decision.baseAssetId === asset.assetId && value.inspection!.tools.some(tool => tool.toolId === decision.toolId));

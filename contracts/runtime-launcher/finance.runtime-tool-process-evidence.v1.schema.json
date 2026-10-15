@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"finance.runtime-tool-process-evidence.v1",
+  "type":"object","additionalProperties":false,
+  "required":["schemaVersion","scope","caseScopeId","records"],
+  "properties":{
+    "schemaVersion":{"const":"finance.runtime-tool-process-evidence.v1"},
+    "scope":{"const":"LAUNCHER_MANAGED_SCRIPT_CALLS"},
+    "caseScopeId":{"$ref":"#/$defs/opaque"},
+    "records":{"type":"array","maxItems":256,"items":{
+      "type":"object","additionalProperties":false,
+      "required":["callIndex","tool","processScopeId","startedAt","exitedAt","exitCode","argumentsDigest","resultDigest"],
+      "properties":{
+        "callIndex":{"type":"integer","minimum":0},"tool":{"$ref":"#/$defs/opaque"},"processScopeId":{"$ref":"#/$defs/opaque"},
+        "startedAt":{"type":"string","format":"date-time"},"exitedAt":{"type":"string","format":"date-time"},
+        "exitCode":{"type":"integer"},"argumentsDigest":{"$ref":"#/$defs/sha"},"resultDigest":{"$ref":"#/$defs/sha"}
+      }
+    }}
+  },
+  "$defs":{
+    "opaque":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$"},
+    "sha":{"type":"string","pattern":"^[a-f0-9]{64}$"}
+  }
+}

@@ -8,26 +8,28 @@ import { authHeaders, apiPath } from './api-path';
 type Optimization = {
   optimizationId: string; sourceJobId: string; status: string; modelId: string;
   summary: string; findings: string[]; changes: Array<{ path: string; before: string; after: string; reason: string }>;
-  candidate: SkillAsset | null; rerunJobId: string | null; error: string | null;
+  candidate: SkillAsset | null; rerunJobId: string | null; holdoutJobId?:string|null; holdoutVerified?:boolean; error: string | null;
   stages: Array<{ stage: string; at: string }>;
 };
-const STAGES = [{ id: "diagnosing", label: "专业诊断与修改" }, { id: "validating", label: "生成候选" }, { id: "reevaluating", label: "同条件复测与留出验证" }, { id: "review", label: "人工选择" }];
+const STAGES = [{ id: "diagnosing", label: "专业诊断与修改" }, { id: "validating", label: "生成候选" }, { id: "reevaluating", label: "开发集同条件复测" }, { id: "final_verifying", label: "最终留出集复核" }, { id: "review", label: "人工选择" }];
 async function request<T>(url: string, body?: unknown): Promise<T> {
   const r = await fetch(apiPath(url), { method: body ? "POST" : "GET", headers: { "content-type": "application/json", ...authHeaders() }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const data = await r.json(); if (!r.ok) throw new Error(data.message || "请求失败"); return data;
 }
-export function OptimizationPanel({ job, migrationId, onCandidate }: { job: EvaluationJob; migrationId?:string; onCandidate?:()=>void }) {
+export function OptimizationPanel({ job, migrationId, planId, onCandidate }: { job: EvaluationJob; migrationId?:string; planId?:string; onCandidate?:()=>void }) {
   const [item, setItem] = useState<Optimization | null>(null);
   const [rerun, setRerun] = useState<EvaluationJob | null>(null);
+  const [holdoutRun,setHoldoutRun]=useState<EvaluationJob|null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    setItem(null); setRerun(null); setError("");
+    setItem(null); setRerun(null); setHoldoutRun(null); setError("");
     let disposed = false;
     void request<Optimization | null>(`/api/runs/${job.jobId}/optimization`).then(async next => {
       if (!next) return;
       const run = next.rerunJobId ? await request<EvaluationJob>(`/api/runs/${next.rerunJobId}`) : null;
-      if (!disposed) { setItem(next); setRerun(run); }
+      const holdout=next.holdoutJobId?await request<EvaluationJob>(`/api/runs/${next.holdoutJobId}`):null;
+      if (!disposed) { setItem(next); setRerun(run);setHoldoutRun(holdout); }
     }).catch(e => { if (!disposed) setError(e.message); });
     return () => { disposed = true; };
   }, [job.jobId]);
@@ -39,7 +41,8 @@ export function OptimizationPanel({ job, migrationId, onCandidate }: { job: Eval
       try {
         const next = await request<Optimization>(`/api/optimizations/${item.optimizationId}`);
         const run = next.rerunJobId ? await request<EvaluationJob>(`/api/runs/${next.rerunJobId}`) : null;
-        if (!disposed) { setItem(next); setRerun(run); }
+        const holdout=next.holdoutJobId?await request<EvaluationJob>(`/api/runs/${next.holdoutJobId}`):null;
+        if (!disposed) { setItem(next); setRerun(run);setHoldoutRun(holdout); }
       } catch (e) { if (!disposed) setError(e instanceof Error ? e.message : String(e)); }
       finally { inFlight = false; }
     };
@@ -48,7 +51,7 @@ export function OptimizationPanel({ job, migrationId, onCandidate }: { job: Eval
   }, [item?.optimizationId, item?.status]);
   const start = async () => {
     setBusy(true); setError("");
-    try { const next = await request<Optimization>(migrationId?`/api/migrations/${migrationId}/optimize`:`/api/runs/${job.jobId}/optimize`, migrationId?{jobId:job.jobId}:{}); setItem(next); localStorage.setItem(`finance-optimization:${job.jobId}`, next.optimizationId); }
+    try { const next = await request<Optimization>(migrationId?`/api/migrations/${migrationId}/optimize`:`/api/runs/${job.jobId}/optimize`, migrationId?{jobId:job.jobId,...(planId?{planId}:{})}:{}); setItem(next); localStorage.setItem(`finance-optimization:${job.jobId}`, next.optimizationId); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const decide = async (decision: string) => {
@@ -62,13 +65,18 @@ export function OptimizationPanel({ job, migrationId, onCandidate }: { job: Eval
     }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
-  const active = item && ["diagnosing", "validating", "reevaluating"].includes(item.status);
+  const active = item && ["diagnosing", "validating", "reevaluating", "final_verifying"].includes(item.status);
   const changedReferences = item?.changes.filter(c => c.path !== "SKILL.md").map(c => c.path) ?? [];
   const unusedReferences = changedReferences.filter(p => !rerun?.evidence.some(e => e.side === "right" && e.metadata?.referenceFilesRead?.[p]));
   const reevaluate = async () => {
     setBusy(true); setError("");
     try { setItem(await request<Optimization>(`/api/optimizations/${item!.optimizationId}/reevaluate`, {})); setRerun(null); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const finalVerify=async()=>{
+    setBusy(true);setError('');
+    try{setItem(await request<Optimization>(`/api/optimizations/${item!.optimizationId}/final-verify`,{}));setHoldoutRun(null)}
+    catch(e){setError(e instanceof Error?e.message:String(e))}finally{setBusy(false)}
   };
   return <section className="optimization-panel">
     <header><div><h3><Sparkles size={18} /> Skill 改进候选</h3><span>{item ? `${item.modelId} · 独立优化会话` : "基于本轮专业评价，生成一轮候选并复测"}</span></div>
@@ -77,7 +85,8 @@ export function OptimizationPanel({ job, migrationId, onCandidate }: { job: Eval
     {error || item?.error ? <div className="run-error">{error || item?.error}</div> : null}
     {item ? <>
       <ol className="optimization-stages">{STAGES.map((s, index) => {
-        const reached = active ? index < STAGES.findIndex(t => t.id === item.status) : item.stages.some(t => t.stage === s.id); const running = active && item.status === s.id;
+        const reached=s.id==='review'?item.holdoutVerified&&['adopted','retained'].includes(item.status):s.id==='final_verifying'?!!item.holdoutVerified:s.id==='reevaluating'?!!item.rerunJobId:item.stages.some(t=>t.stage===s.id)&&(!active||index<STAGES.findIndex(t=>t.id===item.status));
+        const running=item.status===s.id&&(s.id!=='review'||!!item.holdoutVerified);
         return <li key={s.id} className={running ? "active" : reached ? "done" : ""}>{running ? <LoaderCircle className="spin" size={16} /> : reached ? <Check size={16} /> : <span className="stage-dot" />}<span>{s.label}</span></li>;
       })}</ol>
       {item.summary ? <MarkdownContent compact content={item.summary} /> : null}
@@ -88,8 +97,10 @@ export function OptimizationPanel({ job, migrationId, onCandidate }: { job: Eval
         {rerun.report && unusedReferences.length > 0 ? <div className="info-banner">以下候选文件未记录到读取证据，尚不能确认修改效果：{unusedReferences.join("、")}</div> : null}
         {rerun.report ? <><ResultCharts report={rerun.report} />{rerun.report.cases.map(c => <details key={c.caseId}><summary>{c.name} · {c.judge?.winner === "right" ? "候选更优" : c.judge?.winner === "left" ? "原版更优" : c.judge ? "持平" : "未评分"}</summary><MarkdownContent content={c.judge?.summary ?? c.judgeError ?? ""} /><div className="answer-grid"><article><MarkdownContent content={c.left.output} /></article><article><MarkdownContent content={c.right.output} /></article></div></details>)}</> : null}
       </div> : null}
-      {item.candidate && ["review", "failed"].includes(item.status) ? <button className="button secondary" disabled={busy} onClick={reevaluate}><RotateCw size={16} />重新复测当前候选</button> : null}
-      {item.status === "review" ? <div className="optimization-actions"><button className="button primary" disabled={busy} onClick={() => decide("adopt")}><Check size={16} />保留为可用候选</button><button className="button secondary" disabled={busy} onClick={() => decide("retain")}>沿用原版</button><span>仅保存本地选择，不自动发布或替换现有 Skill。</span></div> : null}
+      {holdoutRun&&<div className="candidate-validation"><strong>最终留出集复核 · {holdoutRun.report?.summary.headline??holdoutRun.stageLabel}</strong><p>仅对当前候选运行一次；结果供最终选择，不进入编辑模型的反馈。</p>{holdoutRun.report&&<ResultCharts report={holdoutRun.report}/>}</div>}
+      {item.candidate&&!item.holdoutJobId&&["review", "failed"].includes(item.status) ? <button className="button secondary" disabled={busy} onClick={reevaluate}><RotateCw size={16} />重新复测当前候选</button> : null}
+      {item.status==='review'&&!item.holdoutJobId&&<button className="button primary" disabled={busy} onClick={finalVerify}><Check size={16}/>执行最终留出集复核</button>}
+      {item.status === "review" ? <div className="optimization-actions"><button className="button primary" disabled={busy||!item.holdoutVerified} onClick={() => decide("adopt")}><Check size={16} />保留为可用候选</button><button className="button secondary" disabled={busy} onClick={() => decide("retain")}>沿用原版</button><span>{item.holdoutVerified?'仅保存本地选择，不自动发布或替换现有 Skill。':'采纳前需完成最终留出集复核。'}</span></div> : null}
       {item.status === "adopted" || item.status === "retained" ? <div className="info-banner">{item.status === "adopted" ? "已保留候选，可在版本选择中继续评测。原版未改变。" : "已选择沿用原版，候选和复测证据仍保留。"}</div> : null}
     </> : null}
   </section>;

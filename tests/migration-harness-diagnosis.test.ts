@@ -2,12 +2,38 @@ import {expect,it} from 'vitest';
 import {toProjectInspection} from '../src/migration/infrastructure/migration-agent.js';
 import {buildMigrationPlan,stableToolId} from '../src/migration/domain/migration-model.js';
 import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
+import {runtimeBuildRequirements} from '../src/migration/domain/migration-harness.js';
 
 const source='Runtime harness provides read_file(path) for workspace files.\nBusiness lookup uses read_file to read a local report.\n';
 const files={'SKILL.md':source};
 const harness={name:'read_file',reason:'Runtime 通用文件读取，不建议与 Skill 绑定',usageContract:'path 相对工作区；返回文本；权限及错误待确认',
  consumerTools:['lookup'],evidence:[{path:'SKILL.md',snippet:source.split('\n')[0]!}]};
 const tool={name:'read_file',sourcePaths:['SKILL.md'],portability:'RUNTIME_BOUND'};
+
+it.each([{sideEffects:['read','write']},{sideEffects:42},{sideEffects:{}}])('keeps ambiguous or malformed sideEffects $sideEffects incomplete without breaking reports',({sideEffects})=>{
+ const contract={inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'read'};
+ const inspection=toProjectInspection({tools:[],runtimeCapabilities:[{...harness,contract,constraints:{permissions:['workspace.read'],sideEffects,isolation:'per_case_workspace'}}]},'asset','a'.repeat(64),stableToolId,null,files);
+ expect(inspection.runtimeCapabilities?.[0]?.constraints).toBeUndefined();
+ expect(runtimeBuildRequirements(inspection)).toMatchObject({status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_file',fields:['constraints']}]});
+ // Revalidate older persisted objects too, rather than throwing from serialization.
+ inspection.runtimeCapabilities![0]!.constraints={permissions:['workspace.read'],sideEffects,isolation:'per_case_workspace'} as any;
+ expect(runtimeBuildRequirements(inspection)).toMatchObject({status:'INCOMPLETE_REQUIREMENTS'});
+});
+
+it('normalizes a singleton sideEffects array without changing its meaning',()=>{
+ const contract={inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'read'};
+ const inspection=toProjectInspection({tools:[],runtimeCapabilities:[{...harness,contract,
+  constraints:{permissions:['workspace.read'],sideEffects:['READ'],isolation:'per_case_workspace'}}]},
+  'asset','a'.repeat(64),stableToolId,null,files);
+ expect(inspection.runtimeCapabilities?.[0]?.constraints?.sideEffects).toBe('read');
+ expect(runtimeBuildRequirements(inspection)).toMatchObject({requiredCapabilities:[{constraints:{sideEffects:'read'}}]});
+});
+
+it('rejects array-shaped contract schemas but preserves the source capability evidence',()=>{
+ const inspection=toProjectInspection({tools:[],runtimeCapabilities:[{...harness,contract:{inputSchema:[],outputSchema:{},errorSchema:{},semantics:'read'},constraints:{permissions:['workspace.read'],sideEffects:'read',isolation:'per_case_workspace'}}]},'asset','a'.repeat(64),stableToolId,null,files);
+ expect(inspection.runtimeCapabilities?.[0]?.name).toBe('read_file');
+ expect(runtimeBuildRequirements(inspection)).toMatchObject({status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_file',fields:['contract']}]});
+});
 
 it('retains verified harness requirements for the dedicated Runtime adaptation stage',()=>{
  const payload={tools:[tool],runtimeCapabilities:[harness],dependencyAnalysis:{dependencies:[],chains:[]}};

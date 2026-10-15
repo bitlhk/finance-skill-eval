@@ -1,4 +1,5 @@
 import {runtimeToolConfigTemplate} from '../domain/migration-delivery-contract.js';
+import {parseRetiredSources,sourceRetirementIssues} from '../domain/migration-source-retirement.js';
 import { strToU8 } from 'fflate';
 import {posix} from 'node:path';
 import {parse as parseYaml,stringify as stringifyYaml} from 'yaml';
@@ -69,6 +70,11 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const implementations=input.implementations??{};
   const files:Record<string,Uint8Array>={},generations:PortableGeneration[]=[];
   const hasMcp=input.decisions.some(decision=>decision.form==='MCP');
+  const explicitRetirements=parseRetiredSources(input.skillDelivery?.retiredSources);
+  if(!explicitRetirements)throw Object.assign(new Error('退役源文件清单不合法'),{statusCode:409});
+  const retirementIssues=sourceRetirementIssues(explicitRetirements,input.archive,input.inspection,input.decisions,input.base.skillFile);
+  if(retirementIssues.length)throw Object.assign(new Error(retirementIssues.join('；')),{statusCode:409});
+  const explicitlyRetired=new Set(explicitRetirements.map(item=>item.path));
   // A Tool being migrated is replaced, not carried alongside. Shipping the
   // runtime-coupled original next to its replacement would defeat the migration.
   // sourcePaths also contains citations (SKILL.md, policies, data). It is not a deletion list.
@@ -92,7 +98,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     const relative=skillRoot&&name.startsWith(skillRoot)?name.slice(skillRoot.length):name;
     return relative.startsWith('workspace/')||relative.startsWith('references/workspace/');
   };
-  const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
+  const sourceArchive=Object.fromEntries(Object.entries(input.archive).filter(([name])=>!migratedSources.has(name)&&!retiredRuntimeSources.has(name)&&!explicitlyRetired.has(name)&&!name.startsWith('.diagnosis-supplements/')&&!isWorkspaceData(name)));
   const normalizedSkill=normalizeSkillPackage(sourceArchive,input.base.skillFile,input.base.skillId,input.version);
   if(input.skillDelivery){
     // Document structure is an editorial migration decision made by A4.  The packager may check
@@ -114,6 +120,14 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const relocations=new Map<string,Set<string>>();
   const relocated=(from:string,to:string)=>{const targets=relocations.get(from)??new Set<string>();targets.add(to);relocations.set(from,targets);};
   const replacedResources=new Set<string>();
+  const replaceableResources=new Set(graphDependencies.filter(dep=>dep.owner==='TOOL'&&dep.toolIds.every(id=>migratedIds.has(id)))
+    .flatMap(dep=>dep.resolvedPaths??[]).filter(path=>exclusivelyMigrated(path)
+      &&input.inspection.tools.every(tool=>!tool.sourcePaths.includes(path)||migratedIds.has(tool.toolId)))
+    .map(path=>{
+      const relative=path.startsWith(skillRoot)?path.slice(skillRoot.length):path;
+      return `${hasMcp?'skill/':''}${normalizedSkill.moves.find(move=>move.from===relative)?.to??relative}`;
+    }).filter(path=>!input.skillDelivery?.files[hasMcp&&path.startsWith('skill/')?path.slice(6):path]));
+  const claimedToolPaths=new Set<string>();
 
   // Tools that share one MCP service each declare that service's files, so the same path arriving
   // twice is normal -- as long as it is the same bytes. Two Tools disagreeing about a file they
@@ -121,9 +135,15 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   const claim=(entries:Array<{path:string;content:string}>)=>{
     for(const entry of entries){
       const existing=files[entry.path];
-      if(existing===undefined){files[entry.path]=strToU8(entry.content);continue;}
+      // The first A4 delivery may replace an exclusively owned source resource.
+      // Subsequent tools still have to agree on its bytes; source and two tools
+      // must not be confused as the same kind of collision.
+      if(existing===undefined||replaceableResources.has(entry.path)&&!claimedToolPaths.has(entry.path)){
+        files[entry.path]=strToU8(entry.content);claimedToolPaths.add(entry.path);continue;
+      }
       if(Buffer.from(existing).toString('utf8')!==entry.content)
         throw Object.assign(new Error(`生成的 ${entry.path} 被两个 Tool 以不同内容声明；不会静默覆盖`),{statusCode:409});
+      claimedToolPaths.add(entry.path);
     }
     return entries.map(entry=>entry.path);
   };
@@ -161,7 +181,17 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     const module=language==='node'?nodeName(tool.name):pythonName(tool.name);
     const extra='additionalFiles' in implementation?implementation.additionalFiles:[];
     const dependencies='dependencies' in implementation?implementation.dependencies:[];
-    const entries=[{path:implementation.sourcePath,content:implementation.source},...extra],multi=entries.length>1;
+    const declaredEntries=[{path:implementation.sourcePath,content:implementation.source},...extra];
+    // migration-skill/ is A4's isolated delivery root, not a directory inside the
+    // final Skill. Remove that root uniformly; never infer a new script module
+    // from the common parent of code + assets + README.
+    const deliveryRoot=Boolean(detailed?.generatedBy)&&packagePath(implementation.sourcePath).startsWith('migration-skill/scripts/');
+    if(deliveryRoot&&!declaredEntries.every(file=>packagePath(file.path).startsWith('migration-skill/')))
+      throw Object.assign(new Error(`Script ${tool.name} 的交付文件混用了 Skill 根目录，请统一声明路径`),{statusCode:409});
+    const entries=declaredEntries.map(file=>({...file,path:deliveryRoot?packagePath(file.path).slice('migration-skill/'.length):packagePath(file.path)})),multi=entries.length>1;
+    if(entries.some(file=>isWorkspaceData(file.path)))
+      throw Object.assign(new Error('Script 交付包含工作区业务数据；请移除测试数据后重新交付'),{statusCode:409});
+    const entrypoint=entries[0]!.path;
     // Preserve relative relationships, but do not repeat the common source directory.
     const parents=entries.map(file=>packagePath(file.path).split('/').slice(0,-1));
     let prefixLength=0;while(prefixLength<parents[0]!.length&&parents.every(parts=>parts[prefixLength]===parents[0]![prefixLength]))prefixLength++;
@@ -172,14 +202,14 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     // A4 has already compiled and contract-tested its declared package layout. Preserve that
     // layout when it is already under scripts/: moving the entrypoint one directory deeper can
     // silently break __file__/import.meta.url resource lookups after the contract has passed.
-    const preserveDeclaredLayout=Boolean(detailed?.generatedBy)&&entries.every(file=>packagePath(file.path).startsWith('scripts/'));
+    const preserveDeclaredLayout=Boolean(detailed?.generatedBy)&&entrypoint.startsWith('scripts/');
     // Node only treats a bare .js as ESM when a package.json says so, and the platform runs
     // the entrypoint as `node <path>`. A single non-A4 file therefore ships as .mjs.
     const target=preserveDeclaredLayout
-      ?`${hasMcp?'skill/':''}${packagePath(implementation.sourcePath)}`
+      ?`${hasMcp?'skill/':''}${entrypoint}`
       :language==='python'
-       ?(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.py`)
-       :(multi?`${base}${module}/${relative(implementation.sourcePath)}`:`${base}${module}.mjs`);
+       ?(multi?`${base}${module}/${relative(entrypoint)}`:`${base}${module}.py`)
+       :(multi?`${base}${module}/${relative(entrypoint)}`:`${base}${module}.mjs`);
     const written:{path:string;content:string}[]=entries.map((file,index)=>({
       path:preserveDeclaredLayout?`${hasMcp?'skill/':''}${packagePath(file.path)}`:multi?`${base}${module}/${relative(file.path)}`:target,
       content:index===0&&language==='python'?withPep723(file.content,dependencies):file.content,
@@ -215,7 +245,7 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
   }
   // Rewrite documentation in one pass, so replacements cannot rewrite each other.
   const replacements=[...relocations].filter(([,targets])=>targets.size===1);
-  if(replacements.length){
+  if(replacements.length&&!input.skillDelivery){
     const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/gu,'\\$&');
     const pattern=new RegExp(`(?<![\\w./-])(?:${replacements.map(([from])=>escape(from)).sort((a,b)=>b.length-a.length).join('|')})(?![\\w./-])`,'gu');
     const targets=new Map(replacements.map(([from,to])=>[from,[...to][0]!]));
@@ -232,13 +262,19 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     `- ${g.toolName}: 通过 command 执行；包内入口为 \`${g.entrypoint}\`，执行时使用 Runtime 提供的入口绝对路径。cwd 是 workspace，不能假设为 Skill 目录；包内资源基于脚本位置定位，业务输入和相对输出路径以 workspace 为基准。不支持额外上下文或凭证注入。`);
   const mcpTools=generations.filter(g=>g.form==='MCP').map(g=>`\`${g.toolName.replaceAll('`','')}\``);
   const guide=[...scriptGuide,...(mcpTools.length?[`- MCP 工具：${mcpTools.join('、')}。按照本 Skill 上文定义的业务流程、调用顺序和输出规则使用这些工具。服务地址、身份、凭证及 Runtime Header 均由平台配置，不是业务参数，不要向用户索取；部署配置见 \`runtime-tool-config.template.json\`。`]:[])].join('\n');
+  // A4's confirmed document delivery is authoritative. Do not rewrite metadata, append
+  // deployment instructions or relocate its citations after the agent has checked it.
+  if(!input.skillDelivery){
   const originalInstructions=standardSkillFrontmatter(Buffer.from(files[skillTarget]!).toString('utf8'));
   // Regeneration may start from the previous immutable candidate.  Remove the guide we own
   // before appending its replacement; otherwise every regeneration duplicates the section and
   // gradually drowns out the business instructions.
   const cleanInstructions=originalInstructions.replace(/\n## 迁移后的执行方式\n[\s\S]*?(?=\n## |\s*$)/u,'').trimEnd();
-  files[skillTarget]=strToU8(cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
-    '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n');
+  files[skillTarget]=strToU8(input.decisions.length
+    ?cleanInstructions+'\n\n## 迁移后的执行方式\n\n'+guide+'\n'+
+      '\n- 保持原 Skill 声明的业务输出字段和类型。当指令要求返回指定字段时，最终答案须包含一个 JSON 对象；空数组必须保持为 `[]`，不能改写成说明文字。\n'
+    :originalInstructions.trimEnd()+'\n');
+  }
   if(hasMcp){
     const templatePath='runtime-tool-config.template.json';
     const template=JSON.stringify(runtimeToolConfigTemplate(input.inspection,input.decisions),null,2)+'\n';
@@ -255,6 +291,12 @@ export function generatePortableCandidate(input:{archive:Record<string,Uint8Arra
     if(before&&Buffer.compare(Buffer.from(before),Buffer.from(bytes))===0)return [];
     return [{path:name,operation:before?'MODIFY':'ADD',before:before?Buffer.from(before).toString('utf8'):'',after:Buffer.from(bytes).toString('utf8')} as PortableDiff];
   });
+  // Explicit removals are visible to users and review, even when the original code was
+  // outside the scanner's Tool ownership graph. The original asset remains unchanged.
+  for(const {path,reason} of explicitRetirements){
+    if(files[path]!==undefined||files[`skill/${path}`]!==undefined)throw Object.assign(new Error(`退役源文件同时又被交付：${path}`),{statusCode:409});
+    diff.push({path,operation:'DELETE',before:Buffer.from(input.archive[path]!).toString('utf8'),after:'',reason});
+  }
   return {files,generations,diff};
 }
 

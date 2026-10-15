@@ -6,6 +6,7 @@ import {runConfigurationSchema} from '../src/shared/contracts/run-configuration.
 import {MigrationEvaluationService} from '../src/migration/application/migration-evaluation-service.js';
 import {parseMigrationProject,type MigrationProject} from '../src/migration/domain/migration-project.js';
 import {ModelRuntimeComparisonJudge} from '../src/runtime-comparison-judge.js';
+import {GOAL_JUDGE_POLICY_VERSION} from '../src/goal-judge.js';
 import {SideRuntimeAdapter} from '../src/side-runtime.js';
 import {CandidateAssessmentRuntimeAdapter} from '../src/candidate-assessment-runtime.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
@@ -121,7 +122,7 @@ describe('independent Runtime goal assessment',()=>{
     for(const side of ['left','right'] as const)input[side].metadata={executionMode:'runtime-launcher',
       businessDate:side==='left'?'2026-09-05':'2026-09-06',businessTimeZone:'Asia/Shanghai',businessDateBasis:'VERSIONED_SYNTHETIC_DATASET'};
     const judge=new ModelRuntimeComparisonJudge(goalAdapter(requests),leftModel);
-    expect(judge.judgeId).toContain('model-runtime-goals:fact-provenance-v2:');
+    expect(judge.judgeId).toContain(`model-runtime-goals:${GOAL_JUDGE_POLICY_VERSION}:`);
     await judge.compare(input);
     expect(requests.map(request=>JSON.parse(request.messages[1].content).runtimeEvidence.businessTime.businessDate))
       .toEqual(['2026-09-05','2026-09-06']);

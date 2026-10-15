@@ -1,8 +1,10 @@
-import { mkdir,mkdtemp,rm,writeFile } from 'node:fs/promises';
+import { mkdir,mkdtemp,readFile,rm,writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach,expect,it } from 'vitest';
+import {createServer} from 'node:http';
+import { afterEach,expect,it,vi } from 'vitest';
 import { analyzeWithAgent,implementWithAgent,runMigrationAgent } from '../src/migration/infrastructure/migration-agent.js';
+import {MigrationImplementationService} from '../src/migration/application/migration-implementation-service.js';
 
 const dirs:string[]=[];
 const saved=process.env.FINANCE_EVAL_MIGRATION_PYTHON;
@@ -41,6 +43,90 @@ it('reports the reason an agent leaves in its output, not only the one it puts o
 it('takes the agent\'s own reason when it gives one',async()=>{
   const result=await runStub('A2',{status:'FAILED',payload:{},error:'结果不是约定的 JSON：Expecting value','rawOutput':'ignored'});
   expect(result.run.error).toBe('结果不是约定的 JSON：Expecting value');
+});
+
+it.each(['A2','A4'] as const)('repairs a %s result through a tool-free model call without running the agent twice',async stage=>{
+  let calls=0;
+  const response=stage==='A2'
+    ?{status:'PRODUCED',skill:{status:'COMPLIANT'},tools:[],dependencyAnalysis:{dependencies:[],chains:[]}}
+    :{status:'PRODUCED',tools:[],skillDelivery:{skillFile:'SKILL.md',files:[]}};
+  const server=createServer(async(req,res)=>{
+    let body='';for await(const chunk of req)body+=String(chunk);
+    const request=JSON.parse(body) as {messages:Array<{content:string}>;tools?:unknown};
+    expect(request.tools).toBeUndefined();
+    expect(request.messages.at(-1)?.content).toContain('validationErrors');
+    calls++;
+    res.writeHead(200,{'content-type':'application/json'});
+    res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(response)}}],model:'test'}));
+  });
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const address=server.address();if(!address||typeof address==='string')throw Error('test server port unavailable');
+  const role=stage==='A2'?'ANALYZER':'MIGRATION';
+  const names=[`FINANCE_EVAL_${role}_BASE_URL`,`FINANCE_EVAL_${role}_API_KEY`,`FINANCE_EVAL_${role}_MODEL`,'FINANCE_EVAL_MIGRATION_AGENT'] as const;
+  const before=names.map(name=>process.env[name]);
+  const root=await mkdtemp(path.join(os.tmpdir(),'migration-wire-repair-'));dirs.push(root);
+  try{
+    process.env[names[0]]=`http://127.0.0.1:${address.port}`;
+    process.env[names[1]]='test';process.env[names[2]]='test-model';
+    process.env.FINANCE_EVAL_MIGRATION_AGENT='on';process.env.FINANCE_EVAL_MIGRATION_PYTHON=process.execPath;
+    await mkdir(path.join(root,'integrations','openjiuwen'),{recursive:true});
+    const entry=stage==='A2'?'analyze_agent.py':'migrate_agent.py';
+    const countFile=path.join(root,'agent-count');
+    await writeFile(path.join(root,'integrations','openjiuwen',entry),
+      `require('node:fs').appendFileSync(${JSON.stringify(countFile)},'1');`
+      +`process.stdout.write(JSON.stringify({result:{status:"FAILED",assetDigest:${JSON.stringify('a'.repeat(64))},`
+      +`payload:{},rawOutput:'{"status":"PRODUCED","tools":',outputParseFailed:true,rawOutputTruncated:false,`
+      +`scanner:{coverage:1},files:{'migration-skill/SKILL.md':'IyB0ZXN0'},error:'JSON_INVALID'}})+"\\n");`);
+    await writeFile(path.join(root,'.runtime.local.json'),'{}');
+    const options={projectRoot:root,modelId:'stub'},files={'SKILL.md':new TextEncoder().encode('# t')};
+    const result=stage==='A2'
+      ?await analyzeWithAgent({assetDigest:'a'.repeat(64),runId:'r',files},options)
+      :await implementWithAgent({assetDigest:'a'.repeat(64),runId:'r',files,decisions:[],tools:[],contract:{}},options);
+    expect(result?.status).toBe('PRODUCED');
+    if(stage==='A2')expect(result&&'scanner' in result?result.scanner:undefined).toEqual({coverage:1});
+    else expect(result&&'files' in result?result.files:undefined).toHaveProperty('migration-skill/SKILL.md');
+    expect(await readFile(countFile,'utf8')).toBe('1');expect(calls).toBe(1);
+  }finally{
+    for(const [index,name] of names.entries())if(before[index]===undefined)delete process.env[name];else process.env[name]=before[index];
+    await new Promise<void>(resolve=>server.close(()=>resolve()));
+  }
+});
+
+it('does not repeat A4 code generation after an unrepaired output-format failure',async()=>{
+  const previous=process.env.FINANCE_EVAL_AGENT_ATTEMPTS;process.env.FINANCE_EVAL_AGENT_ATTEMPTS='2';
+  try{
+    const implementer=vi.fn(async()=>({status:'FAILED' as const,reason:'JSON_INVALID',failureKind:'OUTPUT_FORMAT' as const}));
+    const service=new MigrationImplementationService(implementer,{contractSample:()=>({reason:'none'})} as any);
+    await expect(service.generate({},{tools:[{toolId:'t1',name:'lookup',language:'python',samples:[]}]} as any,
+      [{toolId:'t1',form:'SCRIPT',language:'python'}] as any,
+      {assetId:'asset',artifactSha256:'a'.repeat(64)} as any,{items:[{toolId:'t1',language:'python'}]} as any))
+      .rejects.toThrow('不重复执行代码生成');
+    expect(implementer).toHaveBeenCalledTimes(1);
+  }finally{
+    if(previous===undefined)delete process.env.FINANCE_EVAL_AGENT_ATTEMPTS;else process.env.FINANCE_EVAL_AGENT_ATTEMPTS=previous;
+  }
+});
+
+it('records A4 agent attempts separately from format-only corrections',async()=>{
+  const implementer=vi.fn(async()=>({status:'PRODUCED' as const,payload:{tools:[{toolId:'t1',compilePassed:true,contractPassed:true}]},
+    files:{},outputCorrectionAttempts:1}));
+  const mapper={contractSample:()=>({reason:'none'}),generatedImplementations:()=>({t1:{language:'python'}}),
+    skillDocumentDelivery:()=>({files:{'SKILL.md':'---\nname: test\ndescription: test\n---\n'}})};
+  const service=new MigrationImplementationService(implementer,mapper as unknown as ConstructorParameters<typeof MigrationImplementationService>[1]);
+  const result=await service.generate({},{tools:[{toolId:'t1',name:'lookup',language:'python',samples:[]}]} as any,
+    [{toolId:'t1',form:'SCRIPT',language:'python'}] as any,
+    {assetId:'asset',artifactSha256:'a'.repeat(64)} as any,{items:[{toolId:'t1',language:'python'}]} as any);
+  expect(result.generationStats).toEqual({agentAttempts:1,outputCorrectionAttempts:1});
+  expect(implementer).toHaveBeenCalledTimes(1);
+});
+
+it('keeps a Skill with no business tools without invoking the generation agent',async()=>{
+  const implementer=vi.fn();
+  const service=new MigrationImplementationService(implementer,{} as ConstructorParameters<typeof MigrationImplementationService>[1]);
+  const result=await service.generate({},{tools:[],runtimeCapabilities:[{name:'host_capability'}]} as any,[],
+    {assetId:'asset',artifactSha256:'a'.repeat(64)} as any,{items:[]} as any);
+  expect(result).toMatchObject({implementations:{},generationStats:{agentAttempts:0,outputCorrectionAttempts:0}});
+  expect(implementer).not.toHaveBeenCalled();
 });
 
 it('does not invent a failure to explain for a run that produced its payload',async()=>{

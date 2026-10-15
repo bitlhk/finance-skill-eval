@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canonicalSha256 } from "../json-canonicalization.js";
 import { runtimeObservationCapabilitiesSchema } from "./runtime-observation.js";
+import {nativeCapabilitySchema} from './runtime-capability.js';
 import {
   RUNTIME_CAPABILITIES_SCHEMA_VERSION,
   RUNTIME_EXECUTION_SCHEMA_VERSION,
@@ -10,6 +11,18 @@ import {
 } from "./runtime-protocol-versions.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
+
+/** Resource-manager observation, not a business verdict or a global OS audit. */
+export const runtimeCleanupObservationSchema = z.object({
+  schemaVersion: z.literal('finance.eval-cleanup-observation.v1'),
+  instanceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/u),
+  observedAt: z.string().datetime(),
+  status: z.enum(['PENDING', 'RELEASED', 'FAILED', 'UNKNOWN']),
+  scope: z.enum(['LAUNCHER_MANAGED_RESOURCES', 'THIS_INSTANCE']),
+  buildId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/u).nullable().optional(),
+  hostInstanceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/u).nullable().optional(),
+});
+export type RuntimeCleanupObservation = z.infer<typeof runtimeCleanupObservationSchema>;
 
 export const runtimeLauncherBaseUrlSchema = z.string().url().transform(value => {
   const url = new URL(value);
@@ -34,12 +47,21 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   runtime: z.strictObject({ type: z.string().min(1), version: z.string().min(1) }),
   models: z.array(publicModelSchema).min(1),
   defaultModelId: z.string().min(1),
+  supportedSkillModes: z.array(z.enum(["skill_version", "without_target_skill"])).min(1).optional(),
   nativeToolNames: z.array(z.string().min(1)).optional(),
   auxiliaryToolNames: z.array(z.string().min(1)).optional(),
+  nativeCapabilities:z.array(nativeCapabilitySchema).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
+  executionEnvironment:z.strictObject({
+    software:z.array(z.strictObject({name:z.string().min(1).max(100),version:z.string().min(1).max(100)})).min(1).max(64),
+  }).optional(),
   features: z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),
+    multiTurn:z.boolean().optional(),
+    toolProcessEvidence:z.boolean().optional(),
+    mcpResultChannels:z.boolean().optional(),
+    mcpPrepare:z.boolean().optional(),
   }),
   limits: z.strictObject({
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),
@@ -47,6 +69,11 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     minPrimaryTools:z.number().int().nonnegative().optional(),
   }),
 }).superRefine((value, context) => {
+  for(const field of ['capabilityId','name'] as const){
+    const values=(value.nativeCapabilities??[]).map(item=>item[field]);
+    if(new Set(values).size!==values.length)context.addIssue({code:'custom',path:['nativeCapabilities'],message:`Duplicate native capability ${field}`});
+  }
+  if(value.nativeCapabilities?.some(item=>!value.nativeToolNames?.includes(item.name)))context.addIssue({code:'custom',path:['nativeCapabilities'],message:'Native capability must be an advertised native tool'});
   if (!value.models.some(model => model.modelId === value.defaultModelId)) {
     context.addIssue({ code: "custom", message: "Default model is not advertised" });
   }

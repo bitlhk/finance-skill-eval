@@ -2,6 +2,19 @@ import {expect, it} from 'vitest';
 import {dualRuntimeConfiguration} from '../web/src/dual-runtime-configuration';
 import {runConfigurationSchema} from '../src/shared/contracts/run-configuration.js';
 import {modelRefSchema} from '../src/contracts.js';
+import {commonRuntimeModels} from '../web/src/runtime-models';
+
+it('matches actual upstream models while keeping distinct Launcher-local aliases',()=>{
+  const left={providerId:'launcher:left',modelId:'alias-left',upstreamModelId:'real-model',parameters:{}};
+  const right={providerId:'launcher:right',modelId:'alias-right',upstreamModelId:'real-model',parameters:{}};
+  const matches=commonRuntimeModels({models:[left]} as never,{models:[right]} as never);
+  expect(matches).toHaveLength(1);
+  const configuration=dualRuntimeConfiguration(matches[0]!.left,{temperature:0,top_p:1,max_tokens:1024},matches[0]!.right);
+  expect(configuration.leftExecutionModel.modelId).toBe('alias-left');
+  expect(configuration.rightExecutionModel.modelId).toBe('alias-right');
+  expect(configuration.leftExecutionModel.parameters).toEqual(configuration.rightExecutionModel.parameters);
+  expect(commonRuntimeModels({models:[left]} as never,{models:[{...right,upstreamModelId:'different'}]} as never)).toEqual([]);
+});
 
 it('locks the selected mode on both sides without sharing mutable configuration',()=>{
   const parameters={temperature:0,top_p:1,max_tokens:8192,thinking:{type:'disabled' as const}};

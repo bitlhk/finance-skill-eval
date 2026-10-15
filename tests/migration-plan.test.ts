@@ -37,5 +37,12 @@ it('checks pair bindings before scheduling and retains declared conditions and s
     expect((await migrations.report(project.id)).experiments[0]!.evidence).toBe('NOT_COMPLETE');
     await expect(migrations.validate(project.id,{...plan,pair:'BC'})).rejects.toThrow('绑定');
     expect(create).toHaveBeenCalledOnce();
+    const wholeSolution={...plan,pair:'AC',configuration:{...plan.configuration,evaluationMode:'solution_comparison',runtime:{type:'runtime_launcher',environmentId:'other'},
+      runtimeBindings:{left:{environmentId:'original',skillAssetId:a.assetId},right:{environmentId:'other',skillAssetId:b.assetId}},
+      leftExecutionModel:{providerId:'original-provider',modelId:'old-model'},rightExecutionModel:{providerId:'other-provider',modelId:'new-model'}}};
+    await migrations.validate(project.id,wholeSolution);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect((await migrations.report(project.id)).experiments.at(-1)?.comparisonKind).toBe('WHOLE_SOLUTION');
+    expect((await migrations.report(project.id)).verification.targetExecution).toBe('NOT_RUN');
   } finally {await rm(dir,{recursive:true,force:true});}
 });

@@ -29,7 +29,7 @@ export type Diagnosis = {
   declarations: Array<{ path: string; line: number; name: string; parameters: string[]; asyncFunction: boolean; status: string }>;
   files: Array<{ path: string; sha256: string; bytes: number }>;
   ai: {
-    status: 'RUNNING' | 'COMPLETE' | 'NOT_CONFIGURED' | 'FAILED';
+    status: 'RUNNING' | 'COMPLETE' | 'NOT_REQUESTED' | 'NOT_CONFIGURED' | 'FAILED';
     summary?: string;
     error?: string;
     suggestions?: Array<{ findingId: string; explanation: string; nextStep: string }>;

@@ -1,5 +1,5 @@
-import { resolveManagedMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
-import { unresolvedMigrationRuntimeRequirements } from './migration-runtime-requirements.js';
+import { resolveMigrationEnvironment,resolveManagedMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
+import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 import {
   migrationExecutionConfig,
   serviceEnvironment,
@@ -13,6 +13,10 @@ import type { MigrationTechnicalValidationWorkflow } from './migration-technical
 import { migrationConflict as conflict } from './migration-errors.js';
 import type { MigrationRuntimeConfigurationRepository } from './migration-runtime-configuration-repository.js';
 import type { MigrationCommandResolver } from './migration-command-resolver.js';
+import type {MigrationProject} from '../domain/migration-project.js';
+import type {MigrationExperimentContext} from './migration-evaluation-service.js';
+import type {TechnicalValidation} from '../domain/migration-model.js';
+import {migrationScriptInputSchema} from '../domain/migration-script-contract.js';
 
 /** Builds managed launcher bindings; the legacy class name remains API-compatible. */
 export class MigrationOpenJiuwenService {
@@ -28,10 +32,29 @@ export class MigrationOpenJiuwenService {
   ) {}
 
   async validate(id:string,input:unknown) {
-    const value=await this.projects.get(id),state=await this.technicalValidation.currentState(value);
+    return this.validateProject(id,input,await this.projects.get(id));
+  }
+
+  /** Internal only: coupled tools can be validated by the frozen integrated acceptance,
+   * rather than demanding a standalone call with a nonexistent opaque handle. */
+  async validateReuseAcceptance(id:string,input:unknown,taskId:string,planDigest:string){
+    const project=await this.projects.get(id),plan=project.reuseAcceptancePlan;
+    if(!plan?.approvedAt||plan.inputDigest!==planDigest||plan.coverage.status!=='COVERED'
+      ||!project.reuseAcceptanceResults?.some(task=>task.taskId===taskId&&task.planDigest===planDigest&&task.status==='RUNNING'))return conflict('缺少已确认且正在执行的复用验收');
+    return this.validateProject(id,input,project,undefined,true);
+  }
+
+  async validateExperiment(id:string,input:unknown,experiment:MigrationExperimentContext,validations:TechnicalValidation[]){
+    const project=await this.projects.get(id);
+    return this.validateProject(id,input,{...project,candidate:experiment.candidate,
+      technicalValidations:[...(project.technicalValidations??[]),...validations]},experiment);
+  }
+
+  private async validateProject(id:string,input:unknown,value:MigrationProject,experiment?:MigrationExperimentContext,integratedAcceptance=false){
+    const state=await this.technicalValidation.currentState(value);
     const native=value.nativeBindings?.candidateDigest===value.candidate?.artifactSha256?value.nativeBindings:undefined;
-    if(!native&&value.inspection?.skill.status!=='COMPLIANT')return conflict('Runtime 验证被阻止：当前 Skill 尚未通过企业规范检查');
-    if(!native&&!state.ready)return conflict(`Runtime 验证被阻止：${state.reasons.join('；')}`);
+    if(!native&&value.inspection?.skill.status!=='COMPLIANT')return conflict('OpenJiuwen 验证被阻止：当前 Skill 尚未通过企业规范检查');
+    if(!native&&!state.ready&&!integratedAcceptance)return conflict(`OpenJiuwen 验证被阻止：${state.reasons.join('；')}`);
     const body=input as {configuration?:{runtime?:{type?:string;environmentId?:string};runtimeBindings?:{left?:{environmentId?:string};right?:{environmentId?:string}}}};
     const selectedRuntime=body?.configuration?.runtime;
     if(!selectedRuntime||selectedRuntime.type!=='runtime_launcher')return conflict('Runtime 验证必须选择 Runtime Launcher');
@@ -49,16 +72,20 @@ export class MigrationOpenJiuwenService {
       }
       // Native binding has checked every declared Runtime tool against the operator-admitted catalog.
       // Other candidates still require the separate Builder delivery acceptance path.
-      if(!native&&await unresolvedMigrationRuntimeRequirements(value,this.environments,resolved))return conflict('检测到 Runtime 能力缺口；请先由外部 Runtime Builder 构建并接入支持该能力的 Runtime，再执行对比评测');
+      if(!native&&await unresolvedMigrationRuntimeRequirements(value,this.environments,resolved))return conflict('检测到 Runtime 能力缺口；请先核对现有 Runtime 或接入 Builder 交付，再执行评测');
     }
     const inspection=value.inspection!,asset=value.candidate??value.source,archive=await this.skills.readArchive(asset.assetId);
     const scripts=inspection.tools.filter(tool=>tool.kind==='SCRIPT'&&tool.entrypoint)
-      .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');let root=entry.split('/').slice(0,-1).join('/'),cursor=root;
-        while(true){const prefix=cursor?`${cursor}/`:'';if(archive[`${prefix}pyproject.toml`]||archive[`${prefix}package.json`]){root=cursor;break;}if(!cursor)break;cursor=cursor.split('/').slice(0,-1).join('/');}
-        const filePaths=Object.keys(archive).filter(name=>(!root||name.startsWith(`${root}/`))&&/\.(?:py|js|mjs|cjs|json|toml|lock)$/iu.test(name));
+      .map(tool=>{const entry=tool.entrypoint!.path!.replaceAll('\\','/');
+        // Runtime must receive the same portable Skill resources used in technical
+        // validation. A script directory or nearest dependency manifest is not the
+        // Skill root: resources may be siblings, and need not be JSON/code files.
+        const skillFile=asset.skillFile??'SKILL.md',root=skillFile.includes('/')?skillFile.slice(0,skillFile.lastIndexOf('/')+1):'';
+        const filePaths=Object.keys(archive).filter(name=>name.startsWith(root));
+        const inputSchema=migrationScriptInputSchema(value,tool);
         return {name:tool.name,path:entry,kind:tool.entrypoint!.kind,filePaths,
           launch:this.commands.resolve(archive,entry,tool.entrypoint!.kind),
-          ...(tool.inputSchema?{inputSchema:tool.inputSchema}:{})};});
+          ...(inputSchema?{inputSchema}:{})};});
     const services:Array<{assetDigest:string;toolNames:string[];filePaths:string[];start:string[];prepare?:string[];environmentReference?:{migrationId:string;revision:number;assetDigest:string;configurationDigest:string}}>=[];
     for(const generation of value.portableGenerations??[]){
       if(generation.form!=='MCP')continue;
@@ -76,8 +103,15 @@ export class MigrationOpenJiuwenService {
       if(serviceDeps.length)service.environmentReference={migrationId:id,revision:config.revision,assetDigest:asset.artifactSha256,configurationDigest:configurationDigest(config,deps)};
     }
     const comparison=(body.configuration as Record<string,unknown>).evaluationMode==='service_comparison';
-    const normalized={...(input as Record<string,unknown>),configuration:{...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services},...(deps.some(dependency=>dependency.owner==='RUNTIME'&&dependency.action==='INJECT')?{runtimeToolConfig:migrationExecutionConfig(deps,config.values,inspection.tools)}:{})}};
-    return this.evaluation.validate(id,normalized);
+    const toolConfig=migrationExecutionConfig(deps,config.values,inspection.tools);
+    const configuration:Record<string,unknown>={...(body.configuration as Record<string,unknown>),runtimeCommandBindings:{left:comparison?[]:scripts,right:scripts},runtimeMcpBindings:{left:comparison?[]:services,right:services}};
+    // Startup environment values already travel with the packaged MCP service.
+    // Empty binding entries do not require a Runtime context/provider extension.
+    // Derive this field again on retries too; do not retain the old empty config.
+    if(Object.values(toolConfig.tools).some(tool=>Object.keys(tool.contextBindings).length||tool.authProvider))configuration.runtimeToolConfig=toolConfig;
+    else delete configuration.runtimeToolConfig;
+    const normalized={...(input as Record<string,unknown>),configuration};
+    return this.evaluation.validate(id,normalized,experiment);
   }
 
   async validations(id:string) {

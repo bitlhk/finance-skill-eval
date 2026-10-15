@@ -3,6 +3,7 @@ import concurrent.futures
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -90,7 +91,13 @@ class BoundedReferenceTest(unittest.TestCase):
 
     def stop_child(self):
         if self.process.poll() is None:
-            self.process.terminate()
+            if os.name == 'nt':
+                # Windows venv python can be a redirector; reap the actual server
+                # as well, or it retains inherited logs and the listening socket.
+                subprocess.run(['taskkill', '/PID', str(self.process.pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            else:
+                self.process.terminate()
             try:
                 self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -99,7 +106,7 @@ class BoundedReferenceTest(unittest.TestCase):
 
     def post(self, body=INIT, fault=None, **kwargs):
         headers = {**HEADERS, **({'x-test-fault': fault} if fault else {})}
-        return httpx.post(self.url, json=body, headers=headers, timeout=3, **kwargs)
+        return httpx.post(self.url, json=body, headers=headers, timeout=3, trust_env=False, **kwargs)
 
     def events(self):
         path = self.folder/'events.jsonl'
@@ -182,7 +189,7 @@ class BoundedReferenceTest(unittest.TestCase):
 
     def test_uncooperative_child_fails_closed_with_bounded_exit(self):
         started = time.monotonic()
-        with self.assertRaises(httpx.RemoteProtocolError):
+        with self.assertRaises((httpx.RemoteProtocolError, httpx.ReadError)):
             self.post(fault='stubborn')
         self.assertEqual(self.process.wait(timeout=2), 70)
         self.assertLess(time.monotonic()-started, 2.5)

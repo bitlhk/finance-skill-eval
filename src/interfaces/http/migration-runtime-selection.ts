@@ -19,7 +19,6 @@ export async function resolveMigrationRuntimeSelection(input:unknown,environment
   const body=selectionSchema.parse(input),config=body.configuration;
   const dual=body.pair==='CC';
   const models=[];
-  const nativeTypes=[];
   for(const side of ['left','right'] as const){
     const id=config.runtimeBindings[side].environmentId;
     if(!dual&&id!==config.runtime.environmentId)invalid('迁移前后对照必须使用同一执行环境');
@@ -27,10 +26,7 @@ export async function resolveMigrationRuntimeSelection(input:unknown,environment
     if(!environment||!['runtime_launcher','execution_environment'].includes(environment.type))invalid('执行环境不存在');
     const inspection=await environments.inspect(environment),caps=inspection.capabilities;
     if(inspection.status!=='ready'||!caps)invalid(inspection.error??'Runtime Launcher 预检失败');
-    if(dual&&!((caps.runtime.type==='openjiuwen'&&caps.runtime.version==='0.1.15')
-      ||(caps.runtime.type==='agentscope'&&caps.runtime.version==='2.0.3')))
-      invalid('本轮跨 Runtime 对照仅支持 OpenJiuwen Java 0.1.15 与 AgentScope Java 2.0.3');
-    nativeTypes.push(caps.runtime.type);
+    if(dual&&(!caps.runtime.version.trim()||caps.runtime.version==='unknown'))invalid('跨 Runtime 对照需要可核验的运行版本');
     const selected=config[side==='left'?'leftExecutionModel':'rightExecutionModel']??config.executionModel;
     const model=caps.models.find(item=>item.modelId===selected.modelId);
     if(!model)invalid('所选执行模型不属于这个 Runtime Launcher');
@@ -41,7 +37,7 @@ export async function resolveMigrationRuntimeSelection(input:unknown,environment
   }
   if(dual){
     if(config.runtime.environmentId!==config.runtimeBindings.left.environmentId)invalid('主执行环境必须对应左侧绑定');
-    if(new Set(nativeTypes).size!==2)invalid('跨 Runtime 对照需要两个不同的原生框架');
+    if(config.runtimeBindings.left.environmentId===config.runtimeBindings.right.environmentId)invalid('跨 Runtime 对照需要两个不同的执行环境');
     if(models[0]!.upstreamModelId!==models[1]!.upstreamModelId||fingerprint(models[0]!.ref.parameters)!==fingerprint(models[1]!.ref.parameters))invalid('跨 Runtime 对照必须使用相同模型与生成参数');
   }
   return {...body,configuration:{...config,executionModel:models[0]!.ref,leftExecutionModel:models[0]!.ref,rightExecutionModel:models[1]!.ref}};

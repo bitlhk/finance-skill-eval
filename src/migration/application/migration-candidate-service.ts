@@ -6,6 +6,8 @@ import type { MigrationDiagnosisPort } from "./migration-diagnosis-port.js";
 import type { MigrationSkillRepository } from "./migration-skill-repository.js";
 import type { MigrationProjectStore } from "./migration-project-store.js";
 import { migrationConflict as conflict } from "./migration-errors.js";
+import type {MigrationCandidateInspectionService} from './migration-candidate-inspection-service.js';
+import {currentReuseProposal} from '../domain/migration-reuse-design.js';
 
 const candidateSchema = z.strictObject({
   assetId: z.string().min(1),
@@ -30,6 +32,7 @@ export class MigrationCandidateService {
     private readonly projects: MigrationProjectStore,
     private readonly skills: MigrationSkillRepository,
     private readonly diagnostics?: MigrationDiagnosisPort,
+    private readonly candidateInspection?: Pick<MigrationCandidateInspectionService,'inspectRevision'>,
   ) {}
 
   async import(id: string, input: unknown) {
@@ -41,11 +44,43 @@ export class MigrationCandidateService {
         return conflict("请作为独立的新版本候选导入；源资产保持不变");
       }
       if (candidate.version === project.source.version) return conflict("候选必须使用新的版本号");
+      const base=project.candidate??project.source;
+      if(candidate.skillId!==base.skillId)return conflict('候选不能悄悄改变 Skill 身份');
+      if(project.generationAttempts?.at(-1)?.progress.status==='RUNNING'
+        ||project.reuseAcceptanceResults?.some(task=>task.status==='RUNNING')
+        ||project.improvementTasks?.some(task=>['RUNNING','WAITING_BUILDER','WAITING_CONFIGURATION'].includes(task.status)))
+        return conflict('迁移任务进行中，不能替换候选');
+      const revision=Boolean(project.candidate&&project.reuseProposal&&project.portableGenerations);
+      const proposal=revision?currentReuseProposal(project):null;
+      let inspection;
+      if(revision){
+        if(!proposal?.approvedAt)return conflict('迁移方案已失效，请重新确认后导入修复候选');
+        if(candidate.artifactSha256===base.artifactSha256||candidate.version===base.version)
+          return conflict('修复候选必须是独立的新版本');
+        if(!this.candidateInspection)return conflict('候选方案审查服务不可用');
+        const files=await this.skills.readArchive(candidate.assetId);
+        for(const generation of project.portableGenerations??[]){
+          if(generation.files.some(file=>!files[file])||(generation.entrypoint&&!files[generation.entrypoint]))
+            return conflict('修复候选缺少已声明的工具文件，请重新生成或调整迁移方案');
+        }
+        // Review before changing the active project. Failed analysis must leave the old candidate intact.
+        inspection=await this.candidateInspection.inspectRevision(project,candidate);
+      }
       project.candidate = candidate;
       project.candidateNotes = parsed.notes;
-      delete project.inspection;
-      project.decisions = [];
-      delete project.portableGenerations;
+      delete project.analysis;
+      if(inspection){
+        project.inspection=inspection;
+        project.candidateReuseProposalId=proposal!.proposalId;
+        project.decisions=(project.decisions??[]).map(item=>item.baseAssetId===base.assetId?{...item,baseAssetId:candidate.assetId}:item);
+        project.portableGenerations=project.portableGenerations!.map(({checks,...item})=>({...item,callExecuted:false,
+          generatedBy:'MANUAL_REVISION',explanation:'已重新审查修复候选；启动配置沿用声明，实际执行需要重新验证。'}));
+      }else{
+        delete project.inspection;
+        delete project.candidateReuseProposalId;
+        project.decisions = [];
+        delete project.portableGenerations;
+      }
       delete project.portableGenerationDiff;
       (project.candidateHistory ??= []).push({ asset: candidate, notes: parsed.notes, recordedAt: new Date().toISOString() });
       await this.projects.save(project);

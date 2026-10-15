@@ -14,6 +14,7 @@ import type { OptimizationManager } from '../src/service/optimization-manager.js
 import type { EnvironmentStore } from '../src/service/environment-store.js';
 import type { EvalPackCatalog } from '../src/service/catalog.js';
 import { analysisFixture,analyzedTool,implementationFixture } from './analysis-fixture.js';
+import {reusePlannerFixture} from './reuse-design-fixture.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
@@ -57,6 +58,7 @@ it('carries a migration from baseline to adopted optimization and retires the ev
   } as unknown as OptimizationManager;
 
   const store=new MigrationStore(data,{skills,runs,jobs,catalog,optimizers,
+    reusePlanner:reusePlannerFixture,
     diagnostics:new MigrationDiagnostics(path.resolve('.'),data,skills),environments,
     // The A2 stand-in cites the Script where it actually is. The source keeps the layout it was
     // written in; the optimized package ships one where the platform places it.
@@ -87,6 +89,8 @@ it('carries a migration from baseline to adopted optimization and retires the ev
   expect(buildMigrationPlan(inspection,(await store.get(project.id)).decisions??[],source.assetId).generationAllowed).toBe(true);
 
   // A4: the migrated deliverable.
+  const proposal=await store.proposeMigrationPlan(project.id);
+  await store.approveMigrationPlan(project.id,{proposalId:proposal.proposalId,inputDigest:proposal.inputDigest});
   const generated=await store.generate(project.id,{baseAssetId:source.assetId});
   const candidate=generated.candidate!;
   expect(candidate.assetId).not.toBe(source.assetId);
@@ -135,7 +139,9 @@ it('carries a migration from baseline to adopted optimization and retires the ev
     'skill/SKILL.md':'---\nname: chain-lookup\ndescription: 端到端链路夹具，查询账户余额。\n---\n调用 `lookup`，传入 account_id；缺失信息时不要编造。\n成功时返回币种与账面余额。\n',
     'scripts/lookup.py':OPTIMIZED_LOOKUP_PY,
   });
-  optimization={optimizationId:'opt-1',sourceJobId:'job-1',status:'review',candidate:optimized,summary:'补上缺失信息时的处理'};
+  optimization={optimizationId:'opt-1',sourceJobId:'job-1',status:'review',candidate:optimized,summary:'补上缺失信息时的处理',holdoutVerified:false};
+  await expect(store.adoptOptimization(project.id,{optimizationId:'opt-1'})).rejects.toThrow('留出集');
+  (optimization as {holdoutVerified:boolean}).holdoutVerified=true;
   const adopted=await store.adoptOptimization(project.id,{optimizationId:'opt-1'});
   expect(adopted.candidate?.assetId).toBe(optimized.assetId);
   expect(adopted.candidateHistory?.at(-1)).toMatchObject({kind:'optimization'});

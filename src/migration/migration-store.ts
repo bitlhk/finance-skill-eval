@@ -15,7 +15,8 @@ export class MigrationStore {
   async readLegacy(id:string){return this.services.projectService.readLegacy(id);}
   async create(input:unknown) {return this.services.projectService.create(input);}
   async diagnose(id:string,retry=false){return this.services.projectService.diagnose(id,retry);}
-  async inspect(id:string,sourceOnly=false){return this.services.inspectionService.inspect(id,sourceOnly);}
+  async inspect(id:string,sourceOnly=false,environmentId?:string){return this.services.inspectionService.inspect(id,sourceOnly,environmentId);}
+  async reuseRuntime(id:string,input:unknown){return this.services.planningService.reuseRuntime(id,input);}
   async dependencyData(id:string,dependencyId:string){
     return this.services.runtimeConfigurationService.dependencyData(id,dependencyId);
   }
@@ -32,14 +33,34 @@ export class MigrationStore {
   async inspection(id:string){return this.services.inspectionService.inspection(id);}
   async decide(id:string,toolId:string,input:unknown){return this.services.planningService.decide(id,toolId,input);}
   async plan(id:string){return this.services.planningService.plan(id);}
+  async proposeMigrationPlan(id:string,input?:unknown){return this.services.planningService.propose(id,input);}
+  async approveMigrationPlan(id:string,input:unknown){return this.services.planningService.approve(id,input);}
   async runtimeRequirements(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirements(id,runtimeType);}
+  async proposeRuntimeRebuild(id:string,input:unknown){return this.services.runtimeRebuildService.propose(id,input);}
+  async proposeImprovement(id:string,input:unknown){return this.services.improvementPlanningService.propose(id,input);}
+  async startImprovementTask(id:string,input:unknown){return this.services.improvementTasks.start(id,input);}
+  async improvementTasks(id:string){return this.services.improvementTasks.list(id);}
+  async cancelImprovementTask(id:string,taskId:string){return this.services.improvementTasks.cancel(id,taskId);}
+  async adoptImprovementTask(id:string,taskId:string){return this.services.improvementTasks.adopt(id,taskId);}
+  async resumeImprovementTask(id:string,taskId:string,input:unknown){return this.services.improvementTasks.resume(id,taskId,input);}
+  async replanImprovementBuilder(id:string,taskId:string){return this.services.improvementTasks.replanBuilder(id,taskId);}
+  async proposeReuseAcceptance(id:string,input:unknown,signal?:AbortSignal){return this.services.reuseAcceptance.propose(id,input,signal);}
+  async approveReuseAcceptance(id:string,input:unknown){return this.services.reuseAcceptance.approve(id,input);}
+  async startReuseAcceptance(id:string,input:unknown){return this.services.reuseAcceptance.start(id,input);}
+  async reuseAcceptance(id:string){return this.services.reuseAcceptance.summary(id);}
+  async cancelReuseAcceptance(id:string,taskId:string){return this.services.reuseAcceptance.cancel(id,taskId);}
+  async shutdown(){await Promise.all([this.services.improvementTasks.shutdown(),this.services.reuseAcceptance.shutdown()]);}
+  async proposeToolOptimization(id:string,input:unknown){return this.services.toolOptimizationService.propose(id,input);}
+  async adoptToolOptimization(id:string,input:unknown){return this.services.toolOptimizationService.adopt(id,input);}
   async runtimeRequirementsYaml(id:string,runtimeType?:string){return this.services.planningService.runtimeRequirementsYaml(id,runtimeType);}
+  async conformanceCandidate(id:string){return this.services.exportService.conformanceCandidate(id);}
   async bindRuntimeDelivery(id:string,input:unknown){return this.services.planningService.bindRuntimeDelivery(id,input);}
   async validateTechnical(id:string,input:unknown,signal?:AbortSignal){return this.services.technicalValidation.validate(id,input,signal);}
   async technicalValidations(id:string){return this.services.technicalValidation.list(id);}
   async validateOpenJiuwen(id:string,input:unknown){return this.services.openJiuwenService.validate(id,input);}
   async openJiuwenValidations(id:string){return this.services.openJiuwenService.validations(id);}
   async generate(id:string,input:unknown){return this.services.generationService.generate(id,input);}
+  async generationProgress(id:string){return this.services.generationService.executionProgress(id);}
   async candidate(id:string,input:unknown) {return this.services.candidateService.import(id,input);}
   async nativeCandidate(id:string,input:unknown,targets:import('../shared/contracts/native-tool-catalog.js').NativeBindingTarget[]){return this.services.nativeBindingService.bind(id,input,targets);}
   async draft(id:string,input:unknown) {return this.services.candidateService.saveDraft(id,input);}
@@ -53,6 +74,6 @@ export class MigrationStore {
   async validate(id:string,input:unknown) {return this.services.evaluationService.validate(id,input);}
   async report(id:string) {return this.services.reportService.report(id);}
   async exportCandidate(id:string) {return this.services.exportService.exportCandidate(id);}
-  async conformanceCandidate(id:string) {return this.services.exportService.conformanceCandidate(id);}
+  async exportPackage(id:string) {return this.services.exportService.exportPackage(id);}
   release():never {return conflict('发布已阻止：原环境基线、目标 Host 接入、依赖验证与独立业务验收都还没有验证');}
 }

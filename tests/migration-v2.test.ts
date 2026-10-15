@@ -10,6 +10,7 @@ import { LocalWorker } from '../src/service/local-worker.js';
 import { findMissingRequiredTools } from '../src/service/run-manager.js';
 import { createEvaluationService } from '../src/service/server.js';
 import { generatePortableCandidate } from '../src/migration/infrastructure/migration-candidate-packager.js';
+import {reusePlannerFixture,approveReuseOverHttp} from './reuse-design-fixture.js';
 
 const dirs:string[]=[];
 afterEach(async()=>{vi.unstubAllEnvs();for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});});
@@ -110,7 +111,7 @@ it('runs a trusted one-shot job with JSON IO and always cleans its directory',as
 
 it('exposes the v2 inspection, mixed decisions and immutable generated candidate over HTTP',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-http-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationAnalyzer:analysisFixture([
       analyzedTool({name:'portable_mcp',sourcePaths:['tool/scripts/portable_mcp.py'],portability:'RUNTIME_BOUND'}),
       analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}}),
@@ -143,6 +144,8 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
       // The fixtures are Python; asking for MCP/Java is the cross-language rewrite this
       // model produces, so it has to be named rather than inferred.
       expect((await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form,...(form==='MCP'?{language:'java'}:{}),baseAssetId:uploaded.assetId}})).statusCode).toBe(200);}
+    expect((await app.inject({url:`/api/migrations/${project.id}/plan`,headers})).json().generationAllowed).toBe(false);
+    await approveReuseOverHttp(post,project.id);
     const plan=(await app.inject({url:`/api/migrations/${project.id}/plan`,headers})).json();expect(plan.generationAllowed).toBe(true);expect(new Set(plan.items.map((i:{generator:string})=>i.generator))).toEqual(new Set(['COMMAND_SCRIPT','MCP_SERVICE']));
     const generated=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});expect(generated.statusCode).toBe(200);
     const candidate=generated.json().candidate;expect(candidate.assetId).not.toBe(uploaded.assetId);
@@ -166,7 +169,7 @@ it('exposes the v2 inspection, mixed decisions and immutable generated candidate
 
 it('exports a clean v2 delivery archive without migration evidence files',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-state-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationAnalyzer:analysisFixture([]),migrationImplementer:implementationFixture([])});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
   try{
@@ -174,6 +177,7 @@ it('exports a clean v2 delivery archive without migration evidence files',async(
     const uploaded=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
     const project=(await post('/api/migrations',{sourceAssetId:uploaded.assetId,name:'text migration'})).json();
     await post(`/api/migrations/${project.id}/inspect`);
+    await approveReuseOverHttp(post,project.id);
     await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});
     const exported=await app.inject({url:`/api/migrations/${project.id}/export`,headers});
     const files=unzipSync(exported.rawPayload);
@@ -184,7 +188,7 @@ it('exports a clean v2 delivery archive without migration evidence files',async(
 it('writes the test set from the analysis, and never from the generated candidate',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-suite-'));dirs.push(data);
   const seen:Array<{skillSource:string;tools:string[]}>=[];
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['tool/lookup.py'],inputSchema:{type:'object',properties:{account_id:{type:'string'}}},sample:{account_id:'A-1'}})]),
     // Stands in for the analyzer model: what matters is what it is handed, not what it returns.
     migrationSuite:async input=>{seen.push({skillSource:input.skillSource,tools:input.tools});
@@ -209,7 +213,7 @@ it('writes the test set from the analysis, and never from the generated candidat
 
 it('refuses to write a test set before the analysis it would be built from',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-suite-earlier-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['tool/lookup.py']})])});
   const headers={authorization:'Bearer test'};
   try{
@@ -222,7 +226,7 @@ it('refuses to write a test set before the analysis it would be built from',asyn
 
 it('abstains instead of shipping a placeholder when a Tool cannot be migrated faithfully',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-abstain-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sourcePaths:['tool/lookup.py'],portability:'RUNTIME_BOUND'})]),
     // The honest answer when the business implementation is not in the package: say so.
     migrationImplementer:async input=>({status:'ABSTAINED',
@@ -237,6 +241,7 @@ it('abstains instead of shipping a placeholder when a Tool cannot be migrated fa
     const inspection=(await post(`/api/migrations/${project.id}/inspect`)).json();
     const tool=inspection.tools[0];
     await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form:'MCP',baseAssetId:uploaded.assetId}});
+    await approveReuseOverHttp(post,project.id);
     const result=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});
     expect(result.statusCode).toBe(409);
     expect(result.json().message).toContain('无法忠实迁移');
@@ -254,7 +259,7 @@ it('abstains instead of shipping a placeholder when a Tool cannot be migrated fa
 it('prepares a Python Script Tool from its pyproject before technical validation',async()=>{
   vi.stubEnv('FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS','1');
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-pyproject-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationAnalyzer:analysisFixture([analyzedTool({name:'project_tool',sourcePaths:['scripts/project_tool.py'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',
       entrypoint:{kind:'PYTHON',path:'scripts/project_tool.py'}})])});
   const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
@@ -275,11 +280,11 @@ it('prepares a Python Script Tool from its pyproject before technical validation
 
 it('blocks partially analyzed source until it is explicitly acknowledged and re-scans the candidate',async()=>{
   const data=await mkdtemp(path.join(os.tmpdir(),'migration-v2-partial-'));dirs.push(data);
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
+  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,migrationReusePlanner:reusePlannerFixture,
     migrationImplementer:implementationFixture([{tool:'script_tool',entrypoint:'scripts/script_tool.py',language:'python',
       files:{'scripts/script_tool.py':'import json,sys\ndef script_tool(value): return {"value": value}\nif __name__ == "__main__": json.dump(script_tool(**json.load(sys.stdin)),sys.stdout)'}}]),
     // The scanner's coverage rides along with the analysis; it is what says "this file was not read".
-    migrationAnalyzer:async()=>({status:'PRODUCED',payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
+    migrationAnalyzer:async input=>input.files['SKILL.md']?analysisFixture([analyzedTool({name:'script_tool',sourcePaths:['scripts/script_tool.py'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',entrypoint:{kind:'PYTHON',path:'scripts/script_tool.py'}})])(input):({status:'PRODUCED',payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[
       analyzedTool({name:'script_tool',sourcePaths:['tool/scripts/script_tool.py','tool/vendor/opaque.js'],portability:'PORTABLE_SCRIPT',form:'SCRIPT',
         entrypoint:{kind:'PYTHON',path:'tool/scripts/script_tool.py'}})],dependencyAnalysis:{dependencies:[],chains:[{toolName:'script_tool',nodes:[{id:'entry',title:'Script entry',detail:'Source implementation is readable; vendor coverage is acknowledged separately',dependencyKeys:[],evidence:[{path:'tool/scripts/script_tool.py',snippet:'def script_tool(value): return {"value": value}'}]}],edges:[]}]}},
       scanner:{scannerDigest:'a'.repeat(64),coverage:[{path:'skill/SKILL.md',status:'PARSED'},{path:'tool/vendor/opaque.js',status:'UNSUPPORTED_LANGUAGE'}]}})});
@@ -299,6 +304,7 @@ it('blocks partially analyzed source until it is explicitly acknowledged and re-
     await app.inject({method:'PUT',url:`/api/migrations/${project.id}/tools/${tool.toolId}/decision`,headers,payload:{form:'SCRIPT',baseAssetId:uploaded.assetId}});
     const blocked=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId});
     expect(blocked.statusCode).toBe(409);expect(blocked.json().message).toContain('人工审阅');
+    await approveReuseOverHttp(post,project.id);
     const generated=await post(`/api/migrations/${project.id}/generate`,{baseAssetId:uploaded.assetId,acknowledgePartialAnalysis:true});
     expect(generated.statusCode).toBe(200);
     const result=generated.json();

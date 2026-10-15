@@ -20,6 +20,8 @@ type WireResult<T>={
   modelId?:string;
   error?:string;
   rawOutput?:string;
+  rawOutputTruncated?:boolean;
+  outputParseFailed?:boolean;
 };
 
 export type AgentPayload<T>={
@@ -28,6 +30,9 @@ export type AgentPayload<T>={
   libraryInventory?:import('../domain/migration-dependency.js').RuntimeLibraryInventory;
   files?:Record<string,string>;
   scanner?:Record<string,unknown>|null;
+  rawOutput?:string;
+  rawOutputTruncated?:boolean;
+  outputParseFailed?:boolean;
 };
 
 export type AgentResult<T=Record<string,unknown>>=StageEnvelope<AgentPayload<T>>;
@@ -114,8 +119,8 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
     assetDigest,stageId:stage,producer:'AGENT',status:'FAILED',
     payload:{judgement:{} as T},run:{elapsedMs,error},
   });
-  if(!existsSync(program)||!existsSync(runtimeConfig))return failed('migration agent runtime is not available');
   if(!existsSync(entry))return failed('MIGRATION_AGENT_ENTRY_MISSING: check the installed migration code directory');
+  if(!existsSync(program)||!existsSync(runtimeConfig))return failed('migration agent runtime is not available');
 
   const requestedDecisions=stage==='A4'&&Array.isArray((request as {decisions?:unknown[]}).decisions)
     ?(request as {decisions:unknown[]}).decisions.length:0;
@@ -185,6 +190,8 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
             ...(typeof wire.workspaceRoot==='string'?{workspaceRoot:wire.workspaceRoot}:{}),
             ...(wire.files?{files:wire.files}:{}),
             ...(wire.scanner?{scanner:wire.scanner}:{}),
+            ...(wire.outputParseFailed?{outputParseFailed:true,rawOutput:String(wire.rawOutput??''),
+              rawOutputTruncated:wire.rawOutputTruncated===true}:{}),
           },
           ...(wire.trace?{trace:wire.trace}:{}),
           run:{

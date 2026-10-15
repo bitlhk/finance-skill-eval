@@ -3,6 +3,7 @@ import path from 'node:path';
 import {loadEvalPack} from '../src/eval-pack.js';
 import {buildReport,renderHtmlReport,type EvaluationCaseReport} from '../src/report.js';
 import {judgeResultSchema,runtimeExecutionEvidenceSchema,type EvalPack} from '../src/contracts.js';
+import {assessMigrationAcceptance} from '../src/migration/domain/migration-acceptance.js';
 
 let pack:EvalPack;
 beforeAll(async()=>{pack=await loadEvalPack(path.resolve('packs/finance/investment-research/eval.yaml'))});
@@ -42,6 +43,13 @@ it('does not treat a failed runtime as a quality PASS even in inconsistent store
   const item=row('PASS','PASS');item.left.status='failed';
   const value=report([item]);expect(value.summary.runtimeComparison?.left).toMatchObject({PASS:0,unavailable:1});
   const html=renderHtmlReport(value);expect(html).toContain('左侧 · 不可用');expect(html).not.toContain('左侧 · PASS');
+});
+it('requires both independent sides to pass without substituting migration business acceptance',()=>{
+  const definition={...pack.cases[0]!,caseId:'case',requiredTools:[],toolExpectations:{mustSucceed:[],mustNotCall:[]},rubric:[]};
+  expect(assessMigrationAcceptance(report([row('PASS','PASS')]),[definition],true).status).toBe('PASSED');
+  expect(assessMigrationAcceptance(report([row('FAIL','PASS')]),[definition],true).status).toBe('FAILED');
+  expect(assessMigrationAcceptance(report([row('INDETERMINATE','PASS')]),[definition],true).status).toBe('NOT_VALIDATED');
+  expect(assessMigrationAcceptance(report([row('unavailable','PASS')]),[definition],true).status).toBe('FAILED');
 });
 it('does not call a failed paired execution completed or diagnose its empty answer as a Skill gap',()=>{
   const item={...row('unavailable','PASS'),caseId:pack.cases[0]!.caseId,judge:null,judgeError:'execution failed'};

@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 import {matchEnvironments,chooseEnvironment} from '../web/src/environment-matching.js';
-import {describeSkillRuntimeRequirements} from '../src/service/skill-runtime-requirements.js';
+import {describeSkillRuntimeRequirements} from '../src/shared/skill-runtime-requirements.js';
 import type {MigrationRuntime} from '../web/src/types.js';
 
 function runtime(id:string,family:'openjiuwen'|'agentscope',names:string[],minimum=1):MigrationRuntime{

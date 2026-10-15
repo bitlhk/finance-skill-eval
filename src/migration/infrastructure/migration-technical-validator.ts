@@ -90,6 +90,7 @@ export class LocalMigrationValidationRunner implements MigrationValidationRunner
 
     let endpoint=input.endpoint??'', mode:TechnicalValidation['mode']='MCP_HTTP', stop:(()=>Promise<void>)|null=null;
     let workspace:LocalWorkerWorkspace|null=null;
+    let executionWorkspace:LocalWorkerWorkspace|null=null;
     if(launched){
       if(!input.archive)return failed('LOCAL_TRUSTED','交付物声明了启动命令，但没有候选包可供启动');
       mode='LOCAL_TRUSTED';
@@ -106,7 +107,12 @@ export class LocalMigrationValidationRunner implements MigrationValidationRunner
     try{
       let url:URL;try{url=new URL(endpoint);}catch{return failed(mode,mode==='LOCAL_TRUSTED'?'平台起的服务地址无效':'MCP endpoint 无效');}
       if(!['127.0.0.1','localhost','::1'].includes(url.hostname))return failed(mode,'首期只允许验证本机 MCP endpoint');
-      const result=await validateMcpTool({endpoint:url.toString(),toolName:input.tool.name,arguments:input.arguments,headers:input.headers,signal:input.signal});
+      // Same per-request workspace contract as normal Runtime execution. Keep task data
+      // separate from service code; an empty trial workspace is not business acceptance.
+      executionWorkspace=await this.worker.open([]);
+      const headers={...Object.fromEntries(Object.entries(input.headers??{}).filter(([name])=>name.toLowerCase()!=='x-workspace-root')),
+        'X-Workspace-Root':executionWorkspace.directory};
+      const result=await validateMcpTool({endpoint:url.toString(),toolName:input.tool.name,arguments:input.arguments,headers,signal:input.signal});
       const observed=result.tools.find(tool=>tool.name===input.tool.name),observedDigest=digest([input.tool.sourcePaths,input.service??input.endpoint??null,observed??null]);
       const listed=!!observed;
       const stages=[{name:'PROCESS',passed:launched,message:launched?'交付物声明的启动命令已把服务起在 127.0.0.1':`连接操作者提供的 endpoint：${url.host}`},
@@ -117,6 +123,7 @@ export class LocalMigrationValidationRunner implements MigrationValidationRunner
       return {validationId,toolId:input.tool.toolId,assetId:input.asset.assetId,assetDigest:input.asset.artifactSha256,implementationDigest:observedDigest,casesDigest,mode,status:passed?'PASSED':'FAILED',startedAt,finishedAt:new Date().toISOString(),stages,error:passed?null:result.error};
     }finally{
       await stop?.().catch(()=>undefined);
+      await executionWorkspace?.dispose().catch(()=>undefined);
       await workspace?.dispose().catch(()=>undefined);
     }
   }

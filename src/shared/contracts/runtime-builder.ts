@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalSha256 } from "../json-canonicalization.js";
+import {capabilityContractSchema,capabilityConstraintsSchema as constraintsSchema} from './runtime-capability.js';
 import { runtimeLauncherCapabilitiesSchema, runtimeLauncherDescriptorSchema, validateRuntimeLauncherDelivery } from "./runtime-launcher.js";
 import {
   RUNTIME_CAPABILITIES_SCHEMA_VERSION,
@@ -9,16 +10,13 @@ import {
 } from "./runtime-protocol-versions.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
-const jsonSchema = z.record(z.unknown());
 const protocolsSchema = z.strictObject({
   capabilities: z.literal(RUNTIME_CAPABILITIES_SCHEMA_VERSION),
   instance: z.literal(RUNTIME_INSTANCE_SCHEMA_VERSION),
   execution: z.literal(RUNTIME_EXECUTION_SCHEMA_VERSION),
   observation: z.literal(RUNTIME_OBSERVATION_SCHEMA_VERSION),
 });
-const capabilityContractSchema = z.strictObject({ inputSchema: jsonSchema, outputSchema: jsonSchema, errorSchema: jsonSchema, semantics: z.string().min(1) });
-const constraintsSchema = z.strictObject({ permissions: z.array(z.string().min(1)), sideEffects: z.enum(["none", "read", "write"]), isolation: z.string().min(1) });
-const capabilityRequirementSchema = z.strictObject({
+export const capabilityRequirementSchema = z.strictObject({
   id: z.string().min(1), name: z.string().min(1), required: z.boolean(), reason: z.string().min(1),
   contract: capabilityContractSchema, constraints: constraintsSchema,
   preferredTargetCapability: z.string().min(1).nullable(), consumerTools: z.array(z.string().min(1)),
@@ -31,6 +29,11 @@ export const runtimeBuildRequirementsSchema = z.strictObject({
   source: z.strictObject({ assetId: z.string().min(1), artifactSha256: sha256 }),
   target: z.strictObject({ runtimeType: z.string().min(1), protocols: protocolsSchema }),
   requiredCapabilities: z.array(capabilityRequirementSchema),
+  rebuild: z.strictObject({
+    baseline: z.strictObject({deploymentId:z.string().min(1),artifactSha256:sha256,solutionRevisionId:sha256}),
+    hypothesis: z.strictObject({id:z.string().min(1),issue:z.string().min(1).max(2000),expectedBehavior:z.string().min(1).max(2000)}),
+    evidence: z.array(z.strictObject({jobId:z.string().min(1),caseId:z.string().min(1).optional(),summary:z.string().min(1).max(1000)})).min(1).max(20),
+  }).optional(),
   requirementsDigest: sha256,
   extensions: z.record(z.unknown()).optional(),
 }).superRefine((value, context) => {
@@ -101,6 +104,8 @@ export function validateRuntimeBuildResult(requirementsInput: unknown, resultInp
   for (const [id, count] of resultCounts) if (count > 1) issues.push(`DUPLICATE_REQUIREMENT_${id}`);
   if (!result.launcher) issues.push("LAUNCHER_UNAVAILABLE");
   else {
+    if(requirements.rebuild?.baseline.deploymentId===result.launcher.deploymentId)issues.push('REBUILD_DEPLOYMENT_UNCHANGED');
+    if(requirements.rebuild?.baseline.artifactSha256===result.launcher.artifactSha256)issues.push('REBUILD_ARTIFACT_UNCHANGED');
     if (result.launcher.runtime.type !== requirements.target.runtimeType) issues.push("RUNTIME_TYPE_MISMATCH");
     for (const [name, expected] of Object.entries(requirements.target.protocols)) {
       if (result.launcher.protocols[name as keyof typeof result.launcher.protocols] !== expected) issues.push(`PROTOCOL_MISMATCH_${name.toUpperCase()}`);

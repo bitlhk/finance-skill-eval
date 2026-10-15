@@ -152,7 +152,9 @@ it('preserves HTTP uploads, SSE and persisted history without exposing another a
     const first=await events.body!.getReader().read();
     expect(new TextDecoder().decode(first.value)).toContain(id);
   }finally{abort.abort();}
-  await expect.poll(async()=>(await app.inject({url:`/api/runs/${id}`,headers:headers('studio_alice')})).json().status,{timeout:15000}).toBe('completed');
+  // This replay launches the real Promptfoo subprocess alongside other service
+  // tests; keep completion polling within the suite's 90-second outer budget.
+  await expect.poll(async()=>(await app.inject({url:`/api/runs/${id}`,headers:headers('studio_alice')})).json().status,{timeout:45000}).toBe('completed');
   for(const url of [`/api/runs/${id}`,`/api/runs/${id}/export`,`/api/runs/${id}/events`,`/api/migrations/${projectId}`]){
     expect((await app.inject({url,headers:headers('studio_bob')})).statusCode,url).toBe(404);
   }

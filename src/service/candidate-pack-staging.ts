@@ -5,7 +5,7 @@ import YAML from 'yaml';
 import { evalCaseSchema, evalPackFileSchema, judgeProfileSchema } from '../contracts.js';
 import { loadEvalPack } from '../eval-pack.js';
 import { SkillStore } from './skill-store.js';
-import { skillRuntimeRequirements } from './skill-runtime-requirements.js';
+import { skillRuntimeRequirements } from '../shared/skill-runtime-requirements.js';
 
 export interface CandidatePackInput {
   sourcePack: string;

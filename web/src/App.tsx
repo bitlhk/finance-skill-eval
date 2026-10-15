@@ -1,4 +1,5 @@
 import { api } from "./api-client";
+import {commonRuntimeModels} from './runtime-models';
 import {evidenceLabels} from '../../src/evidence-labels';
 import {selectedVersion,versionSelectionKey} from './skill-version-selection';
 import {matchEnvironments,chooseEnvironment,inspectionIssues,type EnvironmentMatch} from './environment-matching';
@@ -336,8 +337,7 @@ export function App() {
     if(runtime!=="dual_runtime"||!catalog)return;
     const left=catalog.executionRuntimes.find(item=>item.runtimeId===launcherPair.left);
     const right=catalog.executionRuntimes.find(item=>item.runtimeId===launcherPair.right);
-    const common=(left?.models??[]).filter(model=>right?.models.some(candidate=>
-      candidate.modelId===model.modelId&&(!model.upstreamModelId||!candidate.upstreamModelId||candidate.upstreamModelId===model.upstreamModelId)));
+    const common=commonRuntimeModels(left,right).map(pair=>pair.left);
     const preferred=common.find(model=>model.modelId===left?.defaultModelId)??common[0];
     if(!preferred)return;
     const key=modelKey(preferred);
@@ -359,10 +359,23 @@ export function App() {
   };
 
   const selectedRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===runtimeEnvironmentId);
+  const declaredSkillModes=selectedRuntimeOption?.supportedSkillModes;
+  const supportsWithoutTargetSkill=runtime!=="runtime_launcher"||declaredSkillModes===undefined||declaredSkillModes.includes("without_target_skill");
+  const fallbackSkillSelection=versionOptions[0]?versionSelectionKey(versionOptions[0]):'';
+  useEffect(()=>{
+    if(supportsWithoutTargetSkill||!versionOptions.length)return;
+    if(leftVariantSelection==="without_target_skill"){
+      const alternative=versionOptions.find(item=>versionSelectionKey(item)!==rightVariantSelection)??versionOptions[0];
+      setLeftVariantSelection(versionSelectionKey(alternative));
+    }
+    if(rightVariantSelection==="without_target_skill"){
+      const alternative=versionOptions.find(item=>versionSelectionKey(item)!==leftVariantSelection)??versionOptions[0];
+      setRightVariantSelection(versionSelectionKey(alternative));
+    }
+  },[supportsWithoutTargetSkill,fallbackSkillSelection,leftVariantSelection,rightVariantSelection]);
   const leftRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.left);
   const rightRuntimeOption=catalog?.executionRuntimes.find(item=>item.runtimeId===launcherPair.right);
-  const pairedRuntimeModels=(leftRuntimeOption?.models??[]).filter(left=>rightRuntimeOption?.models.some(right=>
-    right.modelId===left.modelId&&(!left.upstreamModelId||!right.upstreamModelId||right.upstreamModelId===left.upstreamModelId)));
+  const pairedRuntimeModels=commonRuntimeModels(leftRuntimeOption,rightRuntimeOption).map(pair=>pair.left);
   const runtimeModels=runtime==='dual_runtime'?pairedRuntimeModels:runtime==='runtime_launcher'?(selectedRuntimeOption?.models??[]):[];
   const runtimeDefaultModel=runtime==='dual_runtime'
     ? pairedRuntimeModels.find(item=>item.modelId===leftRuntimeOption?.defaultModelId)??pairedRuntimeModels[0]
@@ -476,7 +489,8 @@ export function App() {
       const dualRuntime=runtime==="dual_runtime";
       const boundAsset=(value:string)=>selectedVersion(value,catalog?.uploadedSkills.filter(item=>item.skillId===targetSkillId)??[]);
       const leftAsset=boundAsset(leftVariantSelection),rightAsset=boundAsset(rightVariantSelection);
-      if(dualRuntime&&(!leftAsset||!rightAsset||leftAsset.assetId!==rightAsset.assetId||!selectedLeftModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要同一份已导入 Skill 和相同模型");
+      const pairedRightModel=dualRuntime&&selectedLeftModel?commonRuntimeModels(leftRuntimeOption,rightRuntimeOption).find(pair=>modelKey(pair.left)===modelKey(selectedLeftModel))?.right:undefined;
+      if(dualRuntime&&(!leftAsset||!rightAsset||leftAsset.assetId!==rightAsset.assetId||!selectedLeftModel||!pairedRightModel||leftModelKey!==rightModelKey))throw Error("双 Runtime 评测需要同一份已导入 Skill 和相同模型");
       const job = await api<EvaluationJob>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
@@ -489,7 +503,7 @@ export function App() {
           judgeMode,
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
-          ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation),
+          ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation,executionReference(pairedRightModel!)),
             runtimeBindings:{left:{environmentId:launcherPair.left,skillAssetId:leftAsset!.assetId},right:{environmentId:launcherPair.right,skillAssetId:rightAsset!.assetId}}}
             : {...(selectedLeftModel ? { leftExecutionModel: executionReference(selectedLeftModel) } : {}),
                ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {})}),
@@ -549,6 +563,7 @@ export function App() {
     && (runtime !== "replay" || Boolean(selectedPack?.replayReady))
     && (runtime === "replay" || [selectedLeftModel, selectedRightModel].every(m => m && (!m.availability || m.availability === "ready")))
     && (runtime !== 'runtime_launcher' || selectedVariantsHaveArtifacts)
+    && (supportsWithoutTargetSkill || (leftVariantSelection !== "without_target_skill" && rightVariantSelection !== "without_target_skill"))
     && (runtime !== 'runtime_launcher' || runtimeEnvironmentId)
     && (runtime !== 'runtime_launcher' || environmentMatches.some(item=>item.runtime.runtimeId===runtimeEnvironmentId&&!item.issues.length))
     && (runtime !== 'dual_runtime' || [launcherPair.left,launcherPair.right].every(id=>environmentMatches.some(item=>item.runtime.runtimeId===id&&!item.issues.length)))
@@ -652,6 +667,7 @@ export function App() {
             versionOptions={versionOptions}
             sameConfiguration={sameConfiguration}
             mixedVariables={mixedVariables}
+            supportsWithoutTargetSkill={supportsWithoutTargetSkill}
             job={currentResult}
             onStart={startRun}
             onCancel={cancelRun}
@@ -780,6 +796,7 @@ function EvaluationView(props: {
   versionOptions: Array<{ version: string; artifactSha256: string | null; packId: string | null }>;
   sameConfiguration: boolean;
   mixedVariables: boolean;
+  supportsWithoutTargetSkill: boolean;
   job: EvaluationJob | null;
   onStart(): void;
   onCancel(): void;
@@ -799,8 +816,7 @@ function EvaluationView(props: {
   const runtimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.runtimeEnvironmentId);
   const leftRuntimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.launcherPair.left);
   const rightRuntimeOption=props.catalog.executionRuntimes.find(item=>item.runtimeId===props.launcherPair.right);
-  const pairedRuntimeModels=(leftRuntimeOption?.models??[]).filter(left=>rightRuntimeOption?.models.some(right=>
-    right.modelId===left.modelId&&(!left.upstreamModelId||!right.upstreamModelId||right.upstreamModelId===left.upstreamModelId)));
+  const pairedRuntimeModels=commonRuntimeModels(leftRuntimeOption,rightRuntimeOption).map(pair=>pair.left);
   const linkedMcp = runtimeEnvironment&&'mcpEnvironmentIds' in runtimeEnvironment?runtimeEnvironment.mcpEnvironmentIds
     .map(id => props.catalog.environments.find(item => item.environmentId === id))
     .filter((item): item is Environment => Boolean(item)):[];
@@ -882,11 +898,12 @@ function EvaluationView(props: {
       </section>
 
       <div className="comparison-grid">
-        <ComparisonConfigurator side="A" title="对照组" runtimeName={props.runtime==='dual_runtime'?leftRuntimeOption?.name:runtimeOption?.name} selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
+        <ComparisonConfigurator side="A" title="对照组" selection={props.leftVariantSelection} modelKeyValue={props.leftModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} withoutTargetSkillDisabled={!props.supportsWithoutTargetSkill} onSelectionChange={props.setLeftVariantSelection} onModelChange={props.setLeftModelKey} />
         <div className="comparison-arrow"><ArrowRight size={20} /></div>
-        <ComparisonConfigurator side="B" title="目标组" runtimeName={props.runtime==='dual_runtime'?rightRuntimeOption?.name:runtimeOption?.name} selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
+        <ComparisonConfigurator side="B" title="目标组" selection={props.rightVariantSelection} modelKeyValue={props.rightModelKey} versions={props.versionOptions} models={comparisonModels} locked={replayLocked} withoutTargetSkillDisabled={!props.supportsWithoutTargetSkill} target onSelectionChange={props.setRightVariantSelection} onModelChange={props.setRightModelKey} />
       </div>
 
+      {!props.supportsWithoutTargetSkill ? <div className="comparison-warning info">当前 Runtime 仅支持装配 Skill，不支持“不加载当前 Skill”基线。请选择两个 Skill 版本进行对比；若只有一个版本，请先上传另一版本。</div> : null}
       {props.sameConfiguration ? <div className="comparison-warning warning">左右配置完全相同，无法形成有效对比。</div> : props.mixedVariables ? <div className="comparison-warning info">Skill 与模型同时变化，本轮只能说明综合方案差异，不能把提升单独归因于 Skill。</div> : null}
       {props.comparisonMode==='model'&&comparisonModels.length<2?<p className="comparison-warning warning">当前环境只有一个可用模型，暂无第二个模型可比较。</p>:null}
       {(props.runtime === 'runtime_launcher'||props.runtime==='dual_runtime') && !props.selectedVariantsHaveArtifacts ? <div className="comparison-warning warning">所选 Skill 版本只有评测定义，本机尚未上传对应实体包；请先到 Skill 资产上传该版本。</div> : null}
@@ -931,6 +948,7 @@ function ComparisonConfigurator(props: {
   versions: Array<{ version: string; artifactSha256: string | null }>;
   models: ModelRef[];
   locked: boolean;
+  withoutTargetSkillDisabled?: boolean;
   target?: boolean;
   onSelectionChange(value: string): void;
   onModelChange(value: string): void;
@@ -939,10 +957,9 @@ function ComparisonConfigurator(props: {
   return <section className={props.target ? "comparison-panel target configurable" : "comparison-panel configurable"}>
     <div className="comparison-panel-head"><div className="side-badge">{props.side}</div><div><span>{props.title}</span><strong>对比配置</strong></div>{props.locked ? <small><Archive size={12} />配置已锁定</small> : null}</div>
     <div className="comparison-fields">
-      {props.runtimeName?<div className="field"><span>运行环境</span><strong>{props.runtimeName}</strong></div>:null}
       <label className="field"><span>Skill</span><select value={selected?versionSelectionKey(selected):props.selection} disabled={props.locked} onChange={event => props.onSelectionChange(event.target.value)}>
-        <option value="without_target_skill">不加载当前 Skill</option>
-        {props.versions.map(item => <option key={versionSelectionKey(item)} value={versionSelectionKey(item)}>v{item.version}{props.versions.filter(other=>other.version===item.version).length>1?` · ${item.artifactSha256?.slice(0,8)??'摘要未记录'}`:''}</option>)}
+        <option value="without_target_skill" disabled={props.withoutTargetSkillDisabled}>不加载当前 Skill{props.withoutTargetSkillDisabled ? "（当前 Runtime 不支持）" : ""}</option>
+        {props.versions.map(item => <option key={versionSelectionKey(item)} value={versionSelectionKey(item)}>v{item.version}{props.versions.filter(other=>other.version===item.version).length>1?` · ${item.artifactSha256?.slice(0,8)??'未上传产物'}`:''}</option>)}
       </select></label>
       <label className="field"><span>模型</span><select value={props.modelKeyValue} disabled={props.locked} onChange={event => props.onModelChange(event.target.value)}>
         {props.models.map(model => {const label=model.label??model.modelId,upstream=model.upstreamModelId??model.modelId;return <option key={modelKey(model)} value={modelKey(model)} disabled={Boolean(model.availability && model.availability !== "ready")} title={model.statusNote}>{label===upstream?upstream:`${label} · ${upstream}`}{model.availability === "unavailable" ? " · 暂不可用" : model.availability === "unverified" ? " · 待验证" : ""}</option>})}

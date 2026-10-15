@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import {afterEach,expect,it} from 'vitest';
-import {RuntimeLauncherAdapter,RUNTIME_LAUNCHER_STREAM_LIMITS} from '../src/runtime-launcher.js';
+import {RuntimeLauncherAdapter,RUNTIME_LAUNCHER_STREAM_LIMITS,summarizeRuntimeObservation} from '../src/runtime-launcher.js';
+import {runtimeObservationEventSchema} from '../src/shared/contracts/runtime-observation.js';
 
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{while(cleanup.length)await cleanup.pop()!();});
@@ -36,4 +37,16 @@ it('applies a separate serialized limit to terminal evidence',async()=>{
 
 it('rejects a stream that ends with an unfinished frame',async()=>{
   await expect((await launcher('unfinished')).execute(request)).rejects.toThrow(/unfinished frame/u);
+});
+
+it('keeps causal tool IDs and digests without persisting diagnostic messages or raw native data',()=>{
+  const event=runtimeObservationEventSchema.parse({schemaVersion:'finance.runtime-observation.v1',eventId:'event-1',sequence:4,
+    occurredAt:new Date().toISOString(),traceId:'trace-1',instanceId:'instance',runId:'run',caseId:'case',side:'right',
+    kind:'tool.call.failed',source:{adapter:'builder',framework:'openjiuwen',nativeEventType:'tool_failed',synthesized:false},
+    payload:{toolCallId:'call-1',name:'lookup',inputDigest:'a'.repeat(64),error:{code:'UPSTREAM_ERROR',message:'private customer data',retryable:true}},
+    native:{data:{phase:'execution'}}});
+  const summary=summarizeRuntimeObservation(event);
+  expect(summary).toMatchObject({kind:'tool.call.failed',toolCallId:'call-1',toolName:'lookup',errorCode:'UPSTREAM_ERROR'});
+  expect(JSON.stringify(summary)).not.toContain('private customer data');
+  expect(JSON.stringify(summary)).not.toContain('phase');
 });

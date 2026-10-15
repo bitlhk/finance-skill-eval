@@ -1,0 +1,3 @@
+# Fixture byte digests are part of the frozen assessment contract.
+examples/fact-check-demo/SKILL.md text eol=lf
+examples/native-readonly-balance/SKILL.md text eol=lf

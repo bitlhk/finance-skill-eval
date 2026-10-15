@@ -21,7 +21,7 @@ it('packages the fact-check fixture deterministically and refuses overwrites',as
   expect(run(first).status).not.toBe(0);expect(await readFile(first)).toEqual(bytes);
 });
 it('imports the reproducible no-tool fact-check sample without changing its method',async()=>{
-  const {skillRuntimeRequirements}=await import('../src/service/skill-runtime-requirements.js');
+  const {skillRuntimeRequirements}=await import('../src/shared/skill-runtime-requirements.js');
   const source=await readFile(new URL('../examples/fact-check-demo/SKILL.md',import.meta.url),'utf8');
   const store=new SkillStore(await directory());await store.initialize();
   const record=await store.uploadZip(Buffer.from(zipSync({'SKILL.md':strToU8(source)})));

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import json
+import os
 
 spec = importlib.util.spec_from_file_location('formal', Path(__file__).parents[1] / 'deploy/promote-formal-entry.py')
 formal = importlib.util.module_from_spec(spec)
@@ -145,7 +146,8 @@ class FormalEntryTests(unittest.TestCase):
                     formal.main()
                 applied = json.loads(receipt.read_text())
                 self.assertEqual(applied['status'], 'APPLIED')
-                self.assertEqual(Path(applied['backup']).stat().st_mode & 0o777, 0o600)
+                if os.name != 'nt':
+                    self.assertEqual(Path(applied['backup']).stat().st_mode & 0o777, 0o600)
                 self.assertEqual(target.read_bytes(), formal.render_gateway(GATEWAY))
                 self.assertEqual(run.call_count, 3)
                 with patch('sys.argv', ['promote', '--target', 'gateway', '--apply',

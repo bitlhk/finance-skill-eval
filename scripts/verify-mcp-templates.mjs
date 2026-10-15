@@ -193,6 +193,11 @@ async function verify(language, markdown) {
     const callText = JSON.stringify(result.callResult ?? null);
     if (!callText.includes('received') || !callText.includes(ARGUMENTS.id))
       throw new Error(`the Tool call did not reach the business method: ${callText}`);
+    if(language.id==='python'){
+      const call=result.callResult,text=call?.content?.find(item=>item.type==='text')?.text;
+      if(typeof text!=='string'||JSON.stringify(canonical(JSON.parse(text)))!==JSON.stringify(canonical(call.structuredContent)))
+        throw new Error('Python ToolResult text and structuredContent did not preserve the same actual business result');
+    }
 
     // The same service again, this time the way A4 is judged on it. `prepare` is skipped: the
     // project is already installed/built above.
@@ -204,7 +209,7 @@ async function verify(language, markdown) {
       throw new Error(`the A4 contract test rejected the skeleton it will be judged on: ${JSON.stringify(gate)}`);
 
     return { language: language.id, protocol: result.protocolVersion, tool: advertised.name,
-      schema: advertised.inputSchema, contractGate: gate.passed };
+      schema: advertised.inputSchema, contractGate: gate.passed,...(language.id==='python'?{resultChannelsMatch:true}:{}) };
   } finally {
     if (server && server.exitCode === null) {
       // A process that is already gone needs no killing, and `taskkill` answers that with exit
@@ -219,9 +224,11 @@ async function verify(language, markdown) {
   }
 }
 
-const markdown = await readFile(TEMPLATES, 'utf8');
+const markdown = (await readFile(TEMPLATES, 'utf8')).replaceAll('\r\n','\n');
 const verified = [];
-for (const language of LANGUAGES) {
+const selectedLanguages=process.env.FINANCE_EVAL_TEMPLATE_LANGUAGES?.split(',').map(value=>value.trim());
+if(selectedLanguages?.some(id=>!LANGUAGES.some(language=>language.id===id)))throw new Error('Unknown requested MCP template language');
+for (const language of LANGUAGES.filter(language=>!selectedLanguages||selectedLanguages.includes(language.id))) {
   process.stdout.write(`--- ${language.id}\n`);
   verified.push(await verify(language, markdown));
 }

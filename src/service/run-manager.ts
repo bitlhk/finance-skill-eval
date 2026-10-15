@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { evalCaseSchema, fingerprint } from "../contracts.js";
 import type { RuntimeAdapter } from "../adapters.js";
@@ -24,8 +24,8 @@ import {ModelRuntimeComparisonJudge} from '../runtime-comparison-judge.js';
 import {OriginalServiceRuntimeAdapter} from '../original-service-runtime.js';
 import {ModelServiceComparisonJudge} from '../service-comparison-judge.js';
 import {RuntimeLauncherAdapter} from '../runtime-launcher.js';
-import {zipSync} from 'fflate';
-import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from './skill-runtime-requirements.js';
+import {runtimeSkillPackage} from '../runtime-skill-package.js';
+import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from '../shared/skill-runtime-requirements.js';
 import {requireManagedRun} from './managed-workspace-policy.js';
 import type {EvaluationRunBudget} from './evaluation-run-budget.js';
 
@@ -231,15 +231,15 @@ export class EvaluationRunManager {
         && (!variant.artifactSha256 || item.artifactSha256 === variant.artifactSha256));
       const asset = matches.find(item => item.assetId === assetId) ?? (!strict && matches.length === 1 ? matches[0] : null);
       if (!asset) throw new Error(`Skill artifact unavailable or ambiguous: ${variant.skillId}@${variant.version}`);
-      let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined,archiveBase64:string|undefined,archiveSha256:string|undefined;
+      let canonicalArchive:string|undefined,archive:Record<string,Uint8Array>|undefined;
+      if(completeArchive)return runtimeSkillPackage({...asset,archive:await this.options.skills.readArchive(asset.assetId)});
       const files=await this.options.skills.readFiles(asset.assetId);
       if (strict) {
         archive=await this.options.skills.readArchive(asset.assetId);
-        if(completeArchive){const bytes=Buffer.from(zipSync(archive));archiveBase64=bytes.toString('base64');archiveSha256=createHash('sha256').update(bytes).digest('hex');}
         if(neutral&&archive['migration-generated/neutral-contract.json'])canonicalArchive=canonicalNeutralArchive(archive,asset.artifactSha256);
         else for(const [name,bytes] of Object.entries(archive)){
           try{files[name]=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
-          catch{if(!completeArchive)throw new Error(`Migration dependency mapping required for non-text file: ${name}`);}
+          catch{throw new Error(`Migration dependency mapping required for non-text file: ${name}`);}
         }
       }
       if(executablePaths.length){archive??=await this.options.skills.readArchive(asset.assetId);for(const name of executablePaths){
@@ -253,14 +253,25 @@ export class EvaluationRunManager {
         instructions: await this.options.skills.readSource(asset.assetId),
         files,
         ...(canonicalArchive?{canonicalArchive}:{}),
-        ...(archiveBase64?{archiveBase64}:{}),
-        ...(archiveSha256?{archiveSha256}:{}),
       };
     };
   }
 
   private async runtimeFor(configuration: RunConfiguration, pack: EvalPack): Promise<RuntimeAdapter> {
+    if(pack.cases.some(c=>c.turns)&&configuration.runtime.type!=='runtime_launcher')throw new Error('真实多轮案例必须通过支持多轮的 Runtime Launcher 执行');
     if (configuration.runtimeBindings) {
+      if(configuration.evaluationMode==='candidate_runtime_comparison'){
+        const identities=await Promise.all((['left','right'] as const).map(async side=>{
+          const selected=await this.options.resolveMigrationRuntime?.(configuration.runtimeBindings![side].environmentId);
+          if(!selected)throw Error('对比执行环境不可用');
+          const inspection=await this.options.environments.inspect(selected);
+          if(inspection.status!=='ready'||!inspection.capabilities)throw Error('Runtime Launcher 预检失败');
+          const model=inspection.capabilities.models.find(item=>item.modelId===pack.models.execution[side].modelId);
+          if(!model?.upstreamModelId)throw Error('所选模型不属于此 Runtime 或缺少真实模型标识');
+          return model.upstreamModelId;
+        }));
+        if(identities[0]!==identities[1])throw Error('跨 Runtime 对照必须使用相同的真实执行模型');
+      }
       const makeSide = async (side: 'left' | 'right') => {
         const binding = configuration.runtimeBindings![side];
         const selectedEnvironment = await this.options.resolveMigrationRuntime?.(binding.environmentId);
@@ -284,7 +295,7 @@ export class EvaluationRunManager {
           descriptor.runtimeToolConfig=configuration.runtimeToolConfig;
         }
         return new RuntimeLauncherAdapter({baseUrl:environment.baseUrl,headers:this.options.environments.headers(environment),side,
-          model:pack.models.execution[side],variant:pack.variants[side],skill,environment:descriptor,timeoutMs:configuration.timeoutMs});
+          model:pack.models.execution[side],variant:pack.variants[side],skill,environment:descriptor,timeoutMs:configuration.timeoutMs,stopAfterFailure:configuration.evaluationMode==='candidate_runtime_comparison'});
       };
       if(configuration.evaluationMode==='candidate_assessment')return makeSide('right');
       if(configuration.evaluationMode==='service_comparison'){
@@ -414,11 +425,14 @@ export class EvaluationRunManager {
     const skillFor=async(side:'left'|'right')=>{
       const resolve=await this.skillResolver(configuration.runtimeBindings?.[side].skillAssetId??configuration.skillAssetId);
       const source=await resolve(pack.variants[side]);
-      return source?{skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256,instructions:source.instructions}:undefined;
+      const prefix=source?.skillFile?.includes('/')?source.skillFile.slice(0,source.skillFile.lastIndexOf('/')+1):'';
+      const files=Object.fromEntries(Object.entries(source?.files??{}).filter(([path])=>path.startsWith(prefix)).map(([path,content])=>[path.slice(prefix.length),content]));
+      return source?{skillId:source.skillId,version:source.version,artifactSha256:source.artifactSha256,instructions:source.instructions,
+        skillPackage:{artifactSha256:source.artifactSha256,files}}:undefined;
     };
     if(configuration.evaluationMode==='candidate_runtime_comparison')return new ModelRuntimeComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{left:await skillFor('left'),right:await skillFor('right')});
     if(configuration.evaluationMode==='service_comparison')return new ModelServiceComparisonJudge(judge.adapter,configuration.judgeModel??pack.models.judge);
-    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,await skillFor('right'));
+    if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{tools:configuration.runtimeCommandBindings?.right,skillPackage:(await skillFor('right'))?.skillPackage});
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
       :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);

@@ -1,0 +1,65 @@
+import {z} from 'zod';
+import {simpleMigrationCaseSchema} from './simple-migration-suite.js';
+import type {MigrationProject} from './migration-project.js';
+import {currentReuseProposal} from './migration-reuse-design.js';
+import type {ReuseAcceptanceFailure,ReuseAcceptancePhase} from './migration-reuse-failure.js';
+import {reuseInputBindingSchema,reuseInputBindingIssues,type ReuseInputBindingReceipt} from './migration-reuse-input-binding.js';
+
+const id=z.string().trim().min(1).max(100);
+export const reuseRuntimeSelectionSchema=z.strictObject({environmentId:z.string().min(1),modelId:z.string().min(1)});
+/** General execution topology, not a menu of business migration strategies.
+ * Each group creates fresh Runtime instances; cases are isolated; turns share one native session. */
+export const reuseAcceptancePlanSchema=z.strictObject({
+  name:z.string().trim().min(1).max(200),
+  groups:z.array(z.strictObject({id,runtime:reuseRuntimeSelectionSchema.optional(),cases:z.array(simpleMigrationCaseSchema).min(1).max(8)})).min(1).max(4),
+  checks:z.array(z.strictObject({checkId:id,caseIds:z.array(id).min(1).max(32),criteria:z.array(z.string().trim().min(1).max(2000)).min(1).max(20)})).min(1).max(32),
+  unresolvedQuestions:z.array(z.string().trim().min(1).max(2000)).max(32),
+  inputBindings:z.array(reuseInputBindingSchema).max(16).optional(),
+});
+export type ReuseAcceptanceExecutionPlan=z.infer<typeof reuseAcceptancePlanSchema>;
+/** Selected topology references, not a business verdict or deployment admission. */
+export function reuseAcceptanceTargetIssues(plan:ReuseAcceptanceExecutionPlan,targets:Array<{environmentId:string;modelId:string}>){
+  if(!targets.length)return [];
+  const key=(t:{environmentId:string;modelId:string})=>JSON.stringify([t.environmentId,t.modelId]);
+  const expected=new Set(targets.map(key)),used=new Set(plan.groups.map(g=>key(g.runtime??targets[0]!)));
+  return [...[...used].filter(k=>!expected.has(k)).map(()=> '运行组引用未选择的部署或模型'),
+    ...targets.filter(t=>!used.has(key(t))).map(t=>`计划未执行所选运行目标：${t.environmentId} / ${t.modelId}`)];
+}
+export const coverageSchema=z.strictObject({status:z.enum(['COVERED','INCOMPLETE']),reasons:z.array(z.string().min(1)).max(64)});
+export const reuseAcceptanceVerdictsSchema=z.strictObject({checks:z.array(z.strictObject({checkId:z.string().min(1),
+  status:z.enum(['PASSED','FAILED','INDETERMINATE']),reason:z.string().min(1),caseIds:z.array(z.string().min(1)).min(1)})).min(1).max(32)});
+export type ReuseAcceptanceRuntimeBinding={environmentId:string;launcherId:string;environmentDigest:string;capabilitiesDigest:string;modelId:string;
+  endpointDigest?:string;deploymentId?:string;deliveryDigest?:string};
+export type ReuseAcceptanceBinding=ReuseAcceptanceRuntimeBinding&{proposalId:string;proposalDigest:string;candidateDigest:string;inspectionDigest:string;configurationDigest:string;
+  additionalRuntimes?:ReuseAcceptanceRuntimeBinding[]};
+export type ReuseAcceptancePlan={planId:string;createdAt:string;approvedAt?:string;inputDigest:string;binding:ReuseAcceptanceBinding;plan:ReuseAcceptanceExecutionPlan;
+  coverage:{status:'COVERED'|'INCOMPLETE';reasons:string[]}};
+export type ReuseAcceptanceResult={taskId:string;planId:string;planDigest:string;binding:ReuseAcceptanceBinding;startedAt:string;finishedAt?:string;
+  status:'RUNNING'|'PASSED'|'FAILED'|'INDETERMINATE'|'CANCELLED'|'INTERRUPTED';
+  jobs:Array<{groupId:string;jobId:string}>;checks:Array<{checkId:string;status:'NOT_RUN'|'PASSED'|'FAILED'|'INDETERMINATE';reason:string;caseIds:string[]}>;
+  reason?:string;phase?:ReuseAcceptancePhase;failure?:ReuseAcceptanceFailure;inputBindings?:ReuseInputBindingReceipt[]};
+export type ReuseAcceptanceSummary={plan:ReuseAcceptancePlan|null;current:boolean;status:ReuseAcceptanceResult['status']|'STALE'|'NOT_RUN';result:ReuseAcceptanceResult|null};
+
+export function reuseAcceptancePlanIssues(project:MigrationProject,plan:ReuseAcceptanceExecutionPlan){
+  const proposal=currentReuseProposal(project),issues:string[]=[];
+  const expected=proposal?.design.acceptanceChecks.map(c=>c.id)??[];
+  if(!proposal?.approvedAt)issues.push('请先确认有效的迁移方案');
+  issues.push(...reuseAcceptanceReferenceIssues(plan,expected),...plan.unresolvedQuestions);
+  for(const binding of plan.inputBindings??[])if(!project.inspection?.tools.some(tool=>tool.name===binding.toolName))issues.push(`输入绑定 ${binding.id} 的来源工具不属于当前候选`);
+  return issues;
+}
+
+/** Structural references only. Does not decide coverage or relax unresolved requirements. */
+export function reuseAcceptanceReferenceIssues(plan:ReuseAcceptanceExecutionPlan,expected:string[]){
+  const issues:string[]=[],ids=plan.groups.flatMap(group=>group.cases.map(c=>c.id));
+  if(new Set(ids).size!==ids.length||new Set(plan.groups.map(g=>g.id)).size!==plan.groups.length)issues.push('运行组和案例标识不能重复');
+  if(plan.checks.length!==expected.length||new Set(plan.checks.map(c=>c.checkId)).size!==expected.length||plan.checks.some(c=>!expected.includes(c.checkId)))issues.push('验收计划必须逐项覆盖已确认的复用要求');
+  for(const check of plan.checks)if(new Set(check.caseIds).size!==check.caseIds.length||check.caseIds.some(c=>!ids.includes(c)))issues.push(`${check.checkId} 引用了不存在或重复的案例`);
+  if(ids.some(caseId=>!plan.checks.some(check=>check.caseIds.includes(caseId))))issues.push('每个执行案例都应属于明确验收要求');
+  issues.push(...reuseInputBindingIssues(plan));
+  for(const binding of plan.inputBindings??[])for(const target of plan.groups.flatMap(g=>g.cases)){
+    if([target.input,...(target.turns??[]).map(t=>t.query)].some(query=>query.includes(`{{reuse:${binding.id}}}`))
+      &&!plan.checks.some(check=>check.caseIds.includes(binding.sourceCaseId)&&check.caseIds.includes(target.id)))issues.push(`输入绑定 ${binding.id} 的来源与消费案例必须关联同一验收要求`);
+  }
+  return issues;
+}

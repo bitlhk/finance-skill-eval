@@ -3,7 +3,7 @@ import tempfile
 import json
 import sys
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 async def mount_skill_runtime(agent, stack, skill, root_path, workspace_path, requested, observe=None, *, observe_start=None):
@@ -25,14 +25,19 @@ async def mount_skill_runtime(agent, stack, skill, root_path, workspace_path, re
     directory = library / 'target-skill'
     if skill:
         directory.mkdir()
+        entrypoint = PurePosixPath(skill.get('skillFile', 'SKILL.md'))
+        prefix = '' if str(entrypoint.parent) == '.' else str(entrypoint.parent) + '/'
         for name, content in skill.get('files', {}).items():
+            if not name.startswith(prefix):
+                continue
+            name = name[len(prefix):]
             target = (directory / name.replace('\\', '/')).resolve()
             if directory.resolve() not in target.parents:
                 raise ValueError('Unsafe Skill resource path')
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding='utf-8')
-        # The canonical source is already supplied by the asset store. Keep the complete
-        # package beside it so reference paths remain package-relative.
+        # SkillUseRail sees the declared document's directory. The execution package
+        # retains the full archive, including sibling MCP projects and launch paths.
         (directory / 'SKILL.md').write_text(skill['instructions'], encoding='utf-8')
     shell_programs = {'python', 'python3', 'uv', 'node', sys.executable}
     shell_programs.update(path for name in ('python', 'python3', 'uv', 'node') if (path := shutil.which(name)))

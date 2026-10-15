@@ -65,6 +65,17 @@ tool execution, method/Lock/history references, session isolation and responsive
 result rendering. `LAUNCHER_FIXTURE_INFO` is a private fixture file; never publish
 its bearer token. `LAUNCHER_UI_OUTPUT` must be a new directory.
 
+`LAUNCHER_UI_EXECUTION_MODE=LIVE` requires actual live-model fixture descriptors;
+it does not by itself select a real Judge. Set `LAUNCHER_UI_JUDGE_MODE=LIVE`
+and provision the existing server-side Judge connection to verify both real
+execution and real assessment. The default remains a controlled Judge that
+returns INDETERMINATE, not a substitute for live scoring. Live acceptance requires
+actual server-authorized tool result projections, not answer-derived facts.
+The script waits up to 120 seconds for real native preflight without bypassing
+it, checks each side's RELEASED cleanup receipt separately, and retains failed
+attempts as failures rather than treating request acknowledgement as release.
+The two repeated balance cases verify this path only, not all migration scenarios.
+
 Controlled model output proves plumbing and isolation, not answer quality. A
 nonempty response, matching parameters or successful tool execution does not
 prove task completeness. A real-model run is separately labeled; a small repeated

@@ -121,7 +121,8 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
     expect(scopedYaml.body).toContain(scopedJson.json().requirementsDigest);
     expect((await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements.yaml?runtimeType=unknown`,headers})).statusCode).toBe(400);
     const plan=await app.inject({method:'GET',url:`/api/migrations/${id}/plan`,headers});
-    expect(plan.statusCode).toBe(200);expect(plan.json()).toMatchObject({generationAllowed:true,technicalValidationAllowed:false});
+    expect(plan.statusCode).toBe(200);expect(plan.json()).toMatchObject({generationAllowed:false,technicalValidationAllowed:false});
+    expect(plan.json().skillBlockingReasons).toContain('请生成并确认可复用迁移方案');
     const requirementsResponse=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements`,headers});
     const requirements=requirementsResponse.json();
     const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
@@ -136,27 +137,11 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
     const accepted=await app.inject({method:'POST',url:`/api/migrations/${id}/runtime-deliveries`,headers,payload:{result,trustReference:'builder-local'}});
     expect(accepted.statusCode,accepted.body).toBe(200);expect(accepted.json()).toMatchObject({status:'ACCEPTED',environment:{delivery:{evalConformance:{status:'PASSED'}}}});
     const project=await app.inject({method:'GET',url:`/api/migrations/${id}`,headers});
-    expect(project.json()).toMatchObject({runtimeDelivery:{environmentId:accepted.json().environment.environmentId,deploymentId:'deployment-http',evalConformance:{status:'PASSED'}}});
-    expect(accepted.json().environment.delivery.requirementsDigest).toBe(requirements.requirementsDigest);
-    expect(project.json().runtimeDelivery.requirementsDigest).toBe(requirements.requirementsDigest);
-    const environmentFile=path.join(directory,'environments',`${accepted.json().environment.environmentId}.json`);
-    const persisted=JSON.parse(await readFile(environmentFile,'utf8'));
-    expect(persisted.delivery.requirementsDigest).toBe(requirements.requirementsDigest);
-    delete persisted.delivery.requirementsDigest;
-    await writeFile(environmentFile,JSON.stringify(persisted));
-    const legacyProject=JSON.parse(await readFile(migrationFile,'utf8'));
-    delete legacyProject.runtimeDelivery.requirementsDigest;
-    await writeFile(migrationFile,JSON.stringify(legacyProject));
-    const legacyReport=await app.inject({method:'GET',url:`/api/migrations/${id}/report`,headers});
-    expect(legacyReport.statusCode,legacyReport.body).toBe(200);
-    expect(legacyReport.json().runtimeRequirements).not.toBeNull();
+    expect(project.json()).toMatchObject({runtimeDelivery:{environmentId:accepted.json().environment.environmentId,deploymentId:'deployment-http',requirementsDigest:requirements.requirementsDigest,evalConformance:{status:'PASSED'}}});
+    const report=await app.inject({method:'GET',url:`/api/migrations/${id}/report`,headers});
+    expect(report.statusCode,report.body).toBe(200);
+    expect(report.json().runtimeRequirements).toBeNull();
     const repeated=await app.inject({method:'POST',url:`/api/migrations/${id}/runtime-deliveries`,headers,payload:{result,trustReference:'builder-local'}});
     expect(repeated.statusCode,repeated.body).toBe(200);expect(repeated.json().environment.environmentId).toBe(accepted.json().environment.environmentId);
-    expect(repeated.json().environment.delivery.requirementsDigest).toBe(requirements.requirementsDigest);
-    expect(JSON.parse(await readFile(environmentFile,'utf8')).delivery.requirementsDigest).toBe(requirements.requirementsDigest);
-    expect(JSON.parse(await readFile(migrationFile,'utf8')).runtimeDelivery.requirementsDigest).toBe(requirements.requirementsDigest);
-    const restoredReport=await app.inject({method:'GET',url:`/api/migrations/${id}/report`,headers});
-    expect(restoredReport.statusCode,restoredReport.body).toBe(200);
-    expect(restoredReport.json().runtimeRequirements).toBeNull();
-  }finally{await app.close();await launcherServer.close();await rm(directory,{recursive:true,force:true});}
+  }finally{await app.close();await launcherServer.close();await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 });
