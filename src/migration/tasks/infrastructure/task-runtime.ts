@@ -104,6 +104,7 @@ export function createBundleRuntime(
         updatedAt: selected.updatedAt,
         launcherId: launcher.environmentId,
         launcherUpdatedAt: launcher.updatedAt,
+        ...(launcher.delivery ? { delivery: launcher.delivery } : {}),
         externalVersions,
         capabilities,
       },

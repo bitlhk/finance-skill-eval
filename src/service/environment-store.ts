@@ -16,6 +16,10 @@ import {nativeToolCatalogSchema} from '../shared/contracts/native-tool-catalog.j
 import {readBoundedJson,runtimeLauncherResponseError} from '../runtime-launcher.js';
 import type {ResolvedSkillSource} from '../direct-model-runtime.js';
 import type {SkillVariant} from '../contracts.js';
+import type { RuntimeBundle } from '../shared/contracts/runtime-bundle.js';
+import type { RuntimeEnvironmentDescriptor } from '../http-runtime.js';
+import { canonicalSha256 } from '../shared/json-canonicalization.js';
+import { taskBuildProfileSchema } from '../shared/contracts/task-builder.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if(record.type==='execution_environment')return {};
@@ -118,11 +122,13 @@ export class EnvironmentStore {
   }
 
   async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string;
-    conformance?:{skill:ResolvedSkillSource;requiredTools:string[]}}):Promise<{
+    conformance?:{skill:ResolvedSkillSource;requiredTools:string[]};
+    bundleConformance?:{bundle:RuntimeBundle;environment:RuntimeEnvironmentDescriptor;modelId?:string;timeoutMs:number}}):Promise<{
     environment:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;capabilities:RuntimeLauncherCapabilities;created:boolean;
   }>{
     const requirements=runtimeBuildRequirementsSchema.parse(input.requirements);
     const result=runtimeBuildResultSchema.parse(input.result);
+    if(requirements.extensions?.migrationTask && !input.bundleConformance) throw Object.assign(new Error('统一任务的 Builder 交付必须通过整组 v2 实例验收入口'),{statusCode:400});
     const launcher=result.launcher;
     if(!launcher)throw Object.assign(new Error('Builder 没有返回可用的 Runtime Launcher。'),{statusCode:400});
     const registered=(await this.list({includeArchived:true})).find(record=>record.type==='runtime_launcher'&&record.delivery?.deploymentId===launcher.deploymentId);
@@ -157,16 +163,32 @@ export class EnvironmentStore {
       throw Object.assign(new Error(`无法验证 Builder 返回的 Launcher: ${error instanceof Error?error.message:String(error)}`),{statusCode:400});
     }
     const issues=validateRuntimeBuildResult(requirements,result,capabilities);
+    const bundleProbe=input.bundleConformance;
+    if(bundleProbe){
+      if(!capabilities.features.multiSkill)issues.push('MULTI_SKILL_REQUIRED');
+      if(bundleProbe.environment.candidateMcpServices?.length&&!capabilities.features.packagedMcp)issues.push('PACKAGED_MCP_REQUIRED');
+      if(bundleProbe.timeoutMs>capabilities.limits.maxTimeoutMs)issues.push('TIMEOUT_LIMIT');
+      if(Buffer.from(bundleProbe.bundle.archiveBase64,'base64').length>capabilities.limits.maxArchiveBytes)issues.push('ARCHIVE_LIMIT');
+      const profile=taskBuildProfileSchema.parse(requirements.extensions?.migrationTask);
+      if(profile.files.length>capabilities.limits.maxFiles)issues.push('FILE_LIMIT');
+      if(profile.candidateDigest!==bundleProbe.bundle.digest||canonicalSha256(profile.members)!==canonicalSha256(bundleProbe.bundle.members))issues.push('BUNDLE_PROFILE_MISMATCH');
+      for(const requirement of requirements.requiredCapabilities.filter(r=>r.required)){
+        const implemented=result.capabilityResults.find(r=>r.requirementId===requirement.id);
+        const actual=capabilities.nativeCapabilities?.find(c=>c.capabilityId===implemented?.capabilityId);
+        if(!actual||canonicalSha256(actual.contract)!==canonicalSha256(requirement.contract)||canonicalSha256(actual.constraints)!==canonicalSha256(requirement.constraints))issues.push('NATIVE_CAPABILITY_MISMATCH_'+requirement.id);
+      }
+    }
     if(issues.length)throw Object.assign(new Error(`Builder 交付未通过验收: ${issues.join(', ')}`),{statusCode:400,issues});
     const headers:Record<string,string>=authorization?{authorization}:{};
-    const model=capabilities.models.find(item=>item.modelId===capabilities.defaultModelId)!;
+    const model=capabilities.models.find(item=>item.modelId===(bundleProbe?.modelId??capabilities.defaultModelId));
+    if(!model)throw Object.assign(new Error('Builder Runtime 不提供需求指定的模型'),{statusCode:400});
     const skill=input.conformance?.skill??null;
-    const variant:SkillVariant=skill?{mode:'skill_version',skillId:skill.skillId,version:skill.version,artifactSha256:skill.artifactSha256}
+    const variant:SkillVariant=bundleProbe?{mode:'skill_version',skillId:'bundle',version:'frozen',artifactSha256:bundleProbe.bundle.digest}:skill?{mode:'skill_version',skillId:skill.skillId,version:skill.version,artifactSha256:skill.artifactSha256}
       :{mode:'without_target_skill',skillId:'finance-eval-conformance'};
     const requiredTools=input.conformance?.requiredTools??[];
-    const probeFiles=!skill||requiredTools.includes('read_case_file');
+    const probeFiles=!bundleProbe&&(!skill||requiredTools.includes('read_case_file'));
     const adapter=new RuntimeLauncherAdapter({baseUrl:launcher.baseUrl,headers,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},
-      variant,skill,environment:{environmentId:`conformance-${launcher.deploymentId}`,requiredToolNames:requiredTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
+      variant,skill,bundle:bundleProbe?.bundle,environment:bundleProbe?.environment??{environmentId:`conformance-${launcher.deploymentId}`,requiredToolNames:requiredTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:bundleProbe?.timeoutMs??Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
     const probeId=`conformance-${randomUUID()}`;
     try{
       await adapter.prepare({runId:probeId});
@@ -201,7 +223,8 @@ export class EnvironmentStore {
           buildId:result.buildId,requestId:result.requestId,requirementsDigest:result.requirementsDigest,deploymentId:launcher.deploymentId,
           artifactSha256:launcher.artifactSha256,capabilitiesDigest:launcher.capabilitiesDigest,resultDigest:result.resultDigest,
           builder:result.builder,acceptedAt:now,expiresAt:launcher.expiresAt,
-          evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']}},
+          evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete'],
+            ...(bundleProbe?{runId:probeId,instanceSchemaVersion:'finance.skill-eval.runtime-instance.v2',bundleDigest:bundleProbe.bundle.digest}:{})}},
       }) as Extract<EnvironmentRecord,{type:'runtime_launcher'}>;
       await writeJsonAtomic(path.join(this.directory,`${environment.environmentId}.json`),environment);
       return {environment,capabilities,created:true};

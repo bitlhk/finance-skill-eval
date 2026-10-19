@@ -135,6 +135,6 @@ export function useMigrationWorkbench({
     setPreview({ path, before: before.content, after: after.content });
   }
   const disabled = busy || Boolean(active);
-  return { pollError, catalog, api, tasks, task, setTask, stage, setStage, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, error, message, setMessage, config, setConfig, suite, setSuite, preview, runId, setRunId, zipInput, filesInput, current, active, latestAttempt, run, runtime, list, select, act, post, start, uploadZip, uploadMembers, showFile, disabled };
+  return { refreshCatalog: onChanged, pollError, catalog, api, tasks, task, setTask, stage, setStage, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, error, message, setMessage, config, setConfig, suite, setSuite, preview, runId, setRunId, zipInput, filesInput, current, active, latestAttempt, run, runtime, list, select, act, post, start, uploadZip, uploadMembers, showFile, disabled };
 }
 export type MigrationWorkbench = ReturnType<typeof useMigrationWorkbench>;

@@ -5,6 +5,7 @@ import { MigrationRunView } from './MigrationRunView';
 export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
   const { api, task, setTask, setStage, setMessage, suite, setSuite, setRunId, current, run, act, start, disabled } = state;
   if (!task) return null;
+  const builderBlocked = ['PENDING', 'STALE'].includes(task.builderStatus ?? '');
   return (
     <section className="stage-section">
       <h3>任务验收</h3>
@@ -39,7 +40,7 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
         </button>
         <button
           className="button primary"
-          disabled={disabled || !current || !task.suite || !task.configuration}
+          disabled={disabled || builderBlocked || !current || !task.suite || !task.configuration}
           onClick={() =>
             void act(async () => {
               setRunId('');
@@ -52,7 +53,7 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
         {Boolean(task.suite?.holdoutCases?.length) && (
           <button
             className="button secondary"
-            disabled={disabled || !current || !task.configuration}
+            disabled={disabled || builderBlocked || !current || !task.configuration}
             onClick={() =>
               void act(async () => {
                 setRunId('');

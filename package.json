@@ -52,7 +52,8 @@
     "pack:local": "pnpm build && pnpm pack --pack-destination artifacts",
     "test:ui:migration": "pnpm build && node scripts/verify-bundle-migration-ui.mjs",
     "test:ui:migration:imports": "pnpm build && node scripts/verify-migration-import-ui.mjs",
-    "test:ui:migration:live": "pnpm build && node scripts/verify-bundle-migration-live-ui.mjs"
+    "test:ui:migration:live": "pnpm build && node scripts/verify-bundle-migration-live-ui.mjs",
+    "test:ui:migration:builder": "pnpm build && node scripts/verify-migration-task-builder-ui.mjs"
   },
   "dependencies": {
     "@fastify/static": "8.3.0",

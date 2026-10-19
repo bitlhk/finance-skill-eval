@@ -21,6 +21,8 @@ src/migration/tasks/
   application/task-service.ts   幂等、并发、取消、恢复、迁移/修复编排
   application/task-acceptance.ts 逐题运行、Judge、回收、冻结记录
   application/task-export.ts   验收绑定核对、环境复核、交付
+  application/task-builder.ts  需求冻结、交付接收、版本绑定与历史
+  infrastructure/task-builder.ts 复用准入登记、v2 生命周期及环境复核
   application/task-ports.ts    存储、源资产、Agent、Runtime、Judge、日志接口
   infrastructure/             文件存储、模型和 Runtime 适配器
         ↓
@@ -39,7 +41,7 @@ integrations/openjiuwen/
 - 新 UI 不再按单/多 Skill 分流，不通过旧流程创建新任务。
 - 「转入统一迁移」复制明确选择的原始资产或候选资产，建立新任务并记录来源；原始记录不修改，不复制旧通过状态、运行配置或测试集。未生成候选时不能选择候选导入。
 - 更早的 v0.1 记录维持只读和原始 JSON 导出，不自动升级结论。
-- 新统一流程采用工程整体分析/改造与真实任务验收；旧版逐 Tool 技术验证和 Builder 页面保留在历史任务中，并未被重新包装为新流程的一次全自动通过。目标 Runtime 缺少能力时需先登记可用环境。
+- 新统一流程支持工程整体改造、Builder 需求导出 / 交付回填 / 版本绑定和真实任务验收。旧逐 Tool 技术验证保留在历史任务中。Builder 交付接收必须执行 v2 整组生命周期，不复用旧单成员验收作为通过依据。
 
 ## 运维或修改时从哪里查
 

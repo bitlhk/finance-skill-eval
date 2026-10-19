@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { MigrationTaskService } from '../../migration/tasks/application/task-service.js';
 import type { MigrationStore } from '../../migration/migration-store.js';
+import { stringify } from 'yaml';
 export function registerMigrationTaskRoutes(
   app: FastifyInstance,
   bundles: MigrationTaskService,
@@ -13,6 +14,24 @@ export function registerMigrationTaskRoutes(
       return reply.code(403).send({ message: '整组迁移仅限私有工作区。' });
   });
   for (const prefix of ['/api/migration-tasks', '/api/migration-bundles']) {
+    const builder = () => { if (!bundles.builder) throw Object.assign(new Error('Builder 接入尚未配置'), { statusCode: 503 }); return bundles.builder; };
+    app.post<{ Params: { id: string } }>(prefix + '/:id/runtime-build-requests', async request => {
+      await builder().request(request.params.id, request.body, request.id); return bundles.get(request.params.id);
+    });
+    app.get<{ Params: { id: string } }>(prefix + '/:id/runtime-requirements.yaml', async (request, reply) => {
+      const query = z.strictObject({ requestId: z.string().optional() }).parse(request.query);
+      return reply.type('application/yaml; charset=utf-8').header('content-disposition', 'attachment; filename="runtime-build-requirements.yaml"')
+        .send(stringify(await builder().requirements(request.params.id, query.requestId)));
+    });
+    app.get<{ Params: { id: string; requestId: string } }>(prefix + '/:id/runtime-build-requests/:requestId/source.zip', async (request, reply) =>
+      reply.type('application/zip').header('content-disposition', 'attachment; filename="builder-candidate.zip"')
+        .send(await builder().source(request.params.id, request.params.requestId)));
+    app.post<{ Params: { id: string } }>(prefix + '/:id/runtime-deliveries', async request => {
+      await builder().accept(request.params.id, request.body, request.id); return bundles.get(request.params.id);
+    });
+    app.delete<{ Params: { id: string } }>(prefix + '/:id/runtime-builder-selection', async request => {
+      await builder().useExisting(request.params.id); return bundles.get(request.params.id);
+    });
     app.get(prefix, () => bundles.list());
     app.post(prefix, (request) => bundles.create(request.body, request.id));
     app.post(prefix + '/upload', (request) => {

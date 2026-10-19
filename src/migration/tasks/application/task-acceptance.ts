@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { operationalError } from '../../../shared/operational-error.js';
 import { simpleMigrationCases, simpleMigrationHoldoutCases } from '../../domain/simple-migration-suite.js';
-import { currentCandidate, bundleError, type BundleTask, type BundleAttempt, type BundleRun } from '../domain/task-model.js';
+import { currentCandidate, bundleError, requireBuilderEnvironment, type BundleTask, type BundleAttempt, type BundleRun } from '../domain/task-model.js';
 import type { MigrationTaskRepository, BundleRuntimeFactory, BundleJudge, MigrationLogger } from './task-ports.js';
 type AcceptanceContext = Pick<MigrationTaskRepository, 'update' | 'readSnapshot'> & {
   runtime: BundleRuntimeFactory; judge: BundleJudge; logger?: MigrationLogger;
@@ -20,6 +20,8 @@ export async function acceptMigrationTask(
     suite = task.suite!,
     bundle = await context.readSnapshot(task.id, candidate.id);
   const run: BundleRun = {
+    ...(task.runtimeSelectionRevision ? { runtimeSelectionRevision: task.runtimeSelectionRevision } : {}),
+    ...(task.selectedRuntimeBuildRequestId ? { builderBindingId: task.runtimeDelivery!.id } : {}),
     id: 'bundle-run-' + randomUUID(),
     candidateId: candidate.id,
     candidateDigest: candidate.digest,
@@ -52,6 +54,7 @@ export async function acceptMigrationTask(
       configuration,
       signal,
     });
+    requireBuilderEnvironment(task, execution.environmentSnapshot);
     if (
       run.runtimeSnapshot &&
       canonicalSha256(run.runtimeSnapshot) !== canonicalSha256(execution.environmentSnapshot)

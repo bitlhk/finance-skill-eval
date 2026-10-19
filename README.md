@@ -49,7 +49,7 @@ pnpm test:ui:migration
 | 在其他产品中嵌入评测 | [Service 与 Adapter 接入](docs/standalone-service-v1.md)、[示例代码](examples/) |
 | 定位代码与排查问题 | [架构与运维导航](docs/current-architecture.md) |
 
-Builder 当前通过外部构建、部署后接入 Runtime；新统一任务尚未提供 Builder 需求导出和交付回填入口，旧任务保留该接口。
+Builder 在统一任务中导出需求与候选源码、回填交付并绑定版本；单 Skill 和多 Skill 共用整组验收流程。
 
 ## 目录
 

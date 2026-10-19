@@ -1,6 +1,6 @@
 import { assertMigrationExportSafe } from '../../domain/migration-export-safety.js';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
-import { currentCandidate, verifiedRun, bundleError, bundleZip } from '../domain/task-model.js';
+import { currentCandidate, verifiedRun, bundleError, bundleZip, requireBuilderEnvironment, taskBuilderStatus } from '../domain/task-model.js';
 import type { MigrationTaskRepository, BundleRuntimeFactory } from './task-ports.js';
 export async function exportMigrationTask(repository: MigrationTaskRepository, runtime: BundleRuntimeFactory, id: string, verified = false) {
   const task = await repository.get(id),
@@ -16,6 +16,7 @@ export async function exportMigrationTask(repository: MigrationTaskRepository, r
       configuration: run.configuration,
       signal: AbortSignal.timeout(60000),
     });
+    requireBuilderEnvironment(task, current.environmentSnapshot);
     if (canonicalSha256(current.environmentSnapshot) !== canonicalSha256(run.runtimeSnapshot))
       bundleError('运行环境已变化，需要对当前环境重新验收');
   }
@@ -30,8 +31,15 @@ export async function exportMigrationTask(repository: MigrationTaskRepository, r
     schemaVersion: task.schemaVersion,
     candidate,
     configuration: task.configuration,
+    runtimeSelectionRevision: task.runtimeSelectionRevision,
     verified: verified && Boolean(run),
+    builderStatus: taskBuilderStatus(task),
+    builderBinding: taskBuilderStatus(task) === 'BOUND' ? task.runtimeDelivery : undefined,
   });
   add('migration/acceptance.json', run ?? { status: 'NOT_VERIFIED' });
+  if (task.selectedRuntimeBuildRequestId) {
+    add('migration/runtime-build-requirements.json', task.runtimeBuildRequests?.find(r => r.requirements.requestId === task.selectedRuntimeBuildRequestId)?.requirements);
+    if (task.runtimeDelivery?.requestId === task.selectedRuntimeBuildRequestId) add('migration/runtime-build-result.json', task.runtimeDelivery.result);
+  }
   return bundleZip(files);
 }

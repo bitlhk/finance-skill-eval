@@ -7,7 +7,16 @@ import type {
   BundleDelivery,
   BundleSnapshot,
   BundleVerdict,
+  TaskBuildRequest,
 } from '../domain/task-model.js';
+import type { RuntimeBuildResultV1 } from '../../../shared/contracts/runtime-builder.js';
+import type { RuntimeLauncherBinding } from '../../../shared/contracts/environment.js';
+export interface TaskBuilderPort {
+  accept(input: { request: TaskBuildRequest; result: RuntimeBuildResultV1; trustReference: string; name?: string;
+    snapshot: BundleSnapshot; services: BundleDelivery['services'] }): Promise<{
+      configuration: BundleConfiguration; environmentSnapshot: unknown; launcher: RuntimeLauncherBinding;
+    }>;
+}
 export type MigrationCorrelation = { taskId: string; attemptId: string; requestId?: string; agentRunId: string; };
 export type BundleAgentInput = {
   correlation?: MigrationCorrelation;

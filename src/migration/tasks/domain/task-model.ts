@@ -5,6 +5,8 @@ import { unzipSync, zipSync } from 'fflate';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { simpleMigrationSuiteSchema } from '../../domain/simple-migration-suite.js';
 import type { RuntimeExecutionEvidence } from '../../../contracts.js';
+import type { RuntimeBuildRequirementsV1, RuntimeBuildResultV1 } from '../../../shared/contracts/runtime-builder.js';
+import type { RuntimeLauncherBinding } from '../../../shared/contracts/environment.js';
 
 export const bundleIdSchema = z.string().regex(/^bundle-[a-f0-9-]+$/);
 export const pathSchema = z
@@ -105,6 +107,8 @@ export type BundleAttempt = {
 };
 export type BundleVerdict = { passed: boolean; reason: string; };
 export type BundleRun = {
+  runtimeSelectionRevision?: string;
+  builderBindingId?: string;
   id: string;
   candidateId: string;
   candidateDigest: string;
@@ -121,6 +125,12 @@ export type BundleRun = {
   runtimeSnapshot?: unknown;
 };
 export type BundleTask = {
+  runtimeSelectionRevision?: string;
+  runtimeBuildRequests?: TaskBuildRequest[];
+  selectedRuntimeBuildRequestId?: string;
+  runtimeDeliveries?: TaskRuntimeDelivery[];
+  runtimeDelivery?: TaskRuntimeDelivery;
+  builderStatus?: 'NONE' | 'PENDING' | 'BOUND' | 'STALE';
   schemaVersion: 'finance.skill-migration.bundle.v1';
   id: string;
   name: string;
@@ -137,6 +147,24 @@ export type BundleTask = {
   suite?: z.infer<typeof bundleSuiteSchema>;
   attempts: BundleAttempt[];
   runs: BundleRun[];
+};
+export type TaskBuildRequest = {
+  requirements: RuntimeBuildRequirementsV1;
+  candidateId: string;
+  candidateDigest: string;
+  baseConfigurationDigest: string;
+  settings: Omit<BundleConfiguration, 'environmentId' | 'modelId'> & { modelId?: string };
+  createdAt: string;
+};
+export type TaskRuntimeDelivery = {
+  id: string;
+  requestId: string;
+  candidateId: string;
+  candidateDigest: string;
+  configurationDigest: string;
+  environmentSnapshot: unknown;
+  launcher: RuntimeLauncherBinding;
+  result: RuntimeBuildResultV1;
 };
 export const createBundleSchema = z.strictObject({
   name: z.string().trim().min(1).max(120),
@@ -279,15 +307,40 @@ export function currentCandidate(task: BundleTask) {
 }
 export function verifiedRun(task: BundleTask) {
   if (!task.configuration || !task.suite) return undefined;
+  if (task.selectedRuntimeBuildRequestId && taskBuilderStatus(task) !== 'BOUND') return undefined;
   const latest = [...task.runs]
     .reverse()
     .find(
       (run) =>
         run.candidateId === task.currentCandidateId &&
+        run.runtimeSelectionRevision === task.runtimeSelectionRevision &&
+        run.builderBindingId === (task.selectedRuntimeBuildRequestId ? task.runtimeDelivery?.id : undefined) &&
         run.configurationDigest === canonicalSha256(task.configuration) &&
         run.suiteDigest === canonicalSha256(task.suite),
     );
   return latest?.status === 'PASSED' && (!task.suite.holdoutCases?.length || latest.phase === 'holdout')
     ? latest
     : undefined;
+}
+export function taskBuilderStatus(task: BundleTask): NonNullable<BundleTask['builderStatus']> {
+  if (!task.selectedRuntimeBuildRequestId) return 'NONE';
+  const request = task.runtimeBuildRequests?.find(r => r.requirements.requestId === task.selectedRuntimeBuildRequestId);
+  if (!request || request.candidateId !== task.currentCandidateId || request.candidateDigest !== currentCandidate(task)?.digest) return 'STALE';
+  const binding = task.runtimeDelivery;
+  if (!binding || binding.requestId !== request.requirements.requestId)
+    return request.baseConfigurationDigest === canonicalSha256(task.configuration ?? null) ? 'PENDING' : 'STALE';
+  if (binding.launcher.expiresAt && Date.parse(binding.launcher.expiresAt) <= Date.now()) return 'STALE';
+  return binding.candidateId === task.currentCandidateId && binding.candidateDigest === currentCandidate(task)?.digest
+    && binding.configurationDigest === canonicalSha256(task.configuration ?? null) ? 'BOUND' : 'STALE';
+}
+export function requireTaskBuilderBinding(task: BundleTask) {
+  const status = taskBuilderStatus(task);
+  if (status === 'PENDING' || status === 'STALE') bundleError('Builder 交付尚未绑定当前候选及运行配置，请重新导出需求并接收交付，或明确切换为已有环境');
+}
+export function requireBuilderEnvironment(task: BundleTask, snapshot: unknown) {
+  requireTaskBuilderBinding(task);
+  if (task.selectedRuntimeBuildRequestId && task.runtimeDelivery?.launcher.expiresAt && Date.parse(task.runtimeDelivery.launcher.expiresAt) <= Date.now())
+    bundleError('Builder 交付已过期，请重新接收有效交付');
+  if (task.selectedRuntimeBuildRequestId && canonicalSha256(task.runtimeDelivery?.environmentSnapshot ?? null) !== canonicalSha256(snapshot))
+    bundleError('Builder 绑定的运行环境已变化，请重新导出需求并接收交付');
 }

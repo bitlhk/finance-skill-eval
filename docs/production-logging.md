@@ -37,3 +37,7 @@ Runtime stderr 持续排空，只保留最多 8 KiB 尾部用于提取异常类�
 取响应 x-request-id、UI taskId/runId、时间和候选版本，查 HTTP → operation → case → process 事件。stderrBytes 非零但无 terminal 时检查异常类别、退出码、资源和网络；完整证据由授权人员在私有任务目录查看，不复制到公共日志/工单。
 
 如需详细 Agent dump，在隔离复现场景启用，设私有路径、短保留期；默认生产预检拒绝该开关。脱敏测试覆盖已知应用路径，不保证任意第三方扩展、业务脚本或代理永不输出敏感信息，新增工具仍须验收。
+
+## Builder 接入日志
+
+统一任务记录 `migration_builder_requirements_created`、`migration_builder_delivery_started`、`migration_builder_delivery_bound` 和 `migration_builder_delivery_failed`。通过 `taskId`、HTTP `requestId`、`buildRequestId` 关联需求与回填；成功日志提供 `bindingId`、`buildId`、`deploymentId`、`environmentId` 和 `conformanceRunId`。生命周期检查的运行 ID 也保存在交付记录 `evalConformance.runId` 中。日志不打印 Result 正文、源码、模型输入或凭据；详细失败原因在受保护的 API 响应中。

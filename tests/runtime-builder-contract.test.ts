@@ -75,3 +75,14 @@ it('binds an iterative rebuild to its previous solution and rejects the old depl
     launcher:{...result.launcher!,deploymentId:'deployment-2',artifactSha256:'0'.repeat(64)}});
   expect(validateRuntimeBuildResult(rebuild,revised,capabilities)).toEqual([]);
 });
+
+it('validates the unified-task extension examples without changing the legacy envelopes',async()=>{
+  const {taskBuildProfileSchema,taskBuildReceiptSchema}=await import('../src/shared/contracts/task-builder.js');
+  const load=async(name:string)=>JSON.parse(await readFile(new URL(`../contracts/runtime-builder/examples/${name}`,import.meta.url),'utf8'));
+  const requirements=await load('task.requirements.success.json'),result=await load('task.result.success.json'),capabilities=await load('task.capabilities.json');
+  expect(validateRuntimeBuildResult(requirements,result,capabilities)).toEqual([]);
+  const profile=taskBuildProfileSchema.parse(requirements.extensions.migrationTask),receipt=taskBuildReceiptSchema.parse(result.extensions.migrationTask);
+  expect(receipt.candidateDigest).toBe(profile.candidateDigest);expect(receipt.taskId).toBe(profile.taskId);
+  expect(profile.members).toHaveLength(1);expect(capabilities.features.multiSkill).toBe(true);
+  expect(()=>taskBuildReceiptSchema.parse({...receipt,instanceSchemaVersion:'finance.skill-eval.runtime-instance.v1'})).toThrow();
+});

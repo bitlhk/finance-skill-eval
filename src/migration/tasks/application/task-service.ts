@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { operationalError } from '../../../shared/operational-error.js';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { simpleMigrationCases } from '../../domain/simple-migration-suite.js';
-import type { BundleAgent, BundleRuntimeFactory, BundleJudge, MigrationTaskRepository, MigrationSourceAssets, MigrationLogger } from './task-ports.js';
+import type { BundleAgent, BundleRuntimeFactory, BundleJudge, MigrationTaskRepository, MigrationSourceAssets, MigrationLogger, TaskBuilderPort } from './task-ports.js';
+import { TaskBuilderService } from './task-builder.js';
 import {
   analysisSchema,
   deliverySchema,
@@ -18,6 +19,7 @@ import {
   bundleDiff,
   currentCandidate,
   readText,
+  taskBuilderStatus, requireTaskBuilderBinding, requireBuilderEnvironment,
   type BundleTask,
   type BundleAttempt,
   type BundleFiles,
@@ -35,9 +37,11 @@ export class MigrationTaskService {
     private runtime: BundleRuntimeFactory,
     private judge: BundleJudge,
     private logger?: MigrationLogger,
-  ) { }
+    builder?: TaskBuilderPort,
+  ) { this.builder = builder ? new TaskBuilderService(repository, builder, logger) : undefined; }
+  readonly builder?: TaskBuilderService;
   async initialize() {
-    for (const task of await this.list()) {
+    for (const task of await this.repository.list()) {
       let changed = false;
       for (const attempt of task.attempts)
         if (attempt.status === 'RUNNING') {
@@ -58,10 +62,10 @@ export class MigrationTaskService {
       }
     }
   }
-  list() { return this.repository.list(); }
-  get(id: string) { return this.repository.get(id); }
+  async list() { return (await this.repository.list()).map(t => ({ ...t, ...(t.selectedRuntimeBuildRequestId ? { builderStatus: taskBuilderStatus(t) } : {}) })); }
+  async get(id: string) { const task = await this.repository.get(id); return { ...task, ...(task.selectedRuntimeBuildRequestId ? { builderStatus: taskBuilderStatus(task) } : {}) }; }
   readSnapshot(id: string, candidateId: string | null) { return this.repository.readSnapshot(id, candidateId); }
-  private update(id: string, change: (task: BundleTask) => void | Promise<void>) { return this.repository.update(id, change); }
+  private async update(id: string, change: (task: BundleTask) => void | Promise<void>) { const task = await this.repository.update(id, change); return { ...task, ...(task.selectedRuntimeBuildRequestId ? { builderStatus: taskBuilderStatus(task) } : {}) }; }
   private idle(task: BundleTask) {
     if (task.attempts.some((a) => a.status === 'RUNNING')) bundleError('任务正在执行，请等待或取消当前操作');
   }
@@ -127,12 +131,14 @@ export class MigrationTaskService {
     const task = await this.get(id),
       candidate = currentCandidate(task);
     if (!candidate || !task.configuration) bundleError('请先生成候选并配置运行环境');
+    requireTaskBuilderBinding(task);
     const result = await this.runtime({
       snapshot: await this.readSnapshot(id, candidate.id),
       services: candidate.services,
       configuration: task.configuration,
       signal: AbortSignal.timeout(60000),
     });
+    requireBuilderEnvironment(task, result.environmentSnapshot);
     return {
       status: 'READY',
       scope: 'CAPABILITIES_AND_BINDINGS',
@@ -170,6 +176,7 @@ export class MigrationTaskService {
           bundleError('独立留出验收记录不提供给修复 Agent，请使用开发回归案例重现问题');
       }
       if (kind === 'ACCEPT') {
+        requireTaskBuilderBinding(task);
         if (!task.currentCandidateId || !task.configuration || !task.suite)
           bundleError('请先生成候选、配置环境并保存验收用例');
         if (parsed.phase === 'holdout' && !task.suite.holdoutCases?.length)

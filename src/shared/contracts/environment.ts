@@ -5,6 +5,7 @@ const baseUrlSchema=endpointSchema.refine(value=>{const url=new URL(value);retur
 const common={name:z.string().trim().min(1).max(80),credentialEnv:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u).max(100).nullable().optional()};
 export const runtimeLauncherEvalConformanceSchema=z.strictObject({
   status:z.literal('PASSED'),testedAt:z.string().datetime(),
+  runId:z.string().min(1).optional(),instanceSchemaVersion:z.literal('finance.skill-eval.runtime-instance.v2').optional(),bundleDigest:z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   checks:z.tuple([z.literal('capabilities'),z.literal('create'),z.literal('status'),z.literal('execute'),z.literal('evidence'),z.literal('delete')]),
 });
 export const runtimeLauncherDeliverySchema=z.strictObject({

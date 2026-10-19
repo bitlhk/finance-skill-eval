@@ -46,6 +46,9 @@ export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbenc
         </p>
       )}
       {message && <p role="status">{message}</p>}
+      {task && ['PENDING', 'STALE'].includes(task.builderStatus ?? '') && <p className="bundle-notice">
+        {task.builderStatus === 'STALE' ? 'Builder 绑定已失效。' : '正在等待 Builder 交付。'}请在 Runtime 适配与登记中完成绑定，或明确切换为已有环境后再验收。
+      </p>}
       {task && (
         <nav aria-label="迁移步骤">
           {stages.map((label, index) => (

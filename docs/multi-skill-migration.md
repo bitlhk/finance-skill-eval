@@ -215,3 +215,7 @@ result.json 明确记录真实模式及成功/失败。测试结束会关闭自�
 真实 UI 测试通过 `MIGRATION_LIVE_MEMBERS=1` 或 `3` 选择成员数量，同一套 Agent、Runtime、Judge、页面和断言路径执行；报告记录 memberCount。
 
 Builder 产出的 Runtime 如何登记、旧任务的交付接口与新流程的支持范围，见 [Builder 接入](runtime-builder-integration.md)。
+
+## Builder 统一接入
+
+在「Runtime 适配与登记」生成需求、下载该需求绑定的候选源码；外部构建部署后回填 Result。平台执行 v2 整组生命周期并绑定候选、需求、交付和配置版本。修复生成新候选或配置变化后需重新交付，或明确切换为已有环境再验收。旧需求和交付保留历史，已验收导出还会核对在线环境。详见 [Builder 操作与协议](runtime-builder-integration.md)。

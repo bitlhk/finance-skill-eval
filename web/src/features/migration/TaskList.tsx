@@ -26,6 +26,7 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
           <label className="bundle-full">
             业务目标
             <textarea
+              aria-label="业务目标"
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
               placeholder="需要完成什么业务任务？"

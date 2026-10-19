@@ -1,5 +1,6 @@
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import { BuilderPanel } from './BuilderPanel';
 export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
   const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled } = state;
   if (!task) return null;
@@ -103,6 +104,7 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
       >
         保存运行配置
       </button>
+      <BuilderPanel key={task.id} state={state} />
     </section>
   );
 }
