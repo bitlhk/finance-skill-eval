@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { operationalError, type OperationalLogger } from '../../service/logging.js';
 import { z } from 'zod';
 import { writeJsonAtomic, readJson, listJsonFiles } from '../../service/file-store.js';
 import { KeyedQueue } from '../../shared/keyed-queue.js';
@@ -42,6 +43,7 @@ export class BundleMigrationService {
     private agent: BundleAgent,
     private runtime: BundleRuntimeFactory,
     private judge: BundleJudge,
+    private logger?: OperationalLogger,
   ) {}
   private taskFile(id: string) {
     bundleIdSchema.parse(id);
@@ -68,7 +70,10 @@ export class BundleMigrationService {
           run.finishedAt = new Date().toISOString();
           changed = true;
         }
-      if (changed) await writeJsonAtomic(this.taskFile(task.id), task);
+      if (changed) {
+        await writeJsonAtomic(this.taskFile(task.id), task);
+        this.logger?.warn({ event: 'bundle_recovered_after_restart', taskId: task.id });
+      }
     }
   }
   async list() {
@@ -223,6 +228,8 @@ export class BundleMigrationService {
     if (duplicate) return task;
     const attempt = task.attempts[task.attempts.length - 1]!,
       controller = new AbortController();
+    this.logger?.info({ event: 'bundle_operation_started', taskId: id, attemptId: attempt.id,
+      kind, candidateId: attempt.baseCandidateId });
     const done = this.execute(task, attempt, parsed.phase, controller.signal).finally(() => {
       this.active.delete(id);
       BundleMigrationService.executing--;
@@ -324,7 +331,12 @@ export class BundleMigrationService {
         a.finishedAt = new Date().toISOString();
         a.message = attempt.kind === 'ACCEPT' ? '联合验收已结束，请查看验收结论' : '本阶段已完成';
       });
+      this.logger?.info({ event: 'bundle_operation_finished', taskId: task.id, attemptId: attempt.id,
+        kind: attempt.kind, status: 'COMPLETED', elapsedMs: Date.now() - Date.parse(attempt.startedAt) });
     } catch (error) {
+      this.logger?.warn({ event: 'bundle_operation_finished', taskId: task.id, attemptId: attempt.id,
+        kind: attempt.kind, status: signal.aborted ? 'CANCELLED' : 'FAILED',
+        elapsedMs: Date.now() - Date.parse(attempt.startedAt), err: operationalError(error) });
       await this.update(task.id, (t) => {
         const a = t.attempts.find((a) => a.id === attempt.id)!;
         a.status = signal.aborted ? 'CANCELLED' : 'FAILED';
@@ -369,6 +381,8 @@ export class BundleMigrationService {
     const receipts: unknown[] = [];
     for (const evalCase of cases) {
       signal.throwIfAborted();
+      this.logger?.info({ event: 'bundle_case_started', taskId: task.id, runId: run.id,
+        caseId: evalCase.caseId, phase, candidateId: candidate.id });
       await this.progress(task.id, attempt.id, '联合验收：' + evalCase.caseId);
       // A new instance per case; the entire group is loaded on every execution.
       const execution = await this.runtime({
@@ -413,7 +427,11 @@ export class BundleMigrationService {
           ? await this.judge({ evalCase, evidence, signal })
           : { passed: false, reason: '执行未完成，或整组装载证据不完整' };
         run.cases.push({ id: evalCase.caseId, ...verdict, evidence });
+        this.logger?.info({ event: 'bundle_case_finished', taskId: task.id, runId: run.id,
+          caseId: evalCase.caseId, passed: verdict.passed, elapsedMs: evidence.elapsedMs });
       } catch (error) {
+        this.logger?.warn({ event: 'bundle_case_failed', taskId: task.id, runId: run.id,
+          caseId: evalCase.caseId, err: operationalError(error) });
         if (signal.aborted) throw error;
         run.cases.push({
           id: evalCase.caseId,

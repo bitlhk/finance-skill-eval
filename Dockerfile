@@ -1,3 +1,4 @@
+# Legacy Node-only image. Full production image: deploy/docker/Dockerfile
 FROM node:22-bookworm-slim AS build
 
 ENV PNPM_HOME=/pnpm

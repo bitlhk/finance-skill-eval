@@ -14,6 +14,8 @@ from .instance_manager import InstanceManager
 from .model_config import resolve_model
 from .runtime_context import RuntimeContext
 from .package_runtime import service_environment
+from .operational_logging import event as log_event, drain_stderr, timeout_ms
+from .session_process import terminate_tree
 
 @asynccontextmanager
 async def lifespan(app):
@@ -22,12 +24,16 @@ async def lifespan(app):
             instances.expire()
             await asyncio.sleep(1)
     task = asyncio.create_task(sweep())
+    log_event('runtime_ready')
     try:
         yield
     finally:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+        if cleanup_jobs:
+            await asyncio.gather(*list(cleanup_jobs), return_exceptions=True)
+        log_event('runtime_stopped')
 
 
 app = FastAPI(lifespan=lifespan)
@@ -142,6 +148,10 @@ async def execute_runtime_instance(instance_id: str, request: Request):
 @app.post("/execute")
 async def execute(request: Request):
     body = await request.json()
+    try:
+        execution_timeout = timeout_ms(body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     cfg = config()
     try:
         RuntimeContext((body.get('environment') or {}).get('runtimeToolConfig'), cfg.get('authProviders', {}))
@@ -188,17 +198,20 @@ async def execute(request: Request):
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(Path(__file__).with_name("session.py")),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+                stderr=asyncio.subprocess.PIPE, start_new_session=True,
                 limit=1048576,
                 env={**os.environ, "FINANCE_RUNTIME_CONFIG": str(CONFIG), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
             )
             active.add(process.pid)
+            correlation = {'runId': body['runId'], 'caseId': body['case']['caseId'], 'pid': process.pid}
+            log_event('runtime_session_started', **correlation, timeoutMs=execution_timeout)
+            diagnostics = asyncio.create_task(drain_stderr(process.stderr))
             terminal = False
             try:
                 process.stdin.write(json.dumps(body).encode())
                 await process.stdin.drain()
                 process.stdin.close()
-                async with asyncio.timeout(300):
+                async with asyncio.timeout(execution_timeout / 1000):
                     while True:
                         if await request.is_disconnected():
                             break
@@ -216,34 +229,20 @@ async def execute(request: Request):
                             terminal = True
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except TimeoutError:
-                pass
+                log_event('runtime_session_timeout', **correlation, timeoutMs=execution_timeout)
             finally:
                 # Client disconnect can cancel the generator while it is reaping.
                 async def reap():
                     try:
-                        if process.returncode is None:
-                            try:
-                                if os.name == "nt":
-                                    process.terminate()
-                                else:
-                                    import signal
-                                    os.killpg(process.pid, signal.SIGTERM)
-                            except ProcessLookupError:
-                                pass
-                            try:
-                                await asyncio.wait_for(process.wait(), 3)
-                            except TimeoutError:
-                                try:
-                                    if os.name == "nt":
-                                        process.kill()
-                                    else:
-                                        import signal
-                                        os.killpg(process.pid, signal.SIGKILL)
-                                except ProcessLookupError:
-                                    pass
-                                await process.wait()
+                        await terminate_tree(process)
                     finally:
                         active.discard(process.pid)
+                        try:
+                            detail = await asyncio.wait_for(diagnostics, 3)
+                        except (TimeoutError, asyncio.CancelledError):
+                            detail = {}
+                        log_event('runtime_session_finished', **correlation, exitCode=process.returncode,
+                                  terminal=terminal, elapsedMs=round((time.monotonic()-started)*1000), **detail)
                 cleanup = asyncio.create_task(reap())
                 cleanup_jobs.add(cleanup)
                 cleanup.add_done_callback(cleanup_jobs.discard)
@@ -254,7 +253,7 @@ async def execute(request: Request):
                             "output": "", "elapsedMs": round((time.monotonic() - started) * 1000),
                             "toolCalls": [], "loadedSkills": [], "usage": None,
                             "runtimeIdentityVerified": False, "streamCompleted": False,
-                            "error": "OpenJiuwen session stopped or exceeded 300 seconds", "metadata": {}}
+                            "error": f"OpenJiuwen session stopped or exceeded {execution_timeout // 1000} seconds", "metadata": {}}
                 yield f"data: {json.dumps({'evidence': evidence})}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})

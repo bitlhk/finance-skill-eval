@@ -21,3 +21,4 @@ __pycache__/
 .runtime.local.json.tmp
 .env.local
 .public-demo/
+/deploy/private/

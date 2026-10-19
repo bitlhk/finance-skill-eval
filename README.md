@@ -20,6 +20,8 @@ Service   独立控制台、Skill 评测与迁移、环境管理和历史报告
 
 ## 核心能力
 
+生产部署见 [统一入口](docs/production-deployment.md)：Linux/systemd、Docker Compose、Windows/WinSW 共用预检、启停和备份工具。另见 [日志说明](docs/production-logging.md) 与 [生产就绪检查](docs/production-readiness.md)。根目录 Dockerfile/compose.yaml 保留为旧版 Node-only 示例，不包含完整迁移 Runtime。
+
 - **多 Skill 整体迁移**：同一个 Agent 工作区查看全部成员与共享源码，跨 Skill 改造，生成整组候选；在同一迁移任务中联合验收、整体修复并打包交付。见 [使用与协议说明](docs/multi-skill-migration.md)。
 - **Skill 分析与出题**：分析 Skill 的目标、流程和依赖，辅助生成与其能力相匹配的测试任务。
 - **Skill 迁移诊断**：读取 Skill 文档和 Tool 源码，区分业务工具、代码依赖、Runtime 注入依赖与原框架胶水，并给出可追溯的迁移建议。

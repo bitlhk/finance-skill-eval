@@ -1,0 +1,7 @@
+# Optional HOST-WIDE policy. Review other services before installing this file
+# into /etc/systemd/journald.conf.d/finance-eval.conf and restarting journald.
+[Journal]
+Storage=persistent
+SystemMaxUse=2G
+SystemKeepFree=1G
+MaxRetentionSec=14day

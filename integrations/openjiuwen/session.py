@@ -40,6 +40,8 @@ def emit(value):
 
 
 async def run(body):
+    from operational_logging import configure_sdk_logging
+    configure_sdk_logging()
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
     from openjiuwen.harness.deep_agent import DeepAgent

@@ -1,4 +1,8 @@
 .git
+.venv*/
+**/.venv*/
+**/__pycache__/
+deploy/private/
 node_modules
 dist
 web-dist

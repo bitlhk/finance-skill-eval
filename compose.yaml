@@ -1,3 +1,5 @@
+# Legacy Node-only example. Full production stack: deploy/docker/compose.yaml
+# Follow docs/production-docker.md for multi-skill migration.
 services:
   finance-skill-eval:
     build: .
