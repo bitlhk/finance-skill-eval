@@ -77,3 +77,13 @@ Launcher 通过 capabilities 的可选 `observability` 字段声明 `core`、`to
 新实例不是重新部署服务；临时句柄只说明同生命周期的状态传递，不是跨生命周期复用证明。
 
 参考 worker 支持 Skill zip 包和包内候选 MCP，校验压缩包大小、文件数及路径。v1 明确声明 `externalMcp: false`，因此拒绝由请求传入任意外部 MCP URL；模型 API Key 和 Base URL 继续只存在于 Runtime 自己的 `.runtime.local.json` 中。
+
+## 多 Skill 实例扩展
+
+新增可选能力 `features.multiSkill` 和版本化请求
+`finance.skill-eval.runtime-instance.v2`。它通过现有实例端点传输完整整组 ZIP
+与成员清单，`skill=null`，每个成员作为独立 Skill 装载。
+证据需要核验整组摘要和全部成员摘要。旧 v1 单 Skill 请求保持兼容；
+未声明能力的 Launcher 不接收整组候选。
+详见 [整体迁移说明](multi-skill-migration.md) 和
+[v2 JSON Schema](../contracts/runtime-launcher/finance.skill-eval.runtime-instance.v2.schema.json)。

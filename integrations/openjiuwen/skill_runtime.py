@@ -23,7 +23,8 @@ async def mount_skill_runtime(agent, stack, skill, root_path, workspace_path, re
     selected = set(requested) & factories.keys()
     library = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='finance-skill-library-')))
     directory = library / 'target-skill'
-    if skill:
+    members = (skill or {}).get('bundleMembers')
+    if skill and not members:
         directory.mkdir()
         entrypoint = PurePosixPath(skill.get('skillFile', 'SKILL.md'))
         prefix = '' if str(entrypoint.parent) == '.' else str(entrypoint.parent) + '/'
@@ -65,13 +66,27 @@ async def mount_skill_runtime(agent, stack, skill, root_path, workspace_path, re
         Runner.resource_mgr.add_tool(tool, refresh=True)
         agent.ability_manager.add(tool.card)
     if skill:
-        rail = SkillUseRail(skills_dir=[str(library)], enabled_skills=['target-skill'],
+        if members:
+            # Use the real directory, retaining sibling/shared relative resource references.
+            roots = sorted({str((Path(root_path) / item['skillFile']).parent.parent) for item in members})
+            enabled = [item['skillId'] for item in members]
+            aliases = {str((Path(root_path) / item['skillFile']).parent.resolve()): item['skillId'] for item in members}
+            class BundleSkillUseRail(SkillUseRail):
+                async def _load_skill(self, skill_dir, update_at):
+                    skill = await super()._load_skill(skill_dir, update_at)
+                    skill.name = aliases.get(str(skill_dir.resolve()), '__unregistered__')
+                    return skill
+            rail_type = BundleSkillUseRail
+        else:
+            roots, enabled = [str(library)], ['target-skill']
+            rail_type = SkillUseRail
+        rail = rail_type(skills_dir=roots, enabled_skills=enabled,
             skill_mode='all', include_tools=False)
         rail.set_sys_operation(operation)
         await agent.register_rail(rail)
         await rail.reload_skills()
-        if len(rail.skills_meta) != 1:
-            raise ValueError('SkillUseRail did not load the requested Skill')
+        if len(rail.skills_meta) != len(enabled):
+            raise ValueError('SkillUseRail did not load every requested Skill')
     if observe:
         class EvidenceRail(AgentRail):
             async def before_tool_call(self, ctx):

@@ -59,6 +59,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),
     multiTurn:z.boolean().optional(),
+    multiSkill:z.boolean().optional(),
     toolProcessEvidence:z.boolean().optional(),
     mcpResultChannels:z.boolean().optional(),
     mcpPrepare:z.boolean().optional(),

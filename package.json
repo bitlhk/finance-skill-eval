@@ -34,6 +34,7 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:ui:migration-v2": "pnpm build && node scripts/verify-migration-v2-ui.mjs",
+    "test:ui:migration-bundle": "pnpm build && node scripts/verify-bundle-migration-ui.mjs",
     "test:ui:migration-enterprise": "pnpm build && node scripts/verify-enterprise-examples-page.mjs",
     "test:ui:migration-capabilities": "pnpm build && node scripts/verify-capability-skills-ui.mjs",
     "test:ui:reuse-acceptance": "pnpm build && node scripts/verify-reuse-acceptance-ui.mjs",

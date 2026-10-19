@@ -14,6 +14,33 @@ from openjiuwen.core.single_agent.schema.agent_card import AgentCard
 
 
 class SkillRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bundle_loads_two_real_framework_skills_in_one_agent(self):
+        async with AsyncExitStack() as stack:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            work = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            agent = ReActAgent(AgentCard(id='bundle-skill-test', name='test'))
+            agent.configure(ReActAgentConfig())
+            members = []
+            for name in ['budget', 'rules']:
+                entry = root / 'members' / name / 'skill' / 'SKILL.md'
+                entry.parent.mkdir(parents=True)
+                entry.write_text('---\nname: ' + name + '\ndescription: test\n---\nBODY_' + name, encoding='utf-8')
+                members.append({'skillId': name, 'skillFile': 'members/' + name + '/skill/SKILL.md'})
+            rails = []
+            register = agent.register_rail
+            async def capture(rail):
+                rails.append(rail)
+                return await register(rail)
+            agent.register_rail = capture
+            await mount_skill_runtime(agent, stack, {'bundleMembers': members}, root, work, [])
+            await rails[0].before_model_call(SimpleNamespace(session=None, extra={}))
+            from openjiuwen.core.runner import Runner
+            tool = Runner.resource_mgr.get_tool(tool_id=agent.ability_manager.get('skill_tool').id)
+            for name in ['budget', 'rules']:
+                result = await tool.invoke({'skill_name': name})
+                self.assertTrue(result.success, result.error)
+                self.assertIn('BODY_' + name, json.dumps(result.data))
+
     async def test_skill_tool_loads_body_and_reference_without_default_file_or_shell_tools(self):
         async with AsyncExitStack() as stack:
             root = Path(stack.enter_context(tempfile.TemporaryDirectory()))

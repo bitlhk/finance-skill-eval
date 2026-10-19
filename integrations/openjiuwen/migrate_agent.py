@@ -321,4 +321,9 @@ async def run(body: dict) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run(json.loads(sys.stdin.read())))
+    request = json.loads(sys.stdin.read())
+    if request.get("bundle"):
+        from bundle_agent import run_bundle
+        asyncio.run(run_bundle(request, protocol))
+    else:
+        asyncio.run(run(request))

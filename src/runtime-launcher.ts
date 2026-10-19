@@ -7,6 +7,7 @@ import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeCleanupObservationSchema, runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 import { runtimeObservationEventSchema, type RuntimeObservationEvent } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
+import {runtimeBundleSchema,type RuntimeBundle} from './shared/contracts/runtime-bundle.js';
 
 export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 export type { RuntimeLauncherCapabilities } from './shared/contracts/runtime-launcher.js';
@@ -32,7 +33,8 @@ export const launcherGenerationSchema=z.strictObject({
   thinking:z.strictObject({type:z.literal('disabled')}).optional(),
 });
 export type RuntimeInstanceRequest={
-  schemaVersion:'finance.skill-eval.runtime-instance.v1';runId:string;side:EvaluationSide;modelId:string;
+  schemaVersion:'finance.skill-eval.runtime-instance.v1'|'finance.skill-eval.runtime-instance.v2';runId:string;side:EvaluationSide;modelId:string;
+  bundle?:RuntimeBundle;
   variant:SkillVariant;skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;
   configuration:Record<string,string>;secrets:RuntimeInstanceSecrets;limits:{timeoutMs:number};
   generation?:z.infer<typeof launcherGenerationSchema>;
@@ -190,12 +192,18 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   private failedCaseId:string|null=null;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
-    skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
+    skill:ResolvedSkillSource|null;bundle?:RuntimeBundle;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
     this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
     const signal = context.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(this.options.timeoutMs)]) : AbortSignal.timeout(this.options.timeoutMs);
     const extracted=extractSecrets(this.options.environment,this.options.secrets);
+    if(this.options.bundle){
+      runtimeBundleSchema.parse(this.options.bundle);
+      if(this.options.skill)throw new Error('Bundle instances cannot contain a separate single Skill');
+      const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-capabilities'),{headers:this.options.headers,redirect:'error',signal});
+      if(!response.ok||runtimeLauncherCapabilitiesSchema.parse(await response.json()).features.multiSkill!==true)throw new Error('目标 Runtime 未声明多 Skill 装载能力');
+    }
     const parameters=this.options.model.parameters;
     const generation=Object.keys(parameters).length
       ? {...launcherGenerationSchema.omit({schemaVersion:true}).parse(parameters),schemaVersion:'finance.eval-generation.v1' as const} : undefined;
@@ -204,6 +212,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       modelId:this.options.model.modelId,variant:this.options.variant,skill:this.options.skill,environment:extracted.environment,
       configuration:this.options.configuration??{},secrets:extracted.secrets,limits:{timeoutMs:this.options.timeoutMs}};
     if(generation)request.generation=generation;
+    if(this.options.bundle){request.schemaVersion='finance.skill-eval.runtime-instance.v2';request.bundle=this.options.bundle;}
     const idempotencyKey=fingerprint({runId:context.runId,side:this.options.side,configuration:fingerprint(request),...(this.incarnation?{incarnation:this.incarnation}:{})});
     const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
@@ -270,6 +279,14 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     }
     if(evidence.status==='failed'&&!evidence.runtimeIdentityVerified)throw new Error(evidence.error??'Runtime instance stopped before producing verified execution evidence');
     if(this.options.skill&&evidence.metadata.skillArtifactSha256!==this.options.skill.artifactSha256)throw new Error('Runtime instance loaded a different Skill digest');
+    if(this.options.bundle){
+      const bundle=this.options.bundle;
+      const observed=z.array(z.object({id:z.string(),skillId:z.string(),version:z.string(),artifactSha256:z.string(),skillFile:z.string()})).parse(evidence.metadata.loadedBundleMembers);
+      if(evidence.metadata.bundleDigest!==bundle.digest||observed.length!==bundle.members.length
+        ||fingerprint([...observed].sort((a,b)=>a.id.localeCompare(b.id)))!==fingerprint([...bundle.members].sort((a,b)=>a.id.localeCompare(b.id)))
+        ||bundle.members.some(member=>!evidence.loadedSkills.some(item=>item.skillId===member.skillId&&item.version===member.version)))
+        throw new Error('整组 Skill 装载清单或内容摘要与本次候选不一致');
+    }
     if(this.options.skill&&!evidence.loadedSkills.some(item=>item.skillId===this.options.skill!.skillId&&item.version===this.options.skill!.version))throw new Error('Runtime instance did not load the requested Skill artifact');
     if(this.options.variant.mode==='without_target_skill'&&evidence.loadedSkills.some(item=>item.skillId===this.options.variant.skillId))throw new Error('Baseline Runtime instance unexpectedly loaded the target Skill');
     if(evidence.metadata.instanceConfigurationDigest!==this.instance.configurationDigest)throw new Error('Runtime instance evidence has a different configuration digest');

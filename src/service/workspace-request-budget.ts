@@ -46,6 +46,7 @@ export function requiresWorkspaceBudget(method:string,url:string):boolean{
   // A saturated ingress must not prevent resource reclamation. Optimization
   // decisions only adopt/retain/cancel existing results; they start no model work.
   if(method==='POST'&&(/^\/api\/runs\/[^/]+\/cancel\/?$/u.test(route)
+    ||/^\/api\/migration-bundles\/[^/]+\/cancel\/?$/u.test(route)
     ||/^\/api\/optimizations\/[^/]+\/decision\/?$/u.test(route)))return false;
   return true;
 }

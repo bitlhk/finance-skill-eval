@@ -79,8 +79,17 @@ class InstanceManager:
 
     def create(self, request, idempotency_key):
         self.expire()
-        if request.get('schemaVersion') != 'finance.skill-eval.runtime-instance.v1':
+        if request.get('schemaVersion') not in ('finance.skill-eval.runtime-instance.v1', 'finance.skill-eval.runtime-instance.v2'):
             raise ValueError('Unsupported Runtime instance contract')
+        request = copy.deepcopy(request)
+        if request['schemaVersion'] == 'finance.skill-eval.runtime-instance.v2':
+            try:
+                from .bundle_runtime import hydrate_bundle
+            except ImportError:
+                from bundle_runtime import hydrate_bundle
+            hydrate_bundle(request, self)
+        elif request.get('bundle') is not None:
+            raise ValueError('Bundles require the v2 instance contract')
         if not isinstance(request.get('runId'), str) or not request['runId'] or request.get('side') not in ('left', 'right'):
             raise ValueError('Invalid Runtime run identity')
         if not isinstance(request.get('modelId'), str) or not request['modelId']:

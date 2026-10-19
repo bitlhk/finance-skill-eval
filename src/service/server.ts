@@ -32,6 +32,11 @@ import { runConfigurationSchema } from "./contracts.js";
 import {createAccountWorkspaces} from './account-workspaces.js';
 import {managedWorkspaceOperation} from './managed-workspace-policy.js';
 import {EvaluationRunBudget} from './evaluation-run-budget.js';
+import {BundleMigrationService} from '../migration/bundle/bundle-service.js';
+import {runBundleAgent,judgeBundleCase} from '../migration/bundle/bundle-agent.js';
+import {createBundleRuntime} from '../migration/bundle/bundle-runtime.js';
+import {registerBundleMigrationRoutes} from '../interfaces/http/bundle-migration-routes.js';
+import type {BundleAgent,BundleRuntimeFactory,BundleJudge} from '../migration/bundle/bundle-ports.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -71,9 +76,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
+  overrides: Partial<ServiceConfig> & {bundlePorts?:{agent?:BundleAgent;runtime?:BundleRuntimeFactory;judge?:BundleJudge};runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
 ): Promise<FastifyInstance> {
-  const {runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
+  const {bundlePorts,runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.workspaceMode==='account'){
     const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
@@ -122,6 +127,10 @@ export async function createEvaluationService(
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
     toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
+  const bundles=new BundleMigrationService(config.dataDirectory,skills,bundlePorts?.agent??runBundleAgent,bundlePorts?.runtime??createBundleRuntime(environments,{managed:config.managedWorkspace}),bundlePorts?.judge??judgeBundleCase);
+  await bundles.initialize();
+  app.addHook('onClose',()=>bundles.close());
+  registerBundleMigrationRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken));
   app.addHook('onClose',()=>migrations.shutdown());
   registerMigrationRoutes(app, {
     migrations,

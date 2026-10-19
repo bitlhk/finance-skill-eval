@@ -195,3 +195,13 @@ Upgrade strict receiver schemas before enabling these optional v1 fields.
 - `examples/tool-call.completed.json`: one normalized event retaining its framework origin.
 - `examples/instance.create.json`, `instance.ready.json`, `case.execute.json` and `execution.evidence.json`: one complete Launcher lifecycle.
 
+## Multi-Skill instance extension
+
+`features.multiSkill: true` opts into `finance.skill-eval.runtime-instance.v2`
+on the existing instance endpoint. The request carries `skill: null` and a
+`bundle` archive with every member entry and content digest; the worker loads
+each member independently. It must verify the archive, bundle digest, member
+digests, and full entry coverage before execution. Evidence metadata returns
+`bundleDigest` and `loadedBundleMembers`; incomplete receipts fail verification.
+The v1 request and single-Skill behavior remain supported.
+See [bundle migration](../../docs/multi-skill-migration.md).

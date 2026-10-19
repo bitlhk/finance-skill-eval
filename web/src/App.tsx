@@ -47,6 +47,7 @@ import { ResultCharts } from "./ResultCharts";
 import {RuntimeGoalResults, runtimeGoalCounts} from './RuntimeGoalResults';
 import { OptimizationPanel } from "./OptimizationPanel";
 import { MigrationPanel } from './MigrationPanel';
+import { BundleMigrationPanel } from './BundleMigrationPanel';
 import type {
   SkillAsset,
   Evidence,
@@ -1053,6 +1054,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
 }
 
 function MigrationWorkspace({catalog,source,onChanged,onUseAsset}:{catalog:Catalog;source:SkillAsset|null;onChanged():Promise<void>;onUseAsset(asset:SkillAsset):Promise<void>}) {
+  const [scope,setScope]=useState<'single'|'bundle'>('single');
   const [uploadedAsset,setUploadedAsset]=useState(source),[error,setError]=useState(''),[uploading,setUploading]=useState(false);
   const [imports,setImports]=useState<ImportResult[]>([]),[refreshKey,setRefreshKey]=useState(0);
   const input=useRef<HTMLInputElement>(null);
@@ -1069,7 +1071,8 @@ function MigrationWorkspace({catalog,source,onChanged,onUseAsset}:{catalog:Catal
     {error&&<p role="alert">{error}</p>}{uploading&&<p role="status">上传中</p>}
     {imports.length>0&&<ul aria-label="导入结果">{imports.map((r,i)=><li key={i}>{r.name}：{r.status==='IMPORTED'?'已导入':r.error}</li>)}</ul>}
     <input hidden ref={input} type="file" multiple accept=".zip,.md,application/zip,text/markdown" onChange={e=>{const files=Array.from(e.target.files??[]);if(files.length)void upload(files);e.target.value='';}}/>
-    <MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUseAsset={onUseAsset} onUpload={()=>{if(!uploading)input.current?.click();}}/>
+    <div className="migration-scope" aria-label="迁移范围"><button className={scope==='single'?'button primary':'button secondary'} aria-pressed={scope==='single'} onClick={()=>setScope('single')}>单个 Skill 迁移</button><button className={scope==='bundle'?'button primary':'button secondary'} aria-pressed={scope==='bundle'} onClick={()=>setScope('bundle')}>多 Skill 整体迁移</button></div>
+    {scope==='bundle'?<BundleMigrationPanel catalog={catalog} api={api} onChanged={onChanged}/>:<MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUseAsset={onUseAsset} onUpload={()=>{if(!uploading)input.current?.click();}}/>}
   </div>;
 }
 
