@@ -10,8 +10,9 @@ import os
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch
-from .bundle_runtime import hydrate_bundle, files_digest
+from unittest.mock import patch, AsyncMock
+from types import SimpleNamespace
+from .bundle_runtime import hydrate_bundle, files_digest, verify_bundle_integrity
 from .instance_manager import InstanceManager
 from .bundle_agent import collect_candidate
 from .bundle_agent import run_bundle
@@ -38,6 +39,28 @@ def fixture():
 
 
 class BundleRuntimeTest(unittest.TestCase):
+    def test_rejects_repaired_workspace_copy_even_when_loaded_package_is_unchanged(self):
+        skill = {'bundleMembers': [{'skillId': 'test'}],
+                 'files': {'shared/review.py': 'from decimal import ArithmeticError\n',
+                           'fixtures/budgets.json': '{}'},
+                 'binaryFiles': {'shared/data.bin': base64.b64encode(b'\0\xff').decode()}}
+        inputs = [{'path': 'fixtures/budgets.json', 'content': '{"case":true}'}]
+        with ExitStack() as stack:
+            workspace, root, _ = execution_paths(stack, {}, skill, inputs)
+            verify_bundle_integrity(skill, root, workspace, inputs)
+            copied = workspace / 'shared/review.py'
+            copied.parent.mkdir()
+            copied.write_bytes((root / 'shared/review.py').read_bytes())
+            verify_bundle_integrity(skill, root, workspace, inputs)
+            copied.write_text('from decimal import Decimal\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, 'Frozen bundle copy was modified'):
+                verify_bundle_integrity(skill, root, workspace, inputs)
+            self.assertEqual((root / 'shared/review.py').read_text(), skill['files']['shared/review.py'])
+            copied.write_bytes((root / 'shared/review.py').read_bytes())
+            (root / 'shared/data.bin').write_bytes(b'changed')
+            with self.assertRaisesRegex(RuntimeError, 'Loaded bundle files were modified'):
+                verify_bundle_integrity(skill, root, workspace, inputs)
+
     def test_runtime_materialization_preserves_windows_line_endings_and_binary(self):
         files, request = fixture()
         hydrate_bundle(request, InstanceManager())
@@ -87,6 +110,46 @@ class BundleRuntimeTest(unittest.TestCase):
 
 
 class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_analysis_uses_read_only_explorer_and_bounded_tool_free_format_repair(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        self.addCleanup(sys.path.pop, 0)
+        from openjiuwen.harness.tools import WriteFileTool, EditFileTool
+        files, request = fixture()
+        encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
+        expected = {'status': 'PRODUCED', 'analysis': {'summary': 'Original finding', 'changes': [], 'missing': []}}
+        broken = json.dumps(expected)[:-1]
+        model = SimpleNamespace(invoke=AsyncMock(return_value=SimpleNamespace(
+            content=json.dumps(expected), tool_calls=[], finish_reason='stop', usage_metadata=None)))
+        owner = self
+
+        def explorer(**options):
+            owner.assertFalse(any(isinstance(tool, (WriteFileTool, EditFileTool)) for tool in options['tools']))
+            owner.assertIn('ANALYZE', options['system_prompt'])
+            return SimpleNamespace(invoke=AsyncMock(return_value={'output': broken, 'result_type': 'answer'}))
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            config.write_text('{}', encoding='utf-8')
+            protocol = io.StringIO()
+            body = {'runId': 'analysis-fixture', 'assetDigest': request['bundle']['digest'], 'files': encoded,
+                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'ANALYZE', 'source': {'files': encoded}}}
+            with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused'}), \
+                    patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
+                    patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
+                    patch('openjiuwen.core.foundation.llm.init_model', return_value=model), \
+                    patch('openjiuwen.harness.subagents.code_agent.create_code_agent') as coder, \
+                    patch('openjiuwen.harness.subagents.explore_agent.create_explore_agent', side_effect=explorer):
+                await run_bundle(body, protocol)
+                coder.assert_not_called()
+            result = json.loads(protocol.getvalue())['result']
+            self.assertEqual(result['status'], 'PRODUCED', result)
+            self.assertEqual(result['payload'], expected)
+            self.assertEqual(result['files'], {})
+            self.assertEqual(model.invoke.await_count, 1)
+            self.assertNotIn('tools', model.invoke.call_args.kwargs)
+            self.assertEqual(model.invoke.call_args.kwargs['messages'][1]['content'], broken)
+
     async def test_real_file_tools_edit_multiple_members_but_reject_source_writes(self):
         # Only model execution is substituted; workspace and SDK tools are real.
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -99,6 +162,7 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
 
         def agent_factory(**options):
             root = Path(options['workspace'])
+            owner.assertFalse(any(tool.card.name == 'run_contract_test' for tool in options['tools']))
             writer = next(tool for tool in options['tools'] if isinstance(tool, WriteFileTool))
             reader = next(tool for tool in options['tools'] if isinstance(tool, ReadFileTool))
 

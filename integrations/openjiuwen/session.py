@@ -15,6 +15,7 @@ from package_runtime import start_candidate_service, absolute_script_command
 from execution_paths import execution_paths
 from skill_runtime import mount_skill_runtime
 from runtime_context import RuntimeContext
+from bundle_runtime import verify_bundle_integrity
 
 try:
     _runtime_version = _package_version("openjiuwen")
@@ -178,6 +179,8 @@ async def run(body):
             prompt += f'\n当前执行工作区绝对路径：{workspace_path}\nSkill 包绝对路径：{root_path}\n相对业务输入输出路径以工作区为基准。'
             if skill:
                 if bundle_members:
+                    prompt += '\n当前为冻结候选的联合验收。只能执行交付的原始代码，不得修改、修补或重写包内代码，也不得复制后修补、猴子补丁或以自行实现替代。脚本异常应保留原始错误并报告验收失败，由迁移 Agent 修复新候选。'
+                    prompt += '\n包内脚本相对路径以 Skill 包根目录为准，命令使用包内脚本绝对路径；业务数据仍相对当前工作区。命令以 python、python3、uv 或 node 开头，路径使用双引号，不探查解释器版本，不执行 ls。按各 Skill 声明的实际 CLI 参数或 stdin 协议传入数据。'
                     prompt += '\n按任务需要调用 skill_tool 加载一个或多个 Skill，协作完成任务；不要求每次使用全部成员。成员索引：' + json.dumps(
                         [{'skill_name': m['skillId'], 'skillId': m['skillId'],
                           'entry': str(root_path / m['skillFile'])} for m in bundle_members], ensure_ascii=False)
@@ -252,14 +255,7 @@ async def run(body):
             if not output.strip():
                 raise RuntimeError("Model returned no answer")
             if bundle_members:
-                # Commands may create outputs, but changing loaded source invalidates the run.
-                for name, original in files.items():
-                    if (root_path / name).read_bytes() != original.encode('utf-8'):
-                        raise RuntimeError('Loaded bundle files were modified during execution')
-                import base64
-                for name, encoded in skill.get('binaryFiles', {}).items():
-                    if (root_path / name).read_bytes() != base64.b64decode(encoded, validate=True):
-                        raise RuntimeError('Loaded bundle binary resources were modified during execution')
+                verify_bundle_integrity(skill, root_path, workspace_path, body['case'].get('workspaceFiles', []))
             await agent.react_agent.clear_session(session_id)
         except Exception as exc:
             # Never emit model keys/HTTP headers in the public stream.
