@@ -1,5 +1,8 @@
 # Finance Skill Eval 2.0：整体架构（L0）
 
+> 本文保留 2.0 设计与历史迁移实现背景。当前新任务已统一支持 1–10 个 Skill，实际模块、兼容边界与运维定位以 [当前架构](../current-architecture.md) 为准。
+
+
 > 对应 [GitHub Issue #3](https://github.com/bitlhk/finance-skill-eval/issues/3)。本文件描述系统边界和关键决策；用户特性及验收要求见 [features.md](./features.md)。
 
 ## 1. 架构结论

@@ -1,8 +1,8 @@
-# 多 Skill 整体迁移与联合验收
+# Skill 统一迁移与任务验收（单 Skill / 多 Skill）
 
 ## 使用方式
 
-在「Skill 迁移」中选择「多 Skill 整体迁移」。一个任务导入 2–10 个 Skill；
+在「Skill 迁移」直接新建任务。一个任务导入 1–10 个 Skill，无需选择单 Skill / 多 Skill 模式；
 同一个迁移 Agent 读取完整源码，可以同时修改多个 Skill、共享工具与入口指令。
 每轮产出一个冻结整组候选，联合验收直接使用这个候选，无需到独立评测入口重新组装。
 
@@ -17,10 +17,14 @@
 4. **Runtime 适配与登记**：选择已登记 Launcher、模型、可选文本入口指令和案例时限。
 5. **验证能否运行**：检查 Launcher 的 multiSkill 能力、模型、容量和服务支持；
    实际启动、脚本/MCP 调用仍由联合验收验证。
-6. **联合验收**：保存任务级测试集，用整组候选运行。失败后可点击「让 Agent 查看整组并修复」，
+6. **任务验收**：保存任务级测试集，用整组候选运行。失败后可点击「让 Agent 查看整组并修复」，
    生成新候选并整组重测。
 7. **下载结果**：导出全部 Skill、共享文件、候选清单及有效验收报告。
    未通过的版本只能作为候选材料导出，不标记为已验收。
+
+单 Skill 是只有一个成员的同一流程，多个成员时进行整组联合验收；不要求每轮修改全部成员，也不要求每个案例调用全部成员。
+
+旧任务从「旧版任务记录」访问，可保留原流程继续处理或复制选定资产转入统一任务，旧结论不会继承。既有整组任务直接出现在统一任务列表。代码与排障入口见 [当前架构](current-architecture.md)。
 
 ## 输入格式与边界
 
@@ -139,6 +143,10 @@ Judge 根据完整工具证据检查其他运行时修补行为；修补后得�
 
 ## 接口与测试
 
+新客户端统一使用 `/api/migration-tasks`。`/api/migration-bundles` 作为同一服务的兼容别名继续可用；旧 `/api/migrations` 保留历史功能。`POST /api/migration-tasks/from-legacy/:id` 接收 name、goal、target、selection（source/candidate），复制旧资产新建任务并记录 origin，不修改旧记录。
+
+磁盘 `migration-bundles/` 与 `finance.skill-migration.bundle.v1` 保持不变。新增 requestId/agentRunId/origin 都是可选字段，旧记录不需要离线转换。Runtime v2 成员下限由 2 扩展为 1，API 和 Runtime 需一起升级。
+
 ### 部署升级
 
 同时部署新版控制服务、前端与 OpenJiuwen Launcher/Worker，重新启动 Launcher 后检查
@@ -203,3 +211,5 @@ result.json 明确记录真实模式及成功/失败。测试结束会关闭自�
 
 2026-10-18 的真实执行结果、发现的问题与修复见
 [真实模型端到端验证报告](verification/multi-skill-live-20261018.md)。
+
+真实 UI 测试通过 `MIGRATION_LIVE_MEMBERS=1` 或 `3` 选择成员数量，同一套 Agent、Runtime、Judge、页面和断言路径执行；报告记录 memberCount。

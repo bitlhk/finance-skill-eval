@@ -39,6 +39,22 @@ def fixture():
 
 
 class BundleRuntimeTest(unittest.TestCase):
+    def test_one_member_uses_the_same_hydration_and_instance_contract(self):
+        files, request = fixture()
+        del files['skills/rules/SKILL.md']
+        request['bundle']['members'] = request['bundle']['members'][:1]
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            for name, value in files.items():
+                archive.writestr(name, value)
+        raw = buffer.getvalue()
+        request['bundle'].update(digest=files_digest(files), archiveBase64=base64.b64encode(raw).decode(), archiveSha256=hashlib.sha256(raw).hexdigest())
+        manager = InstanceManager()
+        instance = manager.create(request, 'single-key')
+        body = manager.execution(instance['instanceId'], {'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'use budget', 'workspaceFiles': []})
+        self.assertEqual(len(body['skill']['bundleMembers']), 1)
+        self.assertEqual(body['bundle']['digest'], files_digest(files))
+
     def test_rejects_repaired_workspace_copy_even_when_loaded_package_is_unchanged(self):
         skill = {'bundleMembers': [{'skillId': 'test'}],
                  'files': {'shared/review.py': 'from decimal import ArithmeticError\n',

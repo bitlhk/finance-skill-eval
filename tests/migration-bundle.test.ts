@@ -51,7 +51,7 @@ const suite = {
   holdoutCases: [{ id: 'secret-holdout', input: 'HIDDEN_CASE', criteria: ['HIDDEN_CRITERION'] }],
 };
 const config = { environmentId: 'env-test', modelId: 'execution', timeoutMs: 10000 };
-async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeFactory) {
+async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeFactory, sourceFiles: BundleFiles = files) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'bundle-test-'));
   roots.push(root);
   const skills = new SkillStore(root);
@@ -131,7 +131,7 @@ async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeF
   await service.initialize();
   const task = await service.upload(
     { name: 'Procurement', goal: 'Review budget with all Skills', target: 'openjiuwen' },
-    bundleZip(files),
+    bundleZip(sourceFiles),
   );
   async function start(
     kind: 'ANALYZE' | 'GENERATE' | 'REPAIR' | 'ACCEPT',
@@ -289,6 +289,8 @@ it('protects bundle APIs in public workspaces and exposes async operations insid
     app = Fastify();
   registerBundleMigrationRoutes(app, f.service, false);
   expect((await app.inject('/api/migration-bundles')).statusCode).toBe(403);
+  expect((await app.inject('/api/migration-tasks')).statusCode).toBe(403);
+  expect((await app.inject({method:'POST',url:'/api/migration-tasks/from-legacy/migration-a',payload:{}})).statusCode).toBe(403);
   await app.close();
   const privateApp = Fastify();
   registerBundleMigrationRoutes(privateApp, f.service, true);
@@ -302,4 +304,54 @@ it('protects bundle APIs in public workspaces and exposes async operations insid
   });
   expect(response.statusCode).toBe(202);
   await privateApp.close();
+});
+
+it.each([1, 3])('uses the same task lifecycle for %i Skill members with persisted correlation', async (count) => {
+  const sourceFiles = Object.fromEntries(Object.entries(files).filter(([name]) => count > 1 || name.startsWith('skills/budget/') || name.startsWith('shared/')));
+  sourceFiles['skills/budget/SKILL.md'] = encoded('---\nname: budget\ndescription: Query\n---\nReturn yuan.');
+  const seen: BundleAgentInput[] = [];
+  const f = await fixture(async input => {
+    seen.push(input);
+    expect(input.base.members).toHaveLength(count);
+    return input.mode === 'ANALYZE'
+      ? {status:'PRODUCED', analysis:{summary:'Preserve business semantics',changes:[],missing:[]}}
+      : {status:'PRODUCED', files:input.base.files, delivery:{summary:'Complete candidate',services:[]}};
+  }, undefined, sourceFiles);
+  const app = Fastify({genReqId: () => 'server-generated-request'});
+  registerBundleMigrationRoutes(app, f.service, true);
+  try {
+    const response = await app.inject({method:'POST',url:'/api/migration-tasks/'+f.task.id+'/analysis',
+      headers:{'x-request-id':'untrusted-client-request'},payload:{key:randomUUID(),baseCandidateId:null}});
+    expect(response.statusCode).toBe(202);
+    await vi.waitFor(async () => expect((await f.service.get(f.task.id)).attempts.at(-1)?.status).toBe('COMPLETED'));
+    const analyzed = await f.service.get(f.task.id);
+    expect(seen[0]!.correlation).toMatchObject({taskId:f.task.id,attemptId:analyzed.attempts[0]!.id,requestId:'server-generated-request',agentRunId:analyzed.attempts[0]!.agentRunId});
+    expect(analyzed.attempts[0]!.agentRunId).toMatch(/^agent-/);
+    await f.start('GENERATE');
+    await f.service.configure(f.task.id,config);
+    await f.service.saveSuite(f.task.id,suite);
+    await f.start('ACCEPT');
+    const accepted = await f.start('ACCEPT',{phase:'holdout'});
+    expect(accepted.runs.at(-1)?.status).toBe('PASSED');
+    expect(accepted.attempts.at(-1)?.runId).toBe(accepted.runs.at(-1)?.id);
+    const archive = unzipSync(await f.service.export(f.task.id,true));
+    expect(JSON.parse(Buffer.from(archive['migration/manifest.json']!).toString()).verified).toBe(true);
+    // Old bundle URL and canonical URL address exactly the same persistent record.
+    expect((await app.inject('/api/migration-bundles/'+f.task.id)).json()).toEqual((await app.inject('/api/migration-tasks/'+f.task.id)).json());
+  } finally { await app.close(); }
+});
+
+it('accepts a standalone root SKILL.md and rejects empty or oversized member sets', () => {
+  const one = { 'SKILL.md':encoded('---\nname: single\ndescription: One\n---\nTask'), 'tool.py':encoded('print(1)') };
+  expect(snapshot(one,'source').members).toHaveLength(1);
+  expect(() => snapshot({'readme.txt':encoded('no skill')},'source')).toThrow('1–10');
+  const many = Object.fromEntries(Array.from({length:11},(_,i)=>['s'+i+'/SKILL.md',encoded('---\nname: s'+i+'\ndescription: One\n---\nTask')]));
+  expect(() => snapshot(many,'source')).toThrow('1–10');
+});
+
+it.each(['.env', 'shared/private.json'])('retains the legacy export credential gate for unified candidates (%s)', async name => {
+  const f = await fixture(undefined, undefined, { ...files, [name]: encoded('{"api_key": "fixture-private-value"}') });
+  await f.start('ANALYZE');
+  await f.start('GENERATE');
+  await expect(f.service.export(f.task.id)).rejects.toMatchObject({statusCode:409,code:'MIGRATION_EXPORT_CREDENTIALS'});
 });

@@ -167,3 +167,5 @@
 .bundle-fields > * {
   min-width: 0;
 }
+
+.bundle-panel code { overflow-wrap: anywhere; }

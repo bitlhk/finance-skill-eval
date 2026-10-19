@@ -1,5 +1,8 @@
 # Finance Skill Eval 2.0：模块架构（L1）
 
+> 本文保留 2.0 设计与历史迁移实现背景。当前新任务已统一支持 1–10 个 Skill，实际模块、兼容边界与运维定位以 [当前架构](../current-architecture.md) 为准。
+
+
 ## 1. 实现原则
 
 - 围绕用户流程增量改造现有 `MigrationStore`，不先建立空的多层框架；

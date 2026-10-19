@@ -139,7 +139,8 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
 
   return await new Promise<AgentResult<T>>((resolve,reject)=>{
     const started=Date.now();
-    const correlation={stage,runId:request.runId,assetDigest};
+    const context = request.correlation as Record<string, unknown> | undefined;
+    const correlation={stage,runId:request.runId,assetDigest, ...Object.fromEntries(['taskId','attemptId','requestId','agentRunId'].flatMap(key => typeof context?.[key] === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(context[key] as string) ? [[key,context[key]]] : []))};
     const child=spawn(program,[entry],{
       cwd:options.projectRoot,
       stdio:['pipe','pipe','pipe'],

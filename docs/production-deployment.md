@@ -1,6 +1,6 @@
 # 生产部署
 
-本套脚本面向可信运维人员使用的私有工作区：一个 Node API/迁移协调器，一个 OpenJiuwen Runtime，真实模型和 Judge 由企业提供。多 Skill 迁移仍在一个完整候选工作区中执行，联合验收时加载整组 Skill。
+本套脚本面向可信运维人员使用的私有工作区：一个 Node API/迁移协调器，一个 OpenJiuwen Runtime，真实模型和 Judge 由企业提供。单 Skill 和多 Skill 统一在一个完整候选工作区中执行，任务验收时加载全部成员。代码与排障位置见 [当前架构](current-architecture.md)。
 
 | 方式 | 入口 | 日志托管 |
 | --- | --- | --- |
@@ -52,6 +52,8 @@ Runtime 执行超时读取请求 limits.timeoutMs，范围 10–900 秒，缺省
 - `BUNDLE_LIVE_SERVICE_URL`：浏览器可达的 API 地址，例如 `http://127.0.0.1:56361`。
 - `BUNDLE_LIVE_RUNTIME_URL`：API 服务端和测试机均可访问的 Runtime 地址，必须以 `/` 结束。适用于本机原生部署或专用测试网络；不要为测试开放公网 Runtime。
 - `FINANCE_RUNTIME_CONFIG`：测试机可读取的真实模型配置路径，用于校验报告中的模型身份。
+
+`MIGRATION_LIVE_MEMBERS=1` 验证单 Skill；缺省或 `3` 验证三个 Skill。两种场景均使用相同统一流程，报告记录成员数量。
 
 设置 `BUNDLE_LIVE_SERVICE_URL` 后，测试直接使用现有服务，不启动独立 API/Worker，不开启服务端详细 dump，也不停止现有服务。它会通过 UI 创建唯一命名的三 Skill 任务与 Runtime 登记，调用真实模型并保留业务数据，执行开发集、必要的整体修复、独立留出集及交付包下载。测试须在已授权的验收实例执行；结果在 `reports/bundle-live-*/result.json`，其中 `deployment=EXISTING_SERVICE` 可区分服务级与独立进程验收。未设置该地址时保留原有临时进程测试方式。
 

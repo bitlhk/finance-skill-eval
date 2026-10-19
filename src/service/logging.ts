@@ -1,3 +1,4 @@
+import { operationalError } from '../shared/operational-error.js';
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger, FastifyInstance, FastifyLoggerOptions } from 'fastify';
 import type { PinoLoggerOptions } from 'fastify/types/logger.js';
@@ -10,12 +11,7 @@ export function stderrExceptionType(tail: string): string | undefined {
 
 // Error messages, causes and custom properties may contain upstream request
 // bodies or credentials. Detailed evidence belongs in protected task storage.
-export function operationalError(value: unknown) {
-  const error = value as { name?: unknown; type?: unknown; code?: unknown; statusCode?: unknown } | null;
-  const safe = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(v) ? v : undefined;
-  return { type: safe(error?.name) ?? safe(error?.type) ?? 'Error', code: safe(error?.code), message: 'See protected task evidence', stack: '',
-    statusCode: typeof error?.statusCode === 'number' ? error.statusCode : undefined };
-}
+export { operationalError } from '../shared/operational-error.js';
 
 export function serviceLoggerOptions(): FastifyLoggerOptions & PinoLoggerOptions {
   const level = process.env.FINANCE_EVAL_LOG_LEVEL ?? 'info';

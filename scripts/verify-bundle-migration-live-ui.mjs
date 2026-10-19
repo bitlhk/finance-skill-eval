@@ -13,8 +13,11 @@ import { zipSync, unzipSync } from 'fflate';
 if (process.env.BUNDLE_LIVE_ENV_FILE) process.loadEnvFile(process.env.BUNDLE_LIVE_ENV_FILE);
 const root = process.cwd(),
   startedAt = new Date().toISOString();
+const memberCount = Number(process.env.MIGRATION_LIVE_MEMBERS ?? 3);
+assert([1,3].includes(memberCount), 'MIGRATION_LIVE_MEMBERS must be 1 or 3');
+const memberNames = memberCount === 1 ? ['procurement'] : ['budget-query', 'purchase-review', 'audit-report'];
 const external = Boolean(process.env.BUNDLE_LIVE_SERVICE_URL);
-const taskName = '真实采购多 Skill 迁移 ' + randomUUID().slice(0, 8);
+const taskName = `真实采购 ${memberCount} Skill 迁移 ` + randomUUID().slice(0, 8);
 const environmentName = '真实 OpenJiuwen 多 Skill Runtime ' + randomUUID().slice(0, 8);
 const directory = path.resolve('reports', 'bundle-live-' + randomUUID());
 await mkdir(directory, { recursive: true });
@@ -40,6 +43,7 @@ const checks = [],
 let app, browser, page, worker, workerLog, taskId, serviceUrl, lastTask;
 const report = {
   mode: 'REAL_AGENT_RUNTIME_AND_JUDGE',
+  memberCount,
   deployment: external ? 'EXISTING_SERVICE' : 'TEST_PROCESS',
   startedAt,
   status: 'RUNNING',
@@ -107,12 +111,12 @@ async function act(name, kind) {
 }
 const stage = (name) =>
   page
-    .getByRole('navigation', { name: '整组迁移步骤' })
+    .getByRole('navigation', { name: '迁移步骤' })
     .getByRole('button', { name: new RegExp(name) })
     .click();
 const dataFile = (values) => [{ path: 'fixtures/budgets.json', content: JSON.stringify(values) }];
 const query = (center, amount) =>
-  '请实际使用 budget-query、purchase-review 和 audit-report 三个 Skill，读取本案例工作区 fixtures/budgets.json，并执行迁移后的预算查询与审核脚本。审核成本中心 ' +
+  '请实际使用 ' + memberNames.join('、') + ' 完成预算查询、采购审核和审计报告，读取本案例工作区 fixtures/budgets.json，并执行迁移后的预算查询与审核脚本。审核成本中心 ' +
   center +
   ' 的 ' +
   amount +
@@ -197,7 +201,7 @@ try {
       workspaceMode: 'single',
       managedWorkspace: false,
     });
-    app.log.level = 'error';
+    app.log.level = 'info';
     serviceUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   } else serviceUrl = process.env.BUNDLE_LIVE_SERVICE_URL.replace(/\/$/, '');
   report.serviceUrl = serviceUrl;
@@ -223,17 +227,16 @@ try {
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button', { name: '进入工作区', exact: true }).click();
   await page.getByRole('button', { name: 'Skill 迁移', exact: true }).click();
-  await page.getByRole('button', { name: '多 Skill 整体迁移', exact: true }).click();
   await page.getByLabel('任务名称', { exact: true }).fill(taskName);
   await page
     .getByLabel('目标环境与要求', { exact: true })
     .fill(
-      '迁移到 OpenJiuwen 原生多 Skill + Python 标准库 CLI。取消 LegacyContext 注入依赖，预算查询与审核两个工具之间统一传递 available_yuan 十进制字符串，原始 JSON 文件仍存 available_cents。保留业务规则、未知中心和金额校验。支持从当前业务 cwd 读取 fixtures/budgets.json。三个 Skill 的路径和名称保持不变。',
+      '迁移到 OpenJiuwen 原生多 Skill + Python 标准库 CLI。取消 LegacyContext 注入依赖，预算查询与审核两个工具之间统一传递 available_yuan 十进制字符串，原始 JSON 文件仍存 available_cents。保留业务规则、未知中心和金额校验。支持从当前业务 cwd 读取 fixtures/budgets.json。'+memberCount+' 个 Skill 的路径和名称保持不变。',
     );
   await page
     .getByLabel('业务目标', { exact: true })
     .fill(
-      '三个 Skill 协作完成采购预算查询、规则判断和审计报告。真实读取工作区数据，实际执行预算查询和审核 CLI，不能用模型心算取代工具。共同适配共享代码和 Skill 调用说明，纯标准库实现，无需 MCP 或网络业务服务。',
+      memberCount+' 个 Skill 完成采购预算查询、规则判断和审计报告。真实读取工作区数据，实际执行预算查询和审核 CLI，不能用模型心算取代工具。共同适配共享代码和 Skill 调用说明，纯标准库实现，无需 MCP 或网络业务服务。',
     );
   const source = path.join(root, 'acceptance', 'multi-skill-procurement'),
     files = {};
@@ -243,6 +246,15 @@ try {
       ['EISDIR', 'EPERM'].includes(error.code) ? null : Promise.reject(error),
     );
     if (content) files[name.replaceAll('\\', '/')] = content;
+  }
+  if (memberCount === 1) {
+    const sections = [];
+    for (const name of ['budget-query','purchase-review','audit-report']) {
+      const file = 'skills/' + name + '/SKILL.md';
+      sections.push('## ' + name + '\n' + files[file].toString().replace(/^---[\s\S]*?---\s*/, ''));
+      delete files[file];
+    }
+    files['skills/procurement/SKILL.md'] = Buffer.from('---\nname: procurement\ndescription: Query actual budgets, evaluate purchases and report traceable decisions.\n---\nThe following are stages within this one Skill. Execute all relevant stages.\n' + sections.join('\n'));
   }
   const archive = Buffer.from(zipSync(files));
   await writeFile(path.join(directory, 'source.zip'), archive);
@@ -258,15 +270,16 @@ try {
   taskId = tasks[0].id;
   report.taskId = taskId;
   pass('whole_workspace_imported_through_ui');
-  let task = await act('分析整组 Skill', 'ANALYZE');
+  let task = await act('分析 Skill 工程', 'ANALYZE');
   assert.deepEqual(task.analysis.missing, [], JSON.stringify(task.analysis));
   await page.screenshot({ path: path.join(directory, 'analysis.png'), fullPage: true });
   pass('real_agent_analyzed_whole_workspace');
   await stage('生成迁移结果');
-  task = await act('生成整组迁移结果', 'GENERATE');
+  task = await act('生成迁移结果', 'GENERATE');
   assert(task.currentCandidateId);
   assert(task.candidates.at(-1).diff.length > 0, 'Migration produced no actual changes');
   await page.screenshot({ path: path.join(directory, 'candidate.png'), fullPage: true });
+  assert(task.attempts.filter(a => a.kind !== 'ACCEPT').every(a => a.requestId && a.agentRunId), 'Missing persisted Agent correlation');
   pass('real_agent_generated_frozen_candidate');
   await stage('Runtime 适配与登记');
   await page
@@ -278,18 +291,18 @@ try {
   await page.getByRole('button', { name: '保存运行配置', exact: true }).click();
   await page.getByRole('button', { name: '检查运行能力', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('检查通过');
-  await stage('联合验收');
+  await stage('任务验收');
   await page.getByLabel('验收测试集 JSON', { exact: true }).fill(JSON.stringify(suite, null, 2));
   await page.getByRole('button', { name: '保存测试集', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('已保存');
   for (let repair = 0; repair <= 2; repair++) {
-    task = await act('开始整组联合验收', 'ACCEPT');
+    task = await act('开始任务验收', 'ACCEPT');
     await page.screenshot({ path: path.join(directory, 'development-' + repair + '.png'), fullPage: true });
     if (task.runs.at(-1).status === 'PASSED') break;
     assert(repair < 2, 'Real development acceptance failed after two actual Agent repairs');
     console.log('Real development acceptance failed; requesting actual whole-workspace repair');
-    await act('让 Agent 查看整组并修复', 'REPAIR');
-    await stage('联合验收');
+    await act('让 Agent 查看工程并修复', 'REPAIR');
+    await stage('任务验收');
   }
   assert.equal(task.runs.at(-1).status, 'PASSED');
   pass('real_runtime_and_judge_development_passed');
@@ -299,6 +312,7 @@ try {
     'PASSED',
     'Real holdout acceptance failed; held-out feedback is not sent to repair',
   );
+  assert.equal(task.attempts.at(-1).runId, task.runs.at(-1).id);
   pass('real_runtime_and_judge_holdout_passed');
   for (const run of task.runs.filter(
     (r) => r.candidateId === task.currentCandidateId && r.status === 'PASSED',
@@ -306,14 +320,14 @@ try {
     for (const item of run.cases) {
       assert(item.evidence.runtimeIdentityVerified && item.evidence.streamCompleted);
       assert.equal(item.evidence.metadata.bundleDigest, run.candidateDigest);
-      assert.equal(item.evidence.loadedSkills.length, 3);
+      assert.equal(item.evidence.loadedSkills.length, memberCount);
       // The production launcher annotates the transport mode; Worker identity
       // is checked separately against the capabilities of our actual process.
       assert.equal(item.evidence.metadata.executionMode, 'runtime-launcher');
       assert.equal(item.evidence.metadata.runtimeVersion, capabilities.runtime.version);
       assert.equal(item.evidence.metadata.agentType, 'DeepAgent');
       assert.equal(item.evidence.metadata.modelBinding.upstreamModelId, report.models.execution);
-      for (const name of ['budget-query', 'purchase-review', 'audit-report']) {
+      for (const name of memberNames) {
         assert(
           item.evidence.metadata.referenceFilesRead['skills/' + name + '/SKILL.md'],
           'No actual activation evidence for ' + name,
@@ -340,7 +354,7 @@ try {
   const manifest = JSON.parse(Buffer.from(exported['migration/manifest.json']).toString());
   assert.equal(manifest.verified, true);
   assert.equal(manifest.candidate.id, task.currentCandidateId);
-  for (const name of ['budget-query', 'purchase-review', 'audit-report'])
+  for (const name of memberNames)
     assert(exported['package/skills/' + name + '/SKILL.md']);
   pass('verified_full_bundle_downloaded_through_ui');
   assert.deepEqual(errors, []);

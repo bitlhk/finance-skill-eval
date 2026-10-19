@@ -34,11 +34,9 @@ import { runConfigurationSchema } from "./contracts.js";
 import {createAccountWorkspaces} from './account-workspaces.js';
 import {managedWorkspaceOperation} from './managed-workspace-policy.js';
 import {EvaluationRunBudget} from './evaluation-run-budget.js';
-import {BundleMigrationService} from '../migration/bundle/bundle-service.js';
-import {runBundleAgent,judgeBundleCase} from '../migration/bundle/bundle-agent.js';
-import {createBundleRuntime} from '../migration/bundle/bundle-runtime.js';
-import {registerBundleMigrationRoutes} from '../interfaces/http/bundle-migration-routes.js';
-import type {BundleAgent,BundleRuntimeFactory,BundleJudge} from '../migration/bundle/bundle-ports.js';
+import {createMigrationTaskService} from '../migration/tasks/composition.js';
+import {registerMigrationTaskRoutes} from '../interfaces/http/migration-task-routes.js';
+import type {BundleAgent,BundleRuntimeFactory,BundleJudge} from '../migration/tasks/application/task-ports.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -133,10 +131,10 @@ export async function createEvaluationService(
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
     toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
   const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
-  const bundles=new BundleMigrationService(config.dataDirectory,skills,bundlePorts?.agent??runBundleAgent,bundlePorts?.runtime??createBundleRuntime(environments,{managed:config.managedWorkspace}),bundlePorts?.judge??judgeBundleCase,app.log);
+  const bundles=createMigrationTaskService({root:config.dataDirectory,skills,environments,managed:config.managedWorkspace,ports:bundlePorts,logger:app.log});
   await bundles.initialize();
   app.addHook('preClose',()=>bundles.close());
-  registerBundleMigrationRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken));
+  registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),migrations);
   app.addHook('preClose',()=>migrations.shutdown());
   registerMigrationRoutes(app, {
     migrations,

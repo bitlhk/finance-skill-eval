@@ -1,3 +1,4 @@
+import { seedLegacyMigration } from './lib/legacy-migration-ui.mjs';
 import {approveMigrationPlanThroughUi} from './lib/verify-reuse-plan-ui.mjs';
 /** Fresh real-model UI acceptance of independent capability-boundary Skills. */
 import assert from 'node:assert/strict';
@@ -88,14 +89,13 @@ try{
       await page.getByRole('button',{name:'进入工作区',exact:true}).click();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
       let project,base,rep;
       if(resumeData){
+        await page.getByRole('button',{name:'旧版任务记录',exact:true}).click();
         const projects=await api('GET','/api/migrations');assert.equal(projects.length,1);
         project=projects[0];assert.equal(project.source.skillId,current);assert(project.candidate);
         base=`/api/migrations/${project.id}`;outcome.provenance.diagnosis='REUSED_REAL';outcome.provenance.generation='REUSED_REAL';
         await page.locator('.migration-project').filter({has:page.getByText(project.name,{exact:true})}).getByRole('button',{name:'继续处理',exact:true}).click();
       }else{
-      await page.getByRole('button',{name:'新建迁移',exact:true}).click();
-      const inspect=page.waitForResponse(r=>r.url().endsWith('/inspect')&&r.request().method()==='POST',{timeout:900000});void inspect.catch(()=>{});
-      await page.locator('input[type=file]').first().setInputFiles({name:current+'.zip',mimeType:'application/zip',buffer:await archive(current)});assert.equal((await inspect).status(),200);outcome.provenance.diagnosis='REAL';
+      await seedLegacyMigration(page, await archive(current)); outcome.provenance.diagnosis='REAL';
       project=(await api('GET','/api/migrations')).sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];base=`/api/migrations/${project.id}`;
       rep=await api('GET',base+'/report');await privateRecord('initial-report',rep);
       assert.equal(rep.inspection.dependencyAnalysis?.status,'COMPLETE','Fresh source diagnosis must close without invented dependencies');

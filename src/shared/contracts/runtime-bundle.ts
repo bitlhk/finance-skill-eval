@@ -12,7 +12,7 @@ export const runtimeBundleSchema = z.strictObject({
         artifactSha256: digest,
       }),
     )
-    .min(2)
+    .min(1)
     .max(10),
   archiveBase64: z.string().min(1),
   archiveSha256: digest,

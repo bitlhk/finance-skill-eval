@@ -21,7 +21,7 @@
         "archiveSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "entryInstructionsFile": {"type": "string", "minLength": 1},
         "members": {
-          "type": "array", "minItems": 2, "maxItems": 10,
+          "type": "array", "minItems": 1, "maxItems": 10,
           "items": {
             "type": "object", "additionalProperties": false,
             "required": ["id", "skillId", "version", "artifactSha256", "skillFile"],

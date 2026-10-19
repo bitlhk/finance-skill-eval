@@ -1,3 +1,4 @@
+import { seedLegacyMigration } from './lib/legacy-migration-ui.mjs';
 import {approveMigrationPlanThroughUi} from './lib/verify-reuse-plan-ui.mjs';
 import {reusePlanFixture} from './lib/reuse-plan-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -279,13 +280,13 @@ try{
   await page.getByRole('button',{name:'进入工作区',exact:true}).click();
   await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
   if(resumeData){
+    await page.getByRole('button',{name:'旧版任务记录',exact:true}).click();
     await expect(page.getByRole('button',{name:'继续处理',exact:true})).toHaveCount(1);
     await page.getByRole('button',{name:'继续处理',exact:true}).click();
     await page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:/验证实际效果/}).click();
     pass('resumed_real_model_generated_candidate_and_frozen_suite');
   }else{
-  await page.getByRole('button',{name:'新建迁移',exact:true}).click();
-  await page.locator('input[type=file]').first().setInputFiles({name:'legacy-skill.zip',mimeType:'application/zip',buffer:legacyZip});
+  await seedLegacyMigration(page, legacyZip);
   await page.getByRole('heading',{name:'诊断与工具选择',exact:true}).waitFor({timeout:STEP});
   if(realAgents){
     // What A2 reports is A2's judgement, and a real one is entitled to disagree with the stub's.
@@ -329,15 +330,10 @@ await page.getByRole('button',{name:'确认方案，进入生成',exact:true}).c
   }
 
   await page.locator('.stage-actions').getByRole('button',{name:'Runtime 适配与登记',exact:true}).click();
-  await expect(page.getByLabel('Builder Result JSON')).toBeVisible();
-  for(const target of ['agentscope','openjiuwen']){
-    await page.getByLabel('交付目标',{exact:true}).selectOption(target);
-    await expect(page.getByLabel('交付目标',{exact:true})).toHaveValue(target);
-    await expect(page.getByRole('button',{name:'下载能力需求 YAML',exact:true})).toBeDisabled();
-  }
-  // No Harness gap means no Builder requirement to download. A second explicit
-  // delivery may still be imported; the server checks its contract independently.
-  pass('runtime_import_remains_visible_without_inventing_builder_requirements');
+  // Historical candidate has no missing runtime capabilities: use the registered environment.
+  await expect(page.getByText('可直接使用已登记 Runtime',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Builder Result JSON')).toHaveCount(0);
+  pass('registered_runtime_reused_without_inventing_builder_requirements');
   await page.locator('.stage-actions').getByRole('button',{name:'验证能否运行',exact:true}).click();
   const scriptCard=page.locator('article').filter({hasText:'calculate_acceptance_total'});
   await scriptCard.getByText('高级设置：覆盖自动测试参数',{exact:true}).click();

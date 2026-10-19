@@ -48,8 +48,8 @@ def hydrate_bundle(request, manager):
     if request.get('skill') is not None or not isinstance(bundle, dict):
         raise ValueError('Bundle instances require a bundle and no single Skill')
     members = bundle.get('members')
-    if not isinstance(members, list) or not 2 <= len(members) <= 10:
-        raise ValueError('Bundle requires 2 to 10 Skill members')
+    if not isinstance(members, list) or not 1 <= len(members) <= 10:
+        raise ValueError('Bundle requires 1 to 10 Skill members')
     archive = base64.b64decode(bundle.pop('archiveBase64'), validate=True)
     if len(archive) > manager.max_archive_bytes or hashlib.sha256(archive).hexdigest() != bundle.get('archiveSha256'):
         raise ValueError('Bundle archive size or digest mismatch')

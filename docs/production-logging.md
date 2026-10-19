@@ -28,6 +28,12 @@ Runtime stderr 持续排空，只保留最多 8 KiB 尾部用于提取异常类�
 
 ## 排障
 
+统一迁移新增的关联链：HTTP `x-request-id` → 尝试 `requestId/attemptId` → 迁移进程 `agentRunId`（进程事件中也作为 `runId`）或验收 `runId` → `caseId` → `judgeRequestId`。API 与 Python Runtime 的验收事件使用同一 `runId/caseId`，无需将模型输入写入日志。`migration_judge_started/finished` 记录任务、尝试、运行、案例、Judge 请求 ID、耗时和安全错误类别；具体判定仍在受保护的验收记录。
+
+任务页「任务与排障标识」展示可复制的任务、请求、尝试、Agent 和验收运行 ID。旧记录缺失关联字段时显示未采集，不补造历史追踪 ID。`migration_task_created` 记录创建请求和成员数量。既有 `bundle_operation_*` / `bundle_case_*` 事件名继续保留，现也用于单成员任务，避免已有日志查询失效。
+
+例如生成失败：先用 UI 的 `attemptId` 查 `bundle_operation_finished`，再按该尝试持久化的 `agentRunId` 查 `agent_process_*`；验收失败则用 `runId/caseId` 查 `runtime_session_*` 和 `migration_judge_*`。具体代码入口见 [当前架构导航](current-architecture.md)。
+
 取响应 x-request-id、UI taskId/runId、时间和候选版本，查 HTTP → operation → case → process 事件。stderrBytes 非零但无 terminal 时检查异常类别、退出码、资源和网络；完整证据由授权人员在私有任务目录查看，不复制到公共日志/工单。
 
 如需详细 Agent dump，在隔离复现场景启用，设私有路径、短保留期；默认生产预检拒绝该开关。脱敏测试覆盖已知应用路径，不保证任意第三方扩展、业务脚本或代理永不输出敏感信息，新增工具仍须验收。

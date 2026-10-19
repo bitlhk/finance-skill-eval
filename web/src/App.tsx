@@ -7,7 +7,6 @@ import {dualRuntimeConfiguration} from './dual-runtime-configuration';
 import { EnvironmentView } from "./features/environments/EnvironmentView";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { accessToken, apiPath, basePath, tokenKey, downloadApi } from './api-path';
-import {importMigrationFiles,type ImportResult} from './migration-import';
 import {
   Activity,
   Archive,
@@ -46,8 +45,7 @@ import { MethodologyView } from "./MethodologyView";
 import { ResultCharts } from "./ResultCharts";
 import {RuntimeGoalResults, runtimeGoalCounts} from './RuntimeGoalResults';
 import { OptimizationPanel } from "./OptimizationPanel";
-import { MigrationPanel } from './MigrationPanel';
-import { BundleMigrationPanel } from './BundleMigrationPanel';
+import { MigrationWorkspace } from './features/migration/MigrationWorkspace';
 import type {
   SkillAsset,
   Evidence,
@@ -1050,29 +1048,6 @@ function ReportResult({ job }: { job: EvaluationJob }) {
     </details>
     {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
     <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span><span>执行服务提交：{report.codeRevision?`${report.codeRevision.commit} (${report.codeRevision.workingTree})`:'旧记录未记录'}</span></footer>
-  </div>;
-}
-
-function MigrationWorkspace({catalog,source,onChanged,onUseAsset}:{catalog:Catalog;source:SkillAsset|null;onChanged():Promise<void>;onUseAsset(asset:SkillAsset):Promise<void>}) {
-  const [scope,setScope]=useState<'single'|'bundle'>('single');
-  const [uploadedAsset,setUploadedAsset]=useState(source),[error,setError]=useState(''),[uploading,setUploading]=useState(false);
-  const [imports,setImports]=useState<ImportResult[]>([]),[refreshKey,setRefreshKey]=useState(0);
-  const input=useRef<HTMLInputElement>(null);
-  async function upload(files:File[]){if(uploading)return;setUploading(true);setError('');setImports([]);let single:SkillAsset|null=null;try{
-    const results=await importMigrationFiles(files,async(bytes)=>{
-      const asset=await api<SkillAsset>('/api/migrations/upload',{method:'POST',body:new Blob([bytes as BlobPart]),headers:{'content-type':'application/zip'}});
-      // Single uploads are opened and created by MigrationPanel. Batch uploads remain in
-      // the project list, so create one project per successful file here.
-      if(files.length>1)await api('/api/migrations',{method:'POST',body:JSON.stringify({sourceAssetId:asset.assetId,name:`${asset.displayName} 迁移`,createMode:'new'})});
-      single=asset;
-    });setImports(results);await onChanged();setUploadedAsset(files.length===1?single:null);setRefreshKey(n=>n+1);
-  }catch(e){setError(String(e));}finally{setUploading(false);}}
-  return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">SKILL MIGRATION</span><h1>Skill 迁移</h1></div></section>
-    {error&&<p role="alert">{error}</p>}{uploading&&<p role="status">上传中</p>}
-    {imports.length>0&&<ul aria-label="导入结果">{imports.map((r,i)=><li key={i}>{r.name}：{r.status==='IMPORTED'?'已导入':r.error}</li>)}</ul>}
-    <input hidden ref={input} type="file" multiple accept=".zip,.md,application/zip,text/markdown" onChange={e=>{const files=Array.from(e.target.files??[]);if(files.length)void upload(files);e.target.value='';}}/>
-    <div className="migration-scope" aria-label="迁移范围"><button className={scope==='single'?'button primary':'button secondary'} aria-pressed={scope==='single'} onClick={()=>setScope('single')}>单个 Skill 迁移</button><button className={scope==='bundle'?'button primary':'button secondary'} aria-pressed={scope==='bundle'} onClick={()=>setScope('bundle')}>多 Skill 整体迁移</button></div>
-    {scope==='bundle'?<BundleMigrationPanel catalog={catalog} api={api} onChanged={onChanged}/>:<MigrationPanel catalog={catalog} api={api} uploadedAsset={uploadedAsset} refreshKey={refreshKey} onUseAsset={onUseAsset} onUpload={()=>{if(!uploading)input.current?.click();}}/>}
   </div>;
 }
 
