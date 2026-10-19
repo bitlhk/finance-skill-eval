@@ -1,6 +1,6 @@
 # 生产就绪检查（2026-10-19）
 
-结论：三种部署方式的实现、公共运维工具、日志和文档已补齐；代码与真实多 Skill 功能验证通过。**尚未在用户目标生产服务器部署，不能把本机验证等同于生产上线验收通过。**
+结论：三种部署方式的实现、公共运维工具、日志和文档已补齐；Docker 演练、本机 Windows/SCM 与 WSL/systemd 实际部署、两套已安装服务的真实三 Skill UI 验收均通过。现场发现的服务账户、权限初始化、停机等待和模型代理问题已修复。**尚未在用户目标生产服务器部署，不能把本机验证等同于生产上线验收通过。** 详细证据见 [本机部署验收记录](local-deployment-validation.md)。
 
 适用范围为可信人员使用的单 API 私有工作区；需要公网开放执行 Runtime、不可信代码强隔离、共享目录多 API 副本的场景，不在当前上线能力范围内。
 
@@ -19,16 +19,19 @@
 | 检查 | 结果 | 实际范围 |
 | --- | --- | --- |
 | TypeScript / Web 类型检查、生产构建 | 通过 | pnpm check / build；前端仍有 >500 KiB chunk 提示，非构建失败 |
-| 最终全量回归 | 通过 | 138 文件，1081 passed、2 skipped；包含本次日志/SSE 改动，跳过项未计入通过 |
+| 最终全量回归 | 通过 | 139 文件，1082 passed、2 skipped；包含模型代理修复，跳过项未计入通过 |
 | 后续 SSE/服务关闭回归 | 通过 | 5 文件、20 项，含真实 HTTP SSE 关闭、账户模式、迁移服务 |
 | 追加异常摘要检查 | 通过 | 日志/SSE 两个文件 4 项，验证 stderr 只提取异常类别 |
 | 部署配置和端口检查 | 通过 | 4 项，真实占用端口、无效令牌/占位符/路径/模型别名 |
 | Python 日志/SDK 配置/进程回收/实例/脚本 | 通过 | Windows 16 项中 15 passed、1 POSIX-only skipped；WSL 单独补验 POSIX 回收 |
 | 备份/恢复 | 通过 | Windows/WSL 各 3 项：完整往返、禁止覆盖、活动状态拒绝、路径穿越、摘要损坏 |
 | Windows 配置 | 通过 | PowerShell 解析、真实模板生成、带空格和 & 的路径、XML、LocalService、轮转、目录边界 |
-| Linux 部署文件 | 通过 | Bash、systemd-analyze、Compose schema；systemd 校验临时使用已有可执行文件占位，未安装正式服务 |
+| Windows 实际 SCM 部署 | 通过 | WinSW 2.12.0、实际 LocalService 身份、自动启动配置、两服务故障恢复、停止/端口/状态清理、备份恢复；新增实体目录 ACL 与硬链接隔离测试 |
+| Linux 部署文件 | 通过 | Bash、systemd-analyze、Compose schema；该静态检查使用已有可执行文件占位，实际服务安装结果另列 |
+| WSL 实际 systemd 部署 | 通过 | finance-eval 账户、enabled、两服务 SIGKILL 恢复、权限、停机/备份恢复；保持 WSL 测试会话，未改主机全局配置 |
 | 真实原生进程冒烟 | 通过 | API + OpenJiuwen：预检、鉴权、重复启动、日志 canary、IPC/stdin 停机、崩溃后新进程恢复、重复停止 |
 | 真实多 Skill UI 端到端 | 通过 | 9 个检查点；真实 Agent、Runtime、Judge，无模型/Runtime 测试替身 |
+| 已安装服务的真实 UI 端到端 | 通过 | Windows 与 WSL 各 9 个检查点，均为三 Skill、开发 2/2、留出 1/1；重启后已验收候选与导出仍可读 |
 | Docker 完整构建和运维演练 | 通过 | 真镜像、Linux Agent SDK 导入、双服务、鉴权、自动重启/PID 复用、持久化、备份恢复、升级回滚 |
 
 原生冒烟：Node v26.8.2、OpenJiuwen 0.1.17.post1，报告位于本地 reports/production-smoke-1792394868814/result.json。冒烟不调用模型，不作为业务验收证据。
@@ -39,7 +42,11 @@
 
 容器测试环境：WSL Ubuntu、Docker 29.1.3、Compose 2.40.3；镜像 finance-skill-eval:production-audit-20261019，image ID 为 sha256:45dd6009a858d941e38ddde24a356c3fe7622056de0e269c96fc1f32d4950e8c（本机测试制品，未推送仓库）。使用隔离 Compose 项目真实启动 API/Runtime，主动 SIGKILL supervisor 后确认自动重启与健康恢复，校验跨重启的数据标记、离线备份和恢复后的字节一致性。升级/回滚使用同制品的不同 tag，验证命令流程与持久卷，不证明跨版本数据格式兼容。测试结束已删除该测试项目的容器和卷；未更改已有其他服务。
 
-Docker 演练不调用模型；真实模型验证来自上述 Windows 原生 UI 流程。Linux/systemd 和 Windows/WinSW 的服务注册、开机自启仍属于现场验收，不能由 Compose 成功代替。
+Docker 演练不调用模型；后续 Windows/WinSW 和 WSL/systemd 已独立完成实际注册及真实三 Skill UI 验收。自启动配置已检查；Windows 主机重启、目标生产服务器启动过程、真实 TLS 和出口仍需在目标环境验收。WSL systemd 服务不能阻止发行版空闲退出。
+
+后续本机服务验证：WSL 于 2026-10-19 08:41:19–08:48:25 UTC、Windows 于 08:54:03–09:05:14 UTC 完成。模型仍为 deepseek-v4-flash / glm-5.3，两轮均首次候选通过，没有实际触发修复；整体修复不能被本轮结果宣称为已触发。初始 WSL 无代理的分析曾卡住并被取消，修正服务代理和 Judge 连接池后重新完成，不把取消的尝试计为通过。
+
+最后对 7 份服务日志检查真实配置密钥和 query/header canary，未发现泄漏；两平台未产生默认 SDK 文件日志目录。备份包含实际已验收任务，恢复到独立目录后逐文件比较 SHA256 一致；服务重启后任务与交付包仍可读取。未将恢复目录另起为独立业务实例，也未用大流量触发日志轮转阈值。
 
 ## 复测入口
 
@@ -56,11 +63,11 @@ bash deploy/tests/linux-static.sh
 bash deploy/tests/docker-smoke.sh
 ```
 
-Windows 配置测试：`./deploy/tests/windows-config.ps1 -Python C:/absolute/runtime/python.exe`。Docker 冒烟复制私有配置到临时目录，生成独立项目和卷，结束只清理该测试项目；会读取真实配置但不调用模型。真实业务 UI 验收使用 `scripts/verify-bundle-migration-live-ui.mjs`，按其文件头设置私有环境文件、Runtime 配置和真实 Python。
+Windows 配置测试：`./deploy/tests/windows-config.ps1 -Python C:/absolute/runtime/python.exe`；实际 ACL 回归：`./deploy/tests/windows-acl.ps1`；硬链接边界回归：`node --test deploy/tests/private-tree.test.mjs`。Docker 冒烟复制私有配置到临时目录，生成独立项目和卷，结束只清理该测试项目；会读取真实配置但不调用模型。真实业务 UI 验收使用 `scripts/verify-bundle-migration-live-ui.mjs`；连接已安装服务的方法见 [部署验收入口](production-deployment.md)。
 
 ## 生产现场仍需完成
 
-- [ ] 在目标 Linux/systemd 或 Windows Server/SCM 上以正式服务账户安装，验证开机自启、机器重启、异常恢复和目录 ACL；本机模板检查不能替代。
+- [ ] 在目标 Linux/systemd 或 Windows Server/SCM 上复验正式账户、开机自启、机器重启、异常恢复和目录 ACL；本机 Windows 11/WSL 服务验收不能代替目标机验收。
 - [ ] 填写生产模型/Judge/MCP 凭据和出口代理，在目标网络重新跑多 Skill 联合验收；开发凭据和本机成功不代表生产权限。
 - [ ] 配置真实域名、TLS、网关超时、上传限制和防火墙；确认 Runtime 无外部入口。
 - [ ] 演练恢复到独立实例，加载历史任务/候选并检查；确定 RPO/RTO、备份加密、保留期和数据版本回退条件。

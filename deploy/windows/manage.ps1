@@ -53,7 +53,7 @@ function Configure([string]$Target) {
   <stoparguments>$Stop</stoparguments>
   <workingdirectory>$($Escape::Escape($Target))</workingdirectory>
   <env name="UV_CACHE_DIR" value="$($Escape::Escape((Join-Path $Base 'cache')))" />
-  <serviceaccount><username>NT AUTHORITY\LocalService</username></serviceaccount>
+  <serviceaccount><domain>NT AUTHORITY</domain><user>LocalService</user></serviceaccount>
   <startmode>Automatic</startmode>
   <stoptimeout>75 sec</stoptimeout>
   <onfailure action="restart" delay="10 sec" />
@@ -71,12 +71,18 @@ function Configure([string]$Target) {
 function Stop-All {
     foreach ($Name in @('api','runtime')) {
         $Service = Get-Service -Name "finance-eval-$Name" -ErrorAction SilentlyContinue
-        if ($Service -and $Service.Status -ne 'Stopped') { Invoke-Checked (Service-Path $Name) @('stop') }
+        if ($Service -and $Service.Status -ne 'Stopped') {
+            Invoke-Checked (Service-Path $Name) @('stop')
+            # WinSW's console command may return while SCM is still StopPending.
+            # Backups and release activation must wait for actual completion.
+            (Get-Service -Name "finance-eval-$Name").WaitForStatus([ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(80))
+        }
     }
 }
 function Health([string]$Target) { Invoke-Checked $Node @((Join-Path $Target 'deploy/health.mjs'), '--env', $EnvFile) }
 function Start-All([string]$Target) {
     foreach ($Name in @('runtime','api')) {
+        if ((Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'").StartName -ne 'NT AUTHORITY\LocalService') { throw 'SCM service identity must be LocalService; repair the stopped installation before starting.' }
         if ((Get-Service "finance-eval-$Name").Status -ne 'Running') { Invoke-Checked (Service-Path $Name) @('start') }
     }
     for ($Attempt=0; $Attempt -lt 30; $Attempt++) {
@@ -95,10 +101,11 @@ function Backup([string]$Target, [string]$Output) {
     Invoke-Checked (Join-Path $Target '.venv-openjiuwen/Scripts/python.exe') @((Join-Path $Target 'deploy/backup.py'), 'create', '--data', $Data, '--config', $Config, '--archive', $Output)
 }
 function Protect-Tree([string]$Directory, [string]$ServiceAccess) {
+    Invoke-Checked $Node @((Join-Path $Root 'deploy/lib/private-tree.mjs'), $Directory, $Base)
     Invoke-Checked 'icacls.exe' @($Directory, '/inheritance:r', '/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*S-1-5-19:(OI)(CI)$ServiceAccess")
     # Existing children may have explicit permissive ACLs; reset them to the protected parent.
     if (Get-ChildItem -LiteralPath $Directory -Force | Select-Object -First 1) {
-        Invoke-Checked 'icacls.exe' @((Join-Path $Directory '*'), '/reset', '/T', '/Q')
+        & (Join-Path $Root 'deploy/windows/reset-inheritance.ps1') -Directory $Directory
     }
 }
 switch ($Action) {
@@ -129,6 +136,12 @@ switch ($Action) {
             foreach ($Directory in @($Data,(Join-Path $Base 'logs'),(Join-Path $Base 'cache'))) { Protect-Tree $Directory 'M' }
             foreach ($Name in @('runtime','api')) {
                 if (-not (Get-Service "finance-eval-$Name" -ErrorAction SilentlyContinue)) { Invoke-Checked (Service-Path $Name) @('install') }
+                $Installed = Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'"
+                if ($Installed.StartName -ne 'NT AUTHORITY\LocalService') {
+                    $Changed = Invoke-CimMethod -InputObject $Installed -MethodName Change -Arguments @{ StartName='NT AUTHORITY\LocalService'; StartPassword='' }
+                    if ($Changed.ReturnValue -ne 0) { throw 'Cannot set the required LocalService account.' }
+                }
+                if ((Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'").StartName -ne 'NT AUTHORITY\LocalService') { throw 'Installed SCM service identity verification failed.' }
             }
         }
         Write-Output 'Configured, not started. Fill config, verify ACLs and service-account access, then preflight and start.'

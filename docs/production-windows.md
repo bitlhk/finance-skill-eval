@@ -23,6 +23,10 @@ icacls C:/ProgramData/FinanceSkillEval/config
 
 安装生成两个 WinSW XML 并注册服务，创建 config/data/cache/logs/backups。默认 LocalService，ACL 限制为 Administrators、SYSTEM、LocalService：服务对 data/cache/logs 可写，对代码和配置只读。**Base 必须是应用专用目录**，安装会重置其子目录 ACL，不可指向共享目录。
 
+prepare 使用独立副本安装 Node/Python 依赖。应用 ACL 前，安装器先检查目录链接必须指向 Base 内部，并解除已有文件与包缓存之间的硬链接，防止权限变更影响其他工作区。权限重置逐个遍历实体目录；链接只使用非递归的 `icacls /L` 处理自身，避免 pnpm 链接结构被重复遍历。依赖文件较多时首次权限初始化可能耗时数分钟；安装日志完成后再启动服务，不要把尚未注册的服务误判为启动失败。
+
+WinSW 2.12 的账户字段是 `<domain>NT AUTHORITY</domain><user>LocalService</user>`，不是 `username`。安装器会读取 SCM 中的实际 `StartName` 并校正本安装的已停止服务；启动前再次检查身份，避免 XML 字段被忽略后以 LocalSystem 运行。现场检查可使用 `Get-CimInstance Win32_Service -Filter "Name LIKE 'finance-eval%'" | Select-Object Name,StartName,StartMode,State`。
+
 模板替换为 Windows 数据/配置路径，Python 默认从当前 release 的 venv 解析；配置路径用正斜杠。preflight 在操作者身份运行，不能替代 LocalService 权限验收，须实际服务启动并执行任务。LocalService 与其他同账户服务共享身份，需要更强隔离时由运维改专用账户并重新验收 ACL。
 
 -Action configure 只生成审查模板，不安装服务、不改 ACL，供构建测试；可在相同 Base/release 上继续 install。重复 install 要求已有服务停止且路径属于本次安装，不覆盖其他安装。自定义 Base 后每次操作均传相同 -Base。venv 在最终目录构建，不移动到其他版本目录。

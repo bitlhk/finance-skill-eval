@@ -24,6 +24,8 @@ sudo bash deploy/linux/manage.sh logs
 
 安装创建 finance-eval 系统账户，release 为 root 所有、服务组可读，配置 root:finance-eval 0640，安装并 enable 两个服务，但不自动启动。填写配置再预检；预检以服务身份运行。确认服务所用解释器的所有父目录可遍历。
 
+WSL 本机测试可使用相同 systemd 服务，但必须保持 WSL 实例运行；systemd 服务本身不会阻止 WSL 空闲退出。测试期间可以保留 `wsl -d Ubuntu -- sleep infinity` 会话，结束时终止该会话。`systemctl enable` 表示发行版启动时拉起服务，不等同于 Windows 开机时自动启动该发行版。不要为了本项目测试随意 `wsl --shutdown`，它会影响同一 WSL 环境中的其他服务。参见 [Microsoft WSL systemd 说明](https://learn.microsoft.com/en-us/windows/wsl/systemd)。
+
 按 deploy/examples/nginx.conf.example 配置真实域名和证书，nginx -t 后 reload；关闭代理缓冲，设置长请求超时，只开放 443，56361/56362 保留本机访问。上传大小与产品策略一同确认。
 
 ## 日志和停机

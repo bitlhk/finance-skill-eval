@@ -15,7 +15,7 @@ try {
         if ($Xml.service.startarguments -notlike "*$Name --env*") { throw 'Start arguments missing.' }
         if ($Xml.service.stoparguments -notlike "*stop $Name --env*") { throw 'Stop arguments missing.' }
         if ($Xml.service.log.sizeThreshold -ne '20480') { throw 'Rotation missing.' }
-        if ($Xml.service.serviceaccount.username -ne 'NT AUTHORITY\LocalService') { throw 'Unexpected service identity.' }
+        if ($Xml.service.serviceaccount.domain -ne 'NT AUTHORITY' -or $Xml.service.serviceaccount.user -ne 'LocalService') { throw 'Unexpected WinSW 2.x service identity fields.' }
     }
     $EnvText = Get-Content -LiteralPath (Join-Path $Base 'config/production.env') -Raw
     if ($EnvText.Contains('/var/lib/') -or $EnvText.Contains('/etc/')) { throw 'Linux paths leaked into Windows template.' }

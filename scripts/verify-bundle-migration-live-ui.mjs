@@ -13,13 +13,17 @@ import { zipSync, unzipSync } from 'fflate';
 if (process.env.BUNDLE_LIVE_ENV_FILE) process.loadEnvFile(process.env.BUNDLE_LIVE_ENV_FILE);
 const root = process.cwd(),
   startedAt = new Date().toISOString();
+const external = Boolean(process.env.BUNDLE_LIVE_SERVICE_URL);
+const taskName = '真实采购多 Skill 迁移 ' + randomUUID().slice(0, 8);
+const environmentName = '真实 OpenJiuwen 多 Skill Runtime ' + randomUUID().slice(0, 8);
 const directory = path.resolve('reports', 'bundle-live-' + randomUUID());
 await mkdir(directory, { recursive: true });
-process.env.FINANCE_EVAL_AGENT_DUMP = path.join(directory, 'agent-diagnostics');
+if (!external) process.env.FINANCE_EVAL_AGENT_DUMP = path.join(directory, 'agent-diagnostics');
 const data = path.join(directory, 'data'),
-  token = randomUUID();
+  token = external ? process.env.FINANCE_EVAL_ACCESS_TOKEN : randomUUID();
+assert(token, 'Configure the deployed service access token');
 const python = process.env.FINANCE_EVAL_MIGRATION_PYTHON;
-assert(python, 'Set FINANCE_EVAL_MIGRATION_PYTHON to the real OpenJiuwen interpreter');
+assert(external || python, 'Set FINANCE_EVAL_MIGRATION_PYTHON to the real OpenJiuwen interpreter');
 assert(process.env.FINANCE_RUNTIME_CONFIG, 'Set FINANCE_RUNTIME_CONFIG to a private model configuration');
 process.env.FINANCE_EVAL_MIGRATION_PROJECT_ROOT = root;
 process.env.FINANCE_EVAL_MIGRATION_AGENT = 'on';
@@ -36,6 +40,7 @@ const checks = [],
 let app, browser, page, worker, workerLog, taskId, serviceUrl, lastTask;
 const report = {
   mode: 'REAL_AGENT_RUNTIME_AND_JUDGE',
+  deployment: external ? 'EXISTING_SERVICE' : 'TEST_PROCESS',
   startedAt,
   status: 'RUNNING',
   checks,
@@ -149,24 +154,27 @@ const suite = {
 try {
   await save();
   console.log('REPORT ' + directory);
-  const port = await availablePort(),
-    runtimeUrl = 'http://127.0.0.1:' + port + '/';
-  workerLog = createWriteStream(path.join(directory, 'runtime.log'));
-  worker = spawn(
-    python,
-    ['-m', 'uvicorn', 'integrations.openjiuwen.worker:app', '--host', '127.0.0.1', '--port', String(port)],
-    {
-      cwd: root,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' },
-    },
-  );
-  worker.stdout.pipe(workerLog);
-  worker.stderr.pipe(workerLog);
+  const port = external ? null : await availablePort(),
+    runtimeUrl = external ? process.env.BUNDLE_LIVE_RUNTIME_URL : 'http://127.0.0.1:' + port + '/';
+  assert(runtimeUrl?.endsWith('/'), 'BUNDLE_LIVE_RUNTIME_URL must end with /');
+  if (!external) {
+    workerLog = createWriteStream(path.join(directory, 'runtime.log'));
+    worker = spawn(
+      python,
+      ['-m', 'uvicorn', 'integrations.openjiuwen.worker:app', '--host', '127.0.0.1', '--port', String(port)],
+      {
+        cwd: root,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' },
+      },
+    );
+    worker.stdout.pipe(workerLog);
+    worker.stderr.pipe(workerLog);
+  }
   let capabilities;
   for (let i = 0; i < 60; i++) {
-    assert(worker.exitCode === null, 'Real Runtime process exited during startup');
+    assert(!worker || worker.exitCode === null, 'Real Runtime process exited during startup');
     try {
       const response = await fetch(runtimeUrl + 'v1/runtime-capabilities');
       if (response.ok) {
@@ -179,29 +187,32 @@ try {
   assert(capabilities?.features.multiSkill, 'Real Runtime must advertise multiSkill');
   report.capabilities = capabilities;
   pass('real_openjiuwen_runtime_started');
-  app = await createEvaluationService({
-    rootDirectory: root,
-    dataDirectory: data,
-    publicDirectory: path.join(root, 'web-dist'),
-    accessToken: token,
-    publicDemo: false,
-    workspaceMode: 'single',
-    managedWorkspace: false,
-  });
-  app.log.level = 'error';
-  const registered = await app.inject({
+  if (!external) {
+    app = await createEvaluationService({
+      rootDirectory: root,
+      dataDirectory: data,
+      publicDirectory: path.join(root, 'web-dist'),
+      accessToken: token,
+      publicDemo: false,
+      workspaceMode: 'single',
+      managedWorkspace: false,
+    });
+    app.log.level = 'error';
+    serviceUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+  } else serviceUrl = process.env.BUNDLE_LIVE_SERVICE_URL.replace(/\/$/, '');
+  report.serviceUrl = serviceUrl;
+  const registered = await fetch(serviceUrl + '/api/environments', {
     method: 'POST',
-    url: '/api/environments',
-    headers: { authorization: 'Bearer ' + token },
-    payload: {
-      name: '真实 OpenJiuwen 多 Skill Runtime',
+    headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name: environmentName,
       type: 'runtime_launcher',
       runtimeType: 'openjiuwen',
       baseUrl: runtimeUrl,
-    },
+    }),
   });
-  assert.equal(registered.statusCode, 200, registered.body);
-  serviceUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+  assert.equal(registered.status, 200, 'Runtime registration failed');
+  const existingTasks = new Set((await api('/api/migration-bundles')).map(task => task.id));
   browser = await chromium.launch({
     headless: true,
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
@@ -213,7 +224,7 @@ try {
   await page.getByRole('button', { name: '进入工作区', exact: true }).click();
   await page.getByRole('button', { name: 'Skill 迁移', exact: true }).click();
   await page.getByRole('button', { name: '多 Skill 整体迁移', exact: true }).click();
-  await page.getByLabel('任务名称', { exact: true }).fill('真实采购多 Skill 迁移');
+  await page.getByLabel('任务名称', { exact: true }).fill(taskName);
   await page
     .getByLabel('目标环境与要求', { exact: true })
     .fill(
@@ -239,8 +250,10 @@ try {
     .locator('.bundle-panel input[type=file]')
     .first()
     .setInputFiles({ name: 'procurement.zip', mimeType: 'application/zip', buffer: archive });
-  await expect(page.getByRole('heading', { name: '真实采购多 Skill 迁移', exact: true })).toBeVisible();
-  const tasks = await api('/api/migration-bundles');
+  await expect(page.getByRole('heading', { name: taskName, exact: true })).toBeVisible();
+  const tasks = (await api('/api/migration-bundles')).filter(
+    task => !existingTasks.has(task.id) && task.name === taskName,
+  );
   assert.equal(tasks.length, 1);
   taskId = tasks[0].id;
   report.taskId = taskId;
@@ -258,7 +271,7 @@ try {
   await stage('Runtime 适配与登记');
   await page
     .getByLabel('已登记执行环境', { exact: true })
-    .selectOption({ label: '真实 OpenJiuwen 多 Skill Runtime' });
+    .selectOption({ label: environmentName });
   await page.getByLabel('执行模型', { exact: true }).selectOption(modelId);
   await page.getByLabel('每个案例超时（秒）', { exact: true }).fill('600');
   await page.getByLabel('允许执行 Skill 包中的脚本（目标环境需支持）', { exact: true }).check();
