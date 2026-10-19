@@ -26,6 +26,9 @@ export function registerMigrationTaskRoutes(
     app.get<{ Params: { id: string; requestId: string } }>(prefix + '/:id/runtime-build-requests/:requestId/source.zip', async (request, reply) =>
       reply.type('application/zip').header('content-disposition', 'attachment; filename="builder-candidate.zip"')
         .send(await builder().source(request.params.id, request.params.requestId)));
+    app.get<{ Params: { id: string; requestId: string } }>(prefix + '/:id/runtime-build-requests/:requestId/skills.json', async (request,reply) =>
+      reply.type('application/json').header('content-disposition','attachment; filename="builder-skills.json"')
+        .send(await builder().skillSource(request.params.id,request.params.requestId)));
     app.post<{ Params: { id: string } }>(prefix + '/:id/runtime-deliveries', async request => {
       await builder().accept(request.params.id, request.body, request.id); return bundles.get(request.params.id);
     });
@@ -36,7 +39,7 @@ export function registerMigrationTaskRoutes(
     app.post(prefix, (request) => bundles.create(request.body, request.id));
     app.post(prefix + '/upload', (request) => {
       if (!Buffer.isBuffer(request.body))
-        throw Object.assign(new Error('请上传完整工程 ZIP'), { statusCode: 400 });
+        throw Object.assign(new Error('请上传包含所选 Skill 及可选依赖的 ZIP'), { statusCode: 400 });
       return bundles.upload(request.query, request.body, request.id);
     });
     app.get<{ Params: { id: string; }; }>(prefix + '/:id', (request) =>

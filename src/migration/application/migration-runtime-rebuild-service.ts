@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { capabilityRequirementSchema, withRequirementsDigest } from '../../shared/contracts/runtime-builder.js';
-import { RUNTIME_CAPABILITIES_SCHEMA_VERSION, RUNTIME_EXECUTION_SCHEMA_VERSION, RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_OBSERVATION_SCHEMA_VERSION } from '../../shared/contracts/runtime-protocol-versions.js';
+import { RUNTIME_CAPABILITIES_SCHEMA_VERSION, RUNTIME_EXECUTION_SCHEMA_VERSION, LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_OBSERVATION_SCHEMA_VERSION } from '../../shared/contracts/runtime-protocol-versions.js';
 import { currentRuntimeRequirements } from '../domain/migration-runtime-requirements.js';
 import { resolveMigrationEnvironment, type MigrationEnvironmentRepository } from './migration-environment-repository.js';
 import type { MigrationEvaluationJobReader } from './migration-evaluation-ports.js';
@@ -65,7 +65,7 @@ export class MigrationRuntimeRebuildService {
         requestId:`${id}:rebuild:${randomUUID()}`,
         source:{assetId:candidate.assetId,artifactSha256:candidate.artifactSha256},
         target:{runtimeType:selected.launcher.runtimeType,protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,
-          instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
+          instance:LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
         requiredCapabilities,
         rebuild:{baseline:{deploymentId:baseline.runtime.deploymentId,artifactSha256:baseline.runtime.artifactSha256,solutionRevisionId:baseline.revisionId},
           hypothesis:proposal.hypothesis,evidence:evidence.map(item=>({jobId:proposal.jobId,...item}))},

@@ -49,13 +49,13 @@ async function setup(count=3) {
 
 it.each([1,3])('binds %i members through v2 lifecycle, persists, accepts and exports the exact Builder revision',async count=>{
   const f=await setup(count),req=await f.request();
-  expect((req.extensions!.migrationTask as any).members).toHaveLength(count);
+  expect((req.extensions!.migrationTask as any).skills).toHaveLength(count);
   const yaml=await f.app.inject(f.url+'/runtime-requirements.yaml');expect(yaml.statusCode).toBe(200);expect(yaml.body).toContain('finance.skill-eval.runtime-instance.v2');
   const source=await f.app.inject(f.url+'/runtime-build-requests/'+req.requestId+'/source.zip');expect(Object.keys(unzipSync(source.rawPayload))).toHaveLength(count);
   const result=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256);
   const first=await f.accept(result);expect(first.statusCode,first.body).toBe(200);
   const bound=first.json() as BundleTask;expect(bound.builderStatus).toBe('BOUND');expect(bound.runtimeDeliveries).toHaveLength(1);
-  expect(f.host.lifecycle).toEqual(['create','status','execute','delete']);expect(f.host.creations[0].schemaVersion).toBe('finance.skill-eval.runtime-instance.v2');expect(f.host.creations[0].bundle.members).toHaveLength(count);expect(f.host.instances.size).toBe(0);
+  expect(f.host.lifecycle).toEqual(['create','status','execute','delete']);expect(f.host.creations[0].schemaVersion).toBe('finance.skill-eval.runtime-instance.v2');expect(f.host.creations[0].skills).toHaveLength(count);expect(f.host.instances.size).toBe(0);
   const repeated=await f.accept(result);expect(repeated.statusCode,repeated.body).toBe(200);expect(repeated.json().runtimeDelivery.id).toBe(bound.runtimeDelivery!.id);expect(repeated.json().runtimeDeliveries).toHaveLength(1);
   await f.service.saveSuite(f.id,{name:'Suite',cases:[{id:'dev',input:'Run business task',criteria:['BUSINESS_OK']}],holdoutCases:[{id:'held',input:'Independent task',criteria:['BUSINESS_OK']}]});
   await f.finish('ACCEPT');await expect(f.service.export(f.id,true)).rejects.toThrow(/尚未通过/);

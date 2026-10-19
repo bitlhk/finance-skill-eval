@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "finance.runtime-build-result.v2",
+  "buildId": "task-build-example",
+  "requestId": "task-build-example-v2",
+  "requirementsDigest": "f58caf7ea37960ebe55ae226b91c057bf165cfc97563069d60aecbac41a4d0a0",
+  "status": "SUCCEEDED",
+  "builder": {
+    "name": "example-builder",
+    "version": "1"
+  },
+  "launcher": {
+    "schemaVersion": "finance.runtime-launcher-descriptor.v1",
+    "deploymentId": "task-deployment-example",
+    "baseUrl": "https://runtime.example.test/launchers/task-deployment-example/",
+    "runtime": {
+      "type": "openjiuwen",
+      "version": "1.2.0"
+    },
+    "protocols": {
+      "capabilities": "finance.skill-eval.runtime-capabilities.v1",
+      "instance": "finance.skill-eval.runtime-instance.v2",
+      "execution": "finance.skill-eval.runtime-case.v1",
+      "observation": "finance.runtime-observation.v1"
+    },
+    "authentication": {
+      "type": "bearer"
+    },
+    "artifactSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "capabilitiesDigest": "d72c4cd477a7e018f6565b4202e324ecebf2378a284ec47252039b81e676ea92",
+    "expiresAt": null
+  },
+  "capabilityResults": [],
+  "verifications": [],
+  "errors": [],
+  "builtAt": "2026-10-19T12:00:00.000Z",
+  "resultDigest": "ad40402c1dc95ea1aebb8b3fd3a1a6046b2a549e517a0c6d7ef375d029d9946e",
+  "extensions": {
+    "migrationTask": {
+      "schemaVersion": "finance.migration-task-build-receipt.v2",
+      "taskId": "bundle-example",
+      "candidateId": "candidate-example-v2",
+      "candidateDigest": "767192dde9979bfb4fdc475d994a519d84748beaee724067a276c71fb491eda6",
+      "instanceSchemaVersion": "finance.skill-eval.runtime-instance.v2"
+    }
+  }
+}

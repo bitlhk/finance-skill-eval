@@ -6,7 +6,7 @@ import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chromium, expect } from '@playwright/test';
-import { zipSync, unzipSync } from 'fflate';
+import { unzipSync } from 'fflate';
 import { liveTaskBuilder } from './lib/live-task-builder.mjs';
 
 // No injected ports, response replay, request interception or fixture model endpoints.
@@ -15,6 +15,8 @@ if (process.env.BUNDLE_LIVE_ENV_FILE) process.loadEnvFile(process.env.BUNDLE_LIV
 const root = process.cwd(),
   startedAt = new Date().toISOString();
 const memberCount = Number(process.env.MIGRATION_LIVE_MEMBERS ?? 3);
+const textOnly = process.env.MIGRATION_LIVE_TEXT_ONLY === '1';
+assert(!textOnly || memberCount===1,'Text-only coverage uses one Skill');
 assert([1,3].includes(memberCount), 'MIGRATION_LIVE_MEMBERS must be 1 or 3');
 const memberNames = memberCount === 1 ? ['procurement'] : ['budget-query', 'purchase-review', 'audit-report'];
 const external = Boolean(process.env.BUNDLE_LIVE_SERVICE_URL);
@@ -52,6 +54,7 @@ let app, browser, page, worker, workerLog, taskId, serviceUrl, lastTask;
 const report = {
   mode: builderMode ? 'REAL_BUILDER_AGENT_RUNTIME_AND_JUDGE' : 'REAL_AGENT_RUNTIME_AND_JUDGE',
   memberCount,
+  textOnly,
   deployment: external ? 'EXISTING_SERVICE' : 'TEST_PROCESS',
   startedAt,
   ...(previousTask ? {resumedFrom:resumeDirectory} : {}),
@@ -130,7 +133,7 @@ const query = (center, amount) =>
   ' 的 ' +
   amount +
   ' 元采购，提供金额、结论及真实执行证据；不要仅靠心算替代脚本。必须使用冻结候选中的原始脚本，不得临时修改或复制后修补；如脚本存在缺陷，报告真实错误供迁移 Agent 修复。';
-const suite = {
+let suite = {
   name: '真实多 Skill 采购联合验收',
   cases: [
     {
@@ -164,6 +167,10 @@ const suite = {
     },
   ],
 };
+if(textOnly) suite={name:'纯指令 Skill 验收',cases:[
+  {id:'over-limit',input:'实际加载 procurement Skill，评估申请金额 129.99 元，报告规则判断结果。',criteria:['决定 REJECT；阈值为 100.00 元，未发生审批或付款。']},
+  {id:'equal-limit',input:'实际加载 procurement Skill，评估申请金额 100.00 元，报告规则判断结果。',criteria:['决定 ALLOW；等于阈值允许，但不表示已审批或付款。']},
+],holdoutCases:[{id:'missing-amount',input:'实际加载 procurement Skill，申请没有提供金额，请评估并报告结果。',criteria:['决定 UNAVAILABLE 或等价无法判断；没有编造金额，也没有批准或执行付款。']}]};
 try {
   await save();
   console.log('REPORT ' + directory);
@@ -249,8 +256,9 @@ try {
   await page
     .getByLabel('目标环境与要求', { exact: true })
     .fill(
-      '迁移到 OpenJiuwen 原生多 Skill + Python 标准库 CLI。取消 LegacyContext 注入依赖，预算查询与审核两个工具之间统一传递 available_yuan 十进制字符串，原始 JSON 文件仍存 available_cents。保留业务规则、未知中心和金额校验。支持从当前业务 cwd 读取 fixtures/budgets.json。'+memberCount+' 个 Skill 的路径和名称保持不变。',
+      (textOnly ? '迁移到 OpenJiuwen 原生纯指令 Skill：去除 LegacyPolicy 宿主调用，金额输入从整数分改为元十进制字符串。保持同一业务阈值和异常语义，不增加脚本、MCP 或外部依赖。' : '') + '迁移到 OpenJiuwen 原生多 Skill + Python 标准库 CLI。取消 LegacyContext 注入依赖，预算查询与审核两个工具之间统一传递 available_yuan 十进制字符串，原始 JSON 文件仍存 available_cents。保留业务规则、未知中心和金额校验。支持从当前业务 cwd 读取 fixtures/budgets.json。'+memberCount+' 个 Skill 的路径和名称保持不变。',
     );
+  if(textOnly) await page.getByLabel('目标环境与要求',{exact:true}).fill('迁移到 OpenJiuwen 原生纯指令 Skill：去除 LegacyPolicy 宿主调用，金额输入从整数分改为元十进制字符串。保持同一业务阈值和异常语义，不增加脚本、MCP 或外部依赖。');
   await page
     .getByLabel('业务目标', { exact: true })
     .fill(
@@ -274,12 +282,25 @@ try {
     }
     files['skills/procurement/SKILL.md'] = Buffer.from('---\nname: procurement\ndescription: Query actual budgets, evaluate purchases and report traceable decisions.\n---\nThe following are stages within this one Skill. Execute all relevant stages.\n' + sections.join('\n'));
   }
-  const archive = Buffer.from(zipSync(files));
-  await writeFile(path.join(directory, 'source.zip'), archive);
-  await page
-    .locator('.bundle-panel input[type=file]')
-    .first()
-    .setInputFiles({ name: 'procurement.zip', mimeType: 'application/zip', buffer: archive });
+  if(textOnly){
+    for(const key of Object.keys(files))delete files[key];
+    files['skills/procurement/SKILL.md']=Buffer.from('---\nname: procurement\ndescription: Evaluate a purchase request using a fixed policy.\n---\nUse LegacyPolicy.evaluate_request(context, amount_cents) in the legacy host. Policy: positive amounts up to and including 10000 cents are ALLOW; larger amounts are REJECT. Missing amount is UNAVAILABLE. Report assessment only; never claim an approval or payment occurred.');
+    await page.getByLabel('业务目标',{exact:true}).fill('通过 procurement 的业务规则评估采购请求，保持等额允许和缺金额无法判断；仅提供评估，不执行审批或付款。此 Skill 只需要说明文本，无工程依赖。');
+  }
+  await writeFile(path.join(directory,'source-files.json'),JSON.stringify(Object.fromEntries(Object.entries(files).map(([name,bytes])=>[name,bytes.toString('base64')]))));
+  // Select independent Skill documents, then attach only the required shared resources.
+  for (const name of memberNames) {
+    const skillFile='skills/'+name+'/SKILL.md';
+    await page.getByRole('button',{name:'导入 Skill 文件',exact:true}).click();
+    await page.locator('.bundle-panel input[type=file][multiple]').first().setInputFiles({name:'SKILL.md',mimeType:'text/markdown',buffer:files[skillFile]});
+    await expect(page.getByRole('status').filter({hasText:'已导入 1 个 Skill'})).toBeVisible();
+    await expect(page.getByRole('button',{name:'创建迁移任务',exact:true})).toBeEnabled();
+  }
+  const dependencies=Object.entries(files).filter(([name])=>name.startsWith('shared/'));
+  await page.getByText(/依赖文件（可选/).click();
+  await page.getByLabel('添加依赖文件',{exact:true}).setInputFiles(dependencies.map(([name,buffer])=>({name:path.basename(name),mimeType:'application/octet-stream',buffer})));
+  await expect(page.getByLabel('依赖文件路径',{exact:true})).toHaveCount(dependencies.length);
+  await page.getByRole('button',{name:'创建迁移任务',exact:true}).click();
   await expect(page.getByRole('heading', { name: taskName, exact: true })).toBeVisible();
   const tasks = (await api('/api/migration-bundles')).filter(
     task => !existingTasks.has(task.id) && task.name === taskName,
@@ -287,7 +308,7 @@ try {
   assert.equal(tasks.length, 1);
   taskId = tasks[0].id;
   report.taskId = taskId;
-  pass('whole_workspace_imported_through_ui');
+  pass('independent_skills_and_optional_dependencies_selected_through_ui');
   task = await act('分析 Skill 工程', 'ANALYZE');
   assert.deepEqual(task.analysis.missing, [], JSON.stringify(task.analysis));
   await page.screenshot({ path: path.join(directory, 'analysis.png'), fullPage: true });
@@ -306,7 +327,7 @@ try {
     .selectOption({ label: environmentName });
   if (!builderMode) await page.getByLabel('执行模型', { exact: true }).selectOption(modelId);
   await page.getByLabel('每个案例超时（秒）', { exact: true }).fill('600');
-  await page.getByLabel('允许执行 Skill 包中的脚本（目标环境需支持）', { exact: true }).check();
+  if(!textOnly) await page.getByLabel('允许执行 Skill 包中的脚本（目标环境需支持）', { exact: true }).check();
   if (builderMode) { capabilities=await builder.bind(page); report.capabilities=capabilities; pass('real_builder_built_deployed_and_bound_through_ui'); }
   else await page.getByRole('button', { name: '保存运行配置', exact: true }).click();
   await stage('验证能否运行');
@@ -321,6 +342,7 @@ try {
     await page.screenshot({ path: path.join(directory, 'development-' + repair + '.png'), fullPage: true });
     if (task.runs.at(-1).status === 'PASSED') break;
     assert(repair < 2, 'Real development acceptance failed after two actual Agent repairs');
+    assert(task.runs.at(-1).cases.every(c=>c.evidence && !c.evidence.error),'Infrastructure execution failed; retain evidence and fix Runtime before business repair');
     console.log('Real development acceptance failed; requesting actual whole-workspace repair');
     await act('让 Agent 查看工程并修复', 'REPAIR');
     if(builderMode){await stage('Runtime 适配与登记'); capabilities=await builder.bind(page);}
@@ -341,7 +363,7 @@ try {
   )) {
     for (const item of run.cases) {
       assert(item.evidence.runtimeIdentityVerified && item.evidence.streamCompleted);
-      assert.equal(item.evidence.metadata.bundleDigest, run.candidateDigest);
+      assert.equal(item.evidence.metadata.contentDigest, run.candidateDigest);
       assert.equal(item.evidence.loadedSkills.length, memberCount);
       // The production launcher annotates the transport mode; Worker identity
       // is checked separately against the capabilities of our actual process.
@@ -351,11 +373,11 @@ try {
       assert.equal(item.evidence.metadata.modelBinding.upstreamModelId, report.models.execution);
       for (const name of memberNames) {
         assert(
-          item.evidence.metadata.referenceFilesRead['skills/' + name + '/SKILL.md'],
+          item.evidence.metadata.referenceFilesRead[task.source.members.find(m=>m.skillId===name).skillFile],
           'No actual activation evidence for ' + name,
         );
       }
-      assert(
+      if(!textOnly) assert(
         item.evidence.toolCalls.some((call) => call.name === 'bash' && call.status === 'completed'),
         'Actual script execution is required',
       );
@@ -377,7 +399,7 @@ try {
   assert.equal(manifest.verified, true);
   assert.equal(manifest.candidate.id, task.currentCandidateId);
   for (const name of memberNames)
-    assert(exported['package/skills/' + name + '/SKILL.md']);
+    assert(exported['package/'+task.source.members.find(m=>m.skillId===name).skillFile]);
   pass('verified_full_bundle_downloaded_through_ui');
   assert.deepEqual(errors, []);
   if (builderMode) {

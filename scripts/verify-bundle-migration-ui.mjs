@@ -89,7 +89,7 @@ const bundlePorts = {
         runtimeIdentityVerified: true,
         streamCompleted: true,
         error: null,
-        metadata: { bundleDigest: snapshot.digest, loadedBundleMembers: snapshot.members },
+        metadata: { contentDigest: snapshot.digest, loadedSkillMembers: snapshot.members },
       }),
     },
   }),

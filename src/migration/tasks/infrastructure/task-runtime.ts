@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { runtimeSkillSetFromFiles, skillSetFileStats } from '../../../shared/contracts/runtime-skills.js';
 import type { EnvironmentStore } from '../../../service/environment-store.js';
 import { RuntimeLauncherAdapter } from '../../../runtime-launcher.js';
-import { bundleError, bundleZip, readText } from '../domain/task-model.js';
+import { bundleError, readText } from '../domain/task-model.js';
 import type { BundleRuntimeFactory } from '../application/task-ports.js';
 import type { RuntimeEnvironmentDescriptor } from '../../../http-runtime.js';
 export function createBundleRuntime(
@@ -27,10 +27,11 @@ export function createBundleRuntime(
       bundleError('运行环境不提供所选模型');
     if (configuration.timeoutMs > capabilities.limits.maxTimeoutMs)
       bundleError('验收超时设置超过 Runtime 限制');
-    const archive = bundleZip(snapshot.files);
+    const skillSet=runtimeSkillSetFromFiles({...snapshot,entryInstructionsFile:configuration.entryInstructionsFile});
+    const size=skillSetFileStats(skillSet);
     if (
-      archive.length > capabilities.limits.maxArchiveBytes ||
-      Object.keys(snapshot.files).length > capabilities.limits.maxFiles
+      size.bytes > capabilities.limits.maxArchiveBytes ||
+      size.count > capabilities.limits.maxFiles
     )
       bundleError('整组包超过目标 Runtime 的容量限制');
     if (configuration.entryInstructionsFile) readText(snapshot.files, configuration.entryInstructionsFile);
@@ -79,15 +80,7 @@ export function createBundleRuntime(
         version: 'frozen',
         artifactSha256: snapshot.digest,
       },
-      bundle: {
-        digest: snapshot.digest,
-        members: snapshot.members,
-        archiveBase64: archive.toString('base64'),
-        archiveSha256: createHash('sha256').update(archive).digest('hex'),
-        ...(configuration.entryInstructionsFile
-          ? { entryInstructionsFile: configuration.entryInstructionsFile }
-          : {}),
-      },
+      skillSet,
       environment: {
         environmentId: configuration.environmentId,
         harnessToolNames: configuration.harnessTools,

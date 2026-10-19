@@ -1,3 +1,4 @@
+import { runtimeSkillSetFromFiles } from '../../../shared/contracts/runtime-skills.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
@@ -30,14 +31,14 @@ export class TaskBuilderService {
       const snapshot = await this.repository.readSnapshot(id, candidate.id);
       if (settings.entryInstructionsFile && !(settings.entryInstructionsFile in snapshot.files)) bundleError('入口指令文件不存在', 400);
       const requirements = withRequirementsDigest({
-        schemaVersion: 'finance.runtime-build-requirements.v1', requestId: 'task-build-' + randomUUID(),
+        schemaVersion: 'finance.runtime-build-requirements.v2', requestId: 'task-build-' + randomUUID(),
         source: { assetId: candidate.id, artifactSha256: candidate.digest },
         target: { runtimeType, protocols: { capabilities: RUNTIME_CAPABILITIES_SCHEMA_VERSION, instance: RUNTIME_INSTANCE_SCHEMA_VERSION, execution: RUNTIME_EXECUTION_SCHEMA_VERSION, observation: RUNTIME_OBSERVATION_SCHEMA_VERSION } },
         requiredCapabilities,
         extensions: { migrationTask: taskBuildProfileSchema.parse({
-          schemaVersion: 'finance.migration-task-build-profile.v1', required: true,
+          schemaVersion: 'finance.migration-task-build-profile.v2', required: true,
           taskId: id, sourceDigest: task.source.digest, candidateId: candidate.id, candidateDigest: candidate.digest,
-          members: candidate.members, goal: task.goal, target: task.target, ...(task.analysis ? { analysis: task.analysis } : {}),
+          skills: candidate.members, goal: task.goal, target: task.target, ...(task.analysis ? { analysis: task.analysis } : {}),
           instanceSchemaVersion: 'finance.skill-eval.runtime-instance.v2', multiSkill: true,
           settings, services: candidate.services,
           files: Object.keys(snapshot.files).sort(),
@@ -72,6 +73,14 @@ export class TaskBuilderService {
     assertMigrationExportSafe(Object.fromEntries(Object.entries(snapshot.files).map(([name, value]) => [name, Buffer.from(value, 'base64')])));
     return bundleZip(snapshot.files);
   }
+  async skillSource(id: string, requestId: string) {
+    const task = await this.repository.get(id);
+    const request = task.runtimeBuildRequests?.find(r => r.requirements.requestId === requestId);
+    if (!request) bundleError('Builder 需求不存在', 404);
+    const snapshot = await this.repository.readSnapshot(id, request.candidateId);
+    assertMigrationExportSafe(Object.fromEntries(Object.entries(snapshot.files).map(([name,value]) => [name,Buffer.from(value,'base64')])));
+    return runtimeSkillSetFromFiles({...snapshot,entryInstructionsFile:request.settings.entryInstructionsFile});
+  }
   async accept(id: string, input: unknown, httpRequestId?: string) {
     const parsed = intakeSchema.parse(input);
     assertMigrationExportSafe({ 'runtime-build-result.json': Buffer.from(JSON.stringify(parsed.result)) });
@@ -86,7 +95,7 @@ export class TaskBuilderService {
         const candidate = currentCandidate(task);
         if (!candidate || candidate.id !== request.candidateId || candidate.digest !== request.candidateDigest) bundleError('候选已变化，请重新生成 Builder 需求');
         const receipt = taskBuildReceiptSchema.safeParse(parsed.result.extensions?.migrationTask);
-        if (!receipt.success || receipt.data.taskId !== id || receipt.data.candidateId !== candidate.id || receipt.data.candidateDigest !== candidate.digest)
+        if (!receipt.success || (request.requirements.schemaVersion.endsWith('.v2') && receipt.data.schemaVersion !== 'finance.migration-task-build-receipt.v2') || receipt.data.taskId !== id || receipt.data.candidateId !== candidate.id || receipt.data.candidateDigest !== candidate.digest)
           bundleError('Builder Result 缺少匹配当前任务、候选及 v2 协议的 migrationTask 回执', 400);
         const replay = task.runtimeDelivery?.requestId === parsed.result.requestId;
         if (replay && (task.runtimeDelivery!.result.resultDigest !== parsed.result.resultDigest || taskBuilderStatus(task) !== 'BOUND')) bundleError('该需求已绑定其他交付或配置已变化，请生成新需求');

@@ -1,4 +1,5 @@
 import { conversationTurnsSchema,fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
+import { randomUUID } from 'node:crypto';
 import {canonicalSha256} from './shared/json-canonicalization.js';
 import type { EvaluationSide, RuntimeAdapter, RuntimeExecutionRequest, RuntimePrepareContext } from './adapters.js';
 import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from './adapters.js';
@@ -7,7 +8,8 @@ import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeCleanupObservationSchema, runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 import { runtimeObservationEventSchema, type RuntimeObservationEvent } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
-import {runtimeBundleSchema,type RuntimeBundle} from './shared/contracts/runtime-bundle.js';
+import {type RuntimeBundle} from './shared/contracts/runtime-bundle.js';
+import { runtimeSkillSetSchema, legacyBundleToSkills, skillMembers, type RuntimeSkillSet } from './shared/contracts/runtime-skills.js';
 
 export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 export type { RuntimeLauncherCapabilities } from './shared/contracts/runtime-launcher.js';
@@ -32,13 +34,15 @@ export const launcherGenerationSchema=z.strictObject({
   max_tokens:z.number().int().min(1).max(32768),
   thinking:z.strictObject({type:z.literal('disabled')}).optional(),
 });
-export type RuntimeInstanceRequest={
-  schemaVersion:'finance.skill-eval.runtime-instance.v1'|'finance.skill-eval.runtime-instance.v2';runId:string;side:EvaluationSide;modelId:string;
-  bundle?:RuntimeBundle;
-  variant:SkillVariant;skill:ResolvedSkillSource|null;environment:RuntimeEnvironmentDescriptor;
+type RuntimeInstanceCommon={
+  runId:string;side:EvaluationSide;modelId:string;environment:RuntimeEnvironmentDescriptor;
   configuration:Record<string,string>;secrets:RuntimeInstanceSecrets;limits:{timeoutMs:number};
   generation?:z.infer<typeof launcherGenerationSchema>;
 };
+export type RuntimeInstanceRequest =
+  | (RuntimeInstanceCommon & RuntimeSkillSet & {schemaVersion:'finance.skill-eval.runtime-instance.v2'})
+  | (RuntimeInstanceCommon & {schemaVersion:'finance.skill-eval.runtime-instance.v1';variant:SkillVariant;skill:ResolvedSkillSource|null});
+
 
 function endpoint(base:string,path:string):URL{return new URL(path,new URL(base));}
 export const RUNTIME_LAUNCHER_STREAM_LIMITS={frameBytes:524_288,evidenceBytes:262_144} as const;
@@ -178,6 +182,7 @@ function forwardObservation(event:RuntimeObservationEvent,request:RuntimeExecuti
 
 export class RuntimeLauncherAdapter implements RuntimeAdapter{
   readonly adapterId:string;
+  private readonly leaseId=randomUUID();
   private instance:InstanceState|null=null;
   private cleanupObservation:Record<string,unknown>={status:'NOT_REQUESTED'};
   private readonly cleanupReceipts=new Map<string,Record<string,unknown>>();
@@ -192,15 +197,16 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   private failedCaseId:string|null=null;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
-    skill:ResolvedSkillSource|null;bundle?:RuntimeBundle;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
+    skill:ResolvedSkillSource|null;skillSet?:RuntimeSkillSet;bundle?:RuntimeBundle;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
     this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
     const signal = context.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(this.options.timeoutMs)]) : AbortSignal.timeout(this.options.timeoutMs);
     const extracted=extractSecrets(this.options.environment,this.options.secrets);
-    if(this.options.bundle){
-      runtimeBundleSchema.parse(this.options.bundle);
-      if(this.options.skill)throw new Error('Bundle instances cannot contain a separate single Skill');
+    if(this.options.bundle && !this.options.skillSet)this.options.skillSet=await legacyBundleToSkills(this.options.bundle);
+    if(this.options.skillSet){
+      runtimeSkillSetSchema.parse(this.options.skillSet);
+      if(this.options.skill)throw new Error('v2 skills[] cannot be combined with the legacy skill field');
       const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-capabilities'),{headers:this.options.headers,redirect:'error',signal});
       if(!response.ok||runtimeLauncherCapabilitiesSchema.parse(await response.json()).features.multiSkill!==true)throw new Error('目标 Runtime 未声明多 Skill 装载能力');
     }
@@ -208,12 +214,13 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     const generation=Object.keys(parameters).length
       ? {...launcherGenerationSchema.omit({schemaVersion:true}).parse(parameters),schemaVersion:'finance.eval-generation.v1' as const} : undefined;
     this.generation=generation;
-    const request:RuntimeInstanceRequest={schemaVersion:'finance.skill-eval.runtime-instance.v1',runId:context.runId,side:this.options.side,
-      modelId:this.options.model.modelId,variant:this.options.variant,skill:this.options.skill,environment:extracted.environment,
-      configuration:this.options.configuration??{},secrets:extracted.secrets,limits:{timeoutMs:this.options.timeoutMs}};
-    if(generation)request.generation=generation;
-    if(this.options.bundle){request.schemaVersion='finance.skill-eval.runtime-instance.v2';request.bundle=this.options.bundle;}
-    const idempotencyKey=fingerprint({runId:context.runId,side:this.options.side,configuration:fingerprint(request),...(this.incarnation?{incarnation:this.incarnation}:{})});
+    const common:RuntimeInstanceCommon={runId:context.runId,side:this.options.side,modelId:this.options.model.modelId,
+      environment:extracted.environment,configuration:this.options.configuration??{},secrets:extracted.secrets,
+      limits:{timeoutMs:this.options.timeoutMs},...(generation?{generation}:{})};
+    const request:RuntimeInstanceRequest=this.options.skillSet
+      ? {...common,schemaVersion:'finance.skill-eval.runtime-instance.v2',...this.options.skillSet}
+      : {...common,schemaVersion:'finance.skill-eval.runtime-instance.v1',variant:this.options.variant,skill:this.options.skill};
+    const idempotencyKey=fingerprint({leaseId:this.leaseId,runId:context.runId,side:this.options.side,configuration:fingerprint(request),...(this.incarnation?{incarnation:this.incarnation}:{})});
     const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
     if(!response.ok)throw await responseError(response);
@@ -279,10 +286,10 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     }
     if(evidence.status==='failed'&&!evidence.runtimeIdentityVerified)throw new Error(evidence.error??'Runtime instance stopped before producing verified execution evidence');
     if(this.options.skill&&evidence.metadata.skillArtifactSha256!==this.options.skill.artifactSha256)throw new Error('Runtime instance loaded a different Skill digest');
-    if(this.options.bundle){
-      const bundle=this.options.bundle;
-      const observed=z.array(z.object({id:z.string(),skillId:z.string(),version:z.string(),artifactSha256:z.string(),skillFile:z.string()})).parse(evidence.metadata.loadedBundleMembers);
-      if(evidence.metadata.bundleDigest!==bundle.digest||observed.length!==bundle.members.length
+    if(this.options.skillSet){
+      const set=this.options.skillSet, bundle={digest:set.contentDigest,members:skillMembers(set)};
+      const observed=z.array(z.object({id:z.string(),skillId:z.string(),version:z.string(),artifactSha256:z.string(),skillFile:z.string()})).parse((evidence.metadata.loadedSkillMembers??(this.options.bundle?evidence.metadata.loadedBundleMembers:undefined)));
+      if((evidence.metadata.contentDigest??(this.options.bundle?evidence.metadata.bundleDigest:undefined))!==bundle.digest||observed.length!==bundle.members.length
         ||fingerprint([...observed].sort((a,b)=>a.id.localeCompare(b.id)))!==fingerprint([...bundle.members].sort((a,b)=>a.id.localeCompare(b.id)))
         ||bundle.members.some(member=>!evidence.loadedSkills.some(item=>item.skillId===member.skillId&&item.version===member.version)))
         throw new Error('整组 Skill 装载清单或内容摘要与本次候选不一致');

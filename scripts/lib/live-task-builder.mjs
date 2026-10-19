@@ -29,13 +29,18 @@ export function liveTaskBuilder({directory, port, python, modelConfig}) {
     await page.getByRole('button',{name:'生成并下载 Builder 需求',exact:true}).click();
     await (await download).saveAs(path.join(round,'requirements.yaml'));
     const requirements=parse(await readFile(path.join(round,'requirements.yaml'),'utf8'));
+    assert.equal(requirements.schemaVersion,'finance.runtime-build-requirements.v2');
+    assert.equal(requirements.target.protocols.instance,'finance.skill-eval.runtime-instance.v2');
     await writeFile(path.join(round,'requirements.json'),JSON.stringify(requirements));
     const source=page.waitForEvent('download');
-    await page.getByRole('button',{name:'下载绑定的候选源码',exact:true}).click();
-    await (await source).saveAs(path.join(round,'candidate.zip'));
+    await page.getByRole('button',{name:'下载绑定的 Skill 与依赖',exact:true}).click();
+    await (await source).saveAs(path.join(round,'skills.json'));
+    const skillSet=JSON.parse(await readFile(path.join(round,'skills.json'),'utf8'));
+    assert.equal(skillSet.skills.length,requirements.extensions.migrationTask.skills.length);
+    assert(!('bundle' in skillSet) && !('archiveBase64' in skillSet));
     const state=path.join(round,'state'), log=createWriteStream(path.join(round,'builder.log'));
     const child=spawn(hostPython,[path.join(root,'engineering/build_migration_task.py'),
-      '--requirements',path.join(round,'requirements.json'),'--source',path.join(round,'candidate.zip'),
+      '--requirements',path.join(round,'requirements.json'),'--skills',path.join(round,'skills.json'),
       '--state-root',state,'--python',python,'--model-config',modelConfig,'--port',String(port)],
       {cwd:root,windowsHide:true,env:{...process.env,PYTHONUTF8:'1',PYTHONUNBUFFERED:'1'},stdio:['ignore','pipe','pipe']});
     child.stdout.pipe(log); child.stderr.pipe(log);
@@ -54,8 +59,9 @@ export function liveTaskBuilder({directory, port, python, modelConfig}) {
     process.env.LIVE_BUILDER_TOKEN=info.token;
     const result=JSON.parse(await readFile(path.join(state,'result.json'),'utf8'));
     assert.equal(result.status,'SUCCEEDED');
+    assert.equal(result.schemaVersion,'finance.runtime-build-result.v2');
     builds.push({buildId:result.buildId,requestId:result.requestId,deploymentId:result.launcher.deploymentId,
-      artifactSha256:result.launcher.artifactSha256,resultDigest:result.resultDigest,candidateId:requirements.source.assetId});
+      skillCount:skillSet.skills.length,assetCount:Object.keys(skillSet.assets??{}).length,instanceProtocol:requirements.target.protocols.instance,artifactSha256:result.launcher.artifactSha256,resultDigest:result.resultDigest,candidateId:requirements.source.assetId});
     await page.getByLabel('导入 Builder Result JSON',{exact:true}).setInputFiles(path.join(state,'result.json'));
     await page.getByLabel('Builder 交付信任引用',{exact:true}).selectOption('real-builder');
     const accepted=page.waitForResponse(r=>r.url().endsWith('/runtime-deliveries')&&r.request().method()==='POST',{timeout:900000});

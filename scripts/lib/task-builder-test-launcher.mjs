@@ -19,13 +19,13 @@ export async function taskBuilderLauncher() {
   app.get('/v1/runtime-instances/:id', request => { lifecycle.push('status'); return state(request.params.id); });
   app.post('/v1/runtime-instances/:id/execute', async request => {
     lifecycle.push('execute'); if(control.executeGate) await control.executeGate;
-    const instance = instances.get(request.params.id), members = instance.bundle.members;
+    const instance = instances.get(request.params.id), members = instance.skills.map(({instructions,files,...member})=>member);
     return { runId: instance.runId, side: 'right', caseId: request.body.caseId, modelId: instance.modelId, skillVersion: 'frozen',
       status: control.failExecution ? 'failed' : 'completed', output: request.body.caseId === 'launcher-lifecycle' ? 'CONFORMANCE_OK' : 'BUSINESS_OK',
       elapsedMs: 1, toolCalls: [], loadedSkills: members.map(m => ({skillId:m.skillId,version:m.version})), usage: null,
       runtimeIdentityVerified: true, streamCompleted: true, error: null,
-      metadata: { bundleDigest: control.badDigest ? 'x'.repeat(64) : instance.bundle.digest,
-        loadedBundleMembers: control.badMembers ? members.slice(1) : members,
+      metadata: { contentDigest: control.badDigest ? 'x'.repeat(64) : instance.contentDigest,
+        loadedSkillMembers: control.badMembers ? members.slice(1) : members,
         instanceConfigurationDigest: state(request.params.id).configurationDigest, workspaceFilesDigest: null } };
   });
   app.delete('/v1/runtime-instances/:id', (request, reply) => {
@@ -37,10 +37,10 @@ export async function taskBuilderLauncher() {
 }
 export function taskBuilderResult(requirements, host, withResultDigest, canonicalSha256, suffix='1') {
   const profile = requirements.extensions.migrationTask;
-  return withResultDigest({ schemaVersion:'finance.runtime-build-result.v1', buildId:'build-'+suffix, requestId:requirements.requestId,
+  return withResultDigest({ schemaVersion:requirements.schemaVersion.replace('requirements','result'), buildId:'build-'+suffix, requestId:requirements.requestId,
     requirementsDigest:requirements.requirementsDigest, status:'SUCCEEDED', builder:{name:'protocol-fixture',version:'1'},
     launcher:{schemaVersion:'finance.runtime-launcher-descriptor.v1',deploymentId:'deployment-'+suffix,baseUrl:host.baseUrl,
       runtime:host.caps.runtime,protocols:requirements.target.protocols,authentication:{type:'none'},artifactSha256:canonicalSha256(suffix),capabilitiesDigest:canonicalSha256(host.caps),expiresAt:null},
     capabilityResults:[],verifications:[],errors:[],builtAt:new Date().toISOString(),
-    extensions:{migrationTask:{schemaVersion:'finance.migration-task-build-receipt.v1',taskId:profile.taskId,candidateId:profile.candidateId,candidateDigest:profile.candidateDigest,instanceSchemaVersion:profile.instanceSchemaVersion}} });
+    extensions:{migrationTask:{schemaVersion:profile.schemaVersion.replace('profile','receipt'),taskId:profile.taskId,candidateId:profile.candidateId,candidateDigest:profile.candidateDigest,instanceSchemaVersion:profile.instanceSchemaVersion}} });
 }

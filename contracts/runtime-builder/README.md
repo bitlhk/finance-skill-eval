@@ -1,5 +1,9 @@
 # Runtime Builder file contracts
 
+New tasks use [requirements v2](finance.runtime-build-requirements.v2.schema.json) and
+[result v2](finance.runtime-build-result.v2.schema.json), with the v2 instance protocol.
+The v1 documents below remain available only for legacy task compatibility.
+
 `finance.runtime-build-requirements.v1` is emitted only when every required Runtime capability has machine-readable input, output, error, permission, side-effect and isolation semantics. Legacy free-text-only findings return `INCOMPLETE_REQUIREMENTS` and are not executable build requests.
 
 `finance.runtime-build-result.v1` returns a deployed Runtime Launcher, not a downloadable Runtime package. `SUCCEEDED` requires a `finance.runtime-launcher-descriptor.v1`; every other status requires `launcher: null`. Both Builder digests use RFC 8785 canonical JSON and SHA-256, excluding the digest field itself.
@@ -14,13 +18,15 @@ This directory defines the build request/result documents only. Submission, poll
 
 ## Unified migration task profile
 
-Single and multiple Skill tasks use the same optional v1 envelope extension, required when present:
+All new tasks use the same 1–N Skill contract:
 
-- Requirements `extensions.migrationTask`: [finance.migration-task-build-profile.v1](finance.migration-task-build-profile.v1.schema.json).
-- Result `extensions.migrationTask`: [finance.migration-task-build-receipt.v1](finance.migration-task-build-receipt.v1.schema.json).
-- Matching illustrative documents: [requirements](examples/task.requirements.success.json), [result](examples/task.result.success.json), [capabilities](examples/task.capabilities.json). These are protocol examples, not records of a live deployment.
+- Requirements extension: [task profile v2](finance.migration-task-build-profile.v2.schema.json), with `skills[]` metadata.
+- Result extension: [task receipt v2](finance.migration-task-build-receipt.v2.schema.json).
+- Illustrative v2 [requirements](examples/task.v2.requirements.success.json), [result](examples/task.v2.result.success.json), [inline Skills](examples/skills.v2.json); these are examples, not live deployment records.
+- Inline input: `skills[]` with instructions and optional member `files`, optional shared `assets`, and `contentDigest`.
+- Both build target and Launcher descriptor declare `finance.skill-eval.runtime-instance.v2`.
 
-The profile pins task/source/candidate identity, all 1–10 member entries and digests, file paths, packaged services and execution settings. The downloaded source ZIP is bound to that request's immutable candidate. The profile requires `finance.skill-eval.runtime-instance.v2` and `features.multiSkill=true`, including for one member. The outer descriptor keeps the baseline v1 protocol declaration; v2 is the additional required protocol. A Builder unable to honor the profile must return an explicit failure, not silently ignore the extension.
+A Skill does not need a project, archive or dependency file. Eval exports `skills.json` bound to the immutable candidate; ZIP is only an optional import/export convenience. The file-tree digest and each member digest still protect the exact input bytes. A Builder unable to honor inline v2 must fail explicitly.
 
 The receipt must echo task ID, candidate ID/digest and the v2 instance version; it is covered by the outer `resultDigest`. The receiver uses its saved requirements and source snapshot, validates the live capabilities and required native contracts, then executes create/status/execute/evidence/delete with every member loaded. A profile-bearing request cannot be admitted through the old v1-only intake. Native capability declarations still require structured contracts; natural-language analysis is context, not proof of implemented semantics.
 

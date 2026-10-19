@@ -1,0 +1,195 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "finance.migration-task-build-profile.v2"
+    },
+    "required": {
+      "type": "boolean",
+      "const": true
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "candidateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidateDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1
+    },
+    "analysis": {},
+    "instanceSchemaVersion": {
+      "type": "string",
+      "const": "finance.skill-eval.runtime-instance.v2"
+    },
+    "multiSkill": {
+      "type": "boolean",
+      "const": true
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 900000
+        },
+        "entryInstructionsFile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harnessTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read_file",
+              "glob",
+              "list_files",
+              "bash"
+            ]
+          },
+          "maxItems": 4
+        }
+      },
+      "required": [
+        "timeoutMs",
+        "harnessTools"
+      ],
+      "additionalProperties": false
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "toolNames": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "filePaths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "start": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "prepare": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "toolNames",
+          "filePaths",
+          "start"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 20
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "maxItems": 1000
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "skillId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "skillFile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifactSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "skillId",
+          "skillFile",
+          "version",
+          "artifactSha256"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 10
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "required",
+    "taskId",
+    "sourceDigest",
+    "candidateId",
+    "candidateDigest",
+    "skills",
+    "goal",
+    "target",
+    "instanceSchemaVersion",
+    "multiSkill",
+    "settings",
+    "services",
+    "files"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "finance.migration-task-build-profile.v2"
+}

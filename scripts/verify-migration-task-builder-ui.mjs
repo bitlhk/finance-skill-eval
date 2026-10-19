@@ -34,15 +34,15 @@ try{
     await stage('生成迁移结果');await page.getByRole('button',{name:'生成迁移结果',exact:true}).click();await expect(page.getByText('整体迁移完成',{exact:true})).toBeVisible();
     await stage('Runtime 适配与登记');
     const download=page.waitForEvent('download'); download.catch(()=>{}); await page.getByRole('button',{name:'生成并下载 Builder 需求',exact:true}).click(); await expect(page.getByRole('alert')).toHaveCount(0);
-    const req=parse(await readFile(await (await download).path(),'utf8'));assert.equal(req.extensions.migrationTask.members.length,count);assert.equal(req.extensions.migrationTask.instanceSchemaVersion,'finance.skill-eval.runtime-instance.v2');
-    const sourceDownload=page.waitForEvent('download');await page.getByRole('button',{name:'下载绑定的候选源码',exact:true}).click();assert.equal(Object.keys(unzipSync(await readFile(await (await sourceDownload).path()))).length,count);
+    const req=parse(await readFile(await (await download).path(),'utf8'));assert.equal(req.extensions.migrationTask.skills.length,count);assert.equal(req.extensions.migrationTask.instanceSchemaVersion,'finance.skill-eval.runtime-instance.v2');
+    const sourceDownload=page.waitForEvent('download');await page.getByRole('button',{name:'下载绑定的 Skill 与依赖',exact:true}).click();assert.equal(JSON.parse(await readFile(await (await sourceDownload).path(),'utf8')).skills.length,count);
     const result=taskBuilderResult(req,host,withResultDigest,canonicalSha256,String(count));
     await page.getByLabel('Builder Result',{exact:true}).fill(JSON.stringify({...result,requirementsDigest:'a'.repeat(64)}));
     await page.getByRole('button',{name:'验证并绑定 Builder 交付',exact:true}).click();await expect(page.getByRole('alert')).toContainText('交付未通过验收');
     await page.getByLabel('导入 Builder Result JSON',{exact:true}).setInputFiles({name:'result.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(result))});
     await page.getByRole('button',{name:'验证并绑定 Builder 交付',exact:true}).click();
     await expect(page.getByText('绑定状态：已绑定当前候选与配置',{exact:true})).toBeVisible({timeout:15000});
-    assert(host.creations.at(-1).bundle.members.length===count);assert.equal(host.instances.size,0);
+    assert(host.creations.at(-1).skills.length===count);assert.equal(host.instances.size,0);
     await page.screenshot({path:path.join(screenshots,`bound-${count}.png`),fullPage:true});
     await stage('任务验收');await page.getByLabel('验收测试集 JSON').fill(JSON.stringify({name:'Business',cases:[{id:'dev',input:'业务任务',criteria:['BUSINESS_OK']}],holdoutCases:[{id:'held',input:'独立任务',criteria:['BUSINESS_OK']}]}));
     await page.getByRole('button',{name:'保存测试集',exact:true}).click();await page.getByRole('button',{name:'开始任务验收',exact:true}).click();

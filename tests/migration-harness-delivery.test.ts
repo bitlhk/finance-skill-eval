@@ -10,7 +10,7 @@ import {runtimeBuildRequirementsYaml} from '../src/migration/infrastructure/migr
 import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
 import {createEvaluationService} from '../src/service/server.js';
 import {analysisFixture,inspectionFixture} from './analysis-fixture.js';
-import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
 import Fastify from 'fastify';
 import {workspaceFilesDigest} from '../src/contracts.js';
 
@@ -47,7 +47,7 @@ it('accepts only a complete matching Builder result and verifies the deployed La
   const capabilities={schemaVersion:RUNTIME_CAPABILITIES_SCHEMA_VERSION,runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'glm-4-plus'}],defaultModelId:'execution',
     observability:{schemaVersion:'finance.runtime-observation-capabilities.v1',profile:'core' as const,supportedKinds:['execution.started','execution.completed','execution.failed'],nativeEvents:false,replayable:false},
     features:{streaming:true,asyncLaunch:true,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1,maxFiles:1,maxTimeoutMs:1,maxConcurrentInstances:1}};
-  const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
+  const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
   const launcher={schemaVersion:'finance.runtime-launcher-descriptor.v1' as const,deploymentId:'deployment-1',baseUrl:'https://runtime.example.test/deployment-1/',runtime:capabilities.runtime,protocols,
     authentication:{type:'none' as const},artifactSha256:'e'.repeat(64),capabilitiesDigest:canonicalSha256(capabilities),expiresAt:null};
   const result=withResultDigest({schemaVersion:'finance.runtime-build-result.v1',buildId:'build-1',requestId:requirements.requestId,
@@ -125,7 +125,7 @@ it('serves the YAML while keeping the migration plan generatable',async()=>{
     expect(plan.json().skillBlockingReasons).toContain('请生成并确认可复用迁移方案');
     const requirementsResponse=await app.inject({method:'GET',url:`/api/migrations/${id}/runtime-requirements`,headers});
     const requirements=requirementsResponse.json();
-    const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
+    const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
     const result=withResultDigest({schemaVersion:'finance.runtime-build-result.v1',buildId:'build-http',requestId:requirements.requestId,requirementsDigest:requirements.requirementsDigest,status:'SUCCEEDED',builder:{name:'fixture-builder',version:'1.0.0'},
       launcher:{schemaVersion:'finance.runtime-launcher-descriptor.v1',deploymentId:'deployment-http',baseUrl,runtime:capabilities.runtime,protocols,authentication:{type:'none'},artifactSha256:'e'.repeat(64),capabilitiesDigest:canonicalSha256(capabilities),expiresAt:null},
       capabilityResults:requirements.requiredCapabilities.map((item:{id:string;contract:unknown})=>({requirementId:item.id,status:'IMPLEMENTED' as const,capabilityId:'workspace.read_document',contractDigest:canonicalSha256(item.contract),verificationIds:['verify-http']})),

@@ -1,6 +1,6 @@
 import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
 import {withRequirementsDigest,type RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
-import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../../shared/contracts/runtime-protocol-versions.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../../shared/contracts/runtime-protocol-versions.js';
 import {capabilityContractSchema,capabilityConstraintsSchema} from '../../shared/contracts/runtime-capability.js';
 
 const callableHarnessName=/^[\p{L}_][\p{L}\p{N}_.:-]*$/u;
@@ -40,7 +40,7 @@ export function runtimeBuildRequirements(inspection:ProjectInspection, target:{r
     schemaVersion:'finance.runtime-build-requirements.v1' as const,
     requestId:target.requestId??`${inspection.assetId}:${inspection.assetDigest.slice(0,12)}:${target.runtimeType}`,
     source:{assetId:inspection.assetId,artifactSha256:inspection.assetDigest},
-    target:{runtimeType:target.runtimeType,protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
+    target:{runtimeType:target.runtimeType,protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
     requiredCapabilities:capabilities.map((capability,index)=>({
       id:`harness-${index+1}-${capability.name.toLowerCase().replace(/[^a-z0-9]+/gu,'-').replace(/^-|-$/gu,'')||'capability'}`,
       name:capability.name,required:true as const,reason:capability.reason,contract:capability.contract!,constraints:capability.constraints!,

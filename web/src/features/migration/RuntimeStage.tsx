@@ -22,7 +22,7 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
               }));
             }}
           >
-            <option value="">选择支持多 Skill 的环境</option>
+            <option value="">选择任务执行环境</option>
             {catalog.executionRuntimes.map((r) => (
               <option key={r.runtimeId} value={r.runtimeId}>
                 {r.name}

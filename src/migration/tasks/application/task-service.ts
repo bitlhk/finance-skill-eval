@@ -82,6 +82,11 @@ export class MigrationTaskService {
       for (const [name, bytes] of Object.entries(archive))
         files['members/member-' + (index + 1) + '/' + name] = Buffer.from(bytes).toString('base64');
     }
+    for (const [name, content] of Object.entries(parsed.assets ?? {})) {
+      if (name in files || name.split('/').at(-1)?.toLowerCase() === 'skill.md') bundleError('依赖文件不能覆盖 Skill 或添加未选择的 Skill',400);
+      if (Buffer.from(content,'base64').toString('base64') !== content) bundleError('依赖文件编码无效',400);
+      files[name] = content;
+    }
     return this.createFiles(parsed, files, requestId, origin);
   }
   async importLegacy(input: unknown, origin: NonNullable<BundleTask['origin']>, requestId?: string) {

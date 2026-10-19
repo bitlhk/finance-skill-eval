@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
+import { runtimeSkillSetFromFiles } from '../src/shared/contracts/runtime-skills.js';
 import Fastify from 'fastify';
 import { expect, it } from 'vitest';
 import { RuntimeLauncherAdapter } from '../src/runtime-launcher.js';
 import { snapshot, bundleZip } from '../src/migration/bundle/bundle-model.js';
 import { evalCaseSchema } from '../src/contracts.js';
-it('sends a v2 full bundle over HTTP and rejects partial or forged load receipts', async () => {
+it('sends inline v2 Skills without an archive over HTTP and rejects partial or forged load receipts', async () => {
   const files = Object.fromEntries(
     ['budget', 'rules'].map((name) => [
       'skills/' + name + '/SKILL.md',
@@ -24,6 +24,7 @@ it('sends a v2 full bundle over HTTP and rejects partial or forged load receipts
   let created: any,
     broken = false,
     deleted = 0;
+  const keys:string[]=[];const retired=new Set<string>();
   server.get('/v1/runtime-capabilities', () => ({
     schemaVersion: 'finance.skill-eval.runtime-capabilities.v1',
     runtime: { type: 'test', version: '1' },
@@ -39,8 +40,10 @@ it('sends a v2 full bundle over HTTP and rejects partial or forged load receipts
     },
     limits: { maxArchiveBytes: 8388608, maxFiles: 1000, maxTimeoutMs: 900000, maxConcurrentInstances: 2 },
   }));
-  server.post('/v1/runtime-instances', (request) => {
-    created = request.body;
+  server.post('/v1/runtime-instances', (request,reply) => {
+    const key=request.headers['idempotency-key'] as string;
+    if(retired.has(key))return reply.code(410).send({error:'INSTANCE_EXPIRED'});
+    keys.push(key);created = request.body;
     return {
       schemaVersion: 'finance.skill-eval.runtime-instance-state.v1',
       instanceId: 'test',
@@ -67,14 +70,14 @@ it('sends a v2 full bundle over HTTP and rejects partial or forged load receipts
     streamCompleted: true,
     error: null,
     metadata: {
-      bundleDigest: bundle.digest,
-      loadedBundleMembers: broken ? bundle.members.slice(0, 1) : bundle.members,
+      contentDigest: bundle.digest,
+      loadedSkillMembers: broken ? bundle.members.slice(0, 1) : bundle.members,
       instanceConfigurationDigest: 'config',
       workspaceFilesDigest: null,
     },
   }));
   server.delete('/v1/runtime-instances/test', (_, reply) => {
-    deleted++;
+    deleted++;retired.add(keys.at(-1)!);
     return reply.code(204).send();
   });
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
@@ -84,20 +87,16 @@ it('sends a v2 full bundle over HTTP and rejects partial or forged load receipts
     variant,
     side: 'right',
     skill: null,
-    bundle: {
-      digest: bundle.digest,
-      members: bundle.members,
-      archiveBase64: zip.toString('base64'),
-      archiveSha256: createHash('sha256').update(zip).digest('hex'),
-    },
+    skillSet: runtimeSkillSetFromFiles(bundle),
     environment: { environmentId: 'test' },
     timeoutMs: 10000,
   });
   try {
     await runtime.prepare({ runId: 'run' });
     expect(created.schemaVersion).toBe('finance.skill-eval.runtime-instance.v2');
-    expect(created.skill).toBeNull();
-    expect(created.bundle.members).toHaveLength(2);
+    expect(created).not.toHaveProperty('skill');expect(created).not.toHaveProperty('variant');expect(created).not.toHaveProperty('bundle');
+    expect(created.skills).toHaveLength(2);expect(created.assets).toBeUndefined();
+    await runtime.prepare({runId:'run'});expect(keys[1]).toBe(keys[0]);
     const evalCase = evalCaseSchema.parse({
       caseId: 'case',
       name: 'case',
@@ -117,7 +116,9 @@ it('sends a v2 full bundle over HTTP and rejects partial or forged load receipts
     );
   } finally {
     await runtime.cleanup();
+    const next=new RuntimeLauncherAdapter({baseUrl,model,variant,side:'right',skill:null,skillSet:runtimeSkillSetFromFiles(bundle),environment:{environmentId:'test'},timeoutMs:10000});
+    await next.prepare({runId:'run'});expect(keys.at(-1)).not.toBe(keys[0]);await next.cleanup();
     await server.close();
   }
-  expect(deleted).toBe(1);
+  expect(deleted).toBe(2);
 });

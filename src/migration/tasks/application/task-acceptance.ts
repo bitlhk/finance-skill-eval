@@ -81,7 +81,7 @@ export async function acceptMigrationTask(
         evidence.status === 'completed' &&
         evidence.streamCompleted &&
         evidence.runtimeIdentityVerified &&
-        evidence.metadata.bundleDigest === bundle.digest &&
+        evidence.metadata.contentDigest === bundle.digest &&
         bundle.members.every((m) =>
           evidence.loadedSkills.some(
             (loaded) => loaded.skillId === m.skillId && loaded.version === m.version,

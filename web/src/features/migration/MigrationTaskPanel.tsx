@@ -22,7 +22,7 @@ export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbenc
               ? task.source.members.length +
               ' 个 Skill · 同一个 Agent 工作区 · ' +
               (current ? '整组候选 r' + task.candidates.length : '尚未生成候选')
-              : '导入 1–10 个 Skill 和相关源码，在同一任务内完成迁移与验收。'}
+              : '选择 1～10 个 Skill，按需添加依赖，在同一任务内完成迁移与验收。'}
           </p>
         </div>
         <button

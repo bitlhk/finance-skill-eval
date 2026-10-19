@@ -7,7 +7,7 @@ import {EnvironmentStore} from '../src/service/environment-store.js';
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 import {workspaceFilesDigest} from '../src/contracts.js';
 import {withRequirementsDigest,withResultDigest} from '../src/shared/contracts/runtime-builder.js';
-import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
 
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{while(cleanup.length)await cleanup.pop()!();vi.unstubAllEnvs();});
@@ -24,7 +24,7 @@ it('admits only a trusted Builder Launcher, probes its lifecycle, recovers and r
   server.delete('/v1/runtime-instances/probe-instance',(_request,reply)=>{lifecycle.push('delete');return reply.code(204).send();});
   await server.listen({host:'127.0.0.1',port:0});cleanup.push(()=>server.close());
   const address=server.server.address();if(!address||typeof address==='string')throw new Error('Missing test server address');
-  const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
+  const protocols={capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION};
   const requirement={id:'harness-1',name:'read_document',required:true,reason:'read workspace data',contract:{inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'workspace only'},constraints:{permissions:['workspace.read'],sideEffects:'read' as const,isolation:'per_instance'},preferredTargetCapability:null,consumerTools:['review'],evidence:[{path:'tool.py',line:1,detail:'call'}]};
   const requirements=withRequirementsDigest({schemaVersion:'finance.runtime-build-requirements.v1',requestId:'request-1',source:{assetId:'asset-1',artifactSha256:'a'.repeat(64)},target:{runtimeType:'openjiuwen',protocols},requiredCapabilities:[requirement]});
   const launcher={schemaVersion:'finance.runtime-launcher-descriptor.v1' as const,deploymentId:'deployment-1',baseUrl:`http://127.0.0.1:${address.port}/`,runtime:capabilities.runtime,protocols,authentication:{type:'bearer' as const},artifactSha256:'b'.repeat(64),capabilitiesDigest:canonicalSha256(capabilities),expiresAt:null};

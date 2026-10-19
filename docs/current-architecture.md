@@ -4,7 +4,7 @@
 
 ## 一条新任务流程
 
-新任务有 1–10 个 Skill，成员数量不选择另一套编排。一个完整工作区包含成员、共享源码、资源和可选入口指令；每轮生成不可变候选，按任务验收，失败后修复工程再验收。单成员也使用工作区 Runtime v2 合同；需要升级 API 和内置 Runtime，旧 Runtime 不能仅凭支持 v1 就被视为兼容。
+新任务有 1–10 个 Skill，成员数量不选择另一套编排。Runtime v2 接收 skills[] 和可选 assets，Agent 工作区只装载这些已选择的说明、依赖与入口指令，不要求完整工程 ZIP；每轮生成不可变候选，按任务验收，失败后修复工程再验收。单成员也使用工作区 Runtime v2 合同；需要升级 API 和内置 Runtime，旧 Runtime 不能仅凭支持 v1 就被视为兼容。
 
 ```text
 web/src/features/migration/
@@ -27,8 +27,9 @@ src/migration/tasks/
   infrastructure/             文件存储、模型和 Runtime 适配器
         ↓
 integrations/openjiuwen/
-  bundle_agent.py              完整工程内分析/生成/修复
-  bundle_runtime.py            1–10 成员装载与候选完整性核验
+  bundle_agent.py              所选 Skill 及依赖的分析/生成/修复
+  skill_set.py                 v2 skills[]、可选资源、摘要与路径核验
+  bundle_runtime.py            冻结文件完整性及旧归档辅助函数
   worker.py / session.py       会话执行、模型、工具与结果
 ```
 
@@ -51,7 +52,7 @@ integrations/openjiuwen/
 | API 鉴权、500、请求超时 | x-request-id、request_failed | src/service/server.ts、src/service/logging.ts |
 | 任务忙、重复提交、取消和重启 | taskId、attemptId、operation 事件 | tasks/application/task-service.ts |
 | 找不到源码、生成/修复失败 | agentRunId、agent_process_*、私有任务证据 | tasks/infrastructure/task-agent.ts、migration-agent-runner.ts、bundle_agent.py |
-| 能力/模型/容量不兼容 | runtime-check、Runtime capabilities | tasks/infrastructure/task-runtime.ts、shared/contracts/runtime-bundle.ts |
+| 能力/模型/容量不兼容 | runtime-check、Runtime capabilities | tasks/infrastructure/task-runtime.ts、shared/contracts/runtime-skills.ts |
 | 验收执行失败 | runId + caseId、runtime_session_* | task-acceptance.ts、runtime-launcher.ts、worker.py、session.py |
 | Judge 超时/格式/判定问题 | migration_judge_*、judgeRequestId、保护目录中的理由 | tasks/infrastructure/task-agent.ts、openai-compatible-model.ts |
 | 下载拒绝/通过状态失效 | 当前候选、配置、测试集、环境摘要 | task-export.ts、domain/task-model.ts |
@@ -76,7 +77,7 @@ integrations/openjiuwen/
 - `pnpm test`：领域、接口、兼容、架构、日志与 Runtime 合同回归。
 - `pnpm test:ui:migration`：实际浏览器/API，确定性 Agent/Runtime/Judge 端口，验证失败→修复→重验与旧任务桥接；不作为真实模型效果证据。
 - `MIGRATION_LIVE_MEMBERS=1` 或 `3` 配合 `pnpm test:ui:migration:live`：同一个 UI 测试入口验证单/多成员，使用真实 Agent、Runtime、Judge，报告明确记录 memberCount。私有环境变量和启动方式见生产部署文档。
-- Python `test_bundle_runtime`：真实 ZIP 装载、成员清单、二进制资源、冻结候选校验，包括单成员 v2。
+- Python `test_bundle_runtime`：无 ZIP 的说明与资源装载、成员清单、二进制资源、冻结候选校验，包括单成员 v2。
 
 生产部署验收和这次工作树测试需分开记录；测试成功不会自动替换正在运行的 Windows/WSL 服务。
 

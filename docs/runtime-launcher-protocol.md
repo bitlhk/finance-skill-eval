@@ -1,5 +1,10 @@
 # Runtime Launcher v1
 
+当前迁移任务统一使用 Runtime instance v2：`skills[]` 支持 1～10 个成员，直接携带说明与可选成员资源，共享依赖放可选 `assets`，不要求完整工程或 ZIP。`contentDigest` 固定全部已选择内容。v1 实例只保留旧任务兼容；能力发现、案例执行、清理回执各自保留独立的版本号。
+
+协议定义见 [v2 实例 Schema](../contracts/runtime-launcher/finance.skill-eval.runtime-instance.v2.schema.json)，接入步骤见 [Builder v2 接入](runtime-builder-integration.md)。以下 v1 请求示例用于兼容历史客户端。
+
+
 测试环境登记的是 Runtime 启动服务，而不是预先启动的 Agent `/execute`。评测服务在运行前发现能力，为左右侧分别创建隔离实例，执行测试集后删除实例。
 
 ## Builder 交付边界

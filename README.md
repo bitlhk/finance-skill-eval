@@ -42,14 +42,14 @@ pnpm test:ui:migration
 
 | 需求 | 文档 |
 | --- | --- |
-| 单 / 多 Skill 迁移与验收 | [统一迁移](docs/multi-skill-migration.md) |
+| 1～N 个 Skill 迁移与验收 | [统一迁移](docs/multi-skill-migration.md) |
 | 配置模型与本地评测 | [本地开发](docs/local-development.md)、[在线评测示例](docs/local-online-demo.md) |
 | 接入 Builder 产出的 Runtime | [Builder 接入与当前支持范围](docs/runtime-builder-integration.md) |
 | 实现其他 Agent Runtime | [Launcher 协议](docs/runtime-launcher-protocol.md)、[合同与示例](contracts/runtime-launcher/README.md) |
 | 在其他产品中嵌入评测 | [Service 与 Adapter 接入](docs/standalone-service-v1.md)、[示例代码](examples/) |
 | 定位代码与排查问题 | [架构与运维导航](docs/current-architecture.md) |
 
-Builder 在统一任务中导出需求与候选源码、回填交付并绑定版本；单 Skill 和多 Skill 共用整组验收流程。
+迁移与 Builder 统一使用支持 1～N 个 Skill 的 v2 协议：直接传递说明，按需附带脚本与共享资源，无需完整工程 ZIP。交付回填后绑定版本，再进行任务验收；v1 仅用于旧任务兼容。
 
 ## 目录
 

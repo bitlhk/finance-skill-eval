@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { canonicalJson, canonicalSha256 } from '../src/shared/json-canonicalization.js';
 import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult, withRequirementsDigest, withResultDigest } from '../src/shared/contracts/runtime-builder.js';
-import { RUNTIME_CAPABILITIES_SCHEMA_VERSION, RUNTIME_EXECUTION_SCHEMA_VERSION, RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_OBSERVATION_SCHEMA_VERSION } from '../src/shared/contracts/runtime-protocol-versions.js';
+import { RUNTIME_CAPABILITIES_SCHEMA_VERSION, RUNTIME_EXECUTION_SCHEMA_VERSION, LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_OBSERVATION_SCHEMA_VERSION } from '../src/shared/contracts/runtime-protocol-versions.js';
 
 function fixtures() {
   const capabilities = {
@@ -12,7 +12,7 @@ function fixtures() {
     features: { streaming: true, asyncLaunch: true, packagedMcp: true, externalMcp: false, inlineSecrets: true },
     limits: { maxArchiveBytes: 1, maxFiles: 1, maxTimeoutMs: 1, maxConcurrentInstances: 1 },
   };
-  const protocols = { capabilities: RUNTIME_CAPABILITIES_SCHEMA_VERSION, instance: RUNTIME_INSTANCE_SCHEMA_VERSION, execution: RUNTIME_EXECUTION_SCHEMA_VERSION, observation: RUNTIME_OBSERVATION_SCHEMA_VERSION };
+  const protocols = { capabilities: RUNTIME_CAPABILITIES_SCHEMA_VERSION, instance: LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION, execution: RUNTIME_EXECUTION_SCHEMA_VERSION, observation: RUNTIME_OBSERVATION_SCHEMA_VERSION };
   const requirements = withRequirementsDigest({ schemaVersion: 'finance.runtime-build-requirements.v1', requestId: 'migration-1:revision-1', source: { assetId: 'asset-1', artifactSha256: 'a'.repeat(64) }, target: { runtimeType: 'openjiuwen', protocols }, requiredCapabilities: [{ id: 'harness-1-read-document', name: 'read_document', required: true, reason: 'read workspace document', contract: { inputSchema: { type: 'object' }, outputSchema: { type: 'object' }, errorSchema: { type: 'object' }, semantics: 'workspace only' }, constraints: { permissions: ['workspace.read'], sideEffects: 'read', isolation: 'per_runtime_instance' }, preferredTargetCapability: null, consumerTools: ['review_document'], evidence: [{ path: 'tools/review.py', line: 8, detail: 'read_document(path)' }] }] });
   const launcher = { schemaVersion: 'finance.runtime-launcher-descriptor.v1' as const, deploymentId: 'deployment-1', baseUrl: 'https://runtime.example.test/deployment-1/', runtime: capabilities.runtime, protocols, authentication: { type: 'bearer' as const, audience: 'finance-skill-eval' }, artifactSha256: 'e'.repeat(64), capabilitiesDigest: canonicalSha256(capabilities), expiresAt: null };
   const base = { schemaVersion: 'finance.runtime-build-result.v1' as const, buildId: 'build-1', requestId: requirements.requestId, requirementsDigest: requirements.requirementsDigest, status: 'SUCCEEDED' as const, builder: { name: 'builder', version: '1.0.0' }, launcher, capabilityResults: [{ requirementId: 'harness-1-read-document', status: 'IMPLEMENTED' as const, capabilityId: 'workspace.read_document', contractDigest: canonicalSha256(requirements.requiredCapabilities[0]!.contract), verificationIds: ['contract-1'] }], verifications: [{ id: 'contract-1', type: 'CONTRACT_TEST', status: 'PASSED' as const, evidenceSha256: 'b'.repeat(64) }], errors: [], builtAt: '2026-09-29T12:00:00.000Z' };
@@ -76,13 +76,14 @@ it('binds an iterative rebuild to its previous solution and rejects the old depl
   expect(validateRuntimeBuildResult(rebuild,revised,capabilities)).toEqual([]);
 });
 
-it('validates the unified-task extension examples without changing the legacy envelopes',async()=>{
+it('validates new v2 task examples and preserves the legacy v1 examples',async()=>{
   const {taskBuildProfileSchema,taskBuildReceiptSchema}=await import('../src/shared/contracts/task-builder.js');
   const load=async(name:string)=>JSON.parse(await readFile(new URL(`../contracts/runtime-builder/examples/${name}`,import.meta.url),'utf8'));
-  const requirements=await load('task.requirements.success.json'),result=await load('task.result.success.json'),capabilities=await load('task.capabilities.json');
+  const requirements=await load('task.v2.requirements.success.json'),result=await load('task.v2.result.success.json'),capabilities=await load('task.capabilities.json');
+  expect(validateRuntimeBuildResult(await load('task.requirements.success.json'),await load('task.result.success.json'),capabilities)).toEqual([]);
   expect(validateRuntimeBuildResult(requirements,result,capabilities)).toEqual([]);
   const profile=taskBuildProfileSchema.parse(requirements.extensions.migrationTask),receipt=taskBuildReceiptSchema.parse(result.extensions.migrationTask);
   expect(receipt.candidateDigest).toBe(profile.candidateDigest);expect(receipt.taskId).toBe(profile.taskId);
-  expect(profile.members).toHaveLength(1);expect(capabilities.features.multiSkill).toBe(true);
+  expect(profile.skills).toHaveLength(1);expect(capabilities.features.multiSkill).toBe(true);
   expect(()=>taskBuildReceiptSchema.parse({...receipt,instanceSchemaVersion:'finance.skill-eval.runtime-instance.v1'})).toThrow();
 });

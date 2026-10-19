@@ -5,7 +5,7 @@ import { unzipSync, zipSync } from 'fflate';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { simpleMigrationSuiteSchema } from '../../domain/simple-migration-suite.js';
 import type { RuntimeExecutionEvidence } from '../../../contracts.js';
-import type { RuntimeBuildRequirementsV1, RuntimeBuildResultV1 } from '../../../shared/contracts/runtime-builder.js';
+import type { RuntimeBuildRequirements, RuntimeBuildResult } from '../../../shared/contracts/runtime-builder.js';
 import type { RuntimeLauncherBinding } from '../../../shared/contracts/environment.js';
 
 export const bundleIdSchema = z.string().regex(/^bundle-[a-f0-9-]+$/);
@@ -149,7 +149,7 @@ export type BundleTask = {
   runs: BundleRun[];
 };
 export type TaskBuildRequest = {
-  requirements: RuntimeBuildRequirementsV1;
+  requirements: RuntimeBuildRequirements;
   candidateId: string;
   candidateDigest: string;
   baseConfigurationDigest: string;
@@ -164,13 +164,14 @@ export type TaskRuntimeDelivery = {
   configurationDigest: string;
   environmentSnapshot: unknown;
   launcher: RuntimeLauncherBinding;
-  result: RuntimeBuildResultV1;
+  result: RuntimeBuildResult;
 };
 export const createBundleSchema = z.strictObject({
   name: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(8000),
   target: z.string().trim().min(1).max(2000),
   sourceAssetIds: z.array(z.string().min(1)).min(1).max(10),
+  assets: z.record(pathSchema, z.string()).optional(),
 });
 export const operationSchema = z.strictObject({
   key: z.string().min(1).max(100),

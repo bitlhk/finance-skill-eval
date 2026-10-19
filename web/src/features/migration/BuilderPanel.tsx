@@ -17,7 +17,7 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
   const selectedTrust = trust || trustReferences[0]?.reference || '';
   return <section className="stage-section" aria-label="Builder 接入">
     <h3>Builder 构建与交付</h3>
-    <p>需要适配目标 Runtime 时，导出当前候选的整组需求与源码，交给外部 Builder 构建部署，再回填交付结果。</p>
+    <p>需要适配目标 Runtime 时，导出所选 Skill 的需求与可选依赖，交给外部 Builder 构建部署，再回填交付结果。</p>
     <p role="status">绑定状态：{({ NONE: '使用已有环境', PENDING: '等待 Builder 交付', BOUND: '已绑定当前候选与配置', STALE: '绑定已失效，请重新导出需求' })[status]}</p>
     <div className="bundle-fields">
       <label>Builder 目标 Runtime<select aria-label="Builder 目标 Runtime" value={runtimeType} onChange={e => setRuntimeType(e.target.value)}>
@@ -37,7 +37,7 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
         setTask(next); setResult('');
         await downloadApi(prefix + '/runtime-requirements.yaml?requestId=' + next.selectedRuntimeBuildRequestId, 'runtime-build-requirements.yaml');
       })}>生成并下载 Builder 需求</button>
-      <button className="button secondary" disabled={disabled || !request} onClick={() => void act(() => downloadApi(prefix + '/runtime-build-requests/' + request!.requirements.requestId + '/source.zip', 'builder-candidate.zip'))}>下载绑定的候选源码</button>
+      <button className="button secondary" disabled={disabled || !request} onClick={() => void act(() => downloadApi(prefix + '/runtime-build-requests/' + request!.requirements.requestId + '/skills.json', 'builder-skills.json'))}>下载绑定的 Skill 与依赖</button>
       {request && <button className="button secondary" disabled={disabled} onClick={() => void act(() => downloadApi(prefix + '/runtime-requirements.yaml?requestId=' + request.requirements.requestId, 'runtime-build-requirements.yaml'))}>重新下载当前需求</button>}
     </div>
     {request && <>
@@ -66,7 +66,7 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
     {!!task.runtimeBuildRequests?.length && <details><summary>Builder 需求历史（{task.runtimeBuildRequests.length}）</summary>
       {[...task.runtimeBuildRequests].reverse().map(r => <article key={r.requirements.requestId}><p>{r.createdAt} · <code>{r.requirements.requestId}</code></p><p>候选：<code>{r.candidateId}</code></p>
         <button className="button secondary" disabled={disabled} onClick={() => void act(() => downloadApi(prefix + '/runtime-requirements.yaml?requestId=' + r.requirements.requestId, 'runtime-build-requirements.yaml'))}>下载历史需求</button>
-        <button className="button secondary" disabled={disabled} onClick={() => void act(() => downloadApi(prefix + '/runtime-build-requests/' + r.requirements.requestId + '/source.zip', 'builder-candidate.zip'))}>下载历史绑定源码</button>
+        <button className="button secondary" disabled={disabled} onClick={() => void act(() => downloadApi(prefix + '/runtime-build-requests/' + r.requirements.requestId + '/skills.json', 'builder-skills.json'))}>下载历史 Skill 与依赖</button>
       </article>)}
     </details>}
     {!!task.runtimeDeliveries?.length && <details><summary>Builder 交付历史（{task.runtimeDeliveries.length}）</summary>

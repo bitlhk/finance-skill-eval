@@ -25,6 +25,7 @@ export function useMigrationWorkbench({
     [goal, setGoal] = useState(''),
     [target, setTarget] = useState(''),
     [selected, setSelected] = useState<string[]>([]);
+  const [assets,setAssets] = useState<Array<{id:string;path:string;content:string}>>([]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [message, setMessage] = useState('');
@@ -135,6 +136,6 @@ export function useMigrationWorkbench({
     setPreview({ path, before: before.content, after: after.content });
   }
   const disabled = busy || Boolean(active);
-  return { refreshCatalog: onChanged, pollError, catalog, api, tasks, task, setTask, stage, setStage, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, error, message, setMessage, config, setConfig, suite, setSuite, preview, runId, setRunId, zipInput, filesInput, current, active, latestAttempt, run, runtime, list, select, act, post, start, uploadZip, uploadMembers, showFile, disabled };
+  return { assets, setAssets, refreshCatalog: onChanged, pollError, catalog, api, tasks, task, setTask, stage, setStage, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, error, message, setMessage, config, setConfig, suite, setSuite, preview, runId, setRunId, zipInput, filesInput, current, active, latestAttempt, run, runtime, list, select, act, post, start, uploadZip, uploadMembers, showFile, disabled };
 }
 export type MigrationWorkbench = ReturnType<typeof useMigrationWorkbench>;

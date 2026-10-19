@@ -1,7 +1,7 @@
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
 export function TaskList({ state }: { state: MigrationWorkbench; }) {
-  const { catalog, api, tasks, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, zipInput, filesInput, list, select, act, uploadZip, uploadMembers } = state;
+  const { assets, setAssets, catalog, api, tasks, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, zipInput, filesInput, list, select, act, uploadZip, uploadMembers } = state;
   return (
     <>
       <section className="stage-section">
@@ -35,7 +35,7 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
         </div>
         <div className="bundle-actions">
           <button className="button secondary" disabled={busy} onClick={() => zipInput.current?.click()}>
-            导入工程 ZIP
+            导入 Skill ZIP（可选）
           </button>
           <button
             className="button secondary"
@@ -68,6 +68,22 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
             e.target.value = '';
           }}
         />
+        <p>选择 1～10 个 Skill 即可创建任务，不需要完整工程。脚本与共享资源按需添加。</p>
+        <details><summary>依赖文件（可选，已选 {assets.length} 个）</summary>
+          <label>添加依赖文件<input aria-label="添加依赖文件" type="file" multiple onChange={e => {
+            const files=Array.from(e.target.files??[]); e.target.value='';
+            void act(async()=>{
+              const next=await Promise.all(files.map(async file=>({id:crypto.randomUUID(),path:'shared/'+file.name,
+                content:btoa(Array.from(new Uint8Array(await file.arrayBuffer()),byte=>String.fromCharCode(byte)).join(''))})));
+              setAssets(old=>[...old,...next]);
+            });
+          }}/></label>
+          <p>路径相对任务工作区；保留 Skill 引用的共享路径。没有依赖时留空。</p>
+          {assets.map(asset=><div className="bundle-fields" key={asset.id}>
+            <label>依赖文件路径<input aria-label="依赖文件路径" value={asset.path} onChange={e=>setAssets(old=>old.map(item=>item.id===asset.id?{...item,path:e.target.value}:item))}/></label>
+            <button className="button secondary" onClick={()=>setAssets(old=>old.filter(item=>item.id!==asset.id))}>移除依赖</button>
+          </div>)}
+        </details>
         <h4>从已有资产选择成员（已选 {selected.length}/10）</h4>
         <div className="bundle-member-options">
           {catalog.uploadedSkills.map((asset) => (
@@ -91,10 +107,11 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
           disabled={busy || !selected.length || selected.length > 10 || !name.trim() || !goal.trim() || !target.trim()}
           onClick={() =>
             void act(async () => {
+              if(new Set(assets.map(asset=>asset.path.toLowerCase())).size!==assets.length)throw new Error('依赖文件路径不能重复');
               select(
                 await api<BundleTask>('/api/migration-tasks', {
                   method: 'POST',
-                  body: JSON.stringify({ name, goal, target, sourceAssetIds: selected }),
+                  body: JSON.stringify({ name, goal, target, sourceAssetIds: selected, assets:Object.fromEntries(assets.map(asset=>[asset.path,asset.content])) }),
                 }),
               );
               await list();

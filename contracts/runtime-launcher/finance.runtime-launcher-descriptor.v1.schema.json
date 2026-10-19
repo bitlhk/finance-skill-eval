@@ -3,36 +3,80 @@
   "$id": "finance.runtime-launcher-descriptor.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "deploymentId", "baseUrl", "runtime", "protocols", "authentication", "artifactSha256", "capabilitiesDigest", "expiresAt"],
+  "required": [
+    "schemaVersion",
+    "deploymentId",
+    "baseUrl",
+    "runtime",
+    "protocols",
+    "authentication",
+    "artifactSha256",
+    "capabilitiesDigest",
+    "expiresAt"
+  ],
   "properties": {
-    "schemaVersion": { "const": "finance.runtime-launcher-descriptor.v1" },
-    "deploymentId": { "type": "string", "minLength": 1 },
+    "schemaVersion": {
+      "const": "finance.runtime-launcher-descriptor.v1"
+    },
+    "deploymentId": {
+      "type": "string",
+      "minLength": 1
+    },
     "baseUrl": {
       "type": "string",
       "format": "uri",
       "anyOf": [
-        { "pattern": "^https://[^/?#@]+(?::[0-9]+)?(?:/[^?#]*)?/?$" },
-        { "pattern": "^http://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:/[^?#]*)?/?$" }
+        {
+          "pattern": "^https://[^/?#@]+(?::[0-9]+)?(?:/[^?#]*)?/?$"
+        },
+        {
+          "pattern": "^http://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]+)?(?:/[^?#]*)?/?$"
+        }
       ]
     },
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "version"],
+      "required": [
+        "type",
+        "version"
+      ],
       "properties": {
-        "type": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 }
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "protocols": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["capabilities", "instance", "execution", "observation"],
+      "required": [
+        "capabilities",
+        "instance",
+        "execution",
+        "observation"
+      ],
       "properties": {
-        "capabilities": { "const": "finance.skill-eval.runtime-capabilities.v1" },
-        "instance": { "const": "finance.skill-eval.runtime-instance.v1" },
-        "execution": { "const": "finance.skill-eval.runtime-case.v1" },
-        "observation": { "const": "finance.runtime-observation.v1" }
+        "capabilities": {
+          "const": "finance.skill-eval.runtime-capabilities.v1"
+        },
+        "instance": {
+          "enum": [
+            "finance.skill-eval.runtime-instance.v1",
+            "finance.skill-eval.runtime-instance.v2"
+          ]
+        },
+        "execution": {
+          "const": "finance.skill-eval.runtime-case.v1"
+        },
+        "observation": {
+          "const": "finance.runtime-observation.v1"
+        }
       }
     },
     "authentication": {
@@ -40,26 +84,50 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type"],
-          "properties": { "type": { "const": "none" } }
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "none"
+            }
+          }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type"],
+          "required": [
+            "type"
+          ],
           "properties": {
-            "type": { "const": "bearer" },
-            "audience": { "type": "string", "minLength": 1 }
+            "type": {
+              "const": "bearer"
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       ]
     },
-    "artifactSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "capabilitiesDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "artifactSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "capabilitiesDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "expiresAt": {
       "oneOf": [
-        { "type": "string", "format": "date-time" },
-        { "type": "null" }
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   }

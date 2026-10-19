@@ -6,6 +6,7 @@ import {
   RUNTIME_CAPABILITIES_SCHEMA_VERSION,
   RUNTIME_EXECUTION_SCHEMA_VERSION,
   RUNTIME_INSTANCE_SCHEMA_VERSION,
+  LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,
   RUNTIME_LAUNCHER_DESCRIPTOR_SCHEMA_VERSION,
   RUNTIME_OBSERVATION_SCHEMA_VERSION,
 } from "./runtime-protocol-versions.js";
@@ -94,7 +95,7 @@ export const runtimeLauncherDescriptorSchema = z.strictObject({
   runtime: z.strictObject({ type: z.string().min(1), version: z.string().min(1) }),
   protocols: z.strictObject({
     capabilities: z.literal(RUNTIME_CAPABILITIES_SCHEMA_VERSION),
-    instance: z.literal(RUNTIME_INSTANCE_SCHEMA_VERSION),
+    instance: z.enum([LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_INSTANCE_SCHEMA_VERSION]),
     execution: z.literal(RUNTIME_EXECUTION_SCHEMA_VERSION),
     observation: z.literal(RUNTIME_OBSERVATION_SCHEMA_VERSION),
   }),

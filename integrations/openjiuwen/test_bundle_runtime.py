@@ -12,7 +12,8 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from types import SimpleNamespace
-from .bundle_runtime import hydrate_bundle, files_digest, verify_bundle_integrity
+from .bundle_runtime import files_digest, verify_bundle_integrity
+from .skill_set import hydrate_skill_set
 from .instance_manager import InstanceManager
 from .bundle_agent import collect_candidate
 from .bundle_agent import run_bundle
@@ -31,29 +32,33 @@ def fixture():
     members = [{'id': name, 'skillId': name, 'version': 'r1', 'skillFile': 'skills/' + name + '/SKILL.md',
                 'artifactSha256': files_digest({p: content for p, content in files.items() if p.startswith('skills/' + name + '/')})}
                for name in ['budget', 'rules']]
-    bundle = {'digest': files_digest(files), 'members': members, 'archiveBase64': base64.b64encode(archive).decode(),
-              'archiveSha256': hashlib.sha256(archive).hexdigest()}
-    return files, {'schemaVersion': 'finance.skill-eval.runtime-instance.v2', 'runId': 'bundle-run', 'side': 'right',
-        'modelId': 'test', 'skill': None, 'bundle': bundle, 'variant': {'mode': 'skill_version'},
-        'environment': {}, 'configuration': {}, 'secrets': {'mode': 'inline', 'values': {}}, 'limits': {'timeoutMs': 10000}}
+    skills=[{**member,'instructions':files[member['skillFile']].decode()} for member in members]
+    return files, {'schemaVersion':'finance.skill-eval.runtime-instance.v2','runId':'bundle-run','side':'right','modelId':'test',
+        'skills':skills,'contentDigest':files_digest(files),'assets':{'shared/data.bin':base64.b64encode(files['shared/data.bin']).decode()},
+        'environment':{},'configuration':{},'secrets':{'mode':'inline','values':{}},'limits':{'timeoutMs':10000}}
+
 
 
 class BundleRuntimeTest(unittest.TestCase):
     def test_one_member_uses_the_same_hydration_and_instance_contract(self):
         files, request = fixture()
         del files['skills/rules/SKILL.md']
-        request['bundle']['members'] = request['bundle']['members'][:1]
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w') as archive:
-            for name, value in files.items():
-                archive.writestr(name, value)
-        raw = buffer.getvalue()
-        request['bundle'].update(digest=files_digest(files), archiveBase64=base64.b64encode(raw).decode(), archiveSha256=hashlib.sha256(raw).hexdigest())
+        request['skills'] = request['skills'][:1]
+        request['contentDigest']=files_digest(files)
         manager = InstanceManager()
         instance = manager.create(request, 'single-key')
         body = manager.execution(instance['instanceId'], {'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'use budget', 'workspaceFiles': []})
         self.assertEqual(len(body['skill']['bundleMembers']), 1)
         self.assertEqual(body['bundle']['digest'], files_digest(files))
+
+    def test_root_skill_accepts_optional_shared_assets_without_project_layout(self):
+        instructions='Root Skill instructions'
+        files={'SKILL.md':instructions.encode(),'rules.json':b'{"limit":100}'}
+        request={'skills':[{'id':'root','skillId':'root','version':'r1','skillFile':'SKILL.md','instructions':instructions,
+                           'artifactSha256':files_digest({'SKILL.md':instructions.encode()})}],
+                 'assets':{'rules.json':base64.b64encode(files['rules.json']).decode()},'contentDigest':files_digest(files)}
+        hydrate_skill_set(request,InstanceManager())
+        self.assertEqual(request['skill']['files']['rules.json'],'{"limit":100}')
 
     def test_rejects_repaired_workspace_copy_even_when_loaded_package_is_unchanged(self):
         skill = {'bundleMembers': [{'skillId': 'test'}],
@@ -79,7 +84,7 @@ class BundleRuntimeTest(unittest.TestCase):
 
     def test_runtime_materialization_preserves_windows_line_endings_and_binary(self):
         files, request = fixture()
-        hydrate_bundle(request, InstanceManager())
+        hydrate_skill_set(request, InstanceManager())
         skill = request['skill']
         skill['files']['shared/windows.txt'] = 'first\r\nsecond\r\n'
         with ExitStack() as stack:
@@ -102,15 +107,15 @@ class BundleRuntimeTest(unittest.TestCase):
         for mutation in ['missing', 'digest', 'entry', 'version']:
             _, request = fixture()
             if mutation == 'missing':
-                request['bundle']['members'].pop()
+                request['skills'].pop()
             elif mutation == 'digest':
-                request['bundle']['members'][0]['artifactSha256'] = 'a' * 64
+                request['skills'][0]['artifactSha256'] = 'a' * 64
             elif mutation == 'version':
-                request['bundle']['members'][0]['version'] = ''
+                request['skills'][0]['version'] = ''
             else:
-                request['bundle']['entryInstructionsFile'] = '../outside'
+                request['entryInstructionsFile'] = '../outside'
             with self.assertRaises(ValueError, msg=mutation):
-                hydrate_bundle(request, InstanceManager())
+                hydrate_skill_set(request, InstanceManager())
 
     def test_full_candidate_collection_keeps_skill_directory_and_unchanged_resources(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -147,7 +152,7 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
             config = Path(directory) / 'config.json'
             config.write_text('{}', encoding='utf-8')
             protocol = io.StringIO()
-            body = {'runId': 'analysis-fixture', 'assetDigest': request['bundle']['digest'], 'files': encoded,
+            body = {'runId': 'analysis-fixture', 'assetDigest': request['contentDigest'], 'files': encoded,
                     'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'ANALYZE', 'source': {'files': encoded}}}
             with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
                     patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused'}), \
@@ -203,7 +208,7 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
             config = Path(directory) / 'config.json'
             config.write_text('{}', encoding='utf-8')
             protocol = io.StringIO()
-            body = {'runId': 'fixture', 'assetDigest': request['bundle']['digest'], 'files': encoded,
+            body = {'runId': 'fixture', 'assetDigest': request['contentDigest'], 'files': encoded,
                     'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'REPAIR', 'source': {'files': encoded}}}
             with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
                     patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused'}), \

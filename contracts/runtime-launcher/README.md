@@ -1,4 +1,11 @@
-# Runtime Launcher v1 contract
+# Runtime Launcher contracts
+
+New migration tasks use [instance v2](finance.skill-eval.runtime-instance.v2.schema.json):
+`skills[]` contains 1–10 identities, instructions and optional member files; `assets`
+is optional shared content. No complete project or archive is required.
+`contentDigest` covers all mounted bytes. New v2 requests do not contain `skill`,
+`variant` or `bundle`. v1 instance requests remain for legacy task compatibility.
+Capabilities, case execution and cleanup retain their independent contract versions.
 
 Capabilities may optionally include `executionEnvironment.software`, a bounded
 list of public `{name, version}` facts measured by the Launcher in its actual
@@ -198,10 +205,10 @@ Upgrade strict receiver schemas before enabling these optional v1 fields.
 ## Multi-Skill instance extension
 
 `features.multiSkill: true` opts into `finance.skill-eval.runtime-instance.v2`
-on the existing instance endpoint. The request carries `skill: null` and a
-`bundle` archive with every member entry and content digest; the worker loads
-each member independently. It must verify the archive, bundle digest, member
-digests, and full entry coverage before execution. Evidence metadata returns
-`bundleDigest` and `loadedBundleMembers`; incomplete receipts fail verification.
-The v1 request and single-Skill behavior remain supported.
+on the existing instance endpoint. The request carries 1–10 inline `skills`,
+optional member resources and shared `assets`. It has no `skill`, `variant`,
+`bundle` or archive. The worker verifies `contentDigest`, every member digest,
+safe paths and entry coverage before execution. Evidence metadata returns
+`contentDigest` and `loadedSkillMembers`; incomplete receipts fail verification.
+The v1 instance decoder is retained for legacy tasks only.
 See [bundle migration](../../docs/multi-skill-migration.md).

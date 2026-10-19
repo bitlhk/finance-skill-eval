@@ -1,13 +1,13 @@
 # Runtime Builder 接入
 
-单 Skill 和多 Skill 都在迁移任务的「Runtime 适配与登记」阶段接入 Builder。平台导出整组需求和冻结源码，外部 Builder 构建、部署后回填 Result；平台执行 v2 整组生命周期检查，通过后绑定版本并进入业务验收。
+1～N 个 Skill 都在迁移任务的「Runtime 适配与登记」阶段接入 Builder。平台导出所选 Skill、可选依赖及冻结需求，外部 Builder 构建、部署后回填 Result；平台执行 v2 整组生命周期检查，通过后绑定版本并进入业务验收。
 
 ## 操作步骤
 
 1. 完成工程分析与候选生成，在运行配置中设置模型、入口指令、超时和脚本权限。未选模型时使用交付 Runtime 的默认模型。
 2. 在「Builder 构建与交付」选择目标 Runtime。存在需要 Runtime 原生提供的能力时，在可选的原生能力合同中填写 `requiredCapabilities`；自动生成部分包含全部成员、共享服务、工程分析和运行设置。
-3. 点击「生成并下载 Builder 需求」和「下载绑定的候选源码」。下载的 ZIP 对应需求记录中的候选，候选后来发生变化也不会悄悄换成新版本。
-4. 将两份文件交给外部 Builder。Builder 核对摘要，构建、部署 Launcher，并返回带统一任务回执的 Result JSON。
+3. 点击「生成并下载 Builder 需求」和「下载绑定的 Skill 与依赖」。下载的 JSON 直接包含 skills[]、说明文本及可选依赖，对应需求记录中的候选，候选后来发生变化也不会悄悄换成新版本。
+4. 将需求 YAML 与 Skill JSON交给外部 Builder。Builder 核对摘要，构建、部署 Launcher，并返回带统一任务回执的 Result JSON。
 5. 选择服务端配置的信任引用，导入或粘贴 Result，点击「验证并绑定 Builder 交付」。平台核验摘要、原生能力合同、模型、协议和资源限制，真实装载全部成员，执行连通检查并删除实例；成功后自动选择交付环境及模型。
 6. 执行开发集、独立留出集验收，下载已验收交付包。Builder 生命周期检查不代替业务测试。
 
@@ -15,12 +15,12 @@
 
 ### Finance Solution Builder 本地接入
 
-Builder 侧需包含 `migration_task_profile.py` 和 `engineering/build_migration_task.py`，并支持 v2 整组 Package Launcher。仅有旧版 v1 Launcher 的安装不能接收统一任务需求。
+Builder 侧需包含 `runtime_skills.py`、`migration_task_profile.py` 和 `engineering/build_migration_task.py`，并支持 v2 整组 Package Launcher。仅有旧版 v1 Launcher 的安装不能接收统一任务需求。
 
 在 Builder 的 `finance-solution-builder` 目录执行：
 
 ```powershell
-python engineering/build_migration_task.py --requirements runtime-build-requirements.yaml --source builder-candidate.zip --state-root PRIVATE_NEW_BUILD_DIRECTORY --python PINNED_NATIVE_PYTHON --model-config PRIVATE_MODEL_CONFIG --port 18324
+python engineering/build_migration_task.py --requirements runtime-build-requirements.yaml --skills builder-skills.json --state-root PRIVATE_NEW_BUILD_DIRECTORY --python PINNED_NATIVE_PYTHON --model-config PRIVATE_MODEL_CONFIG --port 18324
 ```
 
 构建进程保留到平台验收、下载结束。它编译并打包 Builder 自有 Runtime，启动带认证的 Launcher，使用真实模型读取完整 Skill 组和随机工作区内容，通过并清理探测实例后输出 `result.json`。这是受支持能力的实际装配构建；需要新增原生能力合同或重建假设时，使用 Builder 的 Construction Adapter，不能由该配方宣称实现。
@@ -35,7 +35,7 @@ python engineering/build_migration_task.py --requirements runtime-build-requirem
 - `FINANCE_RUNTIME_CONFIG`、`FINANCE_EVAL_MIGRATION_PYTHON`：真实执行模型配置与原生 Python；
 - `MIGRATION_LIVE_BUILDER_ROOT`：上述 Builder 项目目录；
 - `MIGRATION_LIVE_BUILDER_PYTHON`：安装 Builder 依赖的宿主 Python；
-- `MIGRATION_LIVE_MEMBERS=1` 或 `3`：分别覆盖单 Skill 和整组协作。
+- `MIGRATION_LIVE_MEMBERS=1` 或 `3`：分别覆盖 1 个成员和多个成员；`MIGRATION_LIVE_TEXT_ONLY=1` 另验证一个纯指令 Skill、零依赖。
 
 驱动通过真实浏览器导出需求与源码，调用外部 Builder，再通过 UI 回填、验收及下载。没有注入 Agent、Judge 或 Launcher 替身。开发失败会由真实 Agent 修复，并重新生成需求及部署；留出结果不反馈给修复。`MIGRATION_LIVE_RESUME_REPORT` 可指定尚未执行留出验收的失败记录，从实际生成的候选继续，保留原记录。输出位于忽略提交的 `reports/bundle-live-*`，其中包含模型诊断和私有连接信息，请按私有运行数据管理。
 
@@ -53,12 +53,14 @@ FINANCE_EVAL_LAUNCHER_TRUST_JSON=[{"reference":"builder-prod","label":"生产 Bu
 
 ## Builder 协议
 
-保留现有 `finance.runtime-build-requirements.v1` / `finance.runtime-build-result.v1` 外层合同，通过有版本的 `extensions.migrationTask` 扩展表达统一任务。外层 `target.protocols.instance` 是 Launcher 基础 v1 协议；扩展明确要求同时实现 v2 整组实例。**即使只有一个成员也必须支持 v2**，不能忽略扩展并返回仅有 v1 能力的交付。
+新迁移任务统一使用 `finance.runtime-build-requirements.v2` / `finance.runtime-build-result.v2`。`target.protocols.instance` 明确为 `finance.skill-eval.runtime-instance.v2`，不再声明 v1 然后附加多 Skill 要求。v1 仅保留旧任务及旧客户端兼容；不能用于接收新的 v2 需求。
 
-需求扩展 `finance.migration-task-build-profile.v1` 包含：
+实例 v2 直接传递 `skills[]`，允许 1～10 个成员。每个成员包含身份、入口、版本、摘要和 `instructions`，自身资源放可选 `files`（工程相对路径 → base64）；共享脚本或资源放可选 `assets`。`contentDigest` 固定全部所选内容，`entryInstructionsFile` 可选。没有依赖时只传 Skill 说明，不需要项目目录或 ZIP。平台内部为 Agent 建立统一工作区，这只是所选输入的运行视图，不要求用户提交完整代码仓库。
+
+需求扩展 `finance.migration-task-build-profile.v2` 包含：
 
 - 任务 ID、原始源码摘要、候选 ID 和整组摘要；
-- 1～10 个成员的入口、版本和内容摘要，以及完整文件路径清单；
+- `skills[]` 中 1～10 个成员的入口、版本和内容摘要，以及完整文件路径清单；
 - 业务目标、目标环境要求、已有工程分析；
 - `instanceSchemaVersion=finance.skill-eval.runtime-instance.v2`、`multiSkill=true`；
 - `settings` 中的模型、入口指令、超时、Harness 工具，以及 `services` 中的共享 MCP 启动声明。
@@ -69,7 +71,7 @@ Result 继续提供匹配的 `requestId`、`requirementsDigest`、Launcher 描�
 
 ```json
 {
-  "schemaVersion": "finance.migration-task-build-receipt.v1",
+  "schemaVersion": "finance.migration-task-build-receipt.v2",
   "taskId": "从需求复制",
   "candidateId": "从需求复制",
   "candidateDigest": "从需求复制的64位十六进制摘要",
@@ -79,7 +81,7 @@ Result 继续提供匹配的 `requestId`、`requirementsDigest`、Launcher 描�
 
 将完整扩展计入 RFC 8785 canonical JSON 的 `resultDigest`。Schema 与完整示例见 [Builder 合同](../contracts/runtime-builder/README.md)。Launcher 必须声明 `features.multiSkill=true`，返回整组及所有成员的真实装载证据；存在必需原生能力时，在线声明必须与所请求合同和约束匹配。生命周期检查执行真实模型调用，返回 `CONFORMANCE_OK`，并验证实例清理。
 
-候选 ZIP 直接以工程文件为根。`candidateDigest` 使用平台文件树算法：按 UTF-8 路径字节排序，逐项散列 `路径 + NUL + 文件原始字节 + NUL`，使用 SHA-256；它不是 ZIP 字节摘要。Builder 应保留候选文件内容和成员入口；Runtime 构建产物有独立的 `artifactSha256`。
+默认导出的 Skill JSON 不含源码 ZIP。可选 ZIP 导入只提供便利，不是 Runtime 的传输要求。`candidateDigest` 使用平台文件树算法：按 UTF-8 路径字节排序，逐项散列 `路径 + NUL + 文件原始字节 + NUL`，使用 SHA-256；它不是 ZIP 字节摘要。Builder 应保留候选文件内容和成员入口；Runtime 构建产物有独立的 `artifactSha256`。
 
 ## 版本绑定与失效
 
@@ -106,7 +108,8 @@ Result 继续提供匹配的 `requestId`、`requirementsDigest`、Launcher 描�
 | --- | --- | --- |
 | POST | `/runtime-build-requests` | 冻结需求；body 含 baseCandidateId、runtimeType、timeoutMs、harnessTools，可选 modelId、entryInstructionsFile、requiredCapabilities |
 | GET | `/runtime-requirements.yaml?requestId=…` | 下载当前或指定历史需求 |
-| GET | `/runtime-build-requests/:requestId/source.zip` | 下载需求绑定的候选源码 |
+| GET | `/runtime-build-requests/:requestId/skills.json` | 下载冻结 skills[] 与可选 assets，无需 ZIP |
+| GET | `/runtime-build-requests/:requestId/source.zip` | 可选 ZIP 导出，兼容旧工具 |
 | POST | `/runtime-deliveries` | 回填 `{result, trustReference, name?}`；校验、生命周期检查并绑定 |
 | DELETE | `/runtime-builder-selection` | 切换为已有环境，保留历史 |
 

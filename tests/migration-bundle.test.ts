@@ -119,7 +119,7 @@ async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeF
           runtimeIdentityVerified: true,
           streamCompleted: true,
           error: null,
-          metadata: { bundleDigest: bundle.digest, loadedBundleMembers: bundle.members },
+          metadata: { contentDigest: bundle.digest, loadedSkillMembers: bundle.members },
         }),
       },
     }));
