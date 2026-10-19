@@ -71,4 +71,4 @@ wsl -d Ubuntu -u root -- systemctl start finance-eval-runtime finance-eval-api
 
 本次测试使用一个最长 4 小时的 WSL 保活会话；未修改全局 WSL 配置或创建开机计划任务。后续需要持续访问 WSL 页面时，保持一个 `wsl -d Ubuntu -- sleep infinity` 会话；systemd enabled 不代表 Windows 开机自动拉起 WSL。未主动重启 Windows 或关闭其他 WSL 服务。此限制来自 [Microsoft WSL systemd 说明](https://learn.microsoft.com/en-us/windows/wsl/systemd)。
 
-目标生产机器仍需验收 OS 重启、自启、TLS、正式凭据与出口、告警、容量、备份保留和加密。恢复目录尚未启动为独立业务实例。完整边界见 [生产就绪检查](production-readiness.md)。
+目标生产机器仍需验收 OS 重启、自启、TLS、正式凭据与出口、告警、容量、备份保留和加密。恢复目录尚未启动为独立业务实例。操作方法见 [生产部署](production-deployment.md)。

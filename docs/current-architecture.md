@@ -81,3 +81,5 @@ integrations/openjiuwen/
 完整业务验收完成后，使用 `node scripts/verify-migration-log-correlation.mjs REPORT_DIRECTORY API_LOG` 检查实际请求、进程、Runtime 会话和 Judge 事件能否按持久化 ID 串联；审计输出只含 ID 和计数。`pnpm test:ui:migration:imports` 单独覆盖单文件、混合批量失败、整工程路径和窄屏导入。原 bundle 命名测试命令继续可用。旧版 v2 UI 回归通过历史 API 准备任务，然后从旧记录入口处理，不再依赖已移除的单 Skill 新建入口。
 
 统一交付与旧任务导出共用 `domain/migration-export-safety.ts` 的凭据检查，保留旧流程对 `.env`、私钥及明显硬编码凭据的拒绝行为；不会为了通过导出而静默删除候选文件或改变冻结摘要。
+
+Builder 产出的 Runtime 如何登记、旧任务的交付接口与新流程的支持范围，见 [Builder 接入](runtime-builder-integration.md)。

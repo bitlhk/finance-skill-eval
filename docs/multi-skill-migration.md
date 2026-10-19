@@ -213,3 +213,5 @@ result.json 明确记录真实模式及成功/失败。测试结束会关闭自�
 [真实模型端到端验证报告](verification/multi-skill-live-20261018.md)。
 
 真实 UI 测试通过 `MIGRATION_LIVE_MEMBERS=1` 或 `3` 选择成员数量，同一套 Agent、Runtime、Judge、页面和断言路径执行；报告记录 memberCount。
+
+Builder 产出的 Runtime 如何登记、旧任务的交付接口与新流程的支持范围，见 [Builder 接入](runtime-builder-integration.md)。
