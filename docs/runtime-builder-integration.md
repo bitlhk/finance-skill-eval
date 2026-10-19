@@ -13,6 +13,34 @@
 
 平台当前以文件交换对接外部构建，没有自动提交、轮询 Builder 构建 API 的客户端。已有合适 Runtime 时可以直接选用，不必经过 Builder。
 
+### Finance Solution Builder 本地接入
+
+Builder 侧需包含 `migration_task_profile.py` 和 `engineering/build_migration_task.py`，并支持 v2 整组 Package Launcher。仅有旧版 v1 Launcher 的安装不能接收统一任务需求。
+
+在 Builder 的 `finance-solution-builder` 目录执行：
+
+```powershell
+python engineering/build_migration_task.py --requirements runtime-build-requirements.yaml --source builder-candidate.zip --state-root PRIVATE_NEW_BUILD_DIRECTORY --python PINNED_NATIVE_PYTHON --model-config PRIVATE_MODEL_CONFIG --port 18324
+```
+
+构建进程保留到平台验收、下载结束。它编译并打包 Builder 自有 Runtime，启动带认证的 Launcher，使用真实模型读取完整 Skill 组和随机工作区内容，通过并清理探测实例后输出 `result.json`。这是受支持能力的实际装配构建；需要新增原生能力合同或重建假设时，使用 Builder 的 Construction Adapter，不能由该配方宣称实现。
+
+原生 Python 环境固定 `openjiuwen==0.1.17.post1`、`fastmcp==2.14.7`。模型配置只在服务端提供。将私有 `connection-info.json` 中的 token 注入平台准入配置对应的环境变量，只向 UI 导入 Result。向构建状态目录写入 `stop` 文件可回收该 Launcher。该执行方式用于受信本机工程，不代表已部署银行生产 Runtime。
+
+### 真实 UI 联调
+
+在本仓库构建前端和服务后，设置以下环境变量并执行 `node scripts/verify-bundle-migration-live-ui.mjs`：
+
+- `BUNDLE_LIVE_ENV_FILE`：受保护的真实迁移 Agent / Judge 配置；
+- `FINANCE_RUNTIME_CONFIG`、`FINANCE_EVAL_MIGRATION_PYTHON`：真实执行模型配置与原生 Python；
+- `MIGRATION_LIVE_BUILDER_ROOT`：上述 Builder 项目目录；
+- `MIGRATION_LIVE_BUILDER_PYTHON`：安装 Builder 依赖的宿主 Python；
+- `MIGRATION_LIVE_MEMBERS=1` 或 `3`：分别覆盖单 Skill 和整组协作。
+
+驱动通过真实浏览器导出需求与源码，调用外部 Builder，再通过 UI 回填、验收及下载。没有注入 Agent、Judge 或 Launcher 替身。开发失败会由真实 Agent 修复，并重新生成需求及部署；留出结果不反馈给修复。`MIGRATION_LIVE_RESUME_REPORT` 可指定尚未执行留出验收的失败记录，从实际生成的候选继续，保留原记录。输出位于忽略提交的 `reports/bundle-live-*`，其中包含模型诊断和私有连接信息，请按私有运行数据管理。
+
+日志关联检查使用 `node scripts/verify-migration-log-correlation.mjs REPORT_DIRECTORY API_LOG [EARLIER_API_LOG ...]`。断点续跑时提供此前各段 API 日志；外部 Builder 的 Runtime 关联依据真实实例证据与清理回执，不要求存在内置 worker 的 `runtime.log`。
+
 ## 服务端准入配置
 
 在 API 的受保护环境配置中设置允许的 Launcher 地址前缀，再重启 API：

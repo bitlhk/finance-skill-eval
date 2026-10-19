@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chromium, expect } from '@playwright/test';
 import { zipSync, unzipSync } from 'fflate';
+import { liveTaskBuilder } from './lib/live-task-builder.mjs';
 
 // No injected ports, response replay, request interception or fixture model endpoints.
 // The only authored input is a business example and its independently held test data.
@@ -17,7 +18,13 @@ const memberCount = Number(process.env.MIGRATION_LIVE_MEMBERS ?? 3);
 assert([1,3].includes(memberCount), 'MIGRATION_LIVE_MEMBERS must be 1 or 3');
 const memberNames = memberCount === 1 ? ['procurement'] : ['budget-query', 'purchase-review', 'audit-report'];
 const external = Boolean(process.env.BUNDLE_LIVE_SERVICE_URL);
-const taskName = `真实采购 ${memberCount} Skill 迁移 ` + randomUUID().slice(0, 8);
+const builderMode = Boolean(process.env.MIGRATION_LIVE_BUILDER_ROOT);
+assert(!(external && builderMode), 'Builder live test requires an isolated API process');
+let builder;
+const resumeDirectory = process.env.MIGRATION_LIVE_RESUME_REPORT;
+const previousTask = resumeDirectory ? JSON.parse(await readFile(path.join(resumeDirectory,'task.json'),'utf8')) : null;
+if(previousTask){assert(builderMode && previousTask.currentCandidateId && previousTask.source.members.length===memberCount);assert(!previousTask.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');}
+const taskName = previousTask?.name ?? `真实采购 ${memberCount} Skill 迁移 ` + randomUUID().slice(0, 8);
 const environmentName = '真实 OpenJiuwen 多 Skill Runtime ' + randomUUID().slice(0, 8);
 const directory = path.resolve('reports', 'bundle-live-' + randomUUID());
 await mkdir(directory, { recursive: true });
@@ -25,6 +32,7 @@ if (!external) process.env.FINANCE_EVAL_AGENT_DUMP = path.join(directory, 'agent
 const data = path.join(directory, 'data'),
   token = external ? process.env.FINANCE_EVAL_ACCESS_TOKEN : randomUUID();
 assert(token, 'Configure the deployed service access token');
+if(previousTask)await cp(path.join(resumeDirectory,'data'),data,{recursive:true,errorOnExist:true,force:false});
 const python = process.env.FINANCE_EVAL_MIGRATION_PYTHON;
 assert(external || python, 'Set FINANCE_EVAL_MIGRATION_PYTHON to the real OpenJiuwen interpreter');
 assert(process.env.FINANCE_RUNTIME_CONFIG, 'Set FINANCE_RUNTIME_CONFIG to a private model configuration');
@@ -42,10 +50,11 @@ const checks = [],
   errors = [];
 let app, browser, page, worker, workerLog, taskId, serviceUrl, lastTask;
 const report = {
-  mode: 'REAL_AGENT_RUNTIME_AND_JUDGE',
+  mode: builderMode ? 'REAL_BUILDER_AGENT_RUNTIME_AND_JUDGE' : 'REAL_AGENT_RUNTIME_AND_JUDGE',
   memberCount,
   deployment: external ? 'EXISTING_SERVICE' : 'TEST_PROCESS',
   startedAt,
+  ...(previousTask ? {resumedFrom:resumeDirectory} : {}),
   status: 'RUNNING',
   checks,
   models: {
@@ -159,9 +168,10 @@ try {
   await save();
   console.log('REPORT ' + directory);
   const port = external ? null : await availablePort(),
-    runtimeUrl = external ? process.env.BUNDLE_LIVE_RUNTIME_URL : 'http://127.0.0.1:' + port + '/';
+    runtimeUrl = external ? process.env.BUNDLE_LIVE_RUNTIME_URL : 'http://127.0.0.1:' + port + (builderMode ? '/oj/' : '/');
+  if (builderMode) { builder=liveTaskBuilder({directory,port,python,modelConfig:process.env.FINANCE_RUNTIME_CONFIG}); report.builds=builder.builds; }
   assert(runtimeUrl?.endsWith('/'), 'BUNDLE_LIVE_RUNTIME_URL must end with /');
-  if (!external) {
+  if (!external && !builderMode) {
     workerLog = createWriteStream(path.join(directory, 'runtime.log'));
     worker = spawn(
       python,
@@ -177,7 +187,7 @@ try {
     worker.stderr.pipe(workerLog);
   }
   let capabilities;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; !builderMode && i < 60; i++) {
     assert(!worker || worker.exitCode === null, 'Real Runtime process exited during startup');
     try {
       const response = await fetch(runtimeUrl + 'v1/runtime-capabilities');
@@ -188,9 +198,7 @@ try {
     } catch {}
     await pause(1000);
   }
-  assert(capabilities?.features.multiSkill, 'Real Runtime must advertise multiSkill');
-  report.capabilities = capabilities;
-  pass('real_openjiuwen_runtime_started');
+  if (!builderMode) { assert(capabilities?.features.multiSkill, 'Real Runtime must advertise multiSkill'); report.capabilities = capabilities; pass('real_openjiuwen_runtime_started'); }
   if (!external) {
     app = await createEvaluationService({
       rootDirectory: root,
@@ -200,11 +208,13 @@ try {
       publicDemo: false,
       workspaceMode: 'single',
       managedWorkspace: false,
+      ...(builderMode ? {launcherTrust:builder.trust} : {}),
     });
     app.log.level = 'info';
     serviceUrl = await app.listen({ host: '127.0.0.1', port: 0 });
   } else serviceUrl = process.env.BUNDLE_LIVE_SERVICE_URL.replace(/\/$/, '');
   report.serviceUrl = serviceUrl;
+  if (!builderMode) {
   const registered = await fetch(serviceUrl + '/api/environments', {
     method: 'POST',
     headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
@@ -216,17 +226,25 @@ try {
     }),
   });
   assert.equal(registered.status, 200, 'Runtime registration failed');
+  }
   const existingTasks = new Set((await api('/api/migration-bundles')).map(task => task.id));
   browser = await chromium.launch({
     headless: true,
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
   });
   page = await browser.newPage({ viewport: { width: 1440, height: 1050 }, acceptDownloads: true });
+  page.setDefaultTimeout(60000);
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(serviceUrl);
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button', { name: '进入工作区', exact: true }).click();
   await page.getByRole('button', { name: 'Skill 迁移', exact: true }).click();
+  let task;
+  if(previousTask){
+    taskId=previousTask.id; report.taskId=taskId;
+    await page.locator('.bundle-task-row').filter({hasText:taskName}).getByRole('button',{name:'继续处理',exact:true}).click();
+    task=await refresh();pass('resumed_actual_agent_candidate_after_interrupted_builder_run');
+  } else {
   await page.getByLabel('任务名称', { exact: true }).fill(taskName);
   await page
     .getByLabel('目标环境与要求', { exact: true })
@@ -270,7 +288,7 @@ try {
   taskId = tasks[0].id;
   report.taskId = taskId;
   pass('whole_workspace_imported_through_ui');
-  let task = await act('分析 Skill 工程', 'ANALYZE');
+  task = await act('分析 Skill 工程', 'ANALYZE');
   assert.deepEqual(task.analysis.missing, [], JSON.stringify(task.analysis));
   await page.screenshot({ path: path.join(directory, 'analysis.png'), fullPage: true });
   pass('real_agent_analyzed_whole_workspace');
@@ -281,20 +299,23 @@ try {
   await page.screenshot({ path: path.join(directory, 'candidate.png'), fullPage: true });
   assert(task.attempts.filter(a => a.kind !== 'ACCEPT').every(a => a.requestId && a.agentRunId), 'Missing persisted Agent correlation');
   pass('real_agent_generated_frozen_candidate');
+  }
   await stage('Runtime 适配与登记');
-  await page
+  if (!builderMode) await page
     .getByLabel('已登记执行环境', { exact: true })
     .selectOption({ label: environmentName });
-  await page.getByLabel('执行模型', { exact: true }).selectOption(modelId);
+  if (!builderMode) await page.getByLabel('执行模型', { exact: true }).selectOption(modelId);
   await page.getByLabel('每个案例超时（秒）', { exact: true }).fill('600');
   await page.getByLabel('允许执行 Skill 包中的脚本（目标环境需支持）', { exact: true }).check();
-  await page.getByRole('button', { name: '保存运行配置', exact: true }).click();
+  if (builderMode) { capabilities=await builder.bind(page); report.capabilities=capabilities; pass('real_builder_built_deployed_and_bound_through_ui'); }
+  else await page.getByRole('button', { name: '保存运行配置', exact: true }).click();
+  await stage('验证能否运行');
   await page.getByRole('button', { name: '检查运行能力', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('检查通过');
+  await expect(page.getByRole('status').filter({hasText:'检查通过'})).toBeVisible();
   await stage('任务验收');
   await page.getByLabel('验收测试集 JSON', { exact: true }).fill(JSON.stringify(suite, null, 2));
   await page.getByRole('button', { name: '保存测试集', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('已保存');
+  await expect(page.getByRole('status').filter({hasText:'已保存'})).toBeVisible();
   for (let repair = 0; repair <= 2; repair++) {
     task = await act('开始任务验收', 'ACCEPT');
     await page.screenshot({ path: path.join(directory, 'development-' + repair + '.png'), fullPage: true });
@@ -302,6 +323,7 @@ try {
     assert(repair < 2, 'Real development acceptance failed after two actual Agent repairs');
     console.log('Real development acceptance failed; requesting actual whole-workspace repair');
     await act('让 Agent 查看工程并修复', 'REPAIR');
+    if(builderMode){await stage('Runtime 适配与登记'); capabilities=await builder.bind(page);}
     await stage('任务验收');
   }
   assert.equal(task.runs.at(-1).status, 'PASSED');
@@ -325,7 +347,7 @@ try {
       // is checked separately against the capabilities of our actual process.
       assert.equal(item.evidence.metadata.executionMode, 'runtime-launcher');
       assert.equal(item.evidence.metadata.runtimeVersion, capabilities.runtime.version);
-      assert.equal(item.evidence.metadata.agentType, 'DeepAgent');
+      assert.equal(item.evidence.metadata.agentType, builderMode ? 'ReActAgent' : 'DeepAgent');
       assert.equal(item.evidence.metadata.modelBinding.upstreamModelId, report.models.execution);
       for (const name of memberNames) {
         assert(
@@ -358,8 +380,11 @@ try {
     assert(exported['package/skills/' + name + '/SKILL.md']);
   pass('verified_full_bundle_downloaded_through_ui');
   assert.deepEqual(errors, []);
-  const health = await (await fetch(runtimeUrl + 'health')).json();
-  assert.equal(health.activeSessions, 0);
+  if (builderMode) {
+    for (const run of task.runs.filter(r=>r.status==='PASSED')) {assert(run.builderBindingId, 'Acceptance must pin actual Builder binding');assert(run.finalization.length>0 && run.finalization.every(r=>r.status==='RELEASED'),'Actual runtime cleanup receipts are required');}
+    assert.equal(manifest.builderBinding.result.resultDigest, task.runtimeDelivery.result.resultDigest);
+    assert(exported['migration/runtime-build-result.json']);
+  } else { const health = await (await fetch(runtimeUrl + 'health')).json(); assert.equal(health.activeSessions, 0); }
   pass('runtime_sessions_released');
   report.status = 'PASSED';
   report.candidateId = task.currentCandidateId;
@@ -383,6 +408,7 @@ try {
   await save();
   await browser?.close();
   await app?.close();
+  await builder?.close();
   if (worker && worker.exitCode === null) {
     worker.kill();
     await Promise.race([new Promise((resolve) => worker.once('exit', resolve)), pause(5000)]);
