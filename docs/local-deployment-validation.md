@@ -1,4 +1,8 @@
-# 本机 Windows / WSL 部署验收（2026-10-19）
+# 本机 Windows / WSL 历史部署验收（2026-10-19）
+
+本页保留旧发布 `1d50d37` 的验收记录。当前发布以 Windows 的 `C:/ProgramData/FinanceSkillEval/current.txt`、
+WSL 的 `/opt/finance-skill-eval/current` 及发布目录内 `DEPLOYED_REVISION` 为准。
+新版操作见[生产部署](production-deployment.md)与[Builder 接入](runtime-builder-integration.md)，本机最新测试证据保存在忽略提交的 `reports/`。
 
 结果：两套系统均已实际安装 API 与 Runtime 服务，使用低权限服务账户运行，真实三 Skill 整体迁移与联合验收均通过。服务保留运行，数据、配置、日志及备份独立。
 
