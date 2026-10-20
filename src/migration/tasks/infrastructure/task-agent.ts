@@ -53,12 +53,17 @@ export const judgeBundleCase: BundleJudge = async (input) => {
   operationalEvent('migration_judge_started', context);
   const started = Date.now();
   try {
+    const expected = input.evalCase.rubric.map((item) => item.criterionId);
+    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(modelTimeoutMs('JUDGE'))]);
+    let correction = '';
+    const frozen = new Map<string, boolean>();
+    for (let formatAttempt = 0; formatAttempt < 2; formatAttempt++) {
     const response = await role.adapter.complete({
       requestId: judgeRequestId,
       model: role.model,
       responseFormat: 'json',
       toolFree: true,
-      signal: AbortSignal.any([input.signal, AbortSignal.timeout(modelTimeoutMs('JUDGE'))]),
+      signal,
       messages: [
         {
           role: 'system',
@@ -70,28 +75,42 @@ export const judgeBundleCase: BundleJudge = async (input) => {
           content: JSON.stringify({
             task: input.evalCase.prompt,
             criteria: input.evalCase.rubric,
+            requiredCriterionIds: expected,
             evidence: input.evidence,
+            ...(correction ? {formatCorrection: correction, preservedVerdicts: Object.fromEntries(frozen)} : {}),
           }),
         },
       ],
     });
+    try {
     const output = z
       .strictObject({
         criteria: z.array(z.strictObject({ id: z.string(), passed: z.boolean(), reason: z.string().min(1) })),
       })
       .parse(JSON.parse(response.content));
-    const expected = input.evalCase.rubric.map((item) => item.criterionId);
+    for(const check of output.criteria) {
+      if(frozen.has(check.id) && frozen.get(check.id)!==check.passed) bundleError('验收模型格式重试改变了已有标准的判定');
+    }
     if (
       output.criteria.length !== expected.length ||
       new Set(output.criteria.map((c) => c.id)).size !== expected.length ||
       expected.some((id) => !output.criteria.some((c) => c.id === id))
     )
-      bundleError('验收模型未完整覆盖业务标准');
+      {
+        for(const check of output.criteria)if(expected.includes(check.id)&&output.criteria.filter(c=>c.id===check.id).length===1)frozen.set(check.id,check.passed);
+        bundleError('验收模型未完整覆盖业务标准');
+      }
     operationalEvent('migration_judge_finished', { ...context, status: 'COMPLETED', elapsedMs: Date.now() - started });
     return {
       passed: output.criteria.every((c) => c.passed),
       reason: output.criteria.map((c) => c.id + ': ' + c.reason).join('\n'),
     };
+    } catch(error) {
+      if(formatAttempt===1)throw error;
+      correction='上次响应格式无效。criteria 必须恰好覆盖 requiredCriterionIds 中每个 ID 一次，不得改名、漏项或拆分。只返回 {"criteria":[{"id":"原ID","passed":true或false,"reason":"证据及原因"}]}，保留 preservedVerdicts 中已有判定。';
+    }
+    }
+    throw new Error('验收模型未返回有效评分');
   } catch (error) {
     operationalEvent('migration_judge_finished', { ...context, status: 'FAILED', elapsedMs: Date.now() - started, err: operationalError(error) });
     throw error;

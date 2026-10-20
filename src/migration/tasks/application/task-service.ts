@@ -179,6 +179,8 @@ export class MigrationTaskService {
           bundleError('请选择当前候选的失败验收记录');
         if (run.phase === 'holdout')
           bundleError('独立留出验收记录不提供给修复 Agent，请使用开发回归案例重现问题');
+        if(run.cases.some(c=>c.failureStage==='JUDGE'))
+          bundleError('评审服务未完成评分，请先修复评审服务后重新验收，不应据此修改候选');
       }
       if (kind === 'ACCEPT') {
         requireTaskBuilderBinding(task);

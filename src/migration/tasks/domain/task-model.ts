@@ -120,7 +120,7 @@ export type BundleRun = {
   status: 'RUNNING' | 'PASSED' | 'FAILED' | 'INCOMPLETE' | 'CANCELLED';
   createdAt: string;
   finishedAt?: string;
-  cases: Array<{ id: string; passed: boolean; reason: string; evidence?: RuntimeExecutionEvidence; }>;
+  cases: Array<{ id: string; passed: boolean; reason: string; evidence?: RuntimeExecutionEvidence; failureStage?: 'RUNTIME' | 'JUDGE'; }>;
   finalization?: unknown;
   runtimeSnapshot?: unknown;
 };

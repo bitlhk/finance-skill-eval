@@ -18,6 +18,7 @@ import type {
   BundleAgent,
   BundleAgentInput,
   BundleRuntimeFactory,
+  BundleJudge,
 } from '../src/migration/bundle/bundle-ports.js';
 import { registerBundleMigrationRoutes } from '../src/interfaces/http/bundle-migration-routes.js';
 
@@ -51,7 +52,7 @@ const suite = {
   holdoutCases: [{ id: 'secret-holdout', input: 'HIDDEN_CASE', criteria: ['HIDDEN_CRITERION'] }],
 };
 const config = { environmentId: 'env-test', modelId: 'execution', timeoutMs: 10000 };
-async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeFactory, sourceFiles: BundleFiles = files) {
+async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeFactory, sourceFiles: BundleFiles = files, customJudge?:BundleJudge) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'bundle-test-'));
   roots.push(root);
   const skills = new SkillStore(root);
@@ -123,10 +124,10 @@ async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeF
         }),
       },
     }));
-  const service = new BundleMigrationService(root, skills, agent, runtime, async ({ evidence }) => ({
+  const service = new BundleMigrationService(root, skills, agent, runtime, customJudge ?? (async ({ evidence }) => ({
     passed: evidence.output === 'REJECT',
     reason: 'Observed ' + evidence.output,
-  }));
+  })));
   services.push(service);
   await service.initialize();
   const task = await service.upload(
@@ -150,6 +151,19 @@ async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeF
   }
   return { root, skills, service, task, start, seen, cleanup, launches, environment };
 }
+
+it('retains completed execution evidence and blocks candidate repair when Judge fails',async()=>{
+  const f=await fixture(undefined,undefined,files,async()=>{throw new Error('Judge response is invalid')});
+  await f.start('ANALYZE');await f.start('GENERATE');
+  await f.service.configure(f.task.id,config);await f.service.saveSuite(f.task.id,suite);
+  const task=await f.start('ACCEPT');
+  expect(task.runs[0]!.status).toBe('INCOMPLETE');
+  expect(task.runs[0]!.cases[0]!.failureStage).toBe('JUDGE');
+  expect(task.runs[0]!.cases[0]!.evidence?.status).toBe('completed');
+  expect(f.cleanup).toHaveBeenCalled();
+  await expect(f.service.export(task.id,true)).rejects.toThrow();
+  await expect(f.service.start(task.id,'REPAIR',{key:randomUUID(),baseCandidateId:task.currentCandidateId,runId:task.runs[0]!.id})).rejects.toThrow('评审服务');
+});
 
 it('migrates the whole workspace, repairs two members, freezes history and exports only current verified inputs', async () => {
   const f = await fixture();

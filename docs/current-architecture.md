@@ -6,6 +6,10 @@
 
 新任务有 1–10 个 Skill，成员数量不选择另一套编排。Runtime v2 接收 skills[] 和可选 assets，Agent 工作区只装载这些已选择的说明、依赖与入口指令，不要求完整工程 ZIP；每轮生成不可变候选，按任务验收，失败后修复工程再验收。单成员也使用工作区 Runtime v2 合同；需要升级 API 和内置 Runtime，旧 Runtime 不能仅凭支持 v1 就被视为兼容。
 
+验收区分业务未通过与基础设施未完成：Runtime 或 Judge 异常记录为 `INCOMPLETE`，保存已取得的执行证据及 `failureStage`。
+Judge 格式不完整时最多重试一次，保持已经明确返回的判定；完整的业务不通过不重试。
+评审服务异常不能作为改写候选的依据，UI 和服务端都会阻止将该记录交给修复 Agent。
+
 ```text
 web/src/features/migration/
   MigrationWorkspace            统一入口、旧任务桥接

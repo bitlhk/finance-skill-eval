@@ -21,7 +21,6 @@ assert([1,3].includes(memberCount), 'MIGRATION_LIVE_MEMBERS must be 1 or 3');
 const memberNames = memberCount === 1 ? ['procurement'] : ['budget-query', 'purchase-review', 'audit-report'];
 const external = Boolean(process.env.BUNDLE_LIVE_SERVICE_URL);
 const builderMode = Boolean(process.env.MIGRATION_LIVE_BUILDER_ROOT);
-assert(!(external && builderMode), 'Builder live test requires an isolated API process');
 let builder;
 const resumeDirectory = process.env.MIGRATION_LIVE_RESUME_REPORT;
 const previousTask = resumeDirectory ? JSON.parse(await readFile(path.join(resumeDirectory,'task.json'),'utf8')) : null;
@@ -34,7 +33,7 @@ if (!external) process.env.FINANCE_EVAL_AGENT_DUMP = path.join(directory, 'agent
 const data = path.join(directory, 'data'),
   token = external ? process.env.FINANCE_EVAL_ACCESS_TOKEN : randomUUID();
 assert(token, 'Configure the deployed service access token');
-if(previousTask)await cp(path.join(resumeDirectory,'data'),data,{recursive:true,errorOnExist:true,force:false});
+if(previousTask&&!external)await cp(path.join(resumeDirectory,'data'),data,{recursive:true,errorOnExist:true,force:false});
 const python = process.env.FINANCE_EVAL_MIGRATION_PYTHON;
 assert(external || python, 'Set FINANCE_EVAL_MIGRATION_PYTHON to the real OpenJiuwen interpreter');
 assert(process.env.FINANCE_RUNTIME_CONFIG, 'Set FINANCE_RUNTIME_CONFIG to a private model configuration');
@@ -174,7 +173,7 @@ if(textOnly) suite={name:'纯指令 Skill 验收',cases:[
 try {
   await save();
   console.log('REPORT ' + directory);
-  const port = external ? null : await availablePort(),
+  const port = builderMode && external ? Number(new URL(process.env.BUNDLE_LIVE_BUILDER_URL).port) : external ? null : await availablePort(),
     runtimeUrl = external ? process.env.BUNDLE_LIVE_RUNTIME_URL : 'http://127.0.0.1:' + port + (builderMode ? '/oj/' : '/');
   if (builderMode) { builder=liveTaskBuilder({directory,port,python,modelConfig:process.env.FINANCE_RUNTIME_CONFIG}); report.builds=builder.builds; }
   assert(runtimeUrl?.endsWith('/'), 'BUNDLE_LIVE_RUNTIME_URL must end with /');
@@ -250,7 +249,7 @@ try {
   if(previousTask){
     taskId=previousTask.id; report.taskId=taskId;
     await page.locator('.bundle-task-row').filter({hasText:taskName}).getByRole('button',{name:'继续处理',exact:true}).click();
-    task=await refresh();pass('resumed_actual_agent_candidate_after_interrupted_builder_run');
+    task=await refresh();assert.equal(task.currentCandidateId,previousTask.currentCandidateId);assert(!task.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');pass('resumed_actual_agent_candidate_after_interrupted_builder_run');
   } else {
   await page.getByLabel('任务名称', { exact: true }).fill(taskName);
   await page
@@ -293,7 +292,7 @@ try {
     const skillFile='skills/'+name+'/SKILL.md';
     await page.getByRole('button',{name:'导入 Skill 文件',exact:true}).click();
     await page.locator('.bundle-panel input[type=file][multiple]').first().setInputFiles({name:'SKILL.md',mimeType:'text/markdown',buffer:files[skillFile]});
-    await expect(page.getByRole('status').filter({hasText:'已导入 1 个 Skill'})).toBeVisible();
+    await expect(page.getByRole('status').filter({hasText:'已导入 1 个 Skill'})).toBeVisible({timeout:60000});
     await expect(page.getByRole('button',{name:'创建迁移任务',exact:true})).toBeEnabled();
   }
   const dependencies=Object.entries(files).filter(([name])=>name.startsWith('shared/'));
@@ -341,6 +340,7 @@ try {
     task = await act('开始任务验收', 'ACCEPT');
     await page.screenshot({ path: path.join(directory, 'development-' + repair + '.png'), fullPage: true });
     if (task.runs.at(-1).status === 'PASSED') break;
+    assert.notEqual(task.runs.at(-1).status,'INCOMPLETE','Infrastructure or Judge failed; preserve evidence and fix the service before business repair');
     assert(repair < 2, 'Real development acceptance failed after two actual Agent repairs');
     assert(task.runs.at(-1).cases.every(c=>c.evidence && !c.evidence.error),'Infrastructure execution failed; retain evidence and fix Runtime before business repair');
     console.log('Real development acceptance failed; requesting actual whole-workspace repair');

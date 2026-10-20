@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type {RuntimeExecutionEvidence} from '../../../contracts.js';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { operationalError } from '../../../shared/operational-error.js';
 import { simpleMigrationCases, simpleMigrationHoldoutCases } from '../../domain/simple-migration-suite.js';
@@ -40,6 +41,7 @@ export async function acceptMigrationTask(
   });
   const cases = phase === 'holdout' ? simpleMigrationHoldoutCases(suite) : simpleMigrationCases(suite);
   const receipts: unknown[] = [];
+  let incomplete = false;
   for (const evalCase of cases) {
     signal.throwIfAborted();
     context.logger?.info({
@@ -67,9 +69,10 @@ export async function acceptMigrationTask(
       version: candidate.id,
       artifactSha256: bundle.digest,
     };
+    let evidence:RuntimeExecutionEvidence|undefined;
     try {
       await execution.runtime.prepare?.({ runId: run.id, signal });
-      const evidence = await execution.runtime.execute({
+      const observed = await execution.runtime.execute({
         runId: run.id,
         side: 'right',
         model: execution.model,
@@ -77,20 +80,22 @@ export async function acceptMigrationTask(
         evalCase,
         signal,
       });
+      evidence = observed;
       const valid =
         evidence.status === 'completed' &&
         evidence.streamCompleted &&
         evidence.runtimeIdentityVerified &&
         evidence.metadata.contentDigest === bundle.digest &&
         bundle.members.every((m) =>
-          evidence.loadedSkills.some(
+          observed.loadedSkills.some(
             (loaded) => loaded.skillId === m.skillId && loaded.version === m.version,
           ),
         );
       const verdict = valid
         ? await context.judge({ evalCase, evidence, signal, correlation: { taskId: task.id, attemptId: attempt.id, runId: run.id, requestId: attempt.requestId } })
         : { passed: false, reason: '执行未完成，或整组装载证据不完整' };
-      run.cases.push({ id: evalCase.caseId, ...verdict, evidence });
+      if(!valid)incomplete=true;
+      run.cases.push({ id: evalCase.caseId, ...verdict, evidence, ...(!valid ? {failureStage:'RUNTIME' as const} : {}) });
       context.logger?.info({
         event: 'bundle_case_finished', taskId: task.id, attemptId: attempt.id, requestId: attempt.requestId, runId: run.id,
         caseId: evalCase.caseId, passed: verdict.passed, elapsedMs: evidence.elapsedMs
@@ -100,12 +105,15 @@ export async function acceptMigrationTask(
         event: 'bundle_case_failed', taskId: task.id, attemptId: attempt.id, requestId: attempt.requestId, runId: run.id,
         caseId: evalCase.caseId, err: operationalError(error)
       });
-      if (signal.aborted) throw error;
+      incomplete = true;
       run.cases.push({
         id: evalCase.caseId,
         passed: false,
         reason: error instanceof Error ? error.message : '执行失败',
+        ...(evidence ? {evidence} : {}),
+        failureStage: evidence ? 'JUDGE' : 'RUNTIME',
       });
+      if (signal.aborted) throw error;
     } finally {
       try {
         await execution.runtime.cleanup?.();
@@ -120,7 +128,7 @@ export async function acceptMigrationTask(
     }
   }
   signal.throwIfAborted();
-  run.status = run.cases.length === cases.length && run.cases.every((c) => c.passed) ? 'PASSED' : 'FAILED';
+  run.status = incomplete ? 'INCOMPLETE' : run.cases.length === cases.length && run.cases.every((c) => c.passed) ? 'PASSED' : 'FAILED';
   run.finishedAt = new Date().toISOString();
   await context.update(task.id, (t) => {
     t.runs[t.runs.findIndex((r) => r.id === run.id)] = run;

@@ -87,9 +87,11 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
           }
         />
       )}
+      {run?.status==='INCOMPLETE' && <p role="status">验收未完成，请先检查运行环境或评审服务；已取得的执行证据会保留。</p>}
       {run &&
         run.candidateId === task.currentCandidateId &&
         ['FAILED', 'INCOMPLETE'].includes(run.status) &&
+        !run.cases.some(c=>c.failureStage==='JUDGE') &&
         run.phase === 'development' && (
           <button
             className="button primary"

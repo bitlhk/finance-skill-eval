@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 import sys
 import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 from importlib.metadata import PackageNotFoundError, version
 from .instance_manager import InstanceManager
 from .model_config import resolve_model
@@ -22,6 +23,10 @@ async def lifespan(app):
     async def sweep():
         while True:
             instances.expire()
+            for key, expires in list(retired_instances.items()):
+                if expires < time.monotonic() and not instance_activity.get(key):
+                    retired_instances.pop(key, None)
+                    instance_cleanup_failures.discard(key)
             await asyncio.sleep(1)
     task = asyncio.create_task(sweep())
     log_event('runtime_ready')
@@ -41,6 +46,9 @@ active = set()
 cleanup_jobs = set()
 slots = asyncio.Semaphore(2)
 instances = InstanceManager()
+instance_activity = {}
+instance_cleanup_failures = set()
+retired_instances = {}
 CONFIG = Path(os.environ.get("FINANCE_RUNTIME_CONFIG", ".runtime.local.json")).resolve()
 
 
@@ -114,9 +122,15 @@ async def get_runtime_instance(instance_id: str):
 
 @app.delete('/v1/runtime-instances/{instance_id}')
 async def delete_runtime_instance(instance_id: str):
-    if not instances.delete(instance_id):
+    if not instances.delete(instance_id) and instance_id not in retired_instances:
         raise HTTPException(404, 'Runtime instance not found')
-    return Response(status_code=204)
+    retired_instances[instance_id] = time.monotonic() + instances.ttl_seconds
+    # Deletion disconnects the instance stream; the receipt remains PENDING
+    # until its subprocess tree has actually finished reaping.
+    return {'cleanup': {'schemaVersion': 'finance.eval-cleanup-observation.v1',
+        'instanceId': instance_id, 'observedAt': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'status': 'FAILED' if instance_id in instance_cleanup_failures else
+                  'PENDING' if instance_activity.get(instance_id) else 'RELEASED', 'scope': 'THIS_INSTANCE'}}
 
 
 class InstanceExecutionRequest:
@@ -190,7 +204,7 @@ async def execute(request: Request):
     if body.get("schemaVersion") != "finance.skill-eval.runtime-request.v1":
         raise HTTPException(400, "Unsupported runtime contract")
 
-    async def stream():
+    async def session_stream():
         started = time.monotonic()
         async with slots:
             if await request.is_disconnected():
@@ -203,7 +217,12 @@ async def execute(request: Request):
                 env={**os.environ, "FINANCE_RUNTIME_CONFIG": str(CONFIG), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
             )
             active.add(process.pid)
+            instance_id = getattr(request, 'instance_id', None)
+            if instance_id:
+                instance_activity.setdefault(instance_id, set()).add(process.pid)
             correlation = {'runId': body['runId'], 'caseId': body['case']['caseId'], 'pid': process.pid}
+            if instance_id:
+                correlation['instanceId'] = instance_id
             log_event('runtime_session_started', **correlation, timeoutMs=execution_timeout)
             diagnostics = asyncio.create_task(drain_stderr(process.stderr))
             terminal = False
@@ -235,8 +254,17 @@ async def execute(request: Request):
                 async def reap():
                     try:
                         await terminate_tree(process)
+                    except BaseException:
+                        if instance_id:
+                            instance_cleanup_failures.add(instance_id)
+                        raise
                     finally:
                         active.discard(process.pid)
+                        if instance_id:
+                            activity = instance_activity.get(instance_id, set())
+                            activity.discard(process.pid)
+                            if not activity:
+                                instance_activity.pop(instance_id, None)
                         try:
                             detail = await asyncio.wait_for(diagnostics, 3)
                         except (TimeoutError, asyncio.CancelledError):
@@ -255,5 +283,20 @@ async def execute(request: Request):
                             "runtimeIdentityVerified": False, "streamCompleted": False,
                             "error": f"OpenJiuwen session stopped or exceeded {execution_timeout // 1000} seconds", "metadata": {}}
                 yield f"data: {json.dumps({'evidence': evidence})}\n\n"
+
+    async def stream():
+        instance_id = getattr(request, 'instance_id', None)
+        marker = object()
+        if instance_id:
+            instance_activity.setdefault(instance_id, set()).add(marker)
+        try:
+            async for event in session_stream():
+                yield event
+        finally:
+            if instance_id:
+                activity = instance_activity.get(instance_id, set())
+                activity.discard(marker)
+                if not activity:
+                    instance_activity.pop(instance_id, None)
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})

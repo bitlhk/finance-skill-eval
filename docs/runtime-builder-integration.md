@@ -41,6 +41,32 @@ python engineering/build_migration_task.py --requirements runtime-build-requirem
 
 日志关联检查使用 `node scripts/verify-migration-log-correlation.mjs REPORT_DIRECTORY API_LOG [EARLIER_API_LOG ...]`。断点续跑时提供此前各段 API 日志；外部 Builder 的 Runtime 关联依据真实实例证据与清理回执，不要求存在内置 worker 的 `runtime.log`。
 
+### 连接已部署的 Windows / WSL 服务
+
+在上述配置之外设置 `BUNDLE_LIVE_SERVICE_URL` 指向已安装的 Eval，
+`BUNDLE_LIVE_BUILDER_URL` 指向本机专用 Builder Launcher 地址（例如 `http://127.0.0.1:56363/oj/`）。
+服务必须预先配置相同地址的 `real-builder` 信任引用及其凭据环境变量。
+`MIGRATION_LIVE_BUILDER_CREDENTIAL_FILE` 指向只允许宿主与 API 服务身份读取的凭据文件，
+其内容须与 API 使用的凭据一致。Builder CLI 对应 `--credential-file`；未提供时仍生成随机凭据。
+凭据不进入 Result、命令参数值或浏览器。
+
+Builder 在 WSL 时设置 `MIGRATION_LIVE_BUILDER_WSL=Ubuntu`，使用已有的 `finance-eval` 服务账户运行。
+驱动通过 WSL root 入口调用 `runuser` 降权，保留服务账户的 nologin shell。
+`MIGRATION_LIVE_BUILDER_ROOT`、`MIGRATION_LIVE_BUILDER_PYTHON`、`FINANCE_EVAL_MIGRATION_PYTHON`
+填写 Linux 原生安装路径；`MIGRATION_LIVE_BUILDER_MODEL_CONFIG` 覆盖 Builder 使用的模型配置路径。
+`MIGRATION_LIVE_BUILDER_ENV_FILE` 可指定受保护的宿主环境文件（CLI `--env-file`，需要 python-dotenv），
+用于显式加载代理设置。测试机的 `FINANCE_RUNTIME_CONFIG` 仍是本机可读取的模型身份校验文件。
+两平台端口应不同，Launcher 仅绑定 loopback。每轮构建记录宿主系统与入口摘要，结束后回收本轮 Launcher，
+不会停止已安装的 API / Runtime。
+WSL 构建状态默认放在 `/var/lib/finance-builder/builds`（由服务账户独占），
+可用 `MIGRATION_LIVE_BUILDER_STATE_ROOT` 指定其他 Linux 原生目录。
+避免将要求 0600 权限的私有构建状态放在 Windows 挂载盘；驱动在构建就绪和停止后复制证据到测试机。
+
+旧任务验收使用 `node scripts/verify-deployed-legacy-live.mjs BEFORE_JSON OUTPUT_DIRECTORY`。
+`BEFORE_JSON` 包含升级前经鉴权读取的 `{tasks:[{id,task}]}`；沿用服务 URL、Runtime URL、配置与令牌变量。
+脚本比较旧任务内容、检查旧别名和导出，实际发送 v1 单 Skill 请求并调用真实 Judge，
+不重复消费历史任务的留出集。证据写入指定私有输出目录。
+
 ## 服务端准入配置
 
 在 API 的受保护环境配置中设置允许的 Launcher 地址前缀，再重启 API：

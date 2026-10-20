@@ -19,7 +19,10 @@ Descriptor 不得携带 token、API Key、模型密钥或 MCP 密钥。`authenti
 - `POST /v1/runtime-instances`：接收本轮模型、Skill 完整包、候选 MCP 启动描述、运行配置和秘密，返回实例状态。
 - `GET /v1/runtime-instances/{id}`：异步启动时查询状态。
 - `POST /v1/runtime-instances/{id}/execute`：接收单个 case，返回 JSON evidence 或 SSE；每个 case 必须是无历史会话。
-- `DELETE /v1/runtime-instances/{id}`：立即释放实例。Runtime 仍须用 `expiresAt`/TTL 回收失联实例。
+- `DELETE /v1/runtime-instances/{id}`：停止实例并返回 `finance.eval-cleanup-observation.v1` 清理回执。
+  内置 Worker 在会话仍排队、执行或回收进程树时返回 `PENDING`，确认回收完成后才返回 `RELEASED`，
+  回收异常返回 `FAILED`；重复删除同一已回收实例可再次读取回执（保留一个实例 TTL）。
+  Runtime 仍须用 `expiresAt`/TTL 回收失联实例。旧 Launcher 的空响应只代表删除请求成功，不能证明资源已释放。
 
 创建请求必须携带 `idempotency-key`。返回的 `executeEndpoint` 只允许位于已登记 Launcher 的同源、同路径范围内。远程 Launcher 必须使用 HTTPS；`localhost` 和回环 IP 可使用 HTTP。
 
