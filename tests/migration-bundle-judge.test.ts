@@ -19,6 +19,8 @@ it('retries incomplete IDs once and preserves existing negative verdicts',async(
   expect(complete).toHaveBeenCalledTimes(2);
   const correction=JSON.parse(complete.mock.calls[1]![0].messages[1].content);
   expect(correction.requiredCriterionIds).toEqual(['one','two']);expect(correction.preservedVerdicts).toEqual({one:false});
+  expect(correction.responseTemplate.criteria.map((c:{id:string})=>c.id)).toEqual(['one','two']);
+  expect(JSON.parse(correction.previousResponse).criteria).toEqual([check('one',false)]);
 });
 it('does not retry a complete business failure',async()=>{
   const complete=adapter().mockResolvedValue(response([check('one',false),check('two')]));

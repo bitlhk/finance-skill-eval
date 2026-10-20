@@ -39,6 +39,11 @@ python engineering/build_migration_task.py --requirements runtime-build-requirem
 
 驱动通过真实浏览器导出需求与源码，调用外部 Builder，再通过 UI 回填、验收及下载。没有注入 Agent、Judge 或 Launcher 替身。开发失败会由真实 Agent 修复，并重新生成需求及部署；留出结果不反馈给修复。`MIGRATION_LIVE_RESUME_REPORT` 可指定尚未执行留出验收的失败记录，从实际生成的候选继续，保留原记录。输出位于忽略提交的 `reports/bundle-live-*`，其中包含模型诊断和私有连接信息，请按私有运行数据管理。
 
+Runtime 升级后复验已完成的采购 CLI 候选时，可同时设置 `MIGRATION_LIVE_NEW_VALIDATION_SET=1`。
+驱动保留真实 Agent 生成的冻结候选，重新构建和绑定 Runtime，生成全新案例 ID、金额和中心数据，
+执行新的开发与独立留出集；不重放原留出案例，不把旧留出反馈发送给 Agent。
+框架激活检查只针对当前绑定的 Runtime 证据，历史绑定和失败记录仍完整保留。
+
 日志关联检查使用 `node scripts/verify-migration-log-correlation.mjs REPORT_DIRECTORY API_LOG [EARLIER_API_LOG ...]`。断点续跑时提供此前各段 API 日志；外部 Builder 的 Runtime 关联依据真实实例证据与清理回执，不要求存在内置 worker 的 `runtime.log`。
 
 ### 连接已部署的 Windows / WSL 服务

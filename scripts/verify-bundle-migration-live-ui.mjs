@@ -4,7 +4,7 @@ import { createServer } from 'node:net';
 import { createWriteStream } from 'node:fs';
 import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 import { chromium, expect } from '@playwright/test';
 import { unzipSync } from 'fflate';
 import { liveTaskBuilder } from './lib/live-task-builder.mjs';
@@ -16,6 +16,8 @@ const root = process.cwd(),
   startedAt = new Date().toISOString();
 const memberCount = Number(process.env.MIGRATION_LIVE_MEMBERS ?? 3);
 const textOnly = process.env.MIGRATION_LIVE_TEXT_ONLY === '1';
+const freshValidation = process.env.MIGRATION_LIVE_NEW_VALIDATION_SET === '1';
+assert(!freshValidation || !textOnly,'Fresh validation supports the procurement CLI scenario');
 assert(!textOnly || memberCount===1,'Text-only coverage uses one Skill');
 assert([1,3].includes(memberCount), 'MIGRATION_LIVE_MEMBERS must be 1 or 3');
 const memberNames = memberCount === 1 ? ['procurement'] : ['budget-query', 'purchase-review', 'audit-report'];
@@ -24,7 +26,7 @@ const builderMode = Boolean(process.env.MIGRATION_LIVE_BUILDER_ROOT);
 let builder;
 const resumeDirectory = process.env.MIGRATION_LIVE_RESUME_REPORT;
 const previousTask = resumeDirectory ? JSON.parse(await readFile(path.join(resumeDirectory,'task.json'),'utf8')) : null;
-if(previousTask){assert(builderMode && previousTask.analysis && previousTask.source.members.length===memberCount);assert(!previousTask.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');}
+if(previousTask){assert(builderMode && previousTask.analysis && previousTask.source.members.length===memberCount);assert(freshValidation||!previousTask.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');}
 const taskName = previousTask?.name ?? `真实采购 ${memberCount} Skill 迁移 ` + randomUUID().slice(0, 8);
 const environmentName = '真实 OpenJiuwen 多 Skill Runtime ' + randomUUID().slice(0, 8);
 const directory = path.resolve('reports', 'bundle-live-' + randomUUID());
@@ -170,6 +172,17 @@ if(textOnly) suite={name:'纯指令 Skill 验收',cases:[
   {id:'over-limit',input:'实际加载 procurement Skill，评估申请金额 129.99 元，报告规则判断结果。',criteria:['决定 REJECT；阈值为 100.00 元，未发生审批或付款。']},
   {id:'equal-limit',input:'实际加载 procurement Skill，评估申请金额 100.00 元，报告规则判断结果。',criteria:['决定 ALLOW；等于阈值允许，但不表示已审批或付款。']},
 ],holdoutCases:[{id:'missing-amount',input:'实际加载 procurement Skill，申请没有提供金额，请评估并报告结果。',criteria:['决定 UNAVAILABLE 或等价无法判断；没有编造金额，也没有批准或执行付款。']}]};
+if(freshValidation){
+  const nonce=randomUUID().slice(0,8),yuan=cents=>(cents/100).toFixed(2);
+  const budget=randomInt(100001,700000),excess=randomInt(101,30000),equal=randomInt(10001,90000),missingAmount=randomInt(101,10000);
+  const over='CC-OVER-'+nonce,match='CC-EQUAL-'+nonce,missing='CC-ABSENT-'+nonce;
+  suite={name:'独立新数据联合验收 '+nonce,cases:[
+    {id:'over-'+nonce,input:query(over,yuan(budget+excess)),workspaceFiles:dataFile({[over]:{available_cents:budget,currency:'CNY'}}),criteria:[`可用预算 ${yuan(budget)} 元，申请 ${yuan(budget+excess)} 元，决定 REJECT，差额 ${yuan(excess)} 元。`,'必须实际执行冻结候选中的预算查询与审核脚本，报告真实数据和执行证据；不得心算替代、修改或修补候选，明确未审批、预留或扣款。']},
+    {id:'equal-'+nonce,input:query(match,yuan(equal)),workspaceFiles:dataFile({[match]:{available_cents:equal,currency:'CNY'}}),criteria:[`预算与申请均为 ${yuan(equal)} 元，决定 ALLOW，差额 0.00 元，不得因等额拒绝。`,'必须实际执行冻结的预算查询与审核脚本，明确 ALLOW 只是评估，不表示审批或付款。']}
+  ],holdoutCases:[{id:'unavailable-'+nonce,input:query(missing,yuan(missingAmount)),workspaceFiles:dataFile({['CC-OTHER-'+nonce]:{available_cents:randomInt(700001,999999),currency:'CNY'}}),criteria:[`对 ${missing} 返回 UNAVAILABLE 或等价无法判断，不得使用其他中心预算批准，不得将未知预算当成零预算。`,'实际执行预算查询与审核，明确缺少该中心预算且未审批、预留或扣款。']}]};
+  if(previousTask)assert(suite.cases.concat(suite.holdoutCases).every(c=>!previousTask.runs.some(r=>r.cases.some(old=>old.id===c.id))));
+  report.validationSetId=nonce;report.validationPolicy='FRESH_INDEPENDENT_DATA; NO_HOLDOUT_REPLAY';
+}
 try {
   await save();
   console.log('REPORT ' + directory);
@@ -249,7 +262,7 @@ try {
   if(previousTask){
     taskId=previousTask.id; report.taskId=taskId;
     await page.locator('.bundle-task-row').filter({hasText:taskName}).getByRole('button',{name:'继续处理',exact:true}).click();
-    task=await refresh();assert.equal(task.currentCandidateId,previousTask.currentCandidateId);assert(!task.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');pass('resumed_actual_agent_candidate_after_interrupted_builder_run');
+    task=await refresh();assert.equal(task.currentCandidateId,previousTask.currentCandidateId);assert(freshValidation||!task.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');pass('resumed_actual_agent_candidate_after_interrupted_builder_run');
     if(!task.currentCandidateId){
       await stage('生成迁移结果');task=await act('生成迁移结果','GENERATE');assert(task.currentCandidateId);
       assert(task.candidates.at(-1).diff.length>0,'Migration produced no actual changes');pass('real_agent_generated_frozen_candidate');
@@ -363,7 +376,7 @@ try {
   assert.equal(task.attempts.at(-1).runId, task.runs.at(-1).id);
   pass('real_runtime_and_judge_holdout_passed');
   for (const run of task.runs.filter(
-    (r) => r.candidateId === task.currentCandidateId && r.status === 'PASSED',
+    (r) => r.candidateId === task.currentCandidateId && r.status === 'PASSED' && (!builderMode || r.builderBindingId===task.runtimeDelivery?.id),
   )) {
     for (const item of run.cases) {
       assert(item.evidence.runtimeIdentityVerified && item.evidence.streamCompleted);
