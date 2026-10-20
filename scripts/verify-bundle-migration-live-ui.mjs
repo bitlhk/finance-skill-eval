@@ -24,7 +24,7 @@ const builderMode = Boolean(process.env.MIGRATION_LIVE_BUILDER_ROOT);
 let builder;
 const resumeDirectory = process.env.MIGRATION_LIVE_RESUME_REPORT;
 const previousTask = resumeDirectory ? JSON.parse(await readFile(path.join(resumeDirectory,'task.json'),'utf8')) : null;
-if(previousTask){assert(builderMode && previousTask.currentCandidateId && previousTask.source.members.length===memberCount);assert(!previousTask.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');}
+if(previousTask){assert(builderMode && previousTask.analysis && previousTask.source.members.length===memberCount);assert(!previousTask.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');}
 const taskName = previousTask?.name ?? `真实采购 ${memberCount} Skill 迁移 ` + randomUUID().slice(0, 8);
 const environmentName = '真实 OpenJiuwen 多 Skill Runtime ' + randomUUID().slice(0, 8);
 const directory = path.resolve('reports', 'bundle-live-' + randomUUID());
@@ -250,6 +250,10 @@ try {
     taskId=previousTask.id; report.taskId=taskId;
     await page.locator('.bundle-task-row').filter({hasText:taskName}).getByRole('button',{name:'继续处理',exact:true}).click();
     task=await refresh();assert.equal(task.currentCandidateId,previousTask.currentCandidateId);assert(!task.runs.some(r=>r.phase==='holdout'),'Never replay a consumed holdout');pass('resumed_actual_agent_candidate_after_interrupted_builder_run');
+    if(!task.currentCandidateId){
+      await stage('生成迁移结果');task=await act('生成迁移结果','GENERATE');assert(task.currentCandidateId);
+      assert(task.candidates.at(-1).diff.length>0,'Migration produced no actual changes');pass('real_agent_generated_frozen_candidate');
+    }
   } else {
   await page.getByLabel('任务名称', { exact: true }).fill(taskName);
   await page

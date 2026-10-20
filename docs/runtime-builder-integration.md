@@ -66,6 +66,10 @@ WSL 构建状态默认放在 `/var/lib/finance-builder/builds`（由服务账户
 `BEFORE_JSON` 包含升级前经鉴权读取的 `{tasks:[{id,task}]}`；沿用服务 URL、Runtime URL、配置与令牌变量。
 脚本比较旧任务内容、检查旧别名和导出，实际发送 v1 单 Skill 请求并调用真实 Judge，
 不重复消费历史任务的留出集。证据写入指定私有输出目录。
+需要验证真实存量候选能继续执行时，使用相同参数运行
+`node scripts/verify-deployed-historical-task-live.mjs BEFORE_JSON OUTPUT_DIRECTORY`。
+它选择升级前已验收的冻结候选，只追加一次真实开发集运行，并核对原候选和既有历史未改写、
+旧留出集没有重放，再下载已验收交付包。该命令会新增业务运行记录。
 
 ## 服务端准入配置
 

@@ -132,6 +132,7 @@ async def run_bundle(body, protocol):
             '{"status":"PRODUCED","delivery":{"summary":"本轮修改",'
             '"services":[{"toolNames":["真实工具名"],"filePaths":["服务文件路径"],"start":["python","服务入口.py"]}]}}。'
             'services 必须包含整组候选运行所需全部包内 MCP 服务；无服务时为空数组。'
+            'delivery 只允许 summary 和 services 两个字段，不添加 filePaths、files、checks 等字段；实际文件由平台从 candidate 自动收集。'
             '服务以 Streamable HTTP /mcp 暴露，端口读取 PORT；不将独立 Script 误登记为 MCP。')
         phase = ('当前阶段是 ANALYZE，只读取整个工程并交付整体分析方案，不实施改造、不创建实施待办。'
                  '读完全部成员入口和相关共享源码后，立即按分析 JSON 合同结束。'
