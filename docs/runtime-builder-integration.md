@@ -17,6 +17,10 @@
 
 Builder 侧需包含 `runtime_skills.py`、`migration_task_profile.py` 和 `engineering/build_migration_task.py`，并支持 v2 整组 Package Launcher。仅有旧版 v1 Launcher 的安装不能接收统一任务需求。
 
+固定 Builder 源码用于跨宿主验收时，导出必须使用 `git -c core.autocrlf=false archive`。
+仓库的 `pinnedBuilderSource` 已固定此设置，防止 Windows 的换行转换改变 Linux 接收的原始字节和样例摘要；
+只导出指定提交中的文件，私有配置与工作区未提交改动不随源码交付。
+
 在 Builder 的 `finance-solution-builder` 目录执行：
 
 ```powershell
