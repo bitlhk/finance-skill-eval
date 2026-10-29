@@ -167,9 +167,11 @@ export class EnvironmentStore {
     const requiredTools=fileProbe?['read_file']:[];
     const minimum=capabilities.limits.minPrimaryTools;
     if(methodProbe&&minimum===undefined)throw Object.assign(new Error('Managed probe requires an explicit tool minimum'),{statusCode:400});
-    // Keep the server's complete admitted tool set when its atomic packs require
-    // tools. Installation is not permission to invoke them during this probe.
-    const mountedTools=fileProbe?requiredTools:minimum===0?[]:(capabilities.nativeToolNames??[]).filter(name=>!capabilities.auxiliaryToolNames?.includes(name));
+    // The server selects a complete atomic component from its actual catalog.
+    // Mounting the entire catalog can exceed a single method's existing limits.
+    const declaredProbeTools=capabilities.managedMethodProbeToolNames;
+    if(methodProbe&&(!declaredProbeTools||new Set(declaredProbeTools).size!==declaredProbeTools.length||declaredProbeTools.some(name=>!capabilities.nativeToolNames?.includes(name)||capabilities.auxiliaryToolNames?.includes(name))))throw Object.assign(new Error('Managed probe tool declaration is missing or invalid'),{statusCode:400});
+    const mountedTools=fileProbe?requiredTools:declaredProbeTools!;
     if(methodProbe&&mountedTools.length<minimum!)throw Object.assign(new Error('Managed probe cannot satisfy the declared tool minimum'),{statusCode:400});
     const instructions=fileProbe
       ?'---\nname: runtime-conformance\ndescription: Verify isolated Runtime loading and tool execution.\n---\nRead conformance/probe.txt using read_file and return the exact file contents.'

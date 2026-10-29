@@ -52,6 +52,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   supportedSkillModes: z.array(z.enum(["skill_version", "without_target_skill"])).min(1).optional(),
   nativeToolNames: z.array(z.string().min(1)).optional(),
   auxiliaryToolNames: z.array(z.string().min(1)).optional(),
+  managedMethodProbeToolNames: z.array(z.string().min(1)).max(64).optional(),
   nativeCapabilities:z.array(nativeCapabilitySchema).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
   executionEnvironment:z.strictObject({

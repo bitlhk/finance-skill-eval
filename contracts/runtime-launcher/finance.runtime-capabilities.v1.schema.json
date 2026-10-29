@@ -75,6 +75,11 @@
         ]
       }
     },
+    "managedMethodProbeToolNames": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "nativeToolNames": {
       "type": "array",
       "items": {

@@ -12,13 +12,15 @@ import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUN
 const cleanup:Array<()=>Promise<unknown>>=[];
 afterEach(async()=>{while(cleanup.length)await cleanup.pop()!();vi.unstubAllEnvs();});
 
-it.each(['file','managed','managed-tools','managed-minimum','managed-missingminimum','managed-undeclared','managed-marker','managed-mapping','managed-tool','managed-members','managed-cleanup'])('admits only a trusted Builder Launcher and verifies lifecycle: %s',async mode=>{
-  const managed=mode.startsWith('managed'),fault=mode==='managed-tools'?undefined:mode.split('-')[1];
-  const mounted=mode==='managed-tools'?['read_document']:[];
+it.each(['file','managed','managed-tools','managed-catalog','managed-missingprobe','managed-outsideprobe','managed-duplicateprobe','managed-minimum','managed-missingminimum','managed-undeclared','managed-marker','managed-mapping','managed-tool','managed-members','managed-cleanup'])('admits only a trusted Builder Launcher and verifies lifecycle: %s',async mode=>{
+  const managed=mode.startsWith('managed'),fault=['managed-tools','managed-catalog'].includes(mode)?undefined:mode.split('-')[1];
+  const mounted=mode==='managed-tools'?['read_document']:mode==='managed-catalog'?['read_document','read_partner']:[];
   const checks=['capabilities','create','status','execute','evidence','delete'];
   const capabilities={schemaVersion:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instanceSchemaVersion:RUNTIME_INSTANCE_SCHEMA_VERSION,platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},nativeToolNames:managed?['read_document']:['read_file','read_document'],runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'glm-4-plus'}],defaultModelId:'execution',
+    ...(managed&&fault!=='missingprobe'?{managedMethodProbeToolNames:fault==='outsideprobe'?['unknown_tool']:fault==='duplicateprobe'?['read_document','read_document']:mounted}:{}),
     observability:{schemaVersion:'finance.runtime-observation-capabilities.v1' as const,profile:'core' as const,supportedKinds:['execution.started','execution.completed','execution.failed'] as const,nativeEvents:false,replayable:false},
     features:{streaming:true,asyncLaunch:true,packagedMcp:true,externalMcp:false,inlineSecrets:true,...(managed&&fault!=='undeclared'?{managedMethodProbe:true}:{})},limits:{maxSkills:10,maxArchiveBytes:8388608,maxFiles:1000,maxTimeoutMs:300000,maxConcurrentInstances:1,...(fault==='missingminimum'?{}:{minPrimaryTools:fault==='minimum'?2:mounted.length})}};
+  if(mode==='managed-catalog')capabilities.nativeToolNames=['read_document','read_partner',...Array.from({length:14},(_,i)=>`other_${i}`)];
   const lifecycle:string[]=[],authorizations:Array<string|undefined>=[];let instanceRunId='';let created:any;
   const server=Fastify();server.addHook('onRequest',async request=>{authorizations.push(request.headers.authorization);});server.get('/v1/runtime-capabilities',()=>capabilities);
   server.post('/v1/runtime-instances',request=>{lifecycle.push('create');const body=request.body as {runId:string;side:'right';modelId:string};instanceRunId=body.runId;created=body;return {schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'probe-instance',status:'ready',executeEndpoint:'/v1/runtime-instances/probe-instance/execute',expiresAt:new Date(Date.now()+60_000).toISOString(),error:null,configurationDigest:'probe-config'};});
@@ -50,10 +52,10 @@ it.each(['file','managed','managed-tools','managed-minimum','managed-missingmini
   expect(lifecycle).toEqual([]);
   expect(authorizations).toEqual([]);
   if(fault){
-    const reason=fault==='minimum'||fault==='missingminimum'?/tool minimum/u:fault==='undeclared'?/no declared supported/u:fault==='members'?/整组 Skill/u:fault==='cleanup'?/清理失败/u:fault==='marker'?/did not return/u:/Managed method probe/u;
+    const reason=['missingprobe','outsideprobe','duplicateprobe'].includes(fault)?/Managed probe tool/u:fault==='minimum'||fault==='missingminimum'?/tool minimum/u:fault==='undeclared'?/no declared supported/u:fault==='members'?/整组 Skill/u:fault==='cleanup'?/清理失败/u:fault==='marker'?/did not return/u:/Managed method probe/u;
     await expect(store.acceptBuilderDelivery({trustReference:'builder-local',requirements,result})).rejects.toThrow(reason);
     expect(await store.list()).toEqual([]);
-    expect(lifecycle).toEqual(['undeclared','minimum','missingminimum'].includes(fault)?[]:['create','status','execute','delete']);
+    expect(lifecycle).toEqual(['undeclared','minimum','missingminimum','missingprobe','outsideprobe','duplicateprobe'].includes(fault)?[]:['create','status','execute','delete']);
     return;
   }
   const first=await store.acceptBuilderDelivery({trustReference:'builder-local',requirements,result});
