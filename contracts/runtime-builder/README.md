@@ -1,13 +1,16 @@
-# Runtime Builder file contracts
+# Runtime Builder contract
 
-`finance.runtime-build-requirements.v1` is emitted only when every required Runtime capability has machine-readable input, output, error, permission, side-effect and isolation semantics. Legacy free-text-only findings return `INCOMPLETE_REQUIREMENTS` and are not executable build requests.
+`finance.runtime-build-requirements.v3` accepts generic capability requirements and `executionRequirements` (platform, required features, capacity). It does not contain business Skills, Eval task/candidate identifiers, source bundles or migration extensions.
 
-`finance.runtime-build-result.v1` returns a deployed Runtime Launcher, not a downloadable Runtime package. `SUCCEEDED` requires a `finance.runtime-launcher-descriptor.v1`; every other status requires `launcher: null`. Both Builder digests use RFC 8785 canonical JSON and SHA-256, excluding the digest field itself.
+`finance.runtime-build-result.v3` binds the exact RFC 8785 request digest to capability evidence and a deployed `finance.runtime-launcher-descriptor.v2`. SUCCEEDED requires a launcher and a passed RUNTIME_LIFECYCLE verification with an evidence SHA-256. Other statuses have launcher: null.
 
-The receiver must fetch `GET /v1/runtime-capabilities` from the returned Launcher and pass that response to `validateRuntimeBuildResult()`. Acceptance verifies the request/result digests, required capability evidence, Runtime identity, protocol versions, Launcher capabilities digest and observability declaration. A descriptor alone is not proof that the deployment is usable.
+Receivers fetch actual capabilities, compare protocol/platform/contract/permissions/side effects/isolation/capacity, verify digests, then perform an independent platform-owned start/execute/release probe. Business acceptance is a separate caller responsibility. A capability name, descriptor, or build exit code alone is insufficient evidence.
 
-The requirements protocol names are `capabilities`, `instance`, `execution` and `observation`; there is no separate registration protocol. Models, default model, MCP support and limits are discovered from Launcher capabilities and are not copied into the Builder result.
+The same Runtime accepts 1–N Skills through the standard startup collection. No business Skill is compiled into this build protocol. Old build v1/v2 and migration profile/receipt formats are rejected.
 
-An iterative Harness change may add the optional `rebuild` object to the same v1 request. It identifies the previous solution revision and Launcher deployment, a test-backed hypothesis, and references to actual Eval job/case evidence. It does not carry raw business inputs, secrets or framework-specific construction instructions. A successful rebuild must return both a new `deploymentId` and a different Launcher `artifactSha256`; Eval then performs its own Launcher conformance and business evaluation. A new identity alone does not prove that the hypothesis improved results.
-
-This directory defines the build request/result documents only. Submission, polling, callbacks and cancellation transport are outside v1. Deployment is the Builder's responsibility. Credentials are resolved by the receiving environment and must never be embedded in either document.
+- [Requirements schema](finance.runtime-build-requirements.v3.schema.json)
+- [Result schema](finance.runtime-build-result.v3.schema.json)
+- [Generic request](examples/requirements.success.json)
+- [Result](examples/result.success.json)
+- [Startup Skill collection](examples/skills.json)
+- [Launcher boundary](../runtime-launcher/README.md)

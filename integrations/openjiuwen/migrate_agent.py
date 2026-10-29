@@ -24,6 +24,8 @@ from pathlib import Path
 protocol = sys.stdout
 sys.stdout = sys.stderr
 logging.disable(logging.INFO)
+from operational_logging import configure_sdk_logging
+configure_sdk_logging()
 
 from agent_protocol import build_workspace, emit, not_json_reason, parse_structured, write_agent_dump, is_output_format_failure, collect_delivery_files  # noqa: E402
 from harness_tools import (AbsoluteLineReadFileTool, FilesystemOnlyRail, SKILL_DELIVERY,
@@ -41,7 +43,7 @@ deliveryContract.approvedReuseProposal 是已确认的可复用迁移方案。�
 - `form=MCP` 时不得先生成独立 Script 方案再重写。
 如果指定形态确实无法忠实实现，应立即 ABSTAIN，不能擅自改形态试错。
 
-**路径规则（重要）**：运行在 Windows 上。文件工具要**绝对路径**（工具说明里也写了），根目录只有一个：
+**路径规则（重要）**：文件工具要**绝对路径**（工具说明里也写了），根目录只有一个：
 
     @@WORKSPACE_ROOT@@
 
@@ -321,4 +323,9 @@ async def run(body: dict) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run(json.loads(sys.stdin.read())))
+    request = json.loads(sys.stdin.read())
+    if request.get("bundle"):
+        from bundle_agent import run_bundle
+        asyncio.run(run_bundle(request, protocol))
+    else:
+        asyncio.run(run(request))

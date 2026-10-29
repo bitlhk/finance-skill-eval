@@ -11,12 +11,12 @@ it('requires both trusted ingress credential and the configured workspace subjec
   const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:dir,accessToken:'synthetic-ingress',workspaceSubject:'studio_admin',workspaceOrigin:'https://eval.example.test',publicDemo:false});
   const trusted={authorization:'Bearer synthetic-ingress','x-demo-user':'studio_admin'};
   try {
-    expect((await app.inject({url:'/api/migrations',headers:{'x-demo-user':'studio_admin'}})).statusCode).toBe(401);
-    expect((await app.inject({url:'/api/migrations',headers:{authorization:'Bearer synthetic-ingress'}})).statusCode).toBe(403);
-    const otherAccount=await app.inject({url:'/api/migrations',headers:{...trusted,'x-demo-user':'studio_other'}});
+    expect((await app.inject({url:'/api/migration-tasks',headers:{'x-demo-user':'studio_admin'}})).statusCode).toBe(401);
+    expect((await app.inject({url:'/api/migration-tasks',headers:{authorization:'Bearer synthetic-ingress'}})).statusCode).toBe(403);
+    const otherAccount=await app.inject({url:'/api/migration-tasks',headers:{...trusted,'x-demo-user':'studio_other'}});
     expect(otherAccount.statusCode).toBe(403);
     expect(otherAccount.json()).toEqual({error:'WORKSPACE_OWNER_REQUIRED',message:'当前登录账号无权访问此工作区，请使用自己的工作区。'});
-    expect((await app.inject({url:'/api/migrations',headers:trusted})).statusCode).toBe(200);
+    expect((await app.inject({url:'/api/migration-tasks',headers:trusted})).statusCode).toBe(200);
     const payload={name:'runtime',type:'runtime_launcher',runtimeType:'agentscope',baseUrl:'http://127.0.0.1:1/'};
     expect((await app.inject({method:'POST',url:'/api/environments',headers:trusted,payload})).statusCode).toBe(403);
     expect((await app.inject({method:'POST',url:'/api/environments',headers:{...trusted,origin:'https://attacker.example'},payload})).statusCode).toBe(403);

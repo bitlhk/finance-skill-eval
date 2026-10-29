@@ -1,3 +1,4 @@
+import { standardExecutionRequirements } from './runtime-standard-fixture.js';
 import {expect,it} from 'vitest';
 import {toProjectInspection} from '../src/migration/infrastructure/migration-agent.js';
 import {buildMigrationPlan,stableToolId} from '../src/migration/domain/migration-model.js';
@@ -14,10 +15,10 @@ it.each([{sideEffects:['read','write']},{sideEffects:42},{sideEffects:{}}])('kee
  const contract={inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'read'};
  const inspection=toProjectInspection({tools:[],runtimeCapabilities:[{...harness,contract,constraints:{permissions:['workspace.read'],sideEffects,isolation:'per_case_workspace'}}]},'asset','a'.repeat(64),stableToolId,null,files);
  expect(inspection.runtimeCapabilities?.[0]?.constraints).toBeUndefined();
- expect(runtimeBuildRequirements(inspection)).toMatchObject({status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_file',fields:['constraints']}]});
+ expect(runtimeBuildRequirements(inspection,{runtimeType:'openjiuwen',executionRequirements:standardExecutionRequirements})).toMatchObject({status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_file',fields:['constraints']}]});
  // Revalidate older persisted objects too, rather than throwing from serialization.
  inspection.runtimeCapabilities![0]!.constraints={permissions:['workspace.read'],sideEffects,isolation:'per_case_workspace'} as any;
- expect(runtimeBuildRequirements(inspection)).toMatchObject({status:'INCOMPLETE_REQUIREMENTS'});
+ expect(runtimeBuildRequirements(inspection,{runtimeType:'openjiuwen',executionRequirements:standardExecutionRequirements})).toMatchObject({status:'INCOMPLETE_REQUIREMENTS'});
 });
 
 it('normalizes a singleton sideEffects array without changing its meaning',()=>{
@@ -26,13 +27,13 @@ it('normalizes a singleton sideEffects array without changing its meaning',()=>{
   constraints:{permissions:['workspace.read'],sideEffects:['READ'],isolation:'per_case_workspace'}}]},
   'asset','a'.repeat(64),stableToolId,null,files);
  expect(inspection.runtimeCapabilities?.[0]?.constraints?.sideEffects).toBe('read');
- expect(runtimeBuildRequirements(inspection)).toMatchObject({requiredCapabilities:[{constraints:{sideEffects:'read'}}]});
+ expect(runtimeBuildRequirements(inspection,{runtimeType:'openjiuwen',executionRequirements:standardExecutionRequirements})).toMatchObject({requiredCapabilities:[{constraints:{sideEffects:'read'}}]});
 });
 
 it('rejects array-shaped contract schemas but preserves the source capability evidence',()=>{
  const inspection=toProjectInspection({tools:[],runtimeCapabilities:[{...harness,contract:{inputSchema:[],outputSchema:{},errorSchema:{},semantics:'read'},constraints:{permissions:['workspace.read'],sideEffects:'read',isolation:'per_case_workspace'}}]},'asset','a'.repeat(64),stableToolId,null,files);
  expect(inspection.runtimeCapabilities?.[0]?.name).toBe('read_file');
- expect(runtimeBuildRequirements(inspection)).toMatchObject({status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_file',fields:['contract']}]});
+ expect(runtimeBuildRequirements(inspection,{runtimeType:'openjiuwen',executionRequirements:standardExecutionRequirements})).toMatchObject({status:'INCOMPLETE_REQUIREMENTS',missing:[{name:'read_file',fields:['contract']}]});
 });
 
 it('retains verified harness requirements for the dedicated Runtime adaptation stage',()=>{

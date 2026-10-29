@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { requestLoggingOptions, installRequestId, operationalError } from './logging.js';
+import { installShutdown, registerStreamShutdown } from './shutdown.js';
 import {describeSkillRuntimeRequirements} from '../shared/skill-runtime-requirements.js';
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,9 +14,7 @@ import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./co
 import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import {simpleMigrationSuiteSchema,simpleMigrationCases} from '../migration/domain/simple-migration-suite.js';
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
-import { registerMigrationRoutes } from "../interfaces/http/migration-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
-import {RuntimeDeliveryCoordinator} from './runtime-delivery-coordinator.js';
 import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
 import { EvaluationRunManager } from "./run-manager.js";
@@ -32,6 +32,9 @@ import { runConfigurationSchema } from "./contracts.js";
 import {createAccountWorkspaces} from './account-workspaces.js';
 import {managedWorkspaceOperation} from './managed-workspace-policy.js';
 import {EvaluationRunBudget} from './evaluation-run-budget.js';
+import {createMigrationTaskService} from '../migration/tasks/composition.js';
+import {registerMigrationTaskRoutes} from '../interfaces/http/migration-task-routes.js';
+import type {BundleAgent,BundleRuntimeFactory,BundleJudge} from '../migration/tasks/application/task-ports.js';
 
 function markdownReport(report: EvaluationReport): string {
   const cases = report.cases.map((item, index) => [
@@ -71,9 +74,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
+  overrides: Partial<ServiceConfig> & {bundlePorts?:{agent?:BundleAgent;runtime?:BundleRuntimeFactory;judge?:BundleJudge};runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
 ): Promise<FastifyInstance> {
-  const {runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
+  const {bundlePorts,runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.workspaceMode==='account'){
     const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
@@ -85,7 +88,10 @@ export async function createEvaluationService(
   if(config.workspaceSubject && (!config.accessToken || config.publicDemo || !/^studio_[a-zA-Z0-9_-]+$/.test(config.workspaceSubject)
       || !config.workspaceOrigin || new URL(config.workspaceOrigin).origin!==config.workspaceOrigin
       || !config.workspaceOrigin.startsWith('https://')))throw new Error('Single-owner workspace requires a trusted ingress credential, subject and HTTPS origin');
-  const app = Fastify({ logger: true, bodyLimit: 8 * 1024 * 1024 });
+  if (process.env.NODE_ENV === 'production' && !config.accessToken) throw new Error('PRODUCTION_ACCESS_TOKEN_REQUIRED');
+  const app = Fastify({ ...requestLoggingOptions(), bodyLimit: 8 * 1024 * 1024 });
+  installRequestId(app);
+  const trackStream = registerStreamShutdown(app);
   app.addHook('onSend',async(request,reply,payload)=>{
     if(request.url.startsWith('/api/')) reply.header('cache-control','no-store');
     return payload;
@@ -111,25 +117,22 @@ export async function createEvaluationService(
     maxConcurrentRuns: config.maxConcurrentRuns,
     managedWorkspace:config.managedWorkspace,
     runBudget,
+    logger: app.log,
     resolveMigrationRuntime:async runtimeId=>await environments.get(runtimeId),
     resolveServiceEnvironment:(reference,toolNames)=>migrations.resolveServiceEnvironment(reference,toolNames),
   });
   const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
   const demo = new DemoAccess(config.dataDirectory);
   const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  app.addHook('onClose',async()=>{await manager.close();await diagnostics.close();});
+  app.addHook('preClose',async()=>{await manager.close();await diagnostics.close();});
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
     toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
-  const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
-  app.addHook('onClose',()=>migrations.shutdown());
-  registerMigrationRoutes(app, {
-    migrations,
-    skills,
-    environments,
-    runtimeDeliveries,
-    privateWorkspaceEnabled: !config.publicDemo && Boolean(config.accessToken),
-  });
+  const bundles=createMigrationTaskService({root:config.dataDirectory,skills,environments,managed:config.managedWorkspace,ports:bundlePorts,logger:app.log});
+  await bundles.initialize();
+  app.addHook('preClose',()=>bundles.close());
+  registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),skills);
+  app.addHook('preClose',()=>migrations.shutdown());
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
@@ -171,7 +174,7 @@ export async function createEvaluationService(
     }
   });
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+    request.log.error({ event: 'request_failed', err: error });
     const status = "statusCode" in error && typeof error.statusCode === "number"
       ? error.statusCode
       : error.name === "ZodError" ? 400 : 500;
@@ -365,6 +368,7 @@ export async function createEvaluationService(
     const job = jobs.get(request.params.jobId);
     if (!job) throw Object.assign(new Error("Evaluation run not found"), { statusCode: 404 });
     reply.hijack();
+    trackStream(reply.raw);
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
@@ -375,7 +379,7 @@ export async function createEvaluationService(
     send(job);
     const unsubscribe = manager.subscribe(job.jobId, current => send(current));
     const keepAlive = setInterval(() => reply.raw.write(": keepalive\n\n"), 15_000);
-    request.raw.once("close", () => {
+    reply.raw.once("close", () => {
       clearInterval(keepAlive);
       unsubscribe();
     });
@@ -421,7 +425,9 @@ async function registerWeb(app:FastifyInstance,config:ServiceConfig){
 async function main(): Promise<void> {
   const config = loadServiceConfig();
   const app = await createEvaluationService(config);
+  installShutdown(app);
   await app.listen({ host: config.host, port: config.port });
+  app.log.info({ event: 'service_ready', version: FINANCE_SKILL_EVAL_VERSION, workspaceMode: config.workspaceMode });
 }
 
 const isEntryPoint = process.argv[1]
@@ -429,7 +435,7 @@ const isEntryPoint = process.argv[1]
   : false;
 if (isEntryPoint) {
   main().catch(error => {
-    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+    process.stderr.write(JSON.stringify({ event: 'service_start_failed', err: operationalError(error) }) + '\n');
     process.exitCode = 1;
   });
 }

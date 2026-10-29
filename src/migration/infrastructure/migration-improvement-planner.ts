@@ -48,7 +48,7 @@ function preservesProposal(original:unknown,repaired:unknown):boolean{
 export const planMigrationImprovement:ImprovementPlanner=async (input,signal)=>{
   const role=configuredModelRole('OPTIMIZER');
   if(!role.adapter)throw new Error('优化规划模型未配置');
-  const published=JSON.parse(await readFile(new URL('../../../contracts/runtime-builder/finance.runtime-build-requirements.v1.schema.json',import.meta.url),'utf8'));
+  const published=JSON.parse(await readFile(new URL('../../../contracts/runtime-builder/finance.runtime-build-requirements.v3.schema.json',import.meta.url),'utf8'));
   const capabilityFormat={$ref:'#/$defs/capability',$defs:{capability:published.$defs.capability,jsonSchema:published.$defs.jsonSchema}};
   const completion=await role.adapter.complete({requestId:`improvement-${input.sourceJobId}`,model:role.model,responseFormat:'json',signal,
     messages:[{role:'system',content:[

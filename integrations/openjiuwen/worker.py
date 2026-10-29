@@ -2,32 +2,44 @@
 import asyncio
 import json
 import os
+import platform
 from pathlib import Path
 import sys
 import time
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 from importlib.metadata import PackageNotFoundError, version
 from .instance_manager import InstanceManager
 from .model_config import resolve_model
 from .runtime_context import RuntimeContext
 from .package_runtime import service_environment
+from .operational_logging import event as log_event, drain_stderr, timeout_ms
+from .session_process import terminate_tree
 
 @asynccontextmanager
 async def lifespan(app):
     async def sweep():
         while True:
             instances.expire()
+            for key, expires in list(retired_instances.items()):
+                if expires < time.monotonic() and not instance_activity.get(key):
+                    retired_instances.pop(key, None)
+                    instance_cleanup_failures.discard(key)
             await asyncio.sleep(1)
     task = asyncio.create_task(sweep())
+    log_event('runtime_ready')
     try:
         yield
     finally:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+        if cleanup_jobs:
+            await asyncio.gather(*list(cleanup_jobs), return_exceptions=True)
+        log_event('runtime_stopped')
 
 
 app = FastAPI(lifespan=lifespan)
@@ -35,6 +47,9 @@ active = set()
 cleanup_jobs = set()
 slots = asyncio.Semaphore(2)
 instances = InstanceManager()
+instance_activity = {}
+instance_cleanup_failures = set()
+retired_instances = {}
 CONFIG = Path(os.environ.get("FINANCE_RUNTIME_CONFIG", ".runtime.local.json")).resolve()
 
 
@@ -70,12 +85,14 @@ async def runtime_capabilities():
     default_model = runtime_config.get('defaultModelId') or (models[0]['modelId'] if models else None)
     if not models or not default_model:
         raise HTTPException(503, 'Runtime has no enabled execution model')
-    return {'schemaVersion': 'finance.skill-eval.runtime-capabilities.v1',
+    return {'schemaVersion': 'finance.runtime-capabilities.v1',
+            'instanceSchemaVersion':'finance.runtime-instance.v1',
+            'platform':{'os':platform.system().lower(),'arch':{'amd64':'x64','x86_64':'x64','aarch64':'arm64'}.get(platform.machine().lower(),platform.machine().lower()),'isolation':'trusted_local_process'},
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
             'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
                          'externalMcp': True, 'inlineSecrets': True},
-            'limits': {'maxArchiveBytes': instances.max_archive_bytes, 'maxFiles': instances.max_files,
+            'limits': {'maxSkills':10, 'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 
 
@@ -108,9 +125,15 @@ async def get_runtime_instance(instance_id: str):
 
 @app.delete('/v1/runtime-instances/{instance_id}')
 async def delete_runtime_instance(instance_id: str):
-    if not instances.delete(instance_id):
+    if not instances.delete(instance_id) and instance_id not in retired_instances:
         raise HTTPException(404, 'Runtime instance not found')
-    return Response(status_code=204)
+    retired_instances[instance_id] = time.monotonic() + instances.ttl_seconds
+    # Deletion disconnects the instance stream; the receipt remains PENDING
+    # until its subprocess tree has actually finished reaping.
+    return {'cleanup': {'schemaVersion': 'finance.eval-cleanup-observation.v1',
+        'instanceId': instance_id, 'observedAt': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'status': 'FAILED' if instance_id in instance_cleanup_failures else
+                  'PENDING' if instance_activity.get(instance_id) else 'RELEASED', 'scope': 'THIS_INSTANCE'}}
 
 
 class InstanceExecutionRequest:
@@ -142,6 +165,10 @@ async def execute_runtime_instance(instance_id: str, request: Request):
 @app.post("/execute")
 async def execute(request: Request):
     body = await request.json()
+    try:
+        execution_timeout = timeout_ms(body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     cfg = config()
     try:
         RuntimeContext((body.get('environment') or {}).get('runtimeToolConfig'), cfg.get('authProviders', {}))
@@ -180,7 +207,7 @@ async def execute(request: Request):
     if body.get("schemaVersion") != "finance.skill-eval.runtime-request.v1":
         raise HTTPException(400, "Unsupported runtime contract")
 
-    async def stream():
+    async def session_stream():
         started = time.monotonic()
         async with slots:
             if await request.is_disconnected():
@@ -188,17 +215,25 @@ async def execute(request: Request):
             process = await asyncio.create_subprocess_exec(
                 sys.executable, str(Path(__file__).with_name("session.py")),
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+                stderr=asyncio.subprocess.PIPE, start_new_session=True,
                 limit=1048576,
                 env={**os.environ, "FINANCE_RUNTIME_CONFIG": str(CONFIG), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
             )
             active.add(process.pid)
+            instance_id = getattr(request, 'instance_id', None)
+            if instance_id:
+                instance_activity.setdefault(instance_id, set()).add(process.pid)
+            correlation = {'runId': body['runId'], 'caseId': body['case']['caseId'], 'pid': process.pid}
+            if instance_id:
+                correlation['instanceId'] = instance_id
+            log_event('runtime_session_started', **correlation, timeoutMs=execution_timeout)
+            diagnostics = asyncio.create_task(drain_stderr(process.stderr))
             terminal = False
             try:
                 process.stdin.write(json.dumps(body).encode())
                 await process.stdin.drain()
                 process.stdin.close()
-                async with asyncio.timeout(300):
+                async with asyncio.timeout(execution_timeout / 1000):
                     while True:
                         if await request.is_disconnected():
                             break
@@ -216,34 +251,29 @@ async def execute(request: Request):
                             terminal = True
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except TimeoutError:
-                pass
+                log_event('runtime_session_timeout', **correlation, timeoutMs=execution_timeout)
             finally:
                 # Client disconnect can cancel the generator while it is reaping.
                 async def reap():
                     try:
-                        if process.returncode is None:
-                            try:
-                                if os.name == "nt":
-                                    process.terminate()
-                                else:
-                                    import signal
-                                    os.killpg(process.pid, signal.SIGTERM)
-                            except ProcessLookupError:
-                                pass
-                            try:
-                                await asyncio.wait_for(process.wait(), 3)
-                            except TimeoutError:
-                                try:
-                                    if os.name == "nt":
-                                        process.kill()
-                                    else:
-                                        import signal
-                                        os.killpg(process.pid, signal.SIGKILL)
-                                except ProcessLookupError:
-                                    pass
-                                await process.wait()
+                        await terminate_tree(process)
+                    except BaseException:
+                        if instance_id:
+                            instance_cleanup_failures.add(instance_id)
+                        raise
                     finally:
                         active.discard(process.pid)
+                        if instance_id:
+                            activity = instance_activity.get(instance_id, set())
+                            activity.discard(process.pid)
+                            if not activity:
+                                instance_activity.pop(instance_id, None)
+                        try:
+                            detail = await asyncio.wait_for(diagnostics, 3)
+                        except (TimeoutError, asyncio.CancelledError):
+                            detail = {}
+                        log_event('runtime_session_finished', **correlation, exitCode=process.returncode,
+                                  terminal=terminal, elapsedMs=round((time.monotonic()-started)*1000), **detail)
                 cleanup = asyncio.create_task(reap())
                 cleanup_jobs.add(cleanup)
                 cleanup.add_done_callback(cleanup_jobs.discard)
@@ -254,7 +284,22 @@ async def execute(request: Request):
                             "output": "", "elapsedMs": round((time.monotonic() - started) * 1000),
                             "toolCalls": [], "loadedSkills": [], "usage": None,
                             "runtimeIdentityVerified": False, "streamCompleted": False,
-                            "error": "OpenJiuwen session stopped or exceeded 300 seconds", "metadata": {}}
+                            "error": f"OpenJiuwen session stopped or exceeded {execution_timeout // 1000} seconds", "metadata": {}}
                 yield f"data: {json.dumps({'evidence': evidence})}\n\n"
+
+    async def stream():
+        instance_id = getattr(request, 'instance_id', None)
+        marker = object()
+        if instance_id:
+            instance_activity.setdefault(instance_id, set()).add(marker)
+        try:
+            async for event in session_stream():
+                yield event
+        finally:
+            if instance_id:
+                activity = instance_activity.get(instance_id, set())
+                activity.discard(marker)
+                if not activity:
+                    instance_activity.pop(instance_id, None)
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})

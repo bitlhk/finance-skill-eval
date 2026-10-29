@@ -1,3 +1,4 @@
+import { standardExecutionRequirements } from './runtime-standard-fixture.js';
 import {expect,it,vi} from 'vitest';
 import {inspectionFixture} from './analysis-fixture.js';
 import type {MigrationProject} from '../src/migration/domain/migration-project.js';
@@ -11,7 +12,7 @@ import {MigrationPlanningService} from '../src/migration/application/migration-p
 function project():MigrationProject {
   const inspection=inspectionFixture([]);
   const asset={assetId:'asset',artifactSha256:inspection.assetDigest,skillId:'skill',version:'1.0.0'};
-  return {id:'migration-1',source:asset,candidate:asset,inspection,sourceInspection:inspection,
+  return {runtimeExecutionRequirements:standardExecutionRequirements,id:'migration-1',source:asset,candidate:asset,inspection,sourceInspection:inspection,
     runs:[],candidateNotes:'',assessment:'NOT_VALIDATED',createdAt:new Date().toISOString(),name:'test',
     schemaVersion:'finance.skill-migration.v2'} as MigrationProject;
 }
@@ -30,13 +31,13 @@ function addRequirement(value:MigrationProject) {
 }
 
 function deliver(value:MigrationProject,environment:MigrationLauncher) {
-  const requirements=runtimeBuildRequirements(value.sourceInspection!,{runtimeType:environment.runtimeType});
+  const requirements=runtimeBuildRequirements(value.sourceInspection!,{runtimeType:environment.runtimeType,executionRequirements:value.runtimeExecutionRequirements});
   if(!requirements||!('requestId' in requirements))throw new Error('fixture requirements incomplete');
   const delivery={schemaVersion:'finance.runtime-launcher-delivery-record.v1' as const,
     requestId:requirements.requestId,requirementsDigest:requirements.requirementsDigest,
     buildId:'build',deploymentId:'deployment',artifactSha256:'a'.repeat(64),capabilitiesDigest:'b'.repeat(64),resultDigest:'c'.repeat(64),
     builder:{name:'trusted',version:'1'},acceptedAt:new Date().toISOString(),expiresAt:null,
-    evalConformance:{status:'PASSED' as const,testedAt:new Date().toISOString(),checks:['capabilities','create','status','execute','evidence','delete'] as ['capabilities','create','status','execute','evidence','delete']}};
+    evalConformance:{runId:'conformance-test',instanceSchemaVersion:'finance.runtime-instance.v1' as const,probeDigest:'d'.repeat(64),status:'PASSED' as const,testedAt:new Date().toISOString(),checks:['capabilities','create','status','execute','evidence','delete'] as ['capabilities','create','status','execute','evidence','delete']}};
   environment.delivery=delivery;
   value.runtimeDelivery={...delivery,environmentId:environment.environmentId};
   return delivery;

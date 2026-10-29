@@ -1,3 +1,4 @@
+import { canonicalSha256 } from '../../shared/json-canonicalization.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { capabilityRequirementSchema, withRequirementsDigest } from '../../shared/contracts/runtime-builder.js';
@@ -60,15 +61,17 @@ export class MigrationRuntimeRebuildService {
       const current=currentRuntimeRequirements(project);
       const inherited=current&&'requestId' in current?current.requiredCapabilities:[];
       const requiredCapabilities=proposal.requiredCapabilities??inherited;
+      const proof=await this.environments?.preflight?.(selected.launcher);
+      if(proof?.status!=='ready'||!proof.capabilities)return conflict('Runtime capabilities are unavailable');
       const requirements=withRequirementsDigest({
-        schemaVersion:'finance.runtime-build-requirements.v1',
+        schemaVersion:'finance.runtime-build-requirements.v3',
         requestId:`${id}:rebuild:${randomUUID()}`,
-        source:{assetId:candidate.assetId,artifactSha256:candidate.artifactSha256},
+        executionRequirements:{platform:proof.capabilities.platform,features:['streaming'],limits:{maxSkills:proof.capabilities.limits.maxSkills,maxFiles:proof.capabilities.limits.maxFiles,maxArchiveBytes:proof.capabilities.limits.maxArchiveBytes,maxTimeoutMs:proof.capabilities.limits.maxTimeoutMs}},
         target:{runtimeType:selected.launcher.runtimeType,protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,
           instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
         requiredCapabilities,
-        rebuild:{baseline:{deploymentId:baseline.runtime.deploymentId,artifactSha256:baseline.runtime.artifactSha256,solutionRevisionId:baseline.revisionId},
-          hypothesis:proposal.hypothesis,evidence:evidence.map(item=>({jobId:proposal.jobId,...item}))},
+        rebuild:{baseline:{deploymentId:baseline.runtime.deploymentId,artifactSha256:baseline.runtime.artifactSha256,capabilitiesDigest:canonicalSha256(proof.capabilities)},
+          hypothesis:proposal.hypothesis,evidence:evidence.map(item=>({evidenceRef:canonicalSha256({run:proposal.jobId,case:item.caseId??null}),summary:item.summary}))},
       });
       (project.runtimeRebuilds??=[]).push({candidateDigest:candidate.artifactSha256,requirements,createdAt:new Date().toISOString()});
       await this.projects.save(project);

@@ -1,4 +1,8 @@
-# Unified migration and managed Runtime evaluation V1
+# Historical v1 migration and managed Runtime evaluation
+
+New tasks use the unified [1–N Skill v2 workflow](multi-skill-migration.md) and
+[v2 Builder integration](runtime-builder-integration.md). This document retains the
+original v1 rollout and compatibility behavior.
 
 Integration note: [PR14/PR15 integration](pr14-pr15-integration.md) describes
 the current product boundary. The pinned Java targets below describe the

@@ -77,7 +77,7 @@ describe("environment registry", () => {
     const timeout=vi.spyOn(AbortSignal,'timeout');
     const {store}=await fixture();
     const launcher=await store.create({name:'Launcher',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'http://127.0.0.1:9000'});
-    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'deepseek-v4'}],defaultModelId:'execution',supportedSkillModes:['skill_version'],nativeToolNames:['account_balance_query'],features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    const capabilities={schemaVersion:'finance.runtime-capabilities.v1',instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'execution',upstreamModelId:'deepseek-v4'}],defaultModelId:'execution',supportedSkillModes:['skill_version'],nativeToolNames:['account_balance_query'],features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:false,inlineSecrets:true},limits:{maxSkills:10,maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
     expect(await store.inspect(launcher)).toMatchObject({status:'ready',toolCount:1,tools:[{name:'account_balance_query'}],capabilities});
     expect(timeout).toHaveBeenCalledWith(60_000);
@@ -88,7 +88,7 @@ describe("environment registry", () => {
     const {store}=await fixture();
     const launcher=await store.create({...launcherInput,runtimeType:'agentscope'});
     expect(launcher.runtimeType).toBe('agentscope');
-    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'agentscope',version:'2.0.3'},models:[{modelId:'execution',upstreamModelId:'synthetic-model'}],defaultModelId:'execution',features:{streaming:false,asyncLaunch:true,packagedMcp:false,externalMcp:false,inlineSecrets:false},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    const capabilities={schemaVersion:'finance.runtime-capabilities.v1',instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},runtime:{type:'agentscope',version:'2.0.3'},models:[{modelId:'execution',upstreamModelId:'synthetic-model'}],defaultModelId:'execution',features:{streaming:false,asyncLaunch:true,packagedMcp:false,externalMcp:false,inlineSecrets:false},limits:{maxSkills:10,maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
     expect(await store.inspect(launcher)).toMatchObject({status:'ready',capabilities});
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({...capabilities,runtime:{type:'openjiuwen',version:'0.1.15'}})));
@@ -103,7 +103,7 @@ describe("environment registry", () => {
     await expect(store.resolveLauncher(profile)).resolves.toMatchObject({launcher:{environmentId:launcher.environmentId},mcpEnvironmentIds:[mcp.environmentId],defaultModelId:'execution'});
     await expect(store.remove(launcher.environmentId)).rejects.toMatchObject({statusCode:409});
     await expect(store.remove(mcp.environmentId)).rejects.toMatchObject({statusCode:409});
-    const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'other',upstreamModelId:'glm'}],defaultModelId:'other',features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    const capabilities={schemaVersion:'finance.runtime-capabilities.v1',instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},runtime:{type:'openjiuwen',version:'1.0.0'},models:[{modelId:'other',upstreamModelId:'glm'}],defaultModelId:'other',features:{streaming:true,asyncLaunch:false,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxSkills:10,maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(capabilities)));
     expect(await store.preflight(profile)).toMatchObject({status:'failed',error:expect.stringContaining('默认模型')});
   });

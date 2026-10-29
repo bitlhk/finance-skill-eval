@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import {it,expect} from 'vitest';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import os from 'node:os';
@@ -69,38 +70,16 @@ it('does not follow redirects or retain business response secrets',async()=>{
  try{const result=await probeBusinessInterface(`http://127.0.0.1:${address.port}/redirect`,'GET',{});expect(result.status).toBe('FAILED');expect(destination).toBe(0);const passed=await probeBusinessInterface(`http://127.0.0.1:${address.port}/secret`,'GET',{});expect(passed.status).toBe('PASSED');expect(JSON.stringify(passed)).not.toContain('do-not-save')}finally{await new Promise<void>(r=>server.close(()=>r()))}
 });
 
-it.each(['SDK','CONFIG'] as const)('closes source diagnosis after %s file supplementation without leaking runtime values into A2',async(kind)=>{
- const directory=await mkdtemp(path.join(os.tmpdir(),'diagnosis-loop-'));const seen:unknown[]=[];
- const analyzer:MigrationAnalyzer=async input=>{seen.push(input);const sdk=Object.keys(input.files).find(p=>p.includes('/client.mjs'));const payload=diagnosisPayload(true,sdk);payload.dependencyAnalysis.dependencies.find(d=>d.owner==='TOOL')!.kind=kind;return {status:'PRODUCED',payload,scanner:{scannerDigest:'a'.repeat(64),coverage:Object.keys(input.files).map(path=>({path,status:'TEXT_INSPECTED'}))}}};
- const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:directory,accessToken:'test',publicDemo:false,migrationAnalyzer:analyzer});const headers={authorization:'Bearer test'};
- try{
-  const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'skill/SKILL.md':strToU8(SKILL_MD),'tool/lookup.mjs':strToU8(SOURCE)}))})).json();
-  const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'diagnosis'}})).json();const url=`/api/migrations/${project.id}`;
-  const first=(await app.inject({method:'POST',url:url+'/inspect',headers})).json();expect(first.dependencyAnalysis.status).toBe('PARTIAL');const sdk=first.dependencyAnalysis.dependencies.find((d:any)=>d.owner==='TOOL');const token=first.dependencyAnalysis.dependencies.find((d:any)=>d.action==='INJECT');
-  const configured=await app.inject({method:'PUT',url:url+'/runtime-configuration/'+token.id,headers,payload:{revision:0,value:'Bearer secret-test-value'}});expect(configured.statusCode).toBe(200);
-  expect((await app.inject({url:url+'/runtime-configuration',headers})).body).not.toContain('secret-test-value');
-  expect((await app.inject({method:'PUT',url:url+'/dependencies/'+token.id+'/data',headers,payload:{revision:0,value:'bad'}})).statusCode).toBe(409);
-  expect((await app.inject({method:'POST',url:url+'/dependencies/'+sdk.id+'/file?revision=0&filename=client.mjs',headers:{...headers,'content-type':'application/octet-stream'},payload:Buffer.from('export const query = () => ({balance: 100});')})).statusCode).toBe(200);
-  expect((await app.inject({method:'POST',url:url+'/dependencies/'+sdk.id+'/file?revision=0&filename=client.mjs',headers:{...headers,'content-type':'application/octet-stream'},payload:Buffer.from('stale')})).statusCode).toBe(409);
-  const second=(await app.inject({method:'POST',url:url+'/inspect/source',headers})).json();expect(second.dependencyAnalysis.status).toBe('COMPLETE');expect(second.dependencyAnalysis.dependencies.find((d:any)=>d.id===sdk.id).provided).toBe('CONFIRMED');
-  expect(JSON.stringify(seen)).not.toContain('secret-test-value');expect(Object.keys((seen.at(-1) as any).files)).toContain(`.diagnosis-supplements/${sdk.id}/client.mjs`);
-  expect((await app.inject({method:'PUT',url:url+'/runtime-configuration/'+token.id,headers,payload:{revision:0,value:'stale'}})).statusCode).toBe(409);
-  const stored=JSON.parse(await readFile(path.join(directory,'migrations',project.id+'.json'),'utf8'));expect(stored.source.artifactSha256).toBe(asset.artifactSha256);expect(stored.sourceInspection.dependencyAnalysis.status).toBe('COMPLETE');expect(JSON.stringify(stored)).not.toContain('secret-test-value');
- }finally{await app.close();await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:50})}
+it.each(['SDK','CONFIG'])('requires missing %s input to be resolved before generation',async kind=>{
+ const f=await taskHttpFixture({files:{...standardFiles,['shared/'+kind.toLowerCase()+'.txt']:encode('Reviewed dependency documentation')}});
+ f.control.analysis.missing=[kind+' contract is missing'];await f.finish('analysis');expect((await f.start('generate')).statusCode).toBe(409);
+ f.control.analysis={...f.control.analysis,missing:[]};await f.finish('analysis');const task=await f.finish('generate');expect(task.currentCandidateId).not.toBeNull();
+ expect(Object.keys(f.seen.at(-1)!.base.files)).toContain('shared/'+kind.toLowerCase()+'.txt');expect(JSON.stringify(f.seen)).not.toContain('runtime-secret-value');
 });
 
-it('rejects generation of Script with required runtime injection',async()=>{
- const directory=await mkdtemp(path.join(os.tmpdir(),'diagnosis-script-boundary-'));
- let generated=false;
- const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:directory,accessToken:'test',publicDemo:false,migrationAnalyzer:async()=>({status:'PRODUCED',payload:diagnosisPayload(),scanner:{scannerDigest:'a'.repeat(64),coverage:[]}}),migrationImplementer:async()=>{generated=true;throw Error('must not run')}});
- const headers={authorization:'Bearer test'};
- try{
-  const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'skill/SKILL.md':strToU8(SKILL_MD),'tool/lookup.mjs':strToU8(SOURCE)}))})).json();
-  const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'script-boundary'}})).json();const url=`/api/migrations/${project.id}`;
-  const inspection=(await app.inject({method:'POST',url:url+'/inspect',headers})).json();
-  await app.inject({method:'PUT',url:url+'/tools/'+inspection.tools[0].toolId+'/decision',headers,payload:{baseAssetId:asset.assetId,form:'SCRIPT',language:'node'}});
-  const result=await app.inject({method:'POST',url:url+'/generate',headers,payload:{baseAssetId:asset.assetId}});expect(result.statusCode).toBe(409);expect(generated).toBe(false);
- }finally{await app.close();await rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:50})}
+it('rejects a declared service whose required implementation files were not delivered',async()=>{
+ const f=await taskHttpFixture();f.control.services=[{toolNames:['lookup'],filePaths:['missing.py'],start:['python','missing.py']}];await f.finish('analysis');
+ const task=await f.finish('generate');expect(task.attempts.at(-1)).toMatchObject({status:'FAILED',error:expect.stringContaining('文件缺失')});expect(task.candidates).toHaveLength(0);
 });
 
 it('injects MCP credentials independently for each real Tool call without placing them in arguments',async()=>{

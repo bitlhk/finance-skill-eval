@@ -6,71 +6,74 @@ import {chromium,expect} from '@playwright/test';
 import {zipSync,strToU8} from 'fflate';
 import {createEvaluationService} from '../dist/service/server.js';
 
-// Real UI and service; A2 is recorded to verify import/navigation without model variability.
+// Real browser, API and archive storage; this test does not call Agent/Runtime/Judge.
 const root=process.cwd(),data=await mkdtemp(path.join(os.tmpdir(),'migration-import-ui-'));
 const output=path.join(root,'reports','migration-import-ui');await mkdir(output,{recursive:true});
 const checks=[],errors=[],token='local-import-verification';
-const pass=name=>{checks.push(name);console.log('PASS '+name)};
-const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),accessToken:token,publicDemo:false,
- migrationAnalyzer:async input=>({status:'PRODUCED',payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[],dependencyAnalysis:{dependencies:[],chains:[]},coverageGaps:[]},scanner:{scannerDigest:'a'.repeat(64),coverage:Object.keys(input.files).map(p=>({path:p,status:'TEXT_INSPECTED'}))}})});
-app.addHook('onRequest',async req=>{if(req.url==='/api/migrations/upload')await new Promise(resolve=>setTimeout(resolve,250))});
+const pass=name=>checks.push(name);
+const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),accessToken:token,publicDemo:false});
+app.log.level='error';
+const source=name=>'---\nname: '+name+'\ndescription: Real source import\n---\nRead business data.';
+const zip=(files,name)=>({name,mimeType:'application/zip',buffer:Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([key,value])=>[key,strToU8(value)]))))});
 let browser;
-try{
- const url=await app.listen({host:'127.0.0.1',port:0});
- browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH||'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'});
- const page=await browser.newPage({viewport:{width:1440,height:1000}});page.on('pageerror',e=>errors.push(e.message));
- await page.goto(url);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
- await page.getByRole('button',{name:'新建迁移',exact:true}).click();
- await expect(page.getByRole('heading',{name:'准备导入文件',exact:true})).toBeVisible();
- await expect(page.getByText('ZIP 可以保留现有目录结构和外层文件夹',{exact:false})).toBeVisible();
- await expect(page.getByRole('button',{name:'开始诊断',exact:true})).toBeDisabled();
- pass('导入说明允许原目录，未选资产时不可诊断');
- const fileInput=page.locator('input[type=file][multiple]');
- assert((await fileInput.getAttribute('accept')).includes('.md'));
- const source=name=>`---\nname: ${name}\ndescription: 导入页面验证\n---\n使用已提供的业务资料完成任务。`;
- const zip=(files,name)=>({name,mimeType:'application/zip',buffer:Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([k,v])=>[k,strToU8(v)]))))});
- await fileInput.setInputFiles(zip({'original/project/SKILL.md':source('nested-import'),'original/sdk/tool.py':'def query(): pass','README.md':'notes'},'nested-source.zip'));
- await expect(page.getByRole('status').filter({hasText:'上传中'})).toBeVisible();
- await expect(page.getByRole('button',{name:'2 诊断与补充',exact:true})).toHaveClass(/active/,{timeout:30000});
- await expect(page.locator('ul[aria-label="导入结果"]')).toContainText('nested-source.zip：已导入');
- const headers={authorization:`Bearer ${token}`};
- let projects=await (await fetch(url+'/api/migrations',{headers})).json();assert.equal(projects.length,1);
- pass('嵌套 ZIP + 任意顶层文件导入成功，进入诊断且只创建一个项目');
- await page.getByRole('button',{name:'返回迁移列表',exact:true}).click();
- await fileInput.setInputFiles({name:'standalone.md',mimeType:'text/markdown',buffer:Buffer.from(source('markdown-import'))});
- await expect(page.getByRole('button',{name:'2 诊断与补充',exact:true})).toHaveClass(/active/,{timeout:30000});
- await expect(page.locator('h2').filter({hasText:'markdown-import'})).toBeVisible();
- projects=await (await fetch(url+'/api/migrations',{headers})).json();assert.equal(projects.length,2);
- pass('独立 Markdown 导入并进入诊断，无重复项目');
- await page.getByRole('button',{name:'返回迁移列表',exact:true}).click();
- await fileInput.setInputFiles([
-  zip({'repo/instructions.md':source('batch-zip'),'repo/tool.py':'def lookup(): pass'},'batch-source.zip'),
-  {name:'broken.zip',mimeType:'application/zip',buffer:Buffer.from('broken')},
-  {name:'batch.md',mimeType:'text/markdown',buffer:Buffer.from(source('batch-markdown'))}
- ]);
- const results=page.locator('ul[aria-label="导入结果"]');
- await expect(results).toContainText('batch-source.zip：已导入',{timeout:30000});await expect(results).toContainText('batch.md：已导入');
- await expect(results).toContainText('broken.zip：ZIP 文件损坏');
- await expect(page.getByRole('button',{name:'继续处理',exact:true})).toHaveCount(4);
- projects=await (await fetch(url+'/api/migrations',{headers})).json();assert.equal(projects.length,4);
- pass('混合批量上传：两项成功分别创建项目，坏 ZIP 显示原因，停留列表');
- await fileInput.setInputFiles({name:'too-large.md',mimeType:'text/markdown',buffer:Buffer.alloc(8*1024*1024+1,65)});
- await expect(results).toContainText('单个文件不能超过 8 MB');
- projects=await (await fetch(url+'/api/migrations',{headers})).json();assert.equal(projects.length,4);
- pass('超大文件明确提示且不创建项目');
- await fileInput.setInputFiles(zip({'repo/instructions.md':source('recovery')},'recovery.zip'));
- await expect(page.getByRole('button',{name:'2 诊断与补充',exact:true})).toHaveClass(/active/,{timeout:30000});
- pass('失败后仍可重新上传并正常进入诊断');
- await expect(page.getByText('正在处理，请稍候…',{exact:true})).toHaveCount(0,{timeout:30000});
- await page.getByRole('button',{name:'返回迁移列表',exact:true}).click();
- await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
- await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'新建迁移',exact:true}).click();
- await expect(page.getByRole('button',{name:'上传 ZIP 或 Markdown',exact:true})).toBeEnabled();
- pass('任务结束后上传按钮恢复可用');
- assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false);
- await page.screenshot({path:path.join(output,'mobile.png'),fullPage:true});
- pass('窄屏导入页无横向溢出');assert.deepEqual(errors,[]);pass('无浏览器 JavaScript 错误');
- await writeFile(path.join(output,'result.json'),JSON.stringify({status:'PASSED',analyzer:'RECORDED_FIXTURE',checks},null,2));
- console.log(JSON.stringify({status:'PASSED',checks}));
-}catch(error){await writeFile(path.join(output,'result.json'),JSON.stringify({status:'FAILED',checks,error:String(error)},null,2));throw error}
-finally{await browser?.close();await app.close();await rm(data,{recursive:true,force:true})}
+try {
+  const url=await app.listen({host:'127.0.0.1',port:0});
+  const tasks=async()=>{const response=await fetch(url+'/api/migration-tasks',{headers:{authorization:'Bearer '+token}});assert(response.ok);return response.json();};
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(url);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();
+  await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+  await expect(page.getByRole('button',{name:'单个 Skill 迁移',exact:true})).toHaveCount(0);
+  await page.getByLabel('任务名称',{exact:true}).fill('单 Skill 导入');
+  await page.getByLabel('业务目标',{exact:true}).fill('验证业务数据');
+  await page.getByLabel('目标环境与要求',{exact:true}).fill('OpenJiuwen');
+  const input=()=>page.locator('.bundle-panel input[type=file]');
+  await input().nth(1).setInputFiles([
+    zip({'repo/SKILL.md':source('nested-import'),'repo/tool.py':'print(1)'},'nested.zip'),
+    {name:'broken.zip',mimeType:'application/zip',buffer:Buffer.from('broken')},
+    {name:'standalone.md',mimeType:'text/markdown',buffer:Buffer.from(source('markdown-import'))},
+  ]);
+  await expect(page.getByRole('status')).toContainText('已导入 2 个 Skill');
+  await expect(page.getByRole('status')).toContainText('broken.zip');
+  assert.equal((await tasks()).length,0);
+  pass('mixed_upload_reports_individual_failures_without_creating_separate_tasks');
+  const selections=page.locator('.bundle-member-options input[type=checkbox]');
+  await expect(selections).toHaveCount(2);await selections.first().uncheck();
+  await page.getByText(/依赖文件（可选/).click();
+  await page.getByLabel('添加依赖文件',{exact:true}).setInputFiles({name:'rules.json',mimeType:'application/json',buffer:Buffer.from('{"limit":100}')});
+  await expect(page.getByLabel('依赖文件路径',{exact:true})).toHaveValue('shared/rules.json');
+  await page.getByLabel('依赖文件路径',{exact:true}).fill('shared/business-rules.json');
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Optional dependency UI overflows mobile');
+  await page.screenshot({path:path.join(output,'optional-assets-mobile.png'),fullPage:true});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.getByRole('button',{name:'创建迁移任务',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'单 Skill 导入',exact:true})).toBeVisible();
+  assert.equal((await tasks())[0].source.members.length,1);
+  const dependency=await fetch(url+'/api/migration-tasks/'+(await tasks())[0].id+'/file?path=shared/business-rules.json',{headers:{authorization:'Bearer '+token}});
+  assert.equal((await dependency.json()).content,'{"limit":100}');
+  pass('independent_skill_optional_dependency_and_editable_path_without_project_archive');
+  pass('one_selected_asset_creates_one_unified_task');
+  await page.getByRole('button',{name:'任务列表 / 新建',exact:true}).click();
+  await page.getByLabel('任务名称',{exact:true}).fill('工程整体导入');
+  await input().first().setInputFiles(zip({'repo/a/SKILL.md':source('a'),'repo/b/SKILL.md':source('b'),'repo/shared/tool.py':'print(2)'},'whole.zip'));
+  await expect(page.getByRole('heading',{name:'工程整体导入',exact:true})).toBeVisible();
+  const records=await tasks();assert.equal(records.length,2);
+  const whole=records.find(t=>t.name==='工程整体导入');assert.equal(whole.source.members.length,2);
+  const file=await fetch(url+'/api/migration-tasks/'+whole.id+'/file?path=repo/shared/tool.py',{headers:{authorization:'Bearer '+token}});
+  assert.equal((await file.json()).content,'print(2)');
+  pass('whole_project_keeps_members_shared_code_and_relative_paths');
+  await page.getByRole('button',{name:'任务列表 / 新建',exact:true}).click();
+  await input().nth(1).setInputFiles({name:'too-large.md',mimeType:'text/markdown',buffer:Buffer.alloc(8*1024*1024+1,65)});
+  await expect(page.getByRole('status')).toContainText('单个文件不能超过 8 MB');
+  assert.equal((await tasks()).length,2);
+  pass('oversize_import_does_not_create_tasks');
+  await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+  await page.screenshot({path:path.join(output,'mobile.png'),fullPage:true});
+  assert.deepEqual(errors,[]);pass('mobile_and_browser_errors');
+  await writeFile(path.join(output,'result.json'),JSON.stringify({status:'PASSED',checks},null,2));
+  console.log(JSON.stringify({status:'PASSED',checks}));
+} finally {await browser?.close();await app.close();await rm(data,{recursive:true,force:true});}

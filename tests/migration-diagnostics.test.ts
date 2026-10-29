@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import { mkdir, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -121,131 +122,45 @@ it('accepts only source-verifiable model Runtime bindings and feeds them into To
   expect(inspection.tools).toEqual([]);
   expect(inspection.runtimeAnalysis).toEqual(expect.objectContaining({status:'COMPLETE',acceptedBindings:1,rejectedBindings:1}));
 });
-it('fails closed with a clear conflict when no analysis is available',async()=>{
-  const root=await mkdtemp(path.join(os.tmpdir(),'migration-missing-scanner-')),data=path.join(root,'data');dirs.push(root);
-  await mkdir(path.join(root,'packs','finance'),{recursive:true});
-  await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
-  const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,accessToken:'test',publicDemo:false});
-  const headers={authorization:'Bearer test'};
-  try{
-    const zip=Buffer.from(zipSync({'SKILL.md':strToU8(method)}));
-    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
-    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'missing scanner'}})).json();
-    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
-    expect(result.statusCode).toBe(409);expect(result.json().message).toContain('分析不可用');
-  }finally{await app.close();}
-});
-it('reports what the analysis agent could not read, instead of calling it unavailable',async()=>{
-  const root=await mkdtemp(path.join(os.tmpdir(),'migration-abstained-')),data=path.join(root,'data');dirs.push(root);
-  await mkdir(path.join(root,'packs','finance'),{recursive:true});
-  await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
-  // An abstention is a judgement: the agent knows why it stopped. Collapsing it into "no analysis"
-  // throws that away and leaves the reader with nothing to act on.
-  const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,accessToken:'test',publicDemo:false,
-    migrationAnalyzer:async()=>({status:'ABSTAINED' as const,reason:'工具实现是编译产物，读不到源码',missing:['tool/orders/impl.jar']})});
-  const headers={authorization:'Bearer test'};
-  try{
-    const zip=Buffer.from(zipSync({'SKILL.md':strToU8(method)}));
-    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
-    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'abstained'}})).json();
-    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
-    expect(result.statusCode).toBe(409);
-    expect(result.json().message).toContain('工具实现是编译产物，读不到源码');
-    expect(result.json().message).toContain('tool/orders/impl.jar');
-    expect(result.json().message).not.toContain('分析不可用');
-  }finally{await app.close();}
-});
-it('re-runs the analysis when the recorded product no longer matches its binding',async()=>{
-  const data=await mkdtemp(path.join(os.tmpdir(),'migration-binding-'));dirs.push(data);
-  let calls=0;
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
-    migrationAnalyzer:async input=>{calls+=1;return {status:'PRODUCED' as const,
-      payload:{status:'PRODUCED',skill:{status:'COMPLIANT',findings:[]},tools:[{name:'lookup',sourcePaths:['tool/lookup.py'],language:'Python',portability:'RUNTIME_BOUND',
-        input:{description:'',schema:null,path:'skill/SKILL.md',line:3},output:{description:'',schema:null,path:'skill/SKILL.md',line:3},
-        evidence:[],findings:[],recommendedForm:'SCRIPT',recommendationReason:'夹具'}]},
-      scanner:{scannerDigest:'a'.repeat(64),coverage:[]}};}});
-  const headers={authorization:'Bearer test'};
-  try{
-    const zip=Buffer.from(zipSync({'skill/SKILL.md':strToU8(method),'tool/lookup.py':strToU8('def lookup(value): return value\n')}));
-    const asset=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
-    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'binding'}})).json();
-    await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
-    expect(calls).toBe(1);
-    // Same asset, so the recorded product still describes it.
-    await app.inject({url:`/api/migrations/${project.id}/inspection`,headers});
-    expect(calls).toBe(1);
-    // A record whose product was written for other contents -- what an upgrade can leave behind.
-    const file=path.join(data,'migrations',`${project.id}.json`),record=JSON.parse(await readFile(file,'utf8'));
-    record.analysis.binding.assetDigest='0'.repeat(64);
-    await writeFile(file,JSON.stringify(record,null,2));
-    await app.inject({url:`/api/migrations/${project.id}/inspection`,headers});
-    expect(calls).toBe(2);
-  }finally{await app.close();}
-});
-it('reports why the analysis agent did not finish, instead of calling it unavailable',async()=>{
-  const root=await mkdtemp(path.join(os.tmpdir(),'migration-agent-failed-')),data=path.join(root,'data');dirs.push(root);
-  await mkdir(path.join(root,'packs','finance'),{recursive:true});
-  await writeFile(path.join(root,'packs','finance','catalog.yaml'),'schemaVersion: finance.skill-catalog.v1\nskills:\n  - skillId: fixture\n    displayName: Fixture\n    roleName: Tester\n    category: Test\n    iconKey: audit\n    featuredOrder: 0\n    summary: Test fixture\n    capabilities: [Test]\n');
-  // A run that did not finish is an execution problem, and the reader needs to know that rather
-  // than be told, uselessly, that there is no analysis.
-  const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,accessToken:'test',publicDemo:false,
-    migrationAnalyzer:async()=>({status:'FAILED' as const,reason:'agent produced no result line: model call failed'})});
-  const headers={authorization:'Bearer test'};
-  try{
-    const zip=Buffer.from(zipSync({'SKILL.md':strToU8(method)}));
-    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
-    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'agent failed'}})).json();
-    const result=await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}});
-    expect(result.statusCode).toBe(409);
-    expect(result.json().message).toContain('model call failed');
-    expect(result.json().message).toContain('执行问题');
-    expect(result.json().message).not.toContain('分析不可用');
-  }finally{await app.close();}
-});
-it('takes the Skill verdict from the rules, not from the model that judges it twice',async()=>{
-  const data=await mkdtemp(path.join(os.tmpdir(),'migration-verdict-'));dirs.push(data);
-  const tool={name:'lookup',sourcePaths:['tool/lookup.py'],language:'Python',portability:'RUNTIME_BOUND',
-    input:{description:'',schema:null,path:'skill/SKILL.md',line:1},output:{description:'',schema:null,path:'skill/SKILL.md',line:1},
-    evidence:[],findings:[],recommendedForm:'SCRIPT',recommendationReason:'夹具'};
-  // The same package, and the agent calls it compliant. Asked again it will call it non-compliant:
-  // a verdict that flips is not a verdict, so the platform's own rules decide.
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:data,accessToken:'test',publicDemo:false,
-    migrationAnalyzer:async()=>({status:'PRODUCED' as const,
-      payload:{status:'PRODUCED',skill:{status:'NON_COMPLIANT',findings:[]},tools:[tool]},
-      scanner:{scannerDigest:'a'.repeat(64),coverage:[]}})});
-  const headers={authorization:'Bearer test'};
-  try{
-    // `method` carries no description, and the rules count that as an error -- so a compliant Skill
-    // is what shows the agent being overruled in the permissive direction.
-    const compliant='---\nname: verdict-fixture\ndescription: 用来验证合规判定的归属。\n---\n调用 `lookup`，失败时说明原因。';
-    const zip=Buffer.from(zipSync({'skill/SKILL.md':strToU8(compliant),'tool/lookup.py':strToU8('def lookup(value): return value\n')}));
-    const asset=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:zip})).json();
-    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'verdict'}})).json();
-    const inspection=(await app.inject({method:'POST',url:`/api/migrations/${project.id}/inspect`,headers,payload:{}})).json();
-    expect(inspection.skill.status).toBe('COMPLIANT');
+it("rejects generation before analysis without calling the Agent",async()=>{
 
-    // And the rules can veto the model the other way: a Skill with no description is an error
-    // whatever the agent thought of it.
-    const invalid=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},
-      payload:Buffer.from(zipSync({'skill/SKILL.md':strToU8('---\nname: no-description\n---\n调用 `lookup`。'),'tool/lookup.py':strToU8('def lookup(value): return value\n')}))})).json();
-    const second=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:invalid.assetId,name:'verdict-2'}})).json();
-    const checked=(await app.inject({method:'POST',url:`/api/migrations/${second.id}/inspect`,headers,payload:{}})).json();
-    expect(checked.skill.status).toBe('NON_COMPLIANT');
-    expect(checked.skill.findings.map((f:{code:string})=>f.code)).toContain('DESCRIPTION_REQUIRED');
-  }finally{await app.close();}
+ const f=await taskHttpFixture();const r=await f.start('generate');expect(r.statusCode).toBe(409);expect(r.body).toContain('分析');expect(f.seen).toHaveLength(0);
+
 });
-it('project creation is idempotent and rejects the removed legacy generation contract',async()=>{
-  const {asset,dir}=await setup({'helper.py':'from agentscope.tool import ToolResponse\n'});
-  const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'test'});
-  const headers={authorization:'Bearer test'};
-  const post=(url:string,payload:unknown)=>app.inject({url,method:'POST',headers,payload});
-  try{
-    const input={sourceAssetId:asset.assetId,name:'Synthetic'};
-    const first=(await post('/api/migrations',input)).json(),second=(await post('/api/migrations',input)).json();expect(first.id).toBe(second.id);
-    const diagnostic=await app.inject({url:`/api/migrations/${first.id}/diagnosis`,headers});expect(diagnostic.json().findings.length).toBeGreaterThan(0);
-    const legacy=await post(`/api/migrations/${first.id}/generate`,{runtime:'openjiuwen',intent:'portable_method_and_adapters',baseAssetId:asset.assetId});
-    expect(legacy.statusCode).toBe(400);
-    expect(legacy.json().message).toContain('Unrecognized key');
-    expect((await post(`/api/migrations/${first.id}/releases`,{})).statusCode).toBe(409);
-  }finally{await app.close();}
+it("keeps missing source information visible and blocks generation until analysis resolves it",async()=>{
+
+ const f=await taskHttpFixture();f.control.analysis.missing=['Missing shared contract: shared/reader.py'];
+ const incomplete=await f.finish('analysis');expect(incomplete.analysis?.missing).toEqual(['Missing shared contract: shared/reader.py']);
+ expect((await f.start('generate')).statusCode).toBe(409);
+ f.control.analysis={...f.control.analysis,missing:[]};await f.finish('analysis');expect((await f.finish('generate')).currentCandidateId).not.toBeNull();
+
+});
+it("requires a current candidate binding when re-running analysis",async()=>{
+
+ const f=await taskHttpFixture();const generated=await f.candidate();
+ expect((await f.start('analysis',{baseCandidateId:null})).statusCode).toBe(409);
+ await f.finish('analysis');expect(f.seen.at(-1)?.base.digest).toBe(generated.candidates[0]!.digest);
+ expect(f.seen.at(-1)?.source.digest).toBe(generated.source.digest);
+
+});
+it("records an Agent failure without publishing an analysis or candidate",async()=>{
+
+ const f=await taskHttpFixture();f.control.error='READ_FAILED: missing source contract';const task=await f.finish('analysis');
+ expect(task.attempts.at(-1)).toMatchObject({status:'FAILED',error:expect.stringContaining('READ_FAILED')});
+ expect(task.analysis).toBeUndefined();expect(task.candidates).toEqual([]);expect((await f.start('generate')).statusCode).toBe(409);
+
+});
+it("validates candidate member structure independently of Agent claims",async()=>{
+
+ const f=await taskHttpFixture();await f.finish('analysis');f.control.files={...f.files,'skills/method/SKILL.md':encode('No frontmatter, but the Agent says this is valid.')};
+ const task=await f.finish('generate');expect(task.attempts.at(-1)?.status).toBe('FAILED');expect(task.currentCandidateId).toBeNull();expect(task.candidates).toEqual([]);
+
+});
+it("makes operation keys idempotent and rejects changed content under the same key",async()=>{
+
+ const f=await taskHttpFixture();const task=await f.finish('analysis',{key:'analysis-once'});
+ const again=await f.start('analysis',{key:'analysis-once'});expect(again.statusCode).toBe(202);expect((await f.get()).attempts).toHaveLength(1);expect(f.seen).toHaveLength(1);
+ expect((await f.start('generate',{key:'analysis-once'})).statusCode).toBe(409);
+ expect((await f.api('POST','/api/migrations/'+task.id+'/generate',{mode:'legacy'})).statusCode).toBe(404);
+
 });

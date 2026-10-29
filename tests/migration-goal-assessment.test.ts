@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import {it,expect} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
@@ -234,16 +235,13 @@ it('transports a standard text delivery package to the trusted Runtime without a
  const source=await resolve({mode:'skill_version',skillId:'skill',version:'1',artifactSha256:'a'.repeat(64)});
  expect(source.files['mcp-python/server.py']).toBe('server');expect(source.canonicalArchive).toBeUndefined();
 });
-it('imports and freezes the documented format through the migration API',async()=>{
- const dir=await mkdtemp(path.join(os.tmpdir(),'migration-goals-')),app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:dir,accessToken:'test',publicDemo:false}),headers={authorization:'Bearer test'};
- try{
-  const sample=(await app.inject({url:'/api/migration-suite-example',headers})).json();simpleMigrationSuiteSchema.parse(sample);
-  const asset=(await app.inject({url:'/api/skills/upload',method:'POST',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: goals\ndescription: test\nversion: 1.0.0\n---\nRead only')}))})).json();
-  const project=(await app.inject({url:'/api/migrations',method:'POST',headers,payload:{sourceAssetId:asset.assetId,name:'goals'}})).json();
-  const imported=await app.inject({url:`/api/migrations/${project.id}/suites/import`,method:'POST',headers,payload:sample});expect(imported.statusCode).toBe(200);expect(imported.json().assessmentMode).toBe('natural_language');
-  const invalid=await app.inject({url:`/api/migrations/${project.id}/suites/import`,method:'POST',headers,payload:{name:'bad',cases:[{id:'a',input:'x',criteria:[]}]}});expect(invalid.statusCode).toBe(400);
-  const report=(await app.inject({url:`/api/migrations/${project.id}/report`,headers})).json();expect(report.suites[0].cases[0].rubric[0].description).toBe(sample.cases[0].criteria[0]);expect(report.suites[0].cases[0].workspaceFiles).toEqual(sample.workspaceFiles);
-  const html=renderToStaticMarkup(createElement(MigrationAssessmentStep,{initialMode:'goals',api:async()=>({} as any),projectId:project.id,suites:report.suites,experiments:[],busy:false,refresh:async()=>{},runtimeId:'',setRuntimeId:()=>{},runtimes:[],modelKey:'',setModelKey:()=>{},packId:`suite:${imported.json().preparationId}`,setPackId:()=>{},run:()=>{},next:()=>{}}));expect(html).toContain('下载测试集样例');expect(html).toContain(sample.cases[0].criteria[0]);expect(html).toContain('执行并自动评估');
-  expect(html).toContain('fixtures/accounts.json');
- }finally{await app.close();await rm(dir,{recursive:true,force:true})}
+it("imports the documented natural-language suite and freezes its exact run snapshot",async()=>{
+
+ const f=await taskHttpFixture();await f.ready();
+ const example=await f.api('GET','/api/migration-tasks/suite-example');expect(example.statusCode).toBe(200);
+ const suite={name:'Frozen business contract',cases:[{id:'dev',input:'Check the document',criteria:['Cite the source']}],holdoutCases:[{id:'held',input:'Independent document',criteria:['Cite evidence']}]};
+ expect((await f.api('PUT',f.url()+'/suite',suite)).statusCode).toBe(200);const run=(await f.finish('acceptance')).runs.at(-1)!;
+ await f.api('PUT',f.url()+'/suite',{...suite,name:'Changed'});expect((await f.get()).runs.at(-1)?.suite).toEqual(suite);
+ expect((await f.api('GET',f.url()+'/export?verified=true')).statusCode).toBe(409);expect(run.phase).toBe('development');
+
 });

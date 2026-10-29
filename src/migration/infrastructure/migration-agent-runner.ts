@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { operationalEvent, operationalError, stderrExceptionType } from '../../service/logging.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { modelTimeoutMs,type ModelRole } from '../../service/config.js';
@@ -137,44 +138,65 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
   });
 
   return await new Promise<AgentResult<T>>((resolve,reject)=>{
+    const started=Date.now();
+    const context = request.correlation as Record<string, unknown> | undefined;
+    const correlation={stage,runId:request.runId,assetDigest, ...Object.fromEntries(['taskId','attemptId','requestId','agentRunId'].flatMap(key => typeof context?.[key] === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(context[key] as string) ? [[key,context[key]]] : []))};
     const child=spawn(program,[entry],{
       cwd:options.projectRoot,
       stdio:['pipe','pipe','pipe'],
       windowsHide:true,
+      detached:process.platform!=='win32',
       env:{...process.env,FINANCE_RUNTIME_CONFIG:runtimeConfig,PYTHONUTF8:'1',PYTHONUNBUFFERED:'1'},
     });
-    let stdout='',stderr='',settled=false;
+    operationalEvent('agent_process_started',{...correlation,pid:child.pid});
+    const killTree=()=>{
+      if(!child.pid)return;
+      if(process.platform==='win32'){
+        const killer=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
+        killer.on('error',()=>child.kill('SIGKILL'));
+      }else{try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}}
+    };
+    let stdout='',stderrTail='',stderrBytes=0,lastErrorType:string|undefined,settled=false;
     const timer=setTimeout(()=>{
       if(settled)return;
       settled=true;
-      child.kill('SIGKILL');
+      options.signal?.removeEventListener('abort',abort);
+      killTree();
+      operationalEvent('agent_process_timeout',{...correlation,elapsedMs:Date.now()-started});
       reject(new MigrationAgentUnavailable(`${stage} agent exceeded ${options.timeoutMs??900_000}ms`));
     },options.timeoutMs??900_000);
     const abort=()=>{
       if(settled)return;
       settled=true;
       clearTimeout(timer);
-      child.kill('SIGKILL');
+      killTree();
+      operationalEvent('agent_process_cancelled',{...correlation,elapsedMs:Date.now()-started});
       reject(new MigrationAgentUnavailable(`${stage} agent cancelled`));
     };
     options.signal?.addEventListener('abort',abort,{once:true});
     child.stdout.on('data',chunk=>{stdout+=String(chunk)});
-    child.stderr.on('data',chunk=>{stderr=(stderr+String(chunk)).slice(-4000)});
+    child.stderr.on('data',chunk=>{
+      stderrBytes+=Buffer.byteLength(chunk);
+      stderrTail=(stderrTail+String(chunk)).slice(-8192);
+      lastErrorType=stderrExceptionType(stderrTail)??lastErrorType;
+    });
     child.on('error',error=>{
       if(settled)return;
       settled=true;
       clearTimeout(timer);
       options.signal?.removeEventListener('abort',abort);
-      reject(new MigrationAgentUnavailable(`${stage} agent could not start: ${error.message}`));
+      operationalEvent('agent_process_start_failed',{...correlation,err:operationalError(error)});
+      reject(new MigrationAgentUnavailable(`${stage} agent could not start`));
     });
-    child.on('close',()=>{
+    child.on('close',(exitCode,signal)=>{
+      operationalEvent('agent_process_exited',{...correlation,exitCode,signal,elapsedMs:Date.now()-started,stderrBytes,lastErrorType});
       if(settled)return;
       settled=true;
       clearTimeout(timer);
       options.signal?.removeEventListener('abort',abort);
       const line=stdout.split('\n').map(part=>part.trim()).filter(Boolean).reverse()
         .find(part=>part.startsWith('{')&&part.includes('"result"'));
-      if(!line){resolve(failed(`agent produced no result line${stderr?`: ${stderr.slice(-500)}`:''}`));return}
+      if(!line){resolve(failed('agent produced no result line; inspect correlated process logs'));return}
       try{
         const wire=(JSON.parse(line) as {result?:WireResult<T>}).result??{};
         const status=String(wire.status??'').toUpperCase();

@@ -1,3 +1,4 @@
+import {standardSkills,standardMetadata,standardCapabilities,released} from './runtime-standard-fixture.js';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {evalCaseSchema,workspaceFilesDigest} from '../src/contracts.js';
 import {RuntimeLauncherAdapter,launcherGenerationSchema} from '../src/runtime-launcher.js';
@@ -12,6 +13,7 @@ describe('Runtime Launcher adapter',()=>{
   it('retains failure and skips subsequent cases only in the controlled comparison mode',async()=>{
     let executions=0,deletions=0;
     vi.stubGlobal('fetch',vi.fn(async(_input:unknown,init?:RequestInit)=>{
+      if(String(_input).endsWith('/v1/runtime-capabilities'))return Response.json(standardCapabilities('execution'));
       if(init?.method==='DELETE'){
         deletions++;
         return Response.json({cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',instanceId:'instance-1',
@@ -21,7 +23,7 @@ describe('Runtime Launcher adapter',()=>{
       executions++;return Response.json({error:'FIRST_CASE_FAILURE'},{status:502});
     }));
     const model={providerId:'managed',modelId:'execution',parameters:{}};
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,environment:{environmentId:'test'},timeoutMs:1000,stopAfterFailure:true});
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model,variant,skill:null,skillSet:standardSkills,environment:{environmentId:'test'},timeoutMs:1000,stopAfterFailure:true});
     await runtime.prepare({runId:'run-1'});
     const request=(caseId:string)=>({runId:'run-1',side:'right' as const,evalCase:{...evalCase,caseId},model,variant});
     await expect(runtime.execute(request('first'))).rejects.toThrow('FIRST_CASE_FAILURE');
@@ -35,17 +37,18 @@ describe('Runtime Launcher adapter',()=>{
     let created=0;const keys:string[]=[],executed:string[]=[],deleted:string[]=[];
     vi.stubGlobal('fetch',vi.fn(async(input:URL|string|Request,init?:RequestInit)=>{
       const url=String(input);
+      if(url.endsWith('/v1/runtime-capabilities'))return Response.json(standardCapabilities('execution'));
       if(init?.method==='POST'&&url.endsWith('/v1/runtime-instances')){
         created+=1;keys.push((init.headers as Record<string,string>)['idempotency-key']!);
         return Response.json({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:`instance-${created}`,status:'ready',executeEndpoint:`/v1/runtime-instances/instance-${created}/execute`,expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest});
       }
       if(init?.method==='DELETE'){
-        deleted.push(url);return cleanupFails?Response.json({error:'cleanup_failed'},{status:503}):new Response(null,{status:404});
+        deleted.push(url);return cleanupFails?Response.json({error:'cleanup_failed'},{status:503}):Response.json(released(url.split('/').at(-1)!));
       }
       executed.push(`${url}:${JSON.parse(String(init?.body)).caseId}`);
       return Response.json({error:'EVAL_PACKAGE_ITERATION_LIMIT'},{status:502});
     }));
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters:{}},variant,skill:null,environment:{environmentId:'test'},timeoutMs:1000});
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters:{}},variant,skill:null,skillSet:standardSkills,environment:{environmentId:'test'},timeoutMs:1000});
     await runtime.prepare({runId:'run-1'});
     const execute=(caseId:string)=>runtime.execute({runId:'run-1',side:'right',evalCase:{...evalCase,caseId},model:{providerId:'managed',modelId:'execution',parameters:{}},variant});
     const results=await Promise.allSettled([execute('first'),execute('second')]);
@@ -71,24 +74,25 @@ describe('Runtime Launcher adapter',()=>{
   it.each([{}, {temperature:0.25,top_p:0.8,max_tokens:1234}])('creates one configured instance, consumes its stream and always deletes it: %j',async(parameters)=>{
     const calls:Array<{url:string;init:RequestInit|undefined}>=[];
     const state={schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance-1',status:'ready',executeEndpoint:'/v1/runtime-instances/instance-1/execute',expiresAt:'2030-01-01T00:00:00.000Z',error:null,configurationDigest};
-    const evidence={runId:'run-1',side:'right',caseId:'case-1',status:'completed',modelId:'execution',skillVersion:'1',output:'done',elapsedMs:1,toolCalls:[{name:'lookup',status:'completed'}],loadedSkills:[{skillId:'demo',version:'1'}],usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,metadata:{skillArtifactSha256:digest,instanceConfigurationDigest:configurationDigest,workspaceFilesDigest:workspaceFilesDigest(evalCase.workspaceFiles!)}};
+    const evidence={runId:'run-1',side:'right',caseId:'case-1',status:'completed',modelId:'execution',skillVersion:'1',output:'done',elapsedMs:1,toolCalls:[{name:'lookup',status:'completed'}],loadedSkills:standardSkills.skills.map(({skillId,version})=>({skillId,version})),usage:null,runtimeIdentityVerified:true,streamCompleted:true,error:null,metadata:{...standardMetadata,instanceConfigurationDigest:configurationDigest,workspaceFilesDigest:workspaceFilesDigest(evalCase.workspaceFiles!)}};
     Object.assign(evidence.metadata,Object.keys(parameters).length?{declaredModelParameters:parameters,modelGenerationHostVerified:true}:{});
     vi.stubGlobal('fetch',vi.fn(async(input:URL|string|Request,init?:RequestInit)=>{
-      const url=String(input);calls.push({url,init});
+      const url=String(input);
+      if(url.endsWith('/v1/runtime-capabilities'))return Response.json(standardCapabilities('execution'));calls.push({url,init});
       if(init?.method==='POST'&&url.endsWith('/v1/runtime-instances'))return Response.json(state);
       if(init?.method==='POST'&&url.endsWith('/execute'))return new Response(`data: ${JSON.stringify({type:'text_delta',text:'done'})}\n\ndata: ${JSON.stringify({evidence})}\n\n`,{headers:{'content-type':'text/event-stream'}});
-      if(init?.method==='DELETE')return new Response(null,{status:204});
+      if(init?.method==='DELETE')return Response.json(released('instance-1'));
       throw new Error(`Unexpected request ${url}`);
     }));
     const events:unknown[]=[];
     const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'ui-only',modelId:'execution',parameters},variant,
-      skill:{skillId:'demo',version:'1',artifactSha256:digest,instructions:'Use lookup.',files:{'mcp/server.py':'pass'},archiveBase64:'YXJjaGl2ZQ==',archiveSha256:'b'.repeat(64)},
+      skill:null,skillSet:standardSkills,
       environment:{environmentId:'launcher',mcpServers:[{serverId:'external',endpoint:'https://example.com/mcp',transport:'streamable_http',toolNames:['lookup'],secretHeaders:{authorization:'Bearer external-secret'}}],candidateMcpServices:[{assetDigest:digest,toolNames:['lookup'],filePaths:['mcp/server.py'],start:['python','mcp/server.py'],secretEnvironment:{API_TOKEN:'top-secret'}}],
         runtimeToolConfig:{context:{user:{type:'string',value:'alice',sensitive:true}},providers:{},tools:{}}},timeoutMs:300000});
     await runtime.prepare!({runId:'run-1'});
     expect((await runtime.execute({runId:'run-1',side:'right',evalCase,model:{providerId:'ui-only',modelId:'execution',parameters:{}},variant,onEvent:event=>events.push(event)})).output).toBe('done');
     await runtime.cleanup!();
-    const createBody=JSON.parse(String(calls[0]!.init!.body));
+    const createBody=JSON.parse(String(calls.find(c=>c.url.endsWith('/v1/runtime-instances'))!.init!.body));
     if(Object.keys(parameters).length)expect(createBody.generation).toEqual({schemaVersion:'finance.eval-generation.v1',temperature:0.25,top_p:0.8,max_tokens:1234});
     else expect(createBody).not.toHaveProperty('generation');
     expect(createBody.environment.candidateMcpServices[0]).not.toHaveProperty('secretEnvironment');
@@ -107,7 +111,7 @@ describe('Runtime Launcher adapter',()=>{
   it.each([{temperature:0.25},{temperature:0.25,top_p:0.8,max_tokens:1234,seed:42},
     {temperature:0.25,top_p:0.8,max_tokens:1234,schemaVersion:'ignored'}])('rejects incomplete or unknown parameters before creating an instance: %j',async(parameters)=>{
     const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
-    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters},variant,skill:null,environment:{environmentId:'test'},timeoutMs:300000});
+    const runtime=new RuntimeLauncherAdapter({baseUrl:'http://127.0.0.1:9000/',side:'right',model:{providerId:'managed',modelId:'execution',parameters},variant,skill:null,skillSet:standardSkills,environment:{environmentId:'test'},timeoutMs:300000});
     await expect(runtime.prepare({runId:'run-1'})).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });

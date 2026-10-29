@@ -1,3 +1,4 @@
+import { standardExecutionRequirements } from './runtime-standard-fixture.js';
 import {expect,it,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {runtimeLauncherCapabilitiesSchema} from '../src/shared/contracts/runtime-launcher.js';
@@ -15,14 +16,14 @@ function fixture(){
  const capability={capabilityId:'workspace.reader',name:'read_file',
   contract:{inputSchema:{type:'object',properties:{path:{type:'string'}},required:['path']},outputSchema:{type:'string'},errorSchema:{type:'object'},semantics:'Read a relative file in the isolated workspace'},
   constraints:{permissions:['workspace.read'],sideEffects:'read' as const,isolation:'per_case'}};
- const capabilities=runtimeLauncherCapabilitiesSchema.parse({schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'1'},models:[{modelId:'model',upstreamModelId:'real-model'}],defaultModelId:'model',
-  nativeToolNames:['read_file'],nativeCapabilities:[capability],features:{streaming:true,asyncLaunch:true,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxArchiveBytes:100,maxFiles:10,maxTimeoutMs:10000,maxConcurrentInstances:2}});
+ const capabilities=runtimeLauncherCapabilitiesSchema.parse({schemaVersion:'finance.runtime-capabilities.v1',instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},runtime:{type:'openjiuwen',version:'1'},models:[{modelId:'model',upstreamModelId:'real-model'}],defaultModelId:'model',
+  nativeToolNames:['read_file'],nativeCapabilities:[capability],features:{streaming:true,asyncLaunch:true,packagedMcp:true,externalMcp:true,inlineSecrets:true},limits:{maxSkills:10,maxArchiveBytes:100,maxFiles:10,maxTimeoutMs:10000,maxConcurrentInstances:2}});
  const inspection=inspectionFixture([]);
  inspection.runtimeCapabilities=[{name:'source_read',owner:'RUNTIME_HARNESS',migrationAction:'REQUIRES_RUNTIME_BUILDER',blocking:true,reason:'Read with matching boundaries',usageContract:'relative path',targetCapability:capability.capabilityId,
   contract:capability.contract,constraints:capability.constraints,consumerTools:[],testAvailability:'UNCHECKED',evidence:[{path:'SKILL.md',line:1,kind:'SOURCE',detail:'Read the workspace document.'}]}];
- const requirements=runtimeBuildRequirements(inspection)!;
+ const requirements=runtimeBuildRequirements(inspection,{runtimeType:'openjiuwen',executionRequirements:standardExecutionRequirements})!;
  if(!('requirementsDigest' in requirements))throw Error('fixture incomplete');
- const project={id:'migration-test',inspection,sourceInspection:inspection,candidate:null} as unknown as MigrationProject;
+ const project={runtimeExecutionRequirements:standardExecutionRequirements,id:'migration-test',inspection,sourceInspection:inspection,candidate:null} as unknown as MigrationProject;
  const launcher={environmentId:'env-native',type:'runtime_launcher' as const,runtimeType:'openjiuwen' as const,baseUrl:'http://127.0.0.1:19001/',name:'Existing',credentialEnv:null,createdAt:'2026-10-08T00:00:00Z',updatedAt:'2026-10-08T00:00:00Z'};
  const environments={get:vi.fn(async(id:string)=>id===launcher.environmentId?launcher:null),preflight:vi.fn(async()=>({status:'ready',capabilities}))};
  const projects={get:async()=>project,save:vi.fn(),runExclusive:async(_id:string,action:()=>Promise<unknown>)=>action()} as unknown as MigrationProjectStore;
@@ -70,7 +71,7 @@ it('invalidates reuse on requirement, live inventory, registry or selected-envir
 
 it('does not use reuse to bypass incomplete requirements or an explicit rebuild',async()=>{
  const f=fixture();
- expect(runtimeReuseIssues({...f.requirements,rebuild:{baseline:{deploymentId:'old',artifactSha256:'a'.repeat(64),solutionRevisionId:'b'.repeat(64)},hypothesis:{id:'fix',issue:'capacity',expectedBehavior:'higher capacity'},evidence:[{jobId:'failed',summary:'iteration budget'}]}},f.capabilities)).toEqual(['REBUILD_REQUIRED']);
+ expect(runtimeReuseIssues({...f.requirements,rebuild:{baseline:{deploymentId:'old',artifactSha256:'a'.repeat(64),capabilitiesDigest:'b'.repeat(64)},hypothesis:{id:'fix',issue:'capacity',expectedBehavior:'higher capacity'},evidence:[{evidenceRef:'failed',summary:'iteration budget'}]}},f.capabilities)).toEqual(['REBUILD_REQUIRED']);
  delete f.inspection.runtimeCapabilities![0]!.contract;
  await expect(f.service.reuseRuntime(f.project.id,{environmentId:f.launcher.environmentId})).rejects.toThrow('完善能力诊断');
 });
@@ -80,7 +81,7 @@ it('independently guards an admitted alternate deployment against live capabilit
  const delivery={schemaVersion:'finance.runtime-launcher-delivery-record.v1' as const,buildId:'build',requestId:f.requirements.requestId,
   requirementsDigest:f.requirements.requirementsDigest,deploymentId:'deployment-other',artifactSha256:'d'.repeat(64),
   capabilitiesDigest:canonicalSha256(f.capabilities),resultDigest:'e'.repeat(64),builder:{name:'builder',version:'1'},
-  acceptedAt:new Date().toISOString(),expiresAt:null,evalConformance:{status:'PASSED' as const,testedAt:new Date().toISOString(),
+  acceptedAt:new Date().toISOString(),expiresAt:null,evalConformance:{runId:'conformance-test',instanceSchemaVersion:'finance.runtime-instance.v1' as const,probeDigest:'d'.repeat(64),status:'PASSED' as const,testedAt:new Date().toISOString(),
    checks:['capabilities','create','status','execute','evidence','delete'] as ['capabilities','create','status','execute','evidence','delete']}};
  const other={...f.launcher,environmentId:'other',delivery};
  f.project.runtimeDeliveries={other:{...delivery,environmentId:'other'}};
@@ -99,12 +100,12 @@ it('rejects unknown environments, failed discovery and mutating an active task b
  await expect(f.service.reuseRuntime(f.project.id,{environmentId:f.launcher.environmentId})).rejects.toThrow('改进任务');
 });
 
-it('keeps old capabilities valid but rejects ambiguous or unadvertised contracts',()=>{
+it('allows capabilities without optional native contracts but rejects ambiguous or unadvertised contracts',()=>{
  const f=fixture(),legacy={...f.capabilities};delete legacy.nativeCapabilities;
  expect(runtimeLauncherCapabilitiesSchema.safeParse(legacy).success).toBe(true);
  expect(runtimeLauncherCapabilitiesSchema.safeParse({...f.capabilities,nativeToolNames:[]}).success).toBe(false);
  expect(runtimeLauncherCapabilitiesSchema.safeParse({...f.capabilities,nativeCapabilities:[f.capability,f.capability]}).success).toBe(false);
- const published=JSON.parse(readFileSync('contracts/runtime-launcher/finance.skill-eval.runtime-capabilities.v1.schema.json','utf8'));
+ const published=JSON.parse(readFileSync('contracts/runtime-launcher/finance.runtime-capabilities.v1.schema.json','utf8'));
  expect(published.properties.nativeCapabilities.items.required).toEqual(['capabilityId','name','contract','constraints']);
 });
 

@@ -34,6 +34,8 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.examples.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:ui:migration-v2": "pnpm build && node scripts/verify-migration-v2-ui.mjs",
+    "test:ui:migration-bundle": "pnpm build && node scripts/verify-bundle-migration-ui.mjs",
+    "test:ui:migration-bundle:live": "pnpm build && node scripts/verify-bundle-migration-live-ui.mjs",
     "test:ui:migration-enterprise": "pnpm build && node scripts/verify-enterprise-examples-page.mjs",
     "test:ui:migration-capabilities": "pnpm build && node scripts/verify-capability-skills-ui.mjs",
     "test:ui:reuse-acceptance": "pnpm build && node scripts/verify-reuse-acceptance-ui.mjs",
@@ -47,7 +49,11 @@
     "eval:investment:replay": "tsx src/cli.ts replay --pack packs/finance/investment-research/eval.yaml --out reports/investment-research",
     "eval:wealth:replay": "tsx src/cli.ts replay --pack packs/finance/wealth-management/eval.yaml --out reports/wealth-management",
     "eval:risk:harness": "tsx examples/run-harness-risk-review.ts",
-    "pack:local": "pnpm build && pnpm pack --pack-destination artifacts"
+    "pack:local": "pnpm build && pnpm pack --pack-destination artifacts",
+    "test:ui:migration": "pnpm build && node scripts/verify-bundle-migration-ui.mjs",
+    "test:ui:migration:imports": "pnpm build && node scripts/verify-migration-import-ui.mjs",
+    "test:ui:migration:live": "pnpm build && node scripts/verify-bundle-migration-live-ui.mjs",
+    "test:ui:migration:builder": "pnpm build && node scripts/verify-migration-task-builder-ui.mjs"
   },
   "dependencies": {
     "@fastify/static": "8.3.0",

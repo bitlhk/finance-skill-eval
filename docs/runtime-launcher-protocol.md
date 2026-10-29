@@ -1,79 +1,55 @@
-# Runtime Launcher v1
+# Runtime 启动与执行协议
 
-测试环境登记的是 Runtime 启动服务，而不是预先启动的 Agent `/execute`。评测服务在运行前发现能力，为左右侧分别创建隔离实例，执行测试集后删除实例。
+Builder 按通用能力需求交付 Runtime。业务 Skill 在创建实例时注入；一个或多个成员均使用同一 `skills[]` 请求，不设置单/多 Skill 模式。当前 Schema 是 `finance.runtime-instance.v1`（新命名空间），不是旧的 `finance.skill-eval.runtime-instance.v1`。旧协议不再接受。
 
-## Builder 交付边界
+## 交付与能力发现
 
-外部 Builder 完成部署后返回 `finance.runtime-launcher-descriptor.v1`。该描述只携带部署身份、Launcher 入口、协议版本、认证方式、产物摘要和 capabilities 摘要，不复制模型、默认模型、MCP 支持或资源限制。平台必须调用 `GET /v1/runtime-capabilities` 获取这些动态能力，并校验 Runtime 类型、版本及 RFC 8785 capabilities 摘要后才能接入。
+Builder 返回 `finance.runtime-build-result.v3`，其中的 Launcher 描述使用 `finance.runtime-launcher-descriptor.v2`。描述包括部署身份、制品摘要、能力摘要、服务入口和认证方式，不包含凭据、Skill、Eval 任务或候选版本。
 
-Descriptor 不得携带 token、API Key、模型密钥或 MCP 密钥。`authentication.type=bearer` 仅表达凭据要求，实际凭据由接入环境自己的 secret store 提供。`artifactSha256` 用于追踪 Builder 产物来源，不代表本服务必须下载或直接启动构建包。规范和配套示例位于 `contracts/runtime-launcher/`。
+Eval 从已信任的服务调用 `GET /v1/runtime-capabilities`，核对 `finance.runtime-capabilities.v1`、协议版本、平台、能力合同、权限、隔离、容量与摘要，再使用平台自有验证 Skill 完成启动、真实执行和释放。能力声明本身不是运行成功证据。协议字段和正反例见 [合同目录](../contracts/runtime-launcher/README.md)，接入步骤见 [Builder 接入](runtime-builder-integration.md)。
 
 ## 固定接口
 
-- `GET /v1/runtime-capabilities`：返回 Runtime 类型、版本、可选模型、默认模型、特性和资源上限。
-- `POST /v1/runtime-instances`：接收本轮模型、Skill 完整包、候选 MCP 启动描述、运行配置和秘密，返回实例状态。
-- `GET /v1/runtime-instances/{id}`：异步启动时查询状态。
-- `POST /v1/runtime-instances/{id}/execute`：接收单个 case，返回 JSON evidence 或 SSE；每个 case 必须是无历史会话。
-- `DELETE /v1/runtime-instances/{id}`：立即释放实例。Runtime 仍须用 `expiresAt`/TTL 回收失联实例。
+| 接口 | 用途 |
+| --- | --- |
+| `GET /v1/runtime-capabilities` | 发现模型、平台、原生能力、特性和容量 |
+| `POST /v1/runtime-instances` | 用幂等键创建实例，注入本次 Skill 集合与配置 |
+| `GET /v1/runtime-instances/{id}` | 查询准备状态 |
+| `POST /v1/runtime-instances/{id}/execute` | 执行案例，返回 JSON evidence 或 SSE 终态 evidence |
+| `DELETE /v1/runtime-instances/{id}` | 请求释放并读取显式清理回执 |
 
-创建请求必须携带 `idempotency-key`。返回的 `executeEndpoint` 只允许位于已登记 Launcher 的同源、同路径范围内。远程 Launcher 必须使用 HTTPS；`localhost` 和回环 IP 可使用 HTTP。
+HTTP 路径中的 `/v1` 与消息 Schema 独立版本化。远程入口要求 HTTPS，回环地址可用 HTTP；返回的执行地址必须位于已登记入口的同源、同路径范围内。
 
-单次执行失败后，Launcher 可以销毁不可继续使用的实例。Eval 串行使用同侧实例，记录该次失败但不重放
-该 case（它可能已经产生副作用）；执行下一 case 前先删除旧实例，404 视为已清理，再使用新的幂等键
-创建相同配置的隔离实例。清理失败时不创建替代实例，保留句柄供最终清理重试。这个机制不改变业务日期，
-也不允许跨 case 复用会话状态。
+## 实例输入
 
-Skill 同时携带两个摘要：`artifactSha256` 是平台规范文件树的资产身份，用于关联 Variant、运行证据和历史记录；`archiveSha256` 是本次 `archiveBase64` 解码后 ZIP 字节的 SHA-256，用于校验传输完整性。Launcher 必须校验 Variant 与 Skill 的 `artifactSha256` 一致，并独立校验收到的 ZIP 字节匹配 `archiveSha256`，不能用 ZIP 或解包清单重新推导 `artifactSha256`。
+`skills[]` 的每个成员包含身份、版本、入口路径、说明、成员摘要及可选资源；共享依赖放 `assets`。纯指令 Skill 不需要工程 ZIP。可选入口指令和 MCP 启动描述均引用已提供的文件。实例同时携带模型、运行配置、超时和必要秘密。
 
-`skill.skillFile` 是可选的包内文档入口，相对完整 archive 根目录；省略时为 `SKILL.md`。复合交付包可显式使用 `skill/SKILL.md`，保留同级 MCP 工程。Launcher 必须验证入口是安全的现存 `SKILL.md`、内容等于 `instructions`；`files` 的每一项也必须与 archive 中同路径内容一致，不能混入 Skill 目录相对路径别名。文档中的相对引用以入口所在目录为基准，Script/MCP 启动路径仍相对完整包根目录。根目录包不发送该可选字段，保持已有请求形式；嵌套入口需要接收方同步支持此 v1 可选扩展，不支持者应明确拒绝，不能改包路径或猜测入口。
+Launcher 校验原始字节、所有成员摘要、`contentDigest`、入口覆盖、路径与文件冲突，以及 `limits.maxSkills`、文件数、字节数和超时容量。不得通过改写换行、猜测入口或拆分请求绕过检查。所有成员在同一实例工作区可被 Agent 发现；装载不等于实际调用，不要求每个案例调用所有成员。
 
-## 配置与秘密
+`skill`、`variant`、`bundle` 和旧实例 Schema 在传输边界被拒绝。Eval 的内部资产 ZIP 可以转换为标准集合，但不成为第二种 Runtime 接口。
 
-普通配置随实例快照传递。当前过渡版将敏感的服务环境变量和 Runtime context 值放入：
+## 身份与验收
 
-```json
-{"secrets":{"mode":"inline","values":{"mcp.0.API_TOKEN":"..."}}}
-```
+终态 evidence 必须包含正确的 Runtime/模型身份、完整流状态、`contentDigest`、`loadedSkillMembers` 与 `loadedSkills`。工具调用和业务结果由实际执行提供，缺少装载证据不能用模型自述代替。
 
-业务配置只在后端解析，浏览器提交的评测配置仅包含迁移 revision/digest 引用。实例状态、日志事件和最终 evidence 不得返回秘密；Runtime 应在执行前注入，在错误、工具结果和流事件中脱敏。配置摘要包含秘密键名但不包含秘密值，幂等比较仍包含秘密值摘要，避免凭据变化时复用旧实例。
+业务验收冻结 Runtime、Skill/资源、配置、案例和 Judge。输入变化需重新验收；只要 Runtime 能力仍满足需求，就不要求重新构建 Runtime。每个验收案例创建独立实例，案例间不复用会话。可选 `features.multiTurn` 仅表示一个案例内部的原生多轮会话，未声明时拒绝请求。
 
-## 已有原生能力复用
+执行已失败但身份与装载证据可信时，保留真实工具调用和失败信息，可用于开发修复。身份不可信、启动失败或 Judge 失败先排查对应服务，不能据此自动修改 Skill。留出案例不反馈给修复 Agent。
 
-`nativeToolNames` 仅说明工具存在；可选 `nativeCapabilities` 为每项已实现能力提供
-`capabilityId`、调用名 `name`、输入/输出/错误 Schema 与语义 `contract`，以及权限、副作用、隔离
-`constraints`。不公布凭据或宿主路径，不把工具路径约束描述成恶意代码沙箱。
+## 释放与部署生命周期
 
-迁移诊断可读取用户选定的已登记 Runtime 在线声明，将源码需求与目标合同对照。完整匹配时保留原需求并
-记录复用绑定，不伪造 Builder Result；不同语义、证据不足或明确要求重建时不能复用放行。现阶段接收端采用
-保守的合同精确匹配，语义同义但合同不同的情况需要补充诊断，不声称实现任意 JSON Schema 兼容性推理。
-匹配后仍需实际工具验证和业务评估。评测、采用前重新核对在线摘要；源码需求或连接变化使旧绑定失效。
+删除响应里的 `deleted` 只表示收到请求。必须取得匹配实例 ID 的 `finance.eval-cleanup-observation.v1`，且状态为 `RELEASED`，才能确认 Launcher 管理范围内的资源已释放。`PENDING` 继续轮询；`FAILED` 或没有回执保留句柄供重试。空响应、204、404 均不能推断释放成功。不自动重放可能已有副作用的案例。
 
-该字段是现有 v1 的可选增量，不新增注册版本；严格旧客户端需要先升级 Schema。没有合同的旧 Launcher
-仍可使用，但只有工具名不能证明其满足迁移的原生能力需求。
+Launcher 同时管理实例 TTL。部署由独立宿主管理，构建进程退出不会停止部署；停止或撤销部署先停止接收实例，再处理在途执行和释放。重启必须核对制品与进程归属，不能把旧 READY 文件当成当前进程已就绪。
 
-## 可观测契约
+## 秘密和可观测性
 
-跨框架事件遵循 `contracts/runtime-launcher/finance.runtime-observation.v1.schema.json`。Launcher 将框架原生回调映射为稳定的语义 `kind`，并在 `source.nativeEventType` 中保留原始名称；无法取得原生回调时可以生成边界事件，但必须标记 `source.synthesized=true`。经过脱敏的框架原生数据只能放入可选 `native.data`，可移植消费者不得依赖该字段。
+密钥由接入环境的秘密存储解析。允许的 inline secrets 只用于启动注入，状态、日志、错误、事件和证据都必须脱敏。模型凭据不放入 Builder Result，也不回传浏览器。
 
-Launcher 通过 capabilities 的可选 `observability` 字段声明 `core`、`tool` 或 `detailed` 等级以及实际支持的标准事件。字段缺失表示旧版 Launcher，不能推断为 Tool 级可观测。Builder 新交付的 Launcher 必须声明该字段。
+标准观察事件使用 `finance.runtime-observation.v1`；保留框架事件名和是否为边界合成事件。可选工具进程、多轮和 MCP 结果通道证据只能在实际支持时声明。缺少可选观察不应伪造成完整证据；验收依赖终态执行证据和声明的基本保证。
 
-验收只依赖最终 execution evidence 和 `core` 保证；缺失可选事件不得导致验收失败。诊断和优化使用更高等级事件时必须同时记录 Launcher 声明的等级。任何等级都不得输出隐藏思维链、凭证、Authorization Header 或未脱敏的敏感业务值。
+关联日志包括 requestId、buildRequestId、deploymentId、artifactSha256、instanceId、taskId、attemptId、runId、caseId；各服务记录自身边界内的标识。Builder 不需要理解 Eval 的任务含义。
 
-执行失败不等于没有证据。Builder 包后端在已加载并核验 Skill/模型配置后发生的循环失败，可返回
-`status=failed` 的终态 evidence：保留实际已记录的工具调用、稳定错误码及可选
-`metadata.executionBudget.maxAgentIterations`。Launcher 仍须验证模型、Skill、case 文件和配置绑定，
-并销毁该实例；SSE 对应 `execution.failed`，不能发送 `execution.completed`。启动前失败或不能验证
-身份时仍返回失败错误，不伪造终态证据。`streamCompleted` 只说明证据流已结束，不代表任务成功；
-空的部分调用记录不能证明没有调用过工具。循环上限是可选的宿主诊断，不要求其他框架伪造同名能力。
-包后端同时记录 `owner=HARNESS`、`changeMechanism=BUILDER_REBUILD`，因为本实现的上限固化在 Runtime
-源码中，实例请求和测试 case 均无覆盖入口。归因时应保留实际控制边界，不能把宿主预算误当成测试规则。
+## 参考实现
 
-## OpenJiuwen 参考实现边界
-
-复用验收使用可选 v1 `features.multiTurn` / case `turns` 和真实会话回执，详细字段见
-`contracts/runtime-launcher/README.md`。只有明确声明支持的 Launcher 才可执行；不同案例隔离，
-一个案例内的各轮分别调用原生 Agent 并保留该案例的会话、工作区和 MCP 生命周期。
-已有本地参考 worker 未声明该能力，不会把多轮请求降级成一次拼接提示。
-新实例不是重新部署服务；临时句柄只说明同生命周期的状态传递，不是跨生命周期复用证明。
-
-参考 worker 支持 Skill zip 包和包内候选 MCP，校验压缩包大小、文件数及路径。v1 明确声明 `externalMcp: false`，因此拒绝由请求传入任意外部 MCP URL；模型 API Key 和 Base URL 继续只存在于 Runtime 自己的 `.runtime.local.json` 中。
+`integrations/openjiuwen/` 提供标准集合 Worker；它按实际能力声明是否支持外部 MCP、多轮或其他特性。Builder 独立宿主和部署操作见 Builder 的 `docs/migration-builder-deployment.md`。契约是通用边界，参考 Worker 的具体框架能力不是所有 Runtime 都必须伪造的能力。
