@@ -27,7 +27,7 @@ import {
 
 /** One task owns one full workspace. Persisted candidates and run inputs are immutable. */
 export class MigrationTaskService {
-  private active = new Map<string, { controller: AbortController; done: Promise<void>; }>();
+  private operations = new Set<{ taskId: string; controller: AbortController; done: Promise<void>; }>();
   private closing = false;
   private static executing = 0;
   constructor(
@@ -154,11 +154,31 @@ export class MigrationTaskService {
     };
   }
   async start(id: string, kind: BundleAttempt['kind'], input: unknown, requestId?: string) {
+    if (this.closing) bundleError('服务正在关闭', 503);
+    const operation = { taskId: id, controller: new AbortController(), done: Promise.resolve() };
+    let execution = Promise.resolve();
+    // Own registration before any repository await, including duplicate/failed
+    // requests. Each request has its own lifetime so it cannot remove a sibling.
+    this.operations.add(operation);
+    const registration = Promise.resolve().then(() => this.registerAndStart(
+      id, kind, input, operation.controller.signal, done => { execution = done; }, requestId,
+    ));
+    operation.done = registration.then(() => execution, () => {}).finally(() => this.operations.delete(operation));
+    // Background execution can reject if terminal persistence fails. Keep the
+    // original promise observable to lifecycle owners without an unhandled rejection.
+    void operation.done.catch(() => {});
+    return registration;
+  }
+  private async registerAndStart(
+    id: string, kind: BundleAttempt['kind'], input: unknown, signal: AbortSignal,
+    trackExecution: (done: Promise<void>) => void, requestId?: string,
+  ) {
     const parsed = operationSchema.parse(input);
     const requestDigest = canonicalSha256({ kind, input: parsed });
     let duplicate = false,
       reserved = false;
     const task = await this.update(id, (task) => {
+      signal.throwIfAborted();
       const existing = task.attempts.find((a) => a.key === parsed.key);
       if (existing) {
         if (existing.requestDigest !== requestDigest) bundleError('请求标识已用于其他操作');
@@ -213,17 +233,15 @@ export class MigrationTaskService {
       throw error;
     });
     if (duplicate) return task;
-    const attempt = task.attempts[task.attempts.length - 1]!,
-      controller = new AbortController();
+    const attempt = task.attempts[task.attempts.length - 1]!;
     this.logger?.info({
       event: 'bundle_operation_started', taskId: id, attemptId: attempt.id, requestId: attempt.requestId, agentRunId: attempt.agentRunId,
       kind, candidateId: attempt.baseCandidateId
     });
-    const done = this.execute(task, attempt, parsed.phase, controller.signal).finally(() => {
-      this.active.delete(id);
+    const done = this.execute(task, attempt, parsed.phase, signal).finally(() => {
       MigrationTaskService.executing--;
     });
-    this.active.set(id, { controller, done });
+    trackExecution(done);
     return task;
   }
   private async progress(id: string, attemptId: string, message: string) {
@@ -239,6 +257,7 @@ export class MigrationTaskService {
     signal: AbortSignal,
   ) {
     try {
+      signal.throwIfAborted();
       if (attempt.kind === 'ACCEPT') await acceptMigrationTask({ update: this.update.bind(this), readSnapshot: this.readSnapshot.bind(this), progress: this.progress.bind(this), runtime: this.runtime, judge: this.judge, logger: this.logger }, task, attempt, phase, signal);
       else {
         const source = await this.readSnapshot(task.id, null),
@@ -350,16 +369,16 @@ export class MigrationTaskService {
   }
   async cancel(id: string) {
     await this.get(id);
-    const active = this.active.get(id);
-    if (active) {
-      active.controller.abort(new Error('用户取消'));
-      await active.done;
-    }
+    const operations = [...this.operations].filter(operation => operation.taskId === id);
+    for (const operation of operations) operation.controller.abort(new Error('用户取消'));
+    const results = await Promise.allSettled(operations.map(operation => operation.done));
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
     return this.get(id);
   }
   async close() {
     this.closing = true;
-    const active = [...this.active.values()];
+    const active = [...this.operations];
     for (const task of active) task.controller.abort(new Error('服务正在关闭'));
     await Promise.allSettled(active.map((t) => t.done));
   }
