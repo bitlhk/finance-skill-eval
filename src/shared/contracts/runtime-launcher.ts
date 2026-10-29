@@ -64,6 +64,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     toolProcessEvidence:z.boolean().optional(),
     mcpResultChannels:z.boolean().optional(),
     mcpPrepare:z.boolean().optional(),
+    managedMethodProbe:z.boolean().optional(),
   }),
   limits: z.strictObject({
     maxSkills: z.number().int().positive(),

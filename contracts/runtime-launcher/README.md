@@ -79,6 +79,19 @@ The SSE transport is bounded while bytes are being read: an unfinished or comple
 
 Builder verification records are self-reported build evidence. They do not make a deployment usable. Eval records a separate `evalConformance.status=PASSED` only after it has independently exercised capabilities, create, status, execute, terminal evidence validation, and delete against the admitted Launcher target.
 
+When `read_file` is advertised, independent admission still requires that actual
+tool to read a fresh workspace nonce. Without that tool, only an explicit
+`features.managedMethodProbe: true` permits the managed-method probe: Eval installs
+its own tool-free instructions containing a fresh nonce, sends a query without the
+nonce, and verifies the exact answer, complete Skill/member digests, compiled-method
+mapping, zero business tool calls, and owned cleanup. Missing declarations or failed
+evidence reject admission; this is not a fallback after a failed file probe.
+The receipt records `probeKind` as `WORKSPACE_FILE_READ` or
+`MANAGED_METHOD_INSTRUCTION_NONCE`. The latter does not prove file-tool execution
+or any financial capability; contract qualification and business evaluation remain
+separate. No generic file permission is added to a banking Runtime. Old receipts
+without this optional field are retained as-is, not upgraded by inference.
+
 Launcher capabilities may advertise an `observability` object:
 
 - `core` requires execution start, completion and failure events.
