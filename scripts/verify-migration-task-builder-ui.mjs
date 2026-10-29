@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import http from 'node:http';
 import { chromium, expect } from '@playwright/test';
 import { zipSync, unzipSync } from 'fflate';
 import { parse } from 'yaml';
@@ -14,14 +15,38 @@ import { taskBuilderLauncher, taskBuilderResult } from './lib/task-builder-test-
 const host=await taskBuilderLauncher(), data=await mkdtemp(path.join(os.tmpdir(),'builder-ui-'));
 const screenshots=path.resolve('artifacts/task-builder-ui');await mkdir(screenshots,{recursive:true});
 const token='builder-ui-local',checks=[],errors=[];
-const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:data,publicDirectory:path.resolve('web-dist'),accessToken:token,publicDemo:false,
+const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:data,publicDirectory:path.resolve(process.env.MIGRATION_TEST_WEB_DIR||'web-dist'),accessToken:token,publicDemo:false,
   launcherTrust:[{reference:'fixture',label:'测试 Builder',baseUrlPrefix:host.baseUrl,credentialEnv:null}],
   bundlePorts:{agent:async input=>input.mode==='ANALYZE'?{status:'PRODUCED',analysis:{summary:'检查整组依赖',changes:[],missing:[]}}:{status:'PRODUCED',files:input.base.files,delivery:{summary:'整体迁移完成',services:[]}},judge:async()=>({passed:true,reason:'Protocol fixture'})}});
-app.log.level='error';let browser,page;
+app.log.level='error';let browser,page,proxy;
 try{
+  let serviceUrl=await app.listen({host:'127.0.0.1',port:0});
+  const prefix=process.env.MIGRATION_TEST_PREFIX;
+  let gatewayAuthenticated=0;
+  if(prefix){
+    assert(/^\/[a-z-]+\/$/u.test(prefix));
+    const target=serviceUrl;
+    proxy=http.createServer((request,response)=>{
+      if(!request.url.startsWith(prefix)){response.writeHead(404);response.end();return;}
+      const headers={...request.headers};
+      if(process.env.MIGRATION_TEST_PRIVATE_GATEWAY==='true'){
+        headers.authorization=String(headers['x-migration-authorization']||'');
+        delete headers['x-migration-authorization'];
+        if(headers.authorization==='Bearer '+token)gatewayAuthenticated++;
+      }
+      const upstream=http.request(new URL(request.url.slice(prefix.length-1),target),{method:request.method,headers},result=>{
+        response.writeHead(result.statusCode,result.headers);result.pipe(response);
+      });
+      upstream.on('error',()=>{response.writeHead(502);response.end();});request.pipe(upstream);
+    });
+    await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+    serviceUrl=`http://127.0.0.1:${proxy.address().port}${prefix}`;
+    assert.equal((await fetch(new URL('/api/migration-tasks',serviceUrl))).status,404);
+  }
+  assert.equal((await fetch(new URL('api/migration-tasks',serviceUrl))).status,401);
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
   page=await browser.newPage({viewport:{width:1440,height:1100},acceptDownloads:true});page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(await app.listen({host:'127.0.0.1',port:0}));await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();
+  await page.goto(serviceUrl);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();
   await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
   const stage=name=>page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:new RegExp(name)}).click();
   for(const count of [1,3]){ console.log(`Starting ${count} members`);
@@ -58,5 +83,7 @@ try{
     await stage('选择与配置 Runtime');await page.getByRole('button',{name:'切换为已有环境',exact:true}).click();await expect(page.getByText('绑定状态：使用已有环境',{exact:true})).toBeVisible();
     checks.push(`${count}-members: requirements, requirements-only, bad-result-rejected, standard-intake, development, holdout, verified-export, runtime-reuse-after-config-change, explicit-existing-runtime, mobile`);
   }
+  if(prefix&&process.env.MIGRATION_TEST_PRIVATE_GATEWAY==='true')assert(gatewayAuthenticated>0,'Gateway did not receive the private authorization header');
+  checks.push('unauthenticated-api-rejected',...(prefix?['private-subpath', 'outside-prefix-rejected']:[]));
   assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'PASSED',scope:'DETERMINISTIC_UI_PROTOCOL_REGRESSION',checks},null,2));
-}catch(error){if(page){await page.screenshot({path:path.join(screenshots,'failure.png'),fullPage:true});console.log(await page.locator('.bundle-panel').innerText());}throw error;}finally{await browser?.close();await app.close();await host.app.close();await rm(data,{recursive:true,force:true});}
+}catch(error){if(page){await page.screenshot({path:path.join(screenshots,'failure.png'),fullPage:true});console.log(await page.locator('.bundle-panel').innerText());}throw error;}finally{await browser?.close();if(proxy){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}await app.close();await host.app.close();await rm(data,{recursive:true,force:true});}
