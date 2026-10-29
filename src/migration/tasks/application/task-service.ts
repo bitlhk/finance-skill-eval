@@ -267,6 +267,9 @@ export class MigrationTaskService {
             ? 'Agent 正在分析整组 Skill 与共享源码'
             : 'Agent 正在完整工作区改造，可跨 Skill 修改',
         );
+        // Preparation can outlive cancellation. Do not hand an already-aborted
+        // signal to a new agent whose abort listener has not been registered yet.
+        signal.throwIfAborted();
         const result = await this.agent({
           correlation: { taskId: task.id, attemptId: attempt.id, requestId: attempt.requestId, agentRunId: attempt.agentRunId! },
           mode: attempt.kind,

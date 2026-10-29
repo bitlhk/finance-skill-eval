@@ -229,10 +229,12 @@ it('does not publish a partial candidate or alter the source when a member is re
 
 it('deduplicates operation retries, cancels agent work, and rejects stale candidate commands', async () => {
   let release: () => void = () => {};
+  let agentStarted = false;
   const f = await fixture(async (input) => {
     await new Promise<void>((resolve, reject) => {
       release = resolve;
       input.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+      agentStarted = true;
     });
     return { status: 'PRODUCED', analysis: { summary: 'Done', changes: [], missing: [] } };
   });
@@ -241,12 +243,54 @@ it('deduplicates operation retries, cancels agent work, and rejects stale candid
   await f.service.start(f.task.id, 'ANALYZE', input);
   expect((await f.service.get(f.task.id)).attempts).toHaveLength(1);
   await expect(f.service.start(f.task.id, 'GENERATE', input)).rejects.toThrow('其他操作');
+  await vi.waitFor(() => expect(agentStarted).toBe(true));
   await f.service.cancel(f.task.id);
   release();
   expect((await f.service.get(f.task.id)).attempts[0]!.status).toBe('CANCELLED');
   await expect(
     f.service.start(f.task.id, 'ANALYZE', { key: randomUUID(), baseCandidateId: 'old' }),
   ).rejects.toThrow('候选已变化');
+});
+
+it.each(['cancel', 'close'] as const)('does not start an agent when %s interrupts workspace preparation', async (action) => {
+  const agent: BundleAgent = vi.fn(async () => ({
+    status: 'PRODUCED', analysis: { summary: 'Must not run', changes: [], missing: [] },
+  }));
+  const f = await fixture(agent);
+  let release!: () => void;
+  const preparation = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const preparing = new Promise<void>(resolve => { entered = resolve; });
+  let cancelled!: () => void;
+  const cancellationSent = new Promise<void>(resolve => { cancelled = resolve; });
+  const readSnapshot = f.service.readSnapshot.bind(f.service);
+  const read = vi.spyOn(f.service, 'readSnapshot').mockImplementationOnce(async (...args) => {
+    entered();
+    await preparation;
+    return readSnapshot(...args);
+  });
+  const abort = AbortController.prototype.abort;
+  const observeAbort = vi.spyOn(AbortController.prototype, 'abort').mockImplementation(function (reason) {
+    abort.call(this, reason);
+    if (reason instanceof Error && reason.message === (action === 'cancel' ? '用户取消' : '服务正在关闭')) cancelled();
+  });
+  try {
+    await f.service.start(f.task.id, 'ANALYZE', { key: randomUUID(), baseCandidateId: null });
+    await preparing;
+    const stopping = action === 'cancel' ? f.service.cancel(f.task.id) : f.service.close();
+    await cancellationSent;
+    release();
+    await stopping;
+    expect(agent).not.toHaveBeenCalled();
+    const task = await f.service.get(f.task.id);
+    expect(task.attempts[0]!.status).toBe('CANCELLED');
+    expect(task.analysis).toBeUndefined();
+    expect(task.candidates).toHaveLength(0);
+  } finally {
+    release();
+    read.mockRestore();
+    observeAbort.mockRestore();
+  }
 });
 
 it('does not offer holdout evidence to repair', async () => {
