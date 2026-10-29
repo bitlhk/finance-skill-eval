@@ -7,6 +7,7 @@ export const runtimeLauncherEvalConformanceSchema=z.strictObject({
   status:z.literal('PASSED'),testedAt:z.string().datetime(),
   runId:z.string().min(1),instanceSchemaVersion:z.literal('finance.runtime-instance.v1'),probeDigest:z.string().regex(/^[a-f0-9]{64}$/u),
   checks:z.tuple([z.literal('capabilities'),z.literal('create'),z.literal('status'),z.literal('execute'),z.literal('evidence'),z.literal('delete')]),
+  probeKind:z.enum(['WORKSPACE_FILE_READ','MANAGED_METHOD_INSTRUCTION_NONCE']).optional(),
 });
 export const runtimeLauncherDeliverySchema=z.strictObject({
   schemaVersion:z.literal('finance.runtime-launcher-delivery-record.v1'),

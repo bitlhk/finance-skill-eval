@@ -237,6 +237,10 @@
         "mcpPrepare": {
           "type": "boolean",
           "description": "Optional bounded pinned-registry dependency/version preparation probes; not arbitrary install or shell commands."
+        },
+        "managedMethodProbe": {
+          "type": "boolean",
+          "description": "Explicit support for an independently installed, tool-free managed method nonce probe. Does not claim native file-tool access or grant business permissions."
         }
       }
     },
