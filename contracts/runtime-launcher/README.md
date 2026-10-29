@@ -92,6 +92,14 @@ or any financial capability; contract qualification and business evaluation rema
 separate. No generic file permission is added to a banking Runtime. Old receipts
 without this optional field are retained as-is, not upgraded by inference.
 
+A managed probe also requires `limits.minPrimaryTools` and
+`managedMethodProbeToolNames`. This is the server-selected complete atomic
+component to mount, not a client-selected slice of the full catalog. Its names
+must be distinct advertised primary tools and satisfy the minimum. Missing,
+duplicate, auxiliary or unadvertised names reject admission before creation.
+The probe still executes no business tools. Builder and Eval must be upgraded
+together; no missing declaration is inferred from a legacy receipt.
+
 Launcher capabilities may advertise an `observability` object:
 
 - `core` requires execution start, completion and failure events.
