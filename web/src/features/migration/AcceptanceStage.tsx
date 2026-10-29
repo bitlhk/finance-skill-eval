@@ -8,8 +8,8 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
   const builderBlocked = ['PENDING', 'STALE'].includes(task.builderStatus ?? '');
   return (
     <section className="stage-section">
-      <h3>任务验收</h3>
-      <p>{task.source.members.length > 1 ? '整组联合验收：加载全部成员，按业务需要协作。' : '使用当前 Skill 候选完成业务任务验收。'}开发回归反馈可用于修复；独立留出案例不反馈给迁移 Agent。</p>
+      <h3>联合验收</h3>
+      <p>加载全部 Skill，由 Agent 按业务需要协作。开发回归反馈可用于修复；独立留出案例不反馈给迁移 Agent。</p>
       <label>
         验收测试集 JSON
         <textarea
@@ -48,7 +48,7 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
             })
           }
         >
-          开始任务验收
+          开始联合验收
         </button>
         {Boolean(task.suite?.holdoutCases?.length) && (
           <button
@@ -83,7 +83,10 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
           currentCandidateId={task.currentCandidateId}
           configurationMatches={
             JSON.stringify(run.configuration) === JSON.stringify(task.configuration) &&
-            JSON.stringify(run.suite) === JSON.stringify(task.suite)
+            JSON.stringify(run.suite) === JSON.stringify(task.suite) &&
+            run.judgeDigest === task.currentJudgeDigest &&
+            run.runtimeSelectionRevision === task.runtimeSelectionRevision &&
+            run.builderBindingId === (task.selectedRuntimeBuildRequestId ? task.runtimeDelivery?.id : undefined)
           }
         />
       )}
@@ -91,7 +94,7 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
       {run &&
         run.candidateId === task.currentCandidateId &&
         ['FAILED', 'INCOMPLETE'].includes(run.status) &&
-        !run.cases.some(c=>c.failureStage==='JUDGE') &&
+        !run.cases.some(c=>c.failureStage==='JUDGE' || c.failureStage==='RUNTIME') &&
         run.phase === 'development' && (
           <button
             className="button primary"

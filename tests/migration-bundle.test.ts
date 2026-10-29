@@ -274,7 +274,7 @@ it('recovers interrupted operations without promoting incomplete runs', async ()
   const task = await f.start('ACCEPT');
   task.attempts.at(-1)!.status = 'RUNNING';
   task.runs[0]!.status = 'RUNNING';
-  await writeFile(path.join(f.root, 'migration-bundles', 'tasks', task.id + '.json'), JSON.stringify(task));
+  await writeFile(path.join(f.root, 'migration-tasks', 'tasks', task.id + '.json'), JSON.stringify(task));
   await f.service.initialize();
   const restored = await f.service.get(task.id);
   expect(restored.attempts.at(-1)?.status).toBe('INTERRUPTED');
@@ -302,18 +302,18 @@ it('protects bundle APIs in public workspaces and exposes async operations insid
   const f = await fixture(),
     app = Fastify();
   registerBundleMigrationRoutes(app, f.service, false);
-  expect((await app.inject('/api/migration-bundles')).statusCode).toBe(403);
+  expect((await app.inject('/api/migration-tasks')).statusCode).toBe(403);
   expect((await app.inject('/api/migration-tasks')).statusCode).toBe(403);
   expect((await app.inject({method:'POST',url:'/api/migration-tasks/from-legacy/migration-a',payload:{}})).statusCode).toBe(403);
   await app.close();
   const privateApp = Fastify();
   registerBundleMigrationRoutes(privateApp, f.service, true);
-  expect((await privateApp.inject('/api/migration-bundles/' + f.task.id)).json().source.members).toHaveLength(
+  expect((await privateApp.inject('/api/migration-tasks/' + f.task.id)).json().source.members).toHaveLength(
     3,
   );
   const response = await privateApp.inject({
     method: 'POST',
-    url: '/api/migration-bundles/' + f.task.id + '/analysis',
+    url: '/api/migration-tasks/' + f.task.id + '/analysis',
     payload: { key: randomUUID(), baseCandidateId: null },
   });
   expect(response.statusCode).toBe(202);
@@ -351,7 +351,7 @@ it.each([1, 3])('uses the same task lifecycle for %i Skill members with persiste
     const archive = unzipSync(await f.service.export(f.task.id,true));
     expect(JSON.parse(Buffer.from(archive['migration/manifest.json']!).toString()).verified).toBe(true);
     // Old bundle URL and canonical URL address exactly the same persistent record.
-    expect((await app.inject('/api/migration-bundles/'+f.task.id)).json()).toEqual((await app.inject('/api/migration-tasks/'+f.task.id)).json());
+    expect((await app.inject('/api/migration-tasks/'+f.task.id)).json()).toEqual((await app.inject('/api/migration-tasks/'+f.task.id)).json());
   } finally { await app.close(); }
 });
 

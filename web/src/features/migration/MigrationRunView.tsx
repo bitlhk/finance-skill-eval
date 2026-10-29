@@ -19,7 +19,7 @@ export function MigrationRunView({
         <p className="bundle-notice">历史候选的验收记录；当前候选需重新验收。</p>
       )}
       {!configurationMatches && (
-        <p className="bundle-notice">运行配置或测试集已变化；此记录不能作为当前交付的验收结论。</p>
+        <p className="bundle-notice">Runtime 选择、运行配置、测试集或 Judge 已变化；此记录不能作为当前交付的验收结论。</p>
       )}
       {run.cases.map((c) => (
         <details key={c.id}>

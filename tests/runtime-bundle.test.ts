@@ -26,7 +26,9 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
     deleted = 0;
   const keys:string[]=[];const retired=new Set<string>();
   server.get('/v1/runtime-capabilities', () => ({
-    schemaVersion: 'finance.skill-eval.runtime-capabilities.v1',
+    schemaVersion: 'finance.runtime-capabilities.v1',
+    instanceSchemaVersion:'finance.runtime-instance.v1',
+    platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},
     runtime: { type: 'test', version: '1' },
     models: [{ modelId: 'execution', upstreamModelId: 'test' }],
     defaultModelId: 'execution',
@@ -36,9 +38,9 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
       packagedMcp: true,
       externalMcp: true,
       inlineSecrets: true,
-      multiSkill: true,
+
     },
-    limits: { maxArchiveBytes: 8388608, maxFiles: 1000, maxTimeoutMs: 900000, maxConcurrentInstances: 2 },
+    limits: { maxSkills:10, maxArchiveBytes: 8388608, maxFiles: 1000, maxTimeoutMs: 900000, maxConcurrentInstances: 2 },
   }));
   server.post('/v1/runtime-instances', (request,reply) => {
     const key=request.headers['idempotency-key'] as string;
@@ -78,7 +80,7 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
   }));
   server.delete('/v1/runtime-instances/test', (_, reply) => {
     deleted++;retired.add(keys.at(-1)!);
-    return reply.code(204).send();
+    return {cleanup:{schemaVersion:'finance.eval-cleanup-observation.v1',status:'RELEASED',instanceId:'test',scope:'LAUNCHER_MANAGED_RESOURCES',observedAt:new Date().toISOString()}};
   });
   const baseUrl = await server.listen({ port: 0, host: '127.0.0.1' });
   const runtime = new RuntimeLauncherAdapter({
@@ -93,7 +95,7 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
   });
   try {
     await runtime.prepare({ runId: 'run' });
-    expect(created.schemaVersion).toBe('finance.skill-eval.runtime-instance.v2');
+    expect(created.schemaVersion).toBe('finance.runtime-instance.v1');
     expect(created).not.toHaveProperty('skill');expect(created).not.toHaveProperty('variant');expect(created).not.toHaveProperty('bundle');
     expect(created.skills).toHaveLength(2);expect(created.assets).toBeUndefined();
     await runtime.prepare({runId:'run'});expect(keys[1]).toBe(keys[0]);

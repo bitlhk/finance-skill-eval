@@ -1,0 +1,503 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finance.runtime-instance.v1",
+  "title": "One or more inline Skills with optional resources",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "side",
+    "modelId",
+    "environment",
+    "configuration",
+    "secrets",
+    "limits",
+    "skills",
+    "contentDigest"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "finance.runtime-instance.v1"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "side": {
+      "enum": [
+        "left",
+        "right"
+      ]
+    },
+    "modelId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "values"
+      ],
+      "properties": {
+        "mode": {
+          "const": "inline"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeoutMs"
+      ],
+      "properties": {
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "temperature",
+        "top_p",
+        "max_tokens"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "finance.eval-generation.v1"
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "top_p": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768
+        },
+        "thinking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "disabled"
+            }
+          }
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "skillId",
+          "version",
+          "artifactSha256",
+          "skillFile",
+          "instructions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "skillId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifactSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "skillFile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "instructions": {
+            "type": "string",
+            "minLength": 1
+          },
+          "files": {
+            "type": "object",
+            "maxProperties": 1000,
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+            }
+          }
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "maxProperties": 1000,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+      }
+    },
+    "contentDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "entryInstructionsFile": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "contextReference": {
+      "type": "string",
+      "pattern": "^context\\.[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$"
+    },
+    "secretBindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environmentId"
+      ],
+      "properties": {
+        "environmentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredToolNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "availableToolNames": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "harnessToolNames": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "read_file",
+              "glob",
+              "list_files",
+              "bash"
+            ]
+          }
+        },
+        "runtimeToolConfig": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "context",
+            "providers",
+            "tools"
+          ],
+          "properties": {
+            "context": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "sensitive"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "string",
+                      "object",
+                      "array",
+                      "number",
+                      "boolean"
+                    ]
+                  },
+                  "value": {},
+                  "env": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sensitive": {
+                    "type": "boolean"
+                  }
+                },
+                "oneOf": [
+                  {
+                    "required": [
+                      "value"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "env"
+                    ]
+                  }
+                ]
+              }
+            },
+            "providers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "implementation",
+                  "inputs"
+                ],
+                "properties": {
+                  "implementation": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "inputs": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/$defs/contextReference"
+                    }
+                  }
+                }
+              }
+            },
+            "tools": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "contextBindings"
+                ],
+                "properties": {
+                  "contextBindings": {
+                    "type": "object",
+                    "propertyNames": {
+                      "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/$defs/contextReference"
+                    }
+                  },
+                  "authProvider": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "mcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "serverId",
+              "endpoint",
+              "transport",
+              "toolNames"
+            ],
+            "properties": {
+              "serverId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "endpoint": {
+                "type": "string",
+                "format": "uri"
+              },
+              "transport": {
+                "const": "streamable_http"
+              },
+              "toolNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "credentialEnv": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "secretBindings": {
+                "$ref": "#/$defs/secretBindings"
+              }
+            }
+          }
+        },
+        "commandScripts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "path",
+              "kind",
+              "filePaths"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "PYTHON",
+                  "NODE"
+                ]
+              },
+              "filePaths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "inputSchema": {},
+              "launch": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "program",
+                  "args"
+                ],
+                "properties": {
+                  "program": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "candidateMcpServices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "assetDigest",
+              "toolNames",
+              "filePaths",
+              "start"
+            ],
+            "properties": {
+              "assetDigest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "toolNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "filePaths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "start": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1
+              },
+              "prepare": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "environment": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "secretBindings": {
+                "$ref": "#/$defs/secretBindings"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

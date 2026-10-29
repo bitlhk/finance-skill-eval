@@ -21,8 +21,6 @@ export function createBundleRuntime(
     if (probe.status !== 'ready' || !('capabilities' in probe) || !probe.capabilities)
       bundleError('运行环境不可用');
     const capabilities = probe.capabilities;
-    if (!capabilities.features.multiSkill)
-      bundleError('所选 Runtime 尚不支持整组 Skill 装载，请升级 Launcher');
     if (!capabilities.models.some((m) => m.modelId === configuration.modelId))
       bundleError('运行环境不提供所选模型');
     if (configuration.timeoutMs > capabilities.limits.maxTimeoutMs)
@@ -30,6 +28,7 @@ export function createBundleRuntime(
     const skillSet=runtimeSkillSetFromFiles({...snapshot,entryInstructionsFile:configuration.entryInstructionsFile});
     const size=skillSetFileStats(skillSet);
     if (
+      skillSet.skills.length > capabilities.limits.maxSkills ||
       size.bytes > capabilities.limits.maxArchiveBytes ||
       size.count > capabilities.limits.maxFiles
     )

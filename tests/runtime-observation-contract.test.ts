@@ -63,11 +63,11 @@ it("enforces observation profile minimums without requiring optional events for 
 
 it("advertises observation support without breaking legacy Launcher capabilities", () => {
   const legacy = {
-    schemaVersion: "finance.skill-eval.runtime-capabilities.v1",
+    schemaVersion:'finance.runtime-capabilities.v1',instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},
     runtime: { type: "openjiuwen", version: "1" },
     models: [{ modelId: "execution", upstreamModelId: "glm" }], defaultModelId: "execution",
     features: { streaming: true, asyncLaunch: false, packagedMcp: true, externalMcp: true, inlineSecrets: true },
-    limits: { maxArchiveBytes: 1, maxFiles: 1, maxTimeoutMs: 1, maxConcurrentInstances: 1 },
+    limits:{maxSkills:10,maxArchiveBytes: 1, maxFiles: 1, maxTimeoutMs: 1, maxConcurrentInstances: 1 },
   };
   expect(runtimeLauncherCapabilitiesSchema.parse(legacy).observability).toBeUndefined();
   expect(runtimeLauncherCapabilitiesSchema.parse(legacy).supportedSkillModes).toBeUndefined();

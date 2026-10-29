@@ -24,7 +24,7 @@ export function ExportStage({ state }: { state: MigrationWorkbench; }) {
         </button>
         <button
           className="button primary"
-          disabled={!current || busy || Boolean(active)}
+          disabled={!current || !task.verifiedRunId || busy || Boolean(active)}
           onClick={() =>
             void act(() =>
               downloadApi(
@@ -37,7 +37,8 @@ export function ExportStage({ state }: { state: MigrationWorkbench; }) {
           下载已验收交付包
         </button>
       </div>
-      <p>已验收交付要求当前候选、运行配置和测试集与通过记录一致；有留出集时需留出验收通过。</p>
+      <p role="status">{task.verifiedRunId ? '当前版本已有有效验收记录；下载时还会核对 Runtime 在线状态。' : '当前版本尚无有效验收记录，请完成联合验收。'}</p>
+      <p>已验收交付要求当前候选、Runtime、运行配置、测试集和 Judge 与通过记录一致；有留出集时需留出验收通过。</p>
     </section>
   );
 }

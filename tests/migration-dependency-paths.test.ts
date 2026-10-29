@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import {it,expect} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
 import {zipSync,strToU8} from 'fflate';
@@ -75,14 +76,12 @@ it('accepts an explicit bundled resource path verified by schema content, even i
  dep.schemaEvidence=[{path:'assets/rules.json',snippet:'invented content'}];
  expect(analyzeDependencies(raw,inspection,files,[],0,'digest',root).status).toBe('PARTIAL');
 });
-it('passes invocation metadata through the service and does not trust a workspaceRoot inside the model judgement',async()=>{
- const dir=await mkdtemp(path.join(os.tmpdir(),'dependency-path-store-')),root='C:/Temp/current';
- let trust=true;const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:dir,accessToken:'test',publicDemo:false,migrationAnalyzer:async()=>({status:'PRODUCED',payload:{...payload(root),workspaceRoot:root},...(trust?{workspaceRoot:root}:{}),scanner:{scannerDigest:'a'.repeat(64),coverage:Object.keys(files).map(path=>({path,status:'TEXT_INSPECTED'}))}})});
- const headers={authorization:'Bearer test'};
- try{
-  const a=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'SKILL.md':strToU8(SKILL_MD),...Object.fromEntries(Object.entries(files).map(([p,t])=>[p,strToU8(t)]))}))})).json();
-  const p=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:a.assetId,name:'path verification'}})).json();
-  const r=await app.inject({method:'POST',url:`/api/migrations/${p.id}/inspect`,headers});expect(r.statusCode).toBe(200);expect(r.json().dependencyAnalysis.status).toBe('COMPLETE');
-  trust=false;const rejected=await app.inject({method:'POST',url:`/api/migrations/${p.id}/inspect/source`,headers});expect(rejected.statusCode).toBe(200);expect(rejected.json().dependencyAnalysis.status).toBe('PARTIAL');
- }finally{await app.close();await rm(dir,{recursive:true,force:true})}
+it("passes trusted task correlation and source paths to the Agent without accepting a caller workspace root",async()=>{
+
+ const f=await taskHttpFixture();await f.candidate();
+ expect(f.seen[0]?.correlation).toMatchObject({taskId:(await f.get()).id,attemptId:expect.any(String),agentRunId:expect.any(String),requestId:expect.any(String)});
+ expect(Object.keys(f.seen[0]!.source.files)).toEqual(Object.keys(f.files));
+ const result=await f.start('analysis',{workspaceRoot:'C:/outside'});expect(result.statusCode).toBe(400);
+ expect(f.seen).toHaveLength(2);
+
 });

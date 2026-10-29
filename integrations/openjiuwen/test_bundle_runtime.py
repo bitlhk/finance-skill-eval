@@ -33,7 +33,7 @@ def fixture():
                 'artifactSha256': files_digest({p: content for p, content in files.items() if p.startswith('skills/' + name + '/')})}
                for name in ['budget', 'rules']]
     skills=[{**member,'instructions':files[member['skillFile']].decode()} for member in members]
-    return files, {'schemaVersion':'finance.skill-eval.runtime-instance.v2','runId':'bundle-run','side':'right','modelId':'test',
+    return files, {'schemaVersion':'finance.runtime-instance.v1','runId':'bundle-run','side':'right','modelId':'test',
         'skills':skills,'contentDigest':files_digest(files),'assets':{'shared/data.bin':base64.b64encode(files['shared/data.bin']).decode()},
         'environment':{},'configuration':{},'secrets':{'mode':'inline','values':{}},'limits':{'timeoutMs':10000}}
 

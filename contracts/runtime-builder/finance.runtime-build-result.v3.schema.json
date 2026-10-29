@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "finance.runtime-build-result.v2",
+  "$id": "finance.runtime-build-result.v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "finance.runtime-build-result.v2"
+      "const": "finance.runtime-build-result.v3"
     },
     "buildId": {
       "type": "string",
@@ -30,7 +30,7 @@
       "minLength": 1
     },
     "requirementsDigest": {
-      "$ref": "finance.runtime-build-result.v2#/$defs/sha256"
+      "$ref": "finance.runtime-build-result.v3#/$defs/sha256"
     },
     "status": {
       "enum": [
@@ -64,7 +64,7 @@
           "type": "null"
         },
         {
-          "$ref": "finance.runtime-launcher-descriptor.v1"
+          "$ref": "finance.runtime-launcher-descriptor.v2"
         }
       ]
     },
@@ -95,7 +95,7 @@
             "minLength": 1
           },
           "contractDigest": {
-            "$ref": "finance.runtime-build-result.v2#/$defs/sha256"
+            "$ref": "finance.runtime-build-result.v3#/$defs/sha256"
           },
           "verificationIds": {
             "type": "array",
@@ -134,7 +134,7 @@
             ]
           },
           "evidenceSha256": {
-            "$ref": "finance.runtime-build-result.v2#/$defs/sha256"
+            "$ref": "finance.runtime-build-result.v3#/$defs/sha256"
           }
         }
       }
@@ -183,10 +183,7 @@
       "format": "date-time"
     },
     "resultDigest": {
-      "$ref": "finance.runtime-build-result.v2#/$defs/sha256"
-    },
-    "extensions": {
-      "type": "object"
+      "$ref": "finance.runtime-build-result.v3#/$defs/sha256"
     }
   },
   "allOf": [
@@ -204,7 +201,7 @@
       "then": {
         "properties": {
           "launcher": {
-            "$ref": "finance.runtime-launcher-descriptor.v1"
+            "$ref": "finance.runtime-launcher-descriptor.v2"
           }
         }
       },

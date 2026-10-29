@@ -49,7 +49,7 @@ pnpm test:ui:migration
 | 在其他产品中嵌入评测 | [Service 与 Adapter 接入](docs/standalone-service-v1.md)、[示例代码](examples/) |
 | 定位代码与排查问题 | [架构与运维导航](docs/current-architecture.md) |
 
-迁移与 Builder 统一使用支持 1～N 个 Skill 的 v2 协议：直接传递说明，按需附带脚本与共享资源，无需完整工程 ZIP。交付回填后绑定版本，再进行任务验收；v1 仅用于旧任务兼容。
+Builder 接收运行能力、平台和容量需求，交付独立运行的 Runtime。启动实例时通过 `skills[]` 注入 1～N 个 Skill 及可选资源，无需完整工程 ZIP。Skill 更新后复用满足能力要求的 Runtime，重新进行联合验收。新服务只接受标准协议，不转换旧任务。
 
 ## 目录
 

@@ -19,7 +19,7 @@ import {
   bundleDiff,
   currentCandidate,
   readText,
-  taskBuilderStatus, requireTaskBuilderBinding, requireBuilderEnvironment,
+  taskBuilderStatus, requireTaskBuilderBinding, requireBuilderEnvironment, verifiedRun,
   type BundleTask,
   type BundleAttempt,
   type BundleFiles,
@@ -62,15 +62,19 @@ export class MigrationTaskService {
       }
     }
   }
-  async list() { return (await this.repository.list()).map(t => ({ ...t, ...(t.selectedRuntimeBuildRequestId ? { builderStatus: taskBuilderStatus(t) } : {}) })); }
-  async get(id: string) { const task = await this.repository.get(id); return { ...task, ...(task.selectedRuntimeBuildRequestId ? { builderStatus: taskBuilderStatus(task) } : {}) }; }
+  private view(task: BundleTask): BundleTask {
+    const current = { ...task, currentJudgeDigest: this.judge.identity?.(), builderStatus: taskBuilderStatus(task) };
+    return { ...current, verifiedRunId: verifiedRun(current)?.id };
+  }
+  async list() { return (await this.repository.list()).map(task => this.view(task)); }
+  async get(id: string) { return this.view(await this.repository.get(id)); }
   readSnapshot(id: string, candidateId: string | null) { return this.repository.readSnapshot(id, candidateId); }
-  private async update(id: string, change: (task: BundleTask) => void | Promise<void>) { const task = await this.repository.update(id, change); return { ...task, ...(task.selectedRuntimeBuildRequestId ? { builderStatus: taskBuilderStatus(task) } : {}) }; }
+  private async update(id: string, change: (task: BundleTask) => void | Promise<void>) { return this.view(await this.repository.update(id, change)); }
   private idle(task: BundleTask) {
     if (task.attempts.some((a) => a.status === 'RUNNING')) bundleError('任务正在执行，请等待或取消当前操作');
   }
   create(input: unknown, requestId?: string) { return this.createFromAssets(input, requestId); }
-  private async createFromAssets(input: unknown, requestId?: string, origin?: BundleTask['origin']) {
+  private async createFromAssets(input: unknown, requestId?: string) {
     const parsed = createBundleSchema.parse(input);
     if (new Set(parsed.sourceAssetIds).size !== parsed.sourceAssetIds.length)
       bundleError('不能重复选择同一资产', 400);
@@ -87,24 +91,20 @@ export class MigrationTaskService {
       if (Buffer.from(content,'base64').toString('base64') !== content) bundleError('依赖文件编码无效',400);
       files[name] = content;
     }
-    return this.createFiles(parsed, files, requestId, origin);
-  }
-  async importLegacy(input: unknown, origin: NonNullable<BundleTask['origin']>, requestId?: string) {
-    return this.createFromAssets(input, requestId, origin);
+    return this.createFiles(parsed, files, requestId);
   }
   async upload(input: unknown, zip: Buffer, requestId?: string) {
     const parsed = createBundleSchema.omit({ sourceAssetIds: true }).parse(input);
     return this.createFiles(parsed, decodeBundleZip(zip), requestId);
   }
-  private async createFiles(input: { name: string; goal: string; target: string; }, files: BundleFiles, requestId?: string, origin?: BundleTask['origin']) {
+  private async createFiles(input: { name: string; goal: string; target: string; }, files: BundleFiles, requestId?: string) {
     const id = 'bundle-' + randomUUID(),
       source = snapshot(files, 'source');
     const { files: _, ...sourceInfo } = source;
     const task: BundleTask = {
-      schemaVersion: 'finance.skill-migration.bundle.v1',
+      schemaVersion: 'finance.skill-migration.task.v1',
       id,
       name: input.name, goal: input.goal, target: input.target,
-      ...(origin ? { origin } : {}),
       requestId,
       createdAt: new Date().toISOString(),
       source: sourceInfo,
@@ -144,10 +144,12 @@ export class MigrationTaskService {
       signal: AbortSignal.timeout(60000),
     });
     requireBuilderEnvironment(task, result.environmentSnapshot);
+    try { await result.runtime.prepare?.({runId:'startup-'+randomUUID(),signal:AbortSignal.timeout(task.configuration.timeoutMs)}); }
+    finally { await result.runtime.cleanup?.(); }
     return {
       status: 'READY',
-      scope: 'CAPABILITIES_AND_BINDINGS',
-      message: '运行能力及配置检查通过；实际执行由联合验收核验',
+      scope: 'INSTANCE_START_AND_RELEASE',
+      message: '全部 Skill 已完成启动检查并释放实例；业务结果由联合验收核验',
       runtime: result.environmentSnapshot,
     };
   }
@@ -181,6 +183,8 @@ export class MigrationTaskService {
           bundleError('独立留出验收记录不提供给修复 Agent，请使用开发回归案例重现问题');
         if(run.cases.some(c=>c.failureStage==='JUDGE'))
           bundleError('评审服务未完成评分，请先修复评审服务后重新验收，不应据此修改候选');
+        if(run.cases.some(c=>c.failureStage==='RUNTIME'))
+          bundleError('Runtime 未完成可信执行，请先排查启动、模型连接和证据，再重新验收');
       }
       if (kind === 'ACCEPT') {
         requireTaskBuilderBinding(task);
@@ -360,5 +364,5 @@ export class MigrationTaskService {
     const bundle = await this.readSnapshot(id, candidateId);
     return { path: name, content: readText(bundle.files, name) };
   }
-  export(id: string, verified = false) { return exportMigrationTask(this.repository, this.runtime, id, verified); }
+  export(id: string, verified = false) { return exportMigrationTask(this.repository, this.runtime, id, verified, this.judge.identity?.()); }
 }

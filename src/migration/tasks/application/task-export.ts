@@ -2,11 +2,11 @@ import { assertMigrationExportSafe } from '../../domain/migration-export-safety.
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { currentCandidate, verifiedRun, bundleError, bundleZip, requireBuilderEnvironment, taskBuilderStatus } from '../domain/task-model.js';
 import type { MigrationTaskRepository, BundleRuntimeFactory } from './task-ports.js';
-export async function exportMigrationTask(repository: MigrationTaskRepository, runtime: BundleRuntimeFactory, id: string, verified = false) {
+export async function exportMigrationTask(repository: MigrationTaskRepository, runtime: BundleRuntimeFactory, id: string, verified = false, judgeDigest?: string) {
   const task = await repository.get(id),
     candidate = currentCandidate(task);
   if (!candidate) bundleError('尚未生成候选');
-  const run = verifiedRun(task);
+  const run = verifiedRun({...task, currentJudgeDigest: judgeDigest});
   if (verified && !run) bundleError('当前候选及配置尚未通过所需联合验收');
   const bundle = await repository.readSnapshot(id, candidate.id);
   if (verified && run) {

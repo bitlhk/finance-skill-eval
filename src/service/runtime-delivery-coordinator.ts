@@ -15,8 +15,7 @@ export class RuntimeDeliveryCoordinator {
     return this.deliveries.run(key,async()=>{
       const requirements=await this.migrations.runtimeRequirements(migrationId,result.launcher?.runtime.type);
       if(!requirements||!('requestId' in requirements))throw Object.assign(new Error('当前迁移没有可接收的 Runtime Builder 能力需求。'),{statusCode:409});
-      const conformance=await this.migrations.conformanceCandidate(migrationId);
-      const accepted=await this.environments.acceptBuilderDelivery({...input,result,requirements,conformance});
+      const accepted=await this.environments.acceptBuilderDelivery({...input,result,requirements});
       const delivery=accepted.environment.delivery!;
       try{
         await this.migrations.bindRuntimeDelivery(migrationId,{...delivery,environmentId:accepted.environment.environmentId});

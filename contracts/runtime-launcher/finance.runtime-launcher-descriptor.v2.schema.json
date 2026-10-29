@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "finance.runtime-launcher-descriptor.v1",
+  "$id": "finance.runtime-launcher-descriptor.v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "finance.runtime-launcher-descriptor.v1"
+      "const": "finance.runtime-launcher-descriptor.v2"
     },
     "deploymentId": {
       "type": "string",
@@ -63,12 +63,12 @@
       ],
       "properties": {
         "capabilities": {
-          "const": "finance.skill-eval.runtime-capabilities.v1"
+          "const": "finance.runtime-capabilities.v1"
         },
         "instance": {
           "enum": [
-            "finance.skill-eval.runtime-instance.v1",
-            "finance.skill-eval.runtime-instance.v2"
+            "finance.runtime-instance.v1",
+            "finance.runtime-instance.v1"
           ]
         },
         "execution": {

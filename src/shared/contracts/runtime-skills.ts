@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import type { RuntimeBundle } from './runtime-bundle.js';
+import type { ResolvedSkillSource } from '../../direct-model-runtime.js';
 import { runtimeSkillMemberSchema, type RuntimeSkillMember } from './runtime-skill-member.js';
 
 const base64 = z.string().refine(value => /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value), 'Invalid base64 file');
@@ -41,10 +41,23 @@ export function skillSetFileStats(set: RuntimeSkillSet) {
   for (const skill of set.skills) Object.assign(files, skill.files, { [skill.skillFile]: Buffer.from(skill.instructions).toString('base64') });
   return { count: Object.keys(files).length, bytes: Object.values(files).reduce((sum,value) => sum + Buffer.from(value, 'base64').length, 0) };
 }
-/** Compatibility for callers holding an old frozen ZIP; emitted requests are always inline v2. */
-export async function legacyBundleToSkills(bundle: RuntimeBundle): Promise<RuntimeSkillSet> {
-  const { unzipSync } = await import('fflate');
-  const archive = Buffer.from(bundle.archiveBase64, 'base64');
-  if (createHash('sha256').update(archive).digest('hex') !== bundle.archiveSha256) throw new Error('Archive digest mismatch');
-  return runtimeSkillSetFromFiles({ ...bundle, files: Object.fromEntries(Object.entries(unzipSync(archive)).map(([p,b]) => [p,Buffer.from(b).toString('base64')])) });
+
+/** Import a selected asset into the same collection model used by the task workspace. */
+export async function runtimeSkillSetFromAsset(asset: ResolvedSkillSource): Promise<RuntimeSkillSet> {
+  const entry = asset.skillFile ?? 'SKILL.md';
+  let files: Record<string, string>;
+  if (asset.archiveBase64) {
+    const { unzipSync } = await import('fflate');
+    const raw = Buffer.from(asset.archiveBase64, 'base64');
+    if (createHash('sha256').update(raw).digest('hex') !== asset.archiveSha256) throw new Error('Asset archive digest mismatch');
+    files = Object.fromEntries(Object.entries(unzipSync(raw)).filter(([name]) => !name.endsWith('/')).map(([name, bytes]) => [name, Buffer.from(bytes).toString('base64')]));
+  } else files = Object.fromEntries(Object.entries({...asset.files, [entry]: asset.instructions}).map(([name, value]) => [name, Buffer.from(value).toString('base64')]));
+  const digest = (selected: Record<string,string>) => {
+    const hash = createHash('sha256');
+    for (const name of Object.keys(selected).sort()) hash.update(name).update('\0').update(Buffer.from(selected[name]!, 'base64')).update('\0');
+    return hash.digest('hex');
+  };
+  const prefix = entry.slice(0, -'SKILL.md'.length);
+  const own = Object.fromEntries(Object.entries(files).filter(([name]) => name.startsWith(prefix)));
+  return runtimeSkillSetFromFiles({digest: digest(files), files, members:[{id:'selected-skill',skillId:asset.skillId,version:asset.version,skillFile:entry,artifactSha256:digest(own)}]});
 }

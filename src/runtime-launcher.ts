@@ -8,8 +8,8 @@ import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeCleanupObservationSchema, runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 import { runtimeObservationEventSchema, type RuntimeObservationEvent } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
-import {type RuntimeBundle} from './shared/contracts/runtime-bundle.js';
-import { runtimeSkillSetSchema, legacyBundleToSkills, skillMembers, type RuntimeSkillSet } from './shared/contracts/runtime-skills.js';
+import { runtimeSkillSetSchema, runtimeSkillSetFromAsset, skillSetFileStats, skillMembers, type RuntimeSkillSet } from './shared/contracts/runtime-skills.js';
+import { RUNTIME_INSTANCE_SCHEMA_VERSION } from './shared/contracts/runtime-protocol-versions.js';
 
 export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 export type { RuntimeLauncherCapabilities } from './shared/contracts/runtime-launcher.js';
@@ -39,9 +39,7 @@ type RuntimeInstanceCommon={
   configuration:Record<string,string>;secrets:RuntimeInstanceSecrets;limits:{timeoutMs:number};
   generation?:z.infer<typeof launcherGenerationSchema>;
 };
-export type RuntimeInstanceRequest =
-  | (RuntimeInstanceCommon & RuntimeSkillSet & {schemaVersion:'finance.skill-eval.runtime-instance.v2'})
-  | (RuntimeInstanceCommon & {schemaVersion:'finance.skill-eval.runtime-instance.v1';variant:SkillVariant;skill:ResolvedSkillSource|null});
+export type RuntimeInstanceRequest = RuntimeInstanceCommon & RuntimeSkillSet & {schemaVersion: typeof RUNTIME_INSTANCE_SCHEMA_VERSION};
 
 
 function endpoint(base:string,path:string):URL{return new URL(path,new URL(base));}
@@ -197,29 +195,29 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   private generation:z.infer<typeof launcherGenerationSchema>|undefined;
   private failedCaseId:string|null=null;
   constructor(private readonly options:{baseUrl:string;headers?:Record<string,string>;side:EvaluationSide;model:ModelRef;variant:SkillVariant;
-    skill:ResolvedSkillSource|null;skillSet?:RuntimeSkillSet;bundle?:RuntimeBundle;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
+    skill:ResolvedSkillSource|null;skillSet?:RuntimeSkillSet;environment:RuntimeEnvironmentDescriptor;configuration?:Record<string,string>;secrets?:RuntimeInstanceSecrets;timeoutMs:number;requireStatusPoll?:boolean;stopAfterFailure?:boolean}){
     this.options.baseUrl=runtimeLauncherBaseUrlSchema.parse(options.baseUrl);this.adapterId=`runtime-launcher:${new URL(this.options.baseUrl).origin}:${options.side}`;
   }
   async prepare(context:RuntimePrepareContext):Promise<void>{
     const signal = context.signal ? AbortSignal.any([context.signal, AbortSignal.timeout(this.options.timeoutMs)]) : AbortSignal.timeout(this.options.timeoutMs);
     const extracted=extractSecrets(this.options.environment,this.options.secrets);
-    if(this.options.bundle && !this.options.skillSet)this.options.skillSet=await legacyBundleToSkills(this.options.bundle);
-    if(this.options.skillSet){
-      runtimeSkillSetSchema.parse(this.options.skillSet);
-      if(this.options.skill)throw new Error('v2 skills[] cannot be combined with the legacy skill field');
-      const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-capabilities'),{headers:this.options.headers,redirect:'error',signal});
-      if(!response.ok||runtimeLauncherCapabilitiesSchema.parse(await response.json()).features.multiSkill!==true)throw new Error('目标 Runtime 未声明多 Skill 装载能力');
-    }
     const parameters=this.options.model.parameters;
     const generation=Object.keys(parameters).length
       ? {...launcherGenerationSchema.omit({schemaVersion:true}).parse(parameters),schemaVersion:'finance.eval-generation.v1' as const} : undefined;
     this.generation=generation;
+    if (!this.options.skillSet && this.options.skill) this.options.skillSet = await runtimeSkillSetFromAsset(this.options.skill);
+    if (!this.options.skillSet) throw new Error('Runtime 启动需要 Skill 集合');
+    runtimeSkillSetSchema.parse(this.options.skillSet);
+    const capabilityResponse=await fetch(endpoint(this.options.baseUrl,'v1/runtime-capabilities'),{headers:this.options.headers,redirect:'error',signal});
+    if (!capabilityResponse.ok) throw await responseError(capabilityResponse);
+    const capabilities=runtimeLauncherCapabilitiesSchema.parse(await readBoundedJson(capabilityResponse,262144,'Runtime capabilities'));
+    const stats=skillSetFileStats(this.options.skillSet);
+    if (this.options.skillSet.skills.length>capabilities.limits.maxSkills || stats.count>capabilities.limits.maxFiles || stats.bytes>capabilities.limits.maxArchiveBytes || this.options.timeoutMs>capabilities.limits.maxTimeoutMs)
+      throw new Error('实例输入超过 Runtime 容量限制');
     const common:RuntimeInstanceCommon={runId:context.runId,side:this.options.side,modelId:this.options.model.modelId,
       environment:extracted.environment,configuration:this.options.configuration??{},secrets:extracted.secrets,
       limits:{timeoutMs:this.options.timeoutMs},...(generation?{generation}:{})};
-    const request:RuntimeInstanceRequest=this.options.skillSet
-      ? {...common,schemaVersion:'finance.skill-eval.runtime-instance.v2',...this.options.skillSet}
-      : {...common,schemaVersion:'finance.skill-eval.runtime-instance.v1',variant:this.options.variant,skill:this.options.skill};
+    const request:RuntimeInstanceRequest={...common,schemaVersion:RUNTIME_INSTANCE_SCHEMA_VERSION,...this.options.skillSet};
     const idempotencyKey=fingerprint({leaseId:this.leaseId,runId:context.runId,side:this.options.side,configuration:fingerprint(request),...(this.incarnation?{incarnation:this.incarnation}:{})});
     const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
       headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
@@ -285,11 +283,10 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
         throw new Error('Runtime instance did not verify the requested generation configuration');
     }
     if(evidence.status==='failed'&&!evidence.runtimeIdentityVerified)throw new Error(evidence.error??'Runtime instance stopped before producing verified execution evidence');
-    if(this.options.skill&&evidence.metadata.skillArtifactSha256!==this.options.skill.artifactSha256)throw new Error('Runtime instance loaded a different Skill digest');
     if(this.options.skillSet){
       const set=this.options.skillSet, bundle={digest:set.contentDigest,members:skillMembers(set)};
-      const observed=z.array(z.object({id:z.string(),skillId:z.string(),version:z.string(),artifactSha256:z.string(),skillFile:z.string()})).parse((evidence.metadata.loadedSkillMembers??(this.options.bundle?evidence.metadata.loadedBundleMembers:undefined)));
-      if((evidence.metadata.contentDigest??(this.options.bundle?evidence.metadata.bundleDigest:undefined))!==bundle.digest||observed.length!==bundle.members.length
+      const observed=z.array(z.object({id:z.string(),skillId:z.string(),version:z.string(),artifactSha256:z.string(),skillFile:z.string()})).parse(evidence.metadata.loadedSkillMembers);
+      if(evidence.metadata.contentDigest!==bundle.digest||observed.length!==bundle.members.length
         ||fingerprint([...observed].sort((a,b)=>a.id.localeCompare(b.id)))!==fingerprint([...bundle.members].sort((a,b)=>a.id.localeCompare(b.id)))
         ||bundle.members.some(member=>!evidence.loadedSkills.some(item=>item.skillId===member.skillId&&item.version===member.version)))
         throw new Error('整组 Skill 装载清单或内容摘要与本次候选不一致');
@@ -340,6 +337,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       if(parsed.success&&parsed.data.instanceId===instance.instanceId&&parsed.data.status==='PENDING'&&attempt<9){await new Promise(resolve=>setTimeout(resolve,200));continue;}
       break;
     }
+    if(this.cleanupObservation.status!=='RELEASED')throw new Error('Runtime 未提供资源释放成功的回执');
     this.instance=null;this.executeUrl=null;
     }finally{this.cleanupReceipts.set(instance.instanceId,{...this.cleanupObservation});}
   }

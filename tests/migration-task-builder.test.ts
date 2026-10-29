@@ -39,7 +39,7 @@ async function setup(count=3) {
   const url='/api/migration-tasks/'+task.id;
   async function request(overrides:Record<string,unknown>={}){
     task=await service.get(task.id);
-    const response=await app.inject({method:'POST',url:url+'/runtime-build-requests',payload:{baseCandidateId:task.currentCandidateId,runtimeType:'openjiuwen',timeoutMs:10000,harnessTools:[],...overrides}});
+    const response=await app.inject({method:'POST',url:url+'/runtime-build-requests',payload:{baseCandidateId:task.currentCandidateId,runtimeType:'openjiuwen',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},timeoutMs:10000,harnessTools:[],...overrides}});
     expect(response.statusCode,response.body).toBe(200);
     task=response.json();return service.builder!.requirements(task.id);
   }
@@ -47,15 +47,15 @@ async function setup(count=3) {
   return {root,options,host,environments,service,app,url,id:task.id,request,accept,finish,logs};
 }
 
-it.each([1,3])('binds %i members through v2 lifecycle, persists, accepts and exports the exact Builder revision',async count=>{
+it.each([1,3])('binds %i members through independent Runtime admission, persists, accepts and exports the exact Builder revision',async count=>{
   const f=await setup(count),req=await f.request();
-  expect((req.extensions!.migrationTask as any).skills).toHaveLength(count);
-  const yaml=await f.app.inject(f.url+'/runtime-requirements.yaml');expect(yaml.statusCode).toBe(200);expect(yaml.body).toContain('finance.skill-eval.runtime-instance.v2');
-  const source=await f.app.inject(f.url+'/runtime-build-requests/'+req.requestId+'/source.zip');expect(Object.keys(unzipSync(source.rawPayload))).toHaveLength(count);
+  expect(req.executionRequirements.limits.maxSkills).toBe(count);expect(req).not.toHaveProperty('source');expect(req).not.toHaveProperty('extensions');
+  const yaml=await f.app.inject(f.url+'/runtime-requirements.yaml');expect(yaml.statusCode).toBe(200);expect(yaml.body).toContain('finance.runtime-instance.v1');
+  const source=await f.app.inject(f.url+'/runtime-build-requests/'+req.requestId+'/source.zip');expect(source.statusCode).toBe(404);
   const result=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256);
   const first=await f.accept(result);expect(first.statusCode,first.body).toBe(200);
   const bound=first.json() as BundleTask;expect(bound.builderStatus).toBe('BOUND');expect(bound.runtimeDeliveries).toHaveLength(1);
-  expect(f.host.lifecycle).toEqual(['create','status','execute','delete']);expect(f.host.creations[0].schemaVersion).toBe('finance.skill-eval.runtime-instance.v2');expect(f.host.creations[0].skills).toHaveLength(count);expect(f.host.instances.size).toBe(0);
+  expect(f.host.lifecycle).toEqual(['create','status','execute','delete']);expect(f.host.creations[0].schemaVersion).toBe('finance.runtime-instance.v1');expect(f.host.creations[0].skills).toHaveLength(1);expect(f.host.instances.size).toBe(0);
   const repeated=await f.accept(result);expect(repeated.statusCode,repeated.body).toBe(200);expect(repeated.json().runtimeDelivery.id).toBe(bound.runtimeDelivery!.id);expect(repeated.json().runtimeDeliveries).toHaveLength(1);
   await f.service.saveSuite(f.id,{name:'Suite',cases:[{id:'dev',input:'Run business task',criteria:['BUSINESS_OK']}],holdoutCases:[{id:'held',input:'Independent task',criteria:['BUSINESS_OK']}]});
   await f.finish('ACCEPT');await expect(f.service.export(f.id,true)).rejects.toThrow(/尚未通过/);
@@ -63,17 +63,17 @@ it.each([1,3])('binds %i members through v2 lifecycle, persists, accepts and exp
   const pack=unzipSync(await f.service.export(f.id,true));expect(pack['migration/runtime-build-result.json']).toBeDefined();expect(JSON.parse(Buffer.from(pack['migration/manifest.json']!).toString()).builderBinding.id).toBe(bound.runtimeDelivery!.id);
   const restarted=createMigrationTaskService(f.options);await restarted.initialize();expect((await restarted.get(f.id)).runtimeDelivery).toEqual(bound.runtimeDelivery);await restarted.close();
   expect(f.logs.some(x=>x.event==='migration_builder_delivery_bound'&&x.buildRequestId===req.requestId)).toBe(true);
-  f.host.caps.runtime.version='changed';await expect(f.service.checkRuntime(f.id)).rejects.toThrow(/环境已变化/);await expect(f.service.export(f.id,true)).rejects.toThrow(/环境已变化/);
+  f.host.caps.runtime.version='changed';await expect(f.service.checkRuntime(f.id)).rejects.toThrow(/changed|环境已变化/);await expect(f.service.export(f.id,true)).rejects.toThrow(/changed|环境已变化/);
 });
 
 it.each(['trust','digest','members','cleanup','v1','receipt','model','partial'])('rejects %s without binding or registering an unverified environment',async mode=>{
   const f=await setup();const req=await f.request();
-  if(mode==='v1')f.host.caps.features.multiSkill=false;
+  if(mode==='v1')f.host.caps.instanceSchemaVersion='finance.skill-eval.runtime-instance.v1';
   if(mode==='members')f.host.control.badMembers=true;
   if(mode==='cleanup')f.host.control.cleanupFailure=true;
   let result=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256);
   if(mode==='digest')result.requirementsDigest='a'.repeat(64);
-  if(mode==='receipt'){delete result.extensions;const {resultDigest,...body}=result;result=withResultDigest(body);}
+  if(mode==='receipt'){const {resultDigest,...body}=result;result=withResultDigest({...body,verifications:[]});}
   if(mode==='partial'){const {resultDigest,...body}=result;result=withResultDigest({...body,status:'PARTIAL',launcher:null});}
   if(mode==='model') { f.host.caps.models=[{modelId:'other',upstreamModelId:'fixture'}]; f.host.caps.defaultModelId='other'; }
   const response=await f.accept(result,mode==='trust'?'untrusted':'builder-local');expect(response.statusCode,response.body).toBe(400);
@@ -81,27 +81,29 @@ it.each(['trust','digest','members','cleanup','v1','receipt','model','partial'])
   if(['members','cleanup'].includes(mode))expect(f.host.lifecycle.at(-1)).toBe('delete');
 });
 
-it('invalidates changed candidates, configurations and superseded requests, preserving history',async()=>{
+it('reuses the Runtime across candidate and configuration changes but invalidates acceptance',async()=>{
   const f=await setup(1),req=await f.request(),result=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256);
   expect((await f.accept(result)).statusCode).toBe(200);
+  await f.service.saveSuite(f.id,{name:'Suite',cases:[{id:'dev',input:'Run',criteria:['BUSINESS_OK']}]});
+  await f.finish('ACCEPT');await f.service.export(f.id,true);
   const bound=await f.service.get(f.id);await f.service.configure(f.id,{...bound.configuration,timeoutMs:11000});
-  expect((await f.service.get(f.id)).builderStatus).toBe('STALE');expect((await f.accept(result)).statusCode).toBe(409);
-  const stalePack=unzipSync(await f.service.export(f.id));const staleManifest=JSON.parse(Buffer.from(stalePack['migration/manifest.json']!).toString());
-  expect(staleManifest.builderStatus).toBe('STALE');expect(staleManifest.builderBinding).toBeUndefined();expect(staleManifest.verified).toBe(false);
-  await expect(f.service.start(f.id,'ACCEPT',{key:randomUUID(),baseCandidateId:bound.currentCandidateId})).rejects.toThrow(/Builder/);
-  const req2=await f.request();expect((await f.accept(result)).statusCode).toBe(409);
-  const result2=taskBuilderResult(req2,f.host,withResultDigest,canonicalSha256,'2');await f.finish('GENERATE');expect((await f.accept(result2)).statusCode).toBe(409);
-  expect((await f.service.get(f.id)).runtimeDeliveries).toHaveLength(1);
-  const oldZip=await f.app.inject(f.url+'/runtime-build-requests/'+req.requestId+'/source.zip');expect(oldZip.statusCode).toBe(200);
-  const switched=await f.app.inject({method:'DELETE',url:f.url+'/runtime-builder-selection'});expect(switched.statusCode).toBe(200);expect(switched.json().selectedRuntimeBuildRequestId).toBeUndefined();expect(switched.json().runtimeDeliveries).toHaveLength(1);
+  expect((await f.service.get(f.id)).builderStatus).toBe('BOUND');
+  await expect(f.service.export(f.id,true)).rejects.toThrow(/尚未通过/);
+  await f.finish('GENERATE');expect((await f.service.get(f.id)).builderStatus).toBe('BOUND');
+  expect((await f.service.get(f.id)).runtimeDelivery?.id).toBe(bound.runtimeDelivery!.id);
+  await f.service.checkRuntime(f.id);
+  expect(f.host.creations.at(-1).skills).toHaveLength(1);
+  await f.request();expect((await f.accept(result)).statusCode).toBe(409);
+  const switched=await f.app.inject({method:'DELETE',url:f.url+'/runtime-builder-selection'});
+  expect(switched.statusCode).toBe(200);expect(switched.json().runtimeDeliveries).toHaveLength(1);
 });
 
 it('does not accept another task receipt and never exports holdout cases in requirements',async()=>{
   const f=await setup();await f.service.saveSuite(f.id,{name:'hidden',cases:[{id:'dev',input:'DEVELOPMENT_SECRET',criteria:['dev']}],holdoutCases:[{id:'hidden',input:'HOLDOUT_SECRET',criteria:['secret']}]});
   const req=await f.request();expect(JSON.stringify(req)).not.toMatch(/HOLDOUT_SECRET|DEVELOPMENT_SECRET/);
   const original=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256);const {resultDigest,...body}=original;
-  const foreign=withResultDigest({...body,extensions:{migrationTask:{...body.extensions.migrationTask,taskId:'bundle-another'}}});
-  expect((await f.accept(foreign)).statusCode).toBe(400);expect(f.host.creations).toHaveLength(0);
+  const foreign=withResultDigest({...body,requestId:'foreign-request'});
+  expect((await f.accept(foreign)).statusCode).toBe(409);expect(f.host.creations).toHaveLength(0);
 });
 
 it('serializes duplicate deliveries and a concurrent configuration change',async()=>{
@@ -110,7 +112,7 @@ it('serializes duplicate deliveries and a concurrent configuration change',async
   const accepting=f.accept(result);await expect.poll(()=>f.host.lifecycle.includes('execute')).toBe(true);
   const configuring=f.service.configure(f.id,{environmentId:'another-environment',modelId:'execution',timeoutMs:10000,harnessTools:[]});
   release();expect((await accepting).statusCode).toBe(200);await configuring;
-  expect((await f.service.get(f.id)).builderStatus).toBe('STALE');expect((await f.service.get(f.id)).runtimeDeliveries).toHaveLength(1);
+  expect((await f.service.get(f.id)).builderStatus).toBe('BOUND');expect((await f.service.get(f.id)).runtimeDeliveries).toHaveLength(1);
   f.host.control.executeGate=null;
   const next=await f.request(),nextResult=taskBuilderResult(next,f.host,withResultDigest,canonicalSha256,'next');
   const responses=await Promise.all([f.accept(nextResult),f.accept(nextResult)]);expect(responses.map(r=>r.statusCode)).toEqual([200,200]);
@@ -139,15 +141,29 @@ it('checks required native contracts against the actual Launcher declaration',as
   const f=await setup();const requirement={id:'read-document',name:'read_document',required:true,reason:'read business files',contract:{inputSchema:{type:'object'},outputSchema:{type:'object'},errorSchema:{type:'object'},semantics:'read only within instance'},constraints:{permissions:['workspace.read'],sideEffects:'read' as const,isolation:'per_instance'},preferredTargetCapability:null,consumerTools:['review'],evidence:[{path:'skills/s0/SKILL.md',line:4,detail:'read documents'}]};
   const req=await f.request({requiredCapabilities:[requirement]});
   const original=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256),{resultDigest,...body}=original;
-  const delivered={...body,capabilityResults:[{requirementId:requirement.id,status:'IMPLEMENTED' as const,capabilityId:'file.read',contractDigest:canonicalSha256(requirement.contract),verificationIds:['native-test']}],verifications:[{id:'native-test',type:'CONTRACT_TEST',status:'PASSED' as const}]};
+  const delivered={...body,capabilityResults:[{requirementId:requirement.id,status:'IMPLEMENTED' as const,capabilityId:'file.read',contractDigest:canonicalSha256(requirement.contract),verificationIds:['native-test']}],verifications:[...body.verifications,{id:'native-test',type:'CONTRACT_TEST',status:'PASSED' as const}]};
   expect((await f.accept(withResultDigest(delivered))).statusCode).toBe(400);expect(f.host.creations).toHaveLength(0);
-  f.host.caps.nativeToolNames=['read_document'];f.host.caps.nativeCapabilities=[{capabilityId:'file.read',name:'read_document',contract:requirement.contract,constraints:requirement.constraints}];
+  f.host.caps.nativeToolNames=['read_file','read_document'];f.host.caps.nativeCapabilities=[{capabilityId:'file.read',name:'read_document',contract:requirement.contract,constraints:requirement.constraints}];
   const accepted=await f.accept(withResultDigest({...delivered,launcher:{...delivered.launcher,capabilitiesDigest:canonicalSha256(f.host.caps)}}));expect(accepted.statusCode,accepted.body).toBe(200);
 });
 
 it('rejects expired or credential-bearing delivery before any lifecycle call',async()=>{
   const f=await setup(),req=await f.request(),original=taskBuilderResult(req,f.host,withResultDigest,canonicalSha256),{resultDigest,...body}=original;
   const expired=withResultDigest({...body,launcher:{...body.launcher,expiresAt:'2020-01-01T00:00:00.000Z'}});expect((await f.accept(expired)).statusCode).toBe(400);
-  const secret=withResultDigest({...body,extensions:{...body.extensions,apiKey:'should-never-be-delivered'}});expect((await f.accept(secret)).statusCode).toBe(409);
+  const secret={...body,resultDigest,extensions:{apiKey:'should-never-be-delivered'}};expect((await f.accept(secret)).statusCode).toBe(400);
   expect(f.host.creations).toHaveLength(0);
+});
+
+
+it('invalidates business acceptance when Judge identity changes without invalidating Runtime delivery',async()=>{
+  const f=await setup(1),req=await f.request();
+  let identity='judge-a';Object.assign(f.options.ports.judge,{identity:()=>identity});
+  expect((await f.accept(taskBuilderResult(req,f.host,withResultDigest,canonicalSha256))).statusCode).toBe(200);
+  await f.service.saveSuite(f.id,{name:'Suite',cases:[{id:'dev',input:'Run',criteria:['BUSINESS_OK']}]});
+  const first=await f.finish('ACCEPT');expect(first.runs.at(-1)?.judgeDigest).toBe('judge-a');
+  await f.service.export(f.id,true);
+  identity='judge-b';expect((await f.service.get(f.id)).builderStatus).toBe('BOUND');
+  await expect(f.service.export(f.id,true)).rejects.toThrow(/尚未通过/);
+  const second=await f.finish('ACCEPT');expect(second.runs.at(-1)?.judgeDigest).toBe('judge-b');
+  await f.service.export(f.id,true);
 });

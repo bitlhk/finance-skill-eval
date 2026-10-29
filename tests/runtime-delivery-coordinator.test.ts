@@ -1,12 +1,12 @@
 import {expect,it} from 'vitest';
 import {RuntimeDeliveryCoordinator} from '../src/service/runtime-delivery-coordinator.js';
 import {withResultDigest} from '../src/shared/contracts/runtime-builder.js';
-import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
+import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../src/shared/contracts/runtime-protocol-versions.js';
 
 function result(){
-  return withResultDigest({schemaVersion:'finance.runtime-build-result.v1',buildId:'build',requestId:'request',requirementsDigest:'a'.repeat(64),status:'SUCCEEDED',
-    builder:{name:'builder',version:'1'},launcher:{schemaVersion:'finance.runtime-launcher-descriptor.v1',deploymentId:'shared-deployment',baseUrl:'http://127.0.0.1:9000/',runtime:{type:'openjiuwen',version:'1'},
-      protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION},authentication:{type:'none'},artifactSha256:'b'.repeat(64),capabilitiesDigest:'c'.repeat(64),expiresAt:null},
+  return withResultDigest({schemaVersion:'finance.runtime-build-result.v3',buildId:'build',requestId:'request',requirementsDigest:'a'.repeat(64),status:'SUCCEEDED',
+    builder:{name:'builder',version:'1'},launcher:{schemaVersion:'finance.runtime-launcher-descriptor.v2',deploymentId:'shared-deployment',baseUrl:'http://127.0.0.1:9000/',runtime:{type:'openjiuwen',version:'1'},
+      protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION},authentication:{type:'none'},artifactSha256:'b'.repeat(64),capabilitiesDigest:'c'.repeat(64),expiresAt:null},
     capabilityResults:[],verifications:[],errors:[],builtAt:new Date().toISOString()});
 }
 

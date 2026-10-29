@@ -1,3 +1,4 @@
+import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { operationalEvent } from '../../../service/logging.js';
 import { operationalError } from '../../../shared/operational-error.js';
 import { randomUUID } from 'node:crypto';
@@ -137,3 +138,11 @@ export const judgeBundleCase: BundleJudge = async (input) => {
     throw error;
   }
 };
+
+// Bind acceptance to the evaluator implementation and non-secret model configuration.
+judgeBundleCase.identity = () => canonicalSha256({
+  protocol: 'finance.migration-judge.v1', policyRevision: 'frozen-candidate-evidence-v1',
+  model: configuredModelRole('JUDGE').model,
+  provider: process.env.FINANCE_EVAL_JUDGE_PROVIDER ?? 'openai-compatible',
+  endpointDigest: canonicalSha256(process.env.FINANCE_EVAL_JUDGE_BASE_URL ?? process.env.FINANCE_EVAL_MODEL_BASE_URL ?? ''),
+});

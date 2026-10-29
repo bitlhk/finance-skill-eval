@@ -1,19 +1,25 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { MigrationTaskService } from '../../migration/tasks/application/task-service.js';
-import type { MigrationStore } from '../../migration/migration-store.js';
 import { stringify } from 'yaml';
+import type { SkillStore } from '../../service/skill-store.js';
+import { simpleMigrationSuiteExample } from '../../migration/domain/simple-migration-suite.js';
 export function registerMigrationTaskRoutes(
   app: FastifyInstance,
   bundles: MigrationTaskService,
   privateWorkspaceEnabled: boolean,
-  legacy?: MigrationStore,
+  sourceAssets?: Pick<SkillStore,'uploadMigrationZip'>,
 ) {
   app.addHook('preValidation', async (request, reply) => {
-    if (!privateWorkspaceEnabled && ['/api/migration-tasks', '/api/migration-bundles'].some(prefix => request.url.startsWith(prefix)))
+    if (!privateWorkspaceEnabled && ['/api/migration-tasks'].some(prefix => request.url.startsWith(prefix)))
       return reply.code(403).send({ message: '整组迁移仅限私有工作区。' });
   });
-  for (const prefix of ['/api/migration-tasks', '/api/migration-bundles']) {
+  for (const prefix of ['/api/migration-tasks']) {
+    app.get(prefix+'/suite-example',()=>simpleMigrationSuiteExample);
+    if(sourceAssets) app.post(prefix+'/assets',async request=>{
+      if(!Buffer.isBuffer(request.body))throw Object.assign(new Error('请上传 Skill ZIP'),{statusCode:400});
+      return sourceAssets.uploadMigrationZip(request.body);
+    });
     const builder = () => { if (!bundles.builder) throw Object.assign(new Error('Builder 接入尚未配置'), { statusCode: 503 }); return bundles.builder; };
     app.post<{ Params: { id: string } }>(prefix + '/:id/runtime-build-requests', async request => {
       await builder().request(request.params.id, request.body, request.id); return bundles.get(request.params.id);
@@ -23,12 +29,6 @@ export function registerMigrationTaskRoutes(
       return reply.type('application/yaml; charset=utf-8').header('content-disposition', 'attachment; filename="runtime-build-requirements.yaml"')
         .send(stringify(await builder().requirements(request.params.id, query.requestId)));
     });
-    app.get<{ Params: { id: string; requestId: string } }>(prefix + '/:id/runtime-build-requests/:requestId/source.zip', async (request, reply) =>
-      reply.type('application/zip').header('content-disposition', 'attachment; filename="builder-candidate.zip"')
-        .send(await builder().source(request.params.id, request.params.requestId)));
-    app.get<{ Params: { id: string; requestId: string } }>(prefix + '/:id/runtime-build-requests/:requestId/skills.json', async (request,reply) =>
-      reply.type('application/json').header('content-disposition','attachment; filename="builder-skills.json"')
-        .send(await builder().skillSource(request.params.id,request.params.requestId)));
     app.post<{ Params: { id: string } }>(prefix + '/:id/runtime-deliveries', async request => {
       await builder().accept(request.params.id, request.body, request.id); return bundles.get(request.params.id);
     });
@@ -83,12 +83,4 @@ export function registerMigrationTaskRoutes(
         .send(await bundles.export(request.params.id, query.verified === 'true'));
     });
   }
-  if (legacy) app.post<{ Params: { id: string; }; }>('/api/migration-tasks/from-legacy/:id', async request => {
-    const body = z.strictObject({ name: z.string().min(1).max(120), goal: z.string().min(1).max(8000), target: z.string().min(1).max(2000), selection: z.enum(['source', 'candidate']).default('source') }).parse(request.body);
-    const project = await legacy.get(request.params.id);
-    const asset = body.selection === 'candidate' ? project.candidate : project.source;
-    if (!asset) throw Object.assign(new Error('旧任务没有可导入的候选'), { statusCode: 409 });
-    return bundles.importLegacy({ name: body.name, goal: body.goal, target: body.target, sourceAssetIds: [asset.assetId] },
-      { kind: 'legacy-project', projectId: project.id, assetId: asset.assetId, selection: body.selection }, request.id);
-  });
 }

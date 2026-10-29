@@ -6,7 +6,8 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
   if (!task) return null;
   return (
     <section className="stage-section">
-      <h3>整组运行配置</h3>
+      <h3>已选 Runtime 与实例配置</h3>
+      <p>当前 Skill 集合在启动时一次性注入，成员数量不改变 Runtime 执行流程。修改启动输入后需重新联合验收。</p>
       <div className="bundle-fields">
         <label>
           已登记执行环境

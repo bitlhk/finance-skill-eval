@@ -107,7 +107,7 @@ export function useMigrationWorkbench({
   async function uploadMembers(files: File[]) {
     const ids: string[] = [];
     const results = await importMigrationFiles(files, async (bytes) => {
-      const asset = await api<{ assetId: string; }>('/api/migrations/upload', {
+      const asset = await api<{ assetId: string; }>('/api/migration-tasks/assets', {
         method: 'POST',
         body: new Blob([bytes as BlobPart]),
         headers: { 'content-type': 'application/zip' },

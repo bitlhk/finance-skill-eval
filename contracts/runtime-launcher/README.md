@@ -1,33 +1,10 @@
 # Runtime Launcher contracts
 
-New migration tasks use [instance v2](finance.skill-eval.runtime-instance.v2.schema.json):
-`skills[]` contains 1–10 identities, instructions and optional member files; `assets`
-is optional shared content. No complete project or archive is required.
-`contentDigest` covers all mounted bytes. New v2 requests do not contain `skill`,
-`variant` or `bundle`. v1 instance requests remain for legacy task compatibility.
-Capabilities, case execution and cleanup retain their independent contract versions.
+The only accepted startup format is [finance.runtime-instance.v1](finance.runtime-instance.v1.schema.json): `skills[]` plus optional shared assets and entry instructions. One or more members use the same admission, workspace, execution, evidence and cleanup. No multiSkill flag or cardinality-driven mode exists. `limits.maxSkills` expresses capacity.
 
-Capabilities may optionally include `executionEnvironment.software`, a bounded
-list of public `{name, version}` facts measured by the Launcher in its actual
-execution environment. Omission means unknown, not incompatible. This additive
-v1 field is included in the frozen capabilities digest; each selected deployment
-is checked independently. Never put paths, credentials or customer data here.
-These facts support deployment prerequisite checks at check-Judge level, not
-business case verdicts. A worker interpreter version does not attest a different
-interpreter selected by `uv`, containers, MCP or remote services; those require
-their own actual observations. Do not substitute Skill dependency declarations
-or the control server's interpreter for measured execution facts.
+Member digests cover exact UTF-8 instructions and decoded resource bytes; contentDigest covers all mounted bytes. `skill`, `variant`, `bundle`, old instance versions and migration extensions are rejected at the wire boundary. Original paths and newline bytes are preserved. Full project bundles are optional input packaging, never mandatory protocol input.
 
-This directory is the portable contract for Runtime Launchers returned by an external Runtime Builder. A Launcher implementation is framework-neutral at this boundary: it translates framework-native lifecycle callbacks into stable Finance Runtime events and may attach a sanitized native extension.
-
-An instance's optional `skill.skillFile` names the document relative to the full
-archive; omission means `SKILL.md`. A compound Skill/MCP bundle may use
-`skill/SKILL.md` without moving sibling projects. Validate the safe entrypoint and
-its equality with `instructions`; supplied `files` must use actual archive paths
-and matching content, not document-relative aliases. Resolve document references
-from its directory, but executable launch paths from the archive root. Existing
-root packages omit this additive v1 field. Nested-entrypoint senders and receivers
-must be deployed together; unsupported receivers must reject rather than guess.
+Capabilities use `finance.runtime-capabilities.v1`, including instanceSchemaVersion, platform and maxSkills. Descriptor uses `finance.runtime-launcher-descriptor.v2`. Case execution and observation versions are unchanged. Runtime evidence must contain the exact collection digest and complete loadedSkillMembers. Cleanup must return an explicit matching RELEASED receipt; empty/404 alone is not success.
 
 ## Lifecycle and availability
 
@@ -55,7 +32,7 @@ This is separate from instance execution and deletion timeouts.
 
 ## Builder delivery descriptor
 
-After deployment, the Builder returns a `finance.runtime-launcher-descriptor.v1` document. It identifies one deployed Launcher by `deploymentId` and `artifactSha256`, provides its `baseUrl`, declares the supported protocol versions and states whether the caller must supply a bearer credential. The descriptor never contains a token, API key, model credential or MCP secret.
+After deployment, the Builder returns a `finance.runtime-launcher-descriptor.v2` document. It identifies one deployed Launcher by `deploymentId` and `artifactSha256`, provides its `baseUrl`, declares the supported protocol versions and states whether the caller must supply a bearer credential. The descriptor never contains a token, API key, model credential or MCP secret.
 
 The descriptor deliberately does not copy models, default model, MCP support, resource limits or observation detail. Those values are discovered from `GET /v1/runtime-capabilities`, then verified against `capabilitiesDigest` using RFC 8785 canonical JSON and SHA-256. The descriptor's Runtime type and version must also match the capabilities response. A Builder delivery is accepted only when these checks pass and `observability` is declared.
 
@@ -65,7 +42,7 @@ Authentication material is provisioned outside this JSON. `authentication.type=b
 
 ## Fixed HTTP surface
 
-- `GET /v1/runtime-capabilities` returns `finance.skill-eval.runtime-capabilities.v1`.
+- `GET /v1/runtime-capabilities` returns `finance.runtime-capabilities.v1`.
 - `POST /v1/runtime-instances` creates an isolated instance and requires an `idempotency-key` header.
 - `GET /v1/runtime-instances/{instanceId}` returns its current state.
 - `POST /v1/runtime-instances/{instanceId}/execute` executes one stateless case and returns final evidence as JSON or an SSE stream whose terminal item contains that evidence.
@@ -75,7 +52,7 @@ Remote Launchers must use HTTPS. Returned execution endpoints must remain under 
 
 ## Existing native capability reuse
 
-`nativeToolNames` is discovery only. The optional v1 `nativeCapabilities` array advertises
+`nativeToolNames` is discovery only. The optional `nativeCapabilities` array advertises
 `capabilityId`, callable `name`, `contract` (input/output/error JSON Schemas and semantics), and
 `constraints` (permissions, side effects, isolation). IDs and names must be unique; each name must
 also appear in `nativeToolNames`. Advertise implemented behavior only, not planned support.
@@ -190,9 +167,9 @@ New Runtime instances are not new Launcher deployments. Preserving an opaque han
 inside one session does not establish cross-session, cross-instance or deployment reuse.
 Upgrade strict receiver schemas before enabling these optional v1 fields.
 
-- `finance.runtime-launcher-descriptor.v1.schema.json`: Builder-to-platform deployed Launcher handoff.
-- `finance.skill-eval.runtime-capabilities.v1.schema.json`: capabilities discovered from the delivered Launcher.
-- `finance.skill-eval.runtime-instance.v1.schema.json`: complete instance creation request, including Skill, model, environment, secret references and limits.
+- `finance.runtime-launcher-descriptor.v2.schema.json`: Builder-to-platform deployed Launcher handoff.
+- `finance.runtime-capabilities.v1.schema.json`: capabilities discovered from the delivered Launcher.
+- `finance.runtime-instance.v1.schema.json`: complete instance creation request, including Skill, model, environment, secret references and limits.
 - `finance.skill-eval.runtime-instance-state.v1.schema.json`: asynchronous instance lifecycle response.
 - `finance.skill-eval.runtime-case.v1.schema.json`: per-case execution request, including workspace test files.
 - `finance.skill-eval.runtime-evidence.v1.schema.json`: terminal evidence returned by JSON or by the terminal SSE item.
@@ -202,13 +179,6 @@ Upgrade strict receiver schemas before enabling these optional v1 fields.
 - `examples/tool-call.completed.json`: one normalized event retaining its framework origin.
 - `examples/instance.create.json`, `instance.ready.json`, `case.execute.json` and `execution.evidence.json`: one complete Launcher lifecycle.
 
-## Multi-Skill instance extension
+## Uniform Skill collection
 
-`features.multiSkill: true` opts into `finance.skill-eval.runtime-instance.v2`
-on the existing instance endpoint. The request carries 1–10 inline `skills`,
-optional member resources and shared `assets`. It has no `skill`, `variant`,
-`bundle` or archive. The worker verifies `contentDigest`, every member digest,
-safe paths and entry coverage before execution. Evidence metadata returns
-`contentDigest` and `loadedSkillMembers`; incomplete receipts fail verification.
-The v1 instance decoder is retained for legacy tasks only.
-See [bundle migration](../../docs/multi-skill-migration.md).
+The standard instance request carries one or more `skills`, optional resources and shared assets. Capacity is declared through `limits.maxSkills`; no separate feature flag or legacy decoder exists. See [migration workflow](../../docs/multi-skill-migration.md).

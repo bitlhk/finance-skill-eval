@@ -6,14 +6,13 @@ import {
   RUNTIME_CAPABILITIES_SCHEMA_VERSION,
   RUNTIME_EXECUTION_SCHEMA_VERSION,
   RUNTIME_INSTANCE_SCHEMA_VERSION,
-  LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION,
   RUNTIME_OBSERVATION_SCHEMA_VERSION,
 } from "./runtime-protocol-versions.js";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/u);
 const protocolsSchema = z.strictObject({
   capabilities: z.literal(RUNTIME_CAPABILITIES_SCHEMA_VERSION),
-  instance: z.enum([LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_INSTANCE_SCHEMA_VERSION]),
+  instance: z.literal(RUNTIME_INSTANCE_SCHEMA_VERSION),
   execution: z.literal(RUNTIME_EXECUTION_SCHEMA_VERSION),
   observation: z.literal(RUNTIME_OBSERVATION_SCHEMA_VERSION),
 });
@@ -24,22 +23,24 @@ export const capabilityRequirementSchema = z.strictObject({
   evidence: z.array(z.strictObject({ path: z.string().min(1), line: z.number().int().positive(), detail: z.string().min(1) })),
 });
 
+export const runtimeExecutionRequirementsSchema = z.strictObject({
+  platform: z.strictObject({ os: z.enum(['linux', 'windows', 'darwin']), arch: z.string().min(1), isolation: z.string().min(1) }),
+  features: z.array(z.enum(['streaming', 'packagedMcp', 'externalMcp', 'inlineSecrets', 'multiTurn', 'toolProcessEvidence', 'mcpResultChannels', 'mcpPrepare'])),
+  limits: z.strictObject({ maxSkills: z.number().int().positive(), maxFiles: z.number().int().positive(), maxArchiveBytes: z.number().int().positive(), maxTimeoutMs: z.number().int().positive() }),
+});
 export const runtimeBuildRequirementsSchema = z.strictObject({
-  schemaVersion: z.enum(["finance.runtime-build-requirements.v1", "finance.runtime-build-requirements.v2"]),
+  schemaVersion: z.literal("finance.runtime-build-requirements.v3"),
   requestId: z.string().min(1),
-  source: z.strictObject({ assetId: z.string().min(1), artifactSha256: sha256 }),
   target: z.strictObject({ runtimeType: z.string().min(1), protocols: protocolsSchema }),
+  executionRequirements: runtimeExecutionRequirementsSchema,
   requiredCapabilities: z.array(capabilityRequirementSchema),
   rebuild: z.strictObject({
-    baseline: z.strictObject({deploymentId:z.string().min(1),artifactSha256:sha256,solutionRevisionId:sha256}),
+    baseline: z.strictObject({deploymentId:z.string().min(1),artifactSha256:sha256,capabilitiesDigest:sha256}),
     hypothesis: z.strictObject({id:z.string().min(1),issue:z.string().min(1).max(2000),expectedBehavior:z.string().min(1).max(2000)}),
-    evidence: z.array(z.strictObject({jobId:z.string().min(1),caseId:z.string().min(1).optional(),summary:z.string().min(1).max(1000)})).min(1).max(20),
+    evidence: z.array(z.strictObject({evidenceRef:z.string().min(1),probeRef:z.string().min(1).optional(),summary:z.string().min(1).max(1000)})).min(1).max(20),
   }).optional(),
   requirementsDigest: sha256,
-  extensions: z.record(z.unknown()).optional(),
 }).superRefine((value, context) => {
-  const expected = value.schemaVersion.endsWith('.v2') ? RUNTIME_INSTANCE_SCHEMA_VERSION : LEGACY_RUNTIME_INSTANCE_SCHEMA_VERSION;
-  if(value.target.protocols.instance!==expected) context.addIssue({code:'custom',path:['target','protocols','instance'],message:'Instance protocol must match build protocol version'});
   const ids = new Set<string>();
   value.requiredCapabilities.forEach((item, index) => {
     if (ids.has(item.id)) context.addIssue({ code: "custom", path: ["requiredCapabilities", index, "id"], message: "Capability requirement IDs must be unique" });
@@ -53,14 +54,13 @@ const buildErrorSchema = z.strictObject({
 });
 
 export const runtimeBuildResultSchema = z.strictObject({
-  schemaVersion: z.enum(["finance.runtime-build-result.v1", "finance.runtime-build-result.v2"]), buildId: z.string().min(1), requestId: z.string().min(1), requirementsDigest: sha256,
+  schemaVersion: z.literal("finance.runtime-build-result.v3"), buildId: z.string().min(1), requestId: z.string().min(1), requirementsDigest: sha256,
   status: z.enum(["SUCCEEDED", "PARTIAL", "FAILED", "CANCELLED"]),
   builder: z.strictObject({ name: z.string().min(1), version: z.string().min(1) }),
   launcher: runtimeLauncherDescriptorSchema.nullable(),
   capabilityResults: z.array(z.strictObject({ requirementId: z.string().min(1), status: z.enum(["IMPLEMENTED", "UNSUPPORTED", "FAILED"]), capabilityId: z.string().min(1).optional(), contractDigest: sha256.optional(), verificationIds: z.array(z.string().min(1)) })),
   verifications: z.array(z.strictObject({ id: z.string().min(1), type: z.string().min(1), status: z.enum(["PASSED", "FAILED", "NOT_RUN"]), evidenceSha256: sha256.optional() })),
   errors: z.array(buildErrorSchema), builtAt: z.string().datetime(), resultDigest: sha256,
-  extensions: z.record(z.unknown()).optional(),
 }).superRefine((value, context) => {
   if (value.status === "SUCCEEDED" && !value.launcher) context.addIssue({ code: "custom", path: ["launcher"], message: "A successful build must return a deployed Launcher" });
   if (value.status !== "SUCCEEDED" && value.launcher) context.addIssue({ code: "custom", path: ["launcher"], message: "An unsuccessful build must not return an active Launcher" });
@@ -68,16 +68,14 @@ export const runtimeBuildResultSchema = z.strictObject({
 
 export type RuntimeBuildRequirements = z.infer<typeof runtimeBuildRequirementsSchema>;
 /** Legacy import alias; new code uses RuntimeBuildRequirements. */
-export type RuntimeBuildRequirementsV1 = RuntimeBuildRequirements;
 export type RuntimeBuildResult = z.infer<typeof runtimeBuildResultSchema>;
 /** Legacy import alias; new code uses RuntimeBuildResult. */
-export type RuntimeBuildResultV1 = RuntimeBuildResult;
 
-export function withRequirementsDigest(input: Omit<RuntimeBuildRequirementsV1, "requirementsDigest">): RuntimeBuildRequirementsV1 {
+export function withRequirementsDigest(input: Omit<RuntimeBuildRequirements, "requirementsDigest">): RuntimeBuildRequirements {
   return runtimeBuildRequirementsSchema.parse({ ...input, requirementsDigest: canonicalSha256(input) });
 }
 
-export function withResultDigest(input: Omit<RuntimeBuildResultV1, "resultDigest">): RuntimeBuildResultV1 {
+export function withResultDigest(input: Omit<RuntimeBuildResult, "resultDigest">): RuntimeBuildResult {
   return runtimeBuildResultSchema.parse({ ...input, resultDigest: canonicalSha256(input) });
 }
 
@@ -101,6 +99,7 @@ export function validateRuntimeBuildResult(requirementsInput: unknown, resultInp
     if (!requirementIds.has(item.requirementId)) issues.push(`UNKNOWN_REQUIREMENT_${item.requirementId}`);
   }
   const verifications = new Map(result.verifications.map(item => [item.id, item]));
+  if (!result.verifications.some(item => item.type === 'RUNTIME_LIFECYCLE' && item.status === 'PASSED' && item.evidenceSha256)) issues.push('RUNTIME_LIFECYCLE_NOT_VERIFIED');
   for (const requirement of requirements.requiredCapabilities.filter(item => item.required)) {
     const matches = result.capabilityResults.filter(item => item.requirementId === requirement.id);
     if (matches.length !== 1) { issues.push(`REQUIREMENT_RESULT_COUNT_${requirement.id}`); continue; }
@@ -121,9 +120,32 @@ export function validateRuntimeBuildResult(requirementsInput: unknown, resultInp
     if (capabilitiesInput === undefined) issues.push("CAPABILITIES_NOT_PROVIDED");
     else {
       const capabilities = runtimeLauncherCapabilitiesSchema.parse(capabilitiesInput);
-      if(requirements.schemaVersion.endsWith('.v2') && capabilities.features.multiSkill!==true)issues.push('INLINE_SKILLS_NOT_SUPPORTED');
+      issues.push(...runtimeRequirementsIssues(requirements, capabilities));
       issues.push(...validateRuntimeLauncherDelivery(result.launcher, capabilities).map(issue => `LAUNCHER_${issue}`));
     }
+  }
+  return [...new Set(issues)];
+}
+
+/** The same conservative compatibility policy is used for new delivery and reuse. */
+export function runtimeRequirementsIssues(requirements: RuntimeBuildRequirements, capabilities: z.infer<typeof runtimeLauncherCapabilitiesSchema>): string[] {
+  const issues: string[] = [];
+  if (requirements.target.runtimeType !== capabilities.runtime.type) issues.push('RUNTIME_TYPE_MISMATCH');
+  const execution = requirements.executionRequirements;
+  for (const key of ['os', 'arch', 'isolation'] as const)
+    if (execution.platform[key] !== capabilities.platform[key]) issues.push(`PLATFORM_${key.toUpperCase()}_MISMATCH`);
+  for (const feature of execution.features)
+    if (capabilities.features[feature] !== true) issues.push(`FEATURE_UNAVAILABLE_${feature}`);
+  for (const key of ['maxSkills', 'maxFiles', 'maxArchiveBytes', 'maxTimeoutMs'] as const)
+    if (execution.limits[key] > capabilities.limits[key]) issues.push(`CAPACITY_INSUFFICIENT_${key}`);
+  for (const requirement of requirements.requiredCapabilities.filter(item => item.required)) {
+    const target = requirement.preferredTargetCapability ?? requirement.name;
+    const matches = (capabilities.nativeCapabilities ?? []).filter(item => item.capabilityId === target || item.name === target);
+    if (matches.length !== 1) { issues.push(`CAPABILITY_NOT_DECLARED_${requirement.id}`); continue; }
+    const actual = matches[0]!;
+    if (canonicalSha256(actual.contract) !== canonicalSha256(requirement.contract)) issues.push(`CONTRACT_INCOMPATIBLE_${requirement.id}`);
+    const constraints = (value: typeof actual.constraints) => ({...value, permissions: [...new Set(value.permissions)].sort()});
+    if (canonicalSha256(constraints(actual.constraints)) !== canonicalSha256(constraints(requirement.constraints))) issues.push(`CONSTRAINTS_INCOMPATIBLE_${requirement.id}`);
   }
   return [...new Set(issues)];
 }

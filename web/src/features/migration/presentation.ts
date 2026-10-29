@@ -2,10 +2,10 @@ export const stages = [
   '选择 Skill',
   '诊断与迁移方案',
   '生成迁移结果',
-  'Runtime 适配与登记',
-  '验证能否运行',
-  '任务验收',
-  '下载结果',
+  '选择与配置 Runtime',
+  '启动检查',
+  '联合验收',
+  '导出交付',
 ];
 export const statusLabels: Record<string, string> = {
   PASSED: '通过',

@@ -9,10 +9,10 @@ import type {
   BundleVerdict,
   TaskBuildRequest,
 } from '../domain/task-model.js';
-import type { RuntimeBuildResultV1 } from '../../../shared/contracts/runtime-builder.js';
+import type { RuntimeBuildResult } from '../../../shared/contracts/runtime-builder.js';
 import type { RuntimeLauncherBinding } from '../../../shared/contracts/environment.js';
 export interface TaskBuilderPort {
-  accept(input: { request: TaskBuildRequest; result: RuntimeBuildResultV1; trustReference: string; name?: string;
+  accept(input: { request: TaskBuildRequest; configuration?: BundleConfiguration; result: RuntimeBuildResult; trustReference: string; name?: string;
     snapshot: BundleSnapshot; services: BundleDelivery['services'] }): Promise<{
       configuration: BundleConfiguration; environmentSnapshot: unknown; launcher: RuntimeLauncherBinding;
     }>;
@@ -44,12 +44,12 @@ export type BundleRuntimeFactory = (input: {
   configuration: BundleConfiguration;
   signal: AbortSignal;
 }) => Promise<BundleExecution>;
-export type BundleJudge = (input: {
+export type BundleJudge = ((input: {
   correlation?: { taskId: string; attemptId: string; runId: string; requestId?: string; };
   evalCase: EvalCase;
   evidence: RuntimeExecutionEvidence;
   signal: AbortSignal;
-}) => Promise<BundleVerdict>;
+}) => Promise<BundleVerdict>) & { identity?: () => string };
 
 export interface MigrationTaskRepository {
   list(): Promise<BundleTask[]>;

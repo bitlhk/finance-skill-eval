@@ -1,8 +1,8 @@
 {
-  "schemaVersion": "finance.runtime-build-result.v1",
+  "schemaVersion": "finance.runtime-build-result.v3",
   "buildId": "build-example",
-  "requestId": "migration-example:revision-1",
-  "requirementsDigest": "5acb6e8ff603833e2f683cd38a977aa8298e0bdc4da96ba55130a451d85c4d03",
+  "requestId": "runtime-request-example",
+  "requirementsDigest": "602f2b3491e0d149534c59f3e609ea2aa58a75da1858bef4316ec0e343462e6e",
   "status": "PARTIAL",
   "builder": {
     "name": "example-builder",
@@ -16,7 +16,14 @@
       "verificationIds": []
     }
   ],
-  "verifications": [],
+  "verifications": [
+    {
+      "id": "runtime-lifecycle",
+      "type": "RUNTIME_LIFECYCLE",
+      "status": "PASSED",
+      "evidenceSha256": "948e3fd15e4665bf9279355d5925d8f004a77cb08f14e25f313468e956940657"
+    }
+  ],
   "errors": [
     {
       "code": "CAPABILITY_UNSUPPORTED",
@@ -26,5 +33,5 @@
     }
   ],
   "builtAt": "2026-09-29T12:00:00.000Z",
-  "resultDigest": "a79cef437210069fed07d214fa1febdd6365b5bde3b6eade6c545585b88ea80e"
+  "resultDigest": "f13d597a27d8407823311badb95ba1858bf7f7b750e72a788ec4b914c3972e0b"
 }

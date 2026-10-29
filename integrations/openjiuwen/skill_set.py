@@ -1,4 +1,4 @@
-"""v2: one or more inline Skills and optional resources, without a project archive."""
+"""Standard collection: one or more inline Skills and optional resources, without a project archive."""
 import base64
 import copy
 import re
@@ -7,10 +7,10 @@ from .bundle_runtime import files_digest, safe_path
 
 def hydrate_skill_set(request, manager):
     if any(key in request for key in ('bundle', 'skill', 'variant')):
-        raise ValueError('v2 accepts skills[] and optional assets; legacy fields are not allowed')
+        raise ValueError('The instance accepts skills[] and optional assets; legacy fields are not allowed')
     skills = request.get('skills')
     if not isinstance(skills, list) or not 1 <= len(skills) <= 10:
-        raise ValueError('v2 requires 1 to 10 Skills')
+        raise ValueError('The instance requires 1 to 10 Skills')
     files, members, ids, names, paths = {}, [], set(), set(), set()
 
     def decode(value):
@@ -23,7 +23,7 @@ def hydrate_skill_set(request, manager):
             raise ValueError('Unsafe or duplicate Skill resource path')
         paths.add(path.casefold())
         files[path] = raw
-        if len(files) > manager.max_files or sum(map(len, files.values())) > manager.max_uncompressed_bytes:
+        if len(files) > manager.max_files or sum(map(len, files.values())) > min(manager.max_archive_bytes, manager.max_uncompressed_bytes):
             raise ValueError('Skill resources exceed Runtime limits')
 
     for skill in skills:
@@ -75,7 +75,7 @@ def hydrate_skill_set(request, manager):
     entry = request.get('entryInstructionsFile')
     if entry and (not safe_path(entry) or entry not in text):
         raise ValueError('Entry instructions are missing')
-    # SDK-internal mounted view. The public v2 request contains no bundle/archive.
+    # SDK-internal mounted view. The public collection request contains no bundle/archive.
     request['bundle'] = {'digest': request['contentDigest'], 'members': members, **({'entryInstructionsFile': entry} if entry else {})}
     request['skill'] = {'skillId': 'bundle', 'version': 'frozen', 'artifactSha256': request['contentDigest'],
                         'files': text, 'binaryFiles': binary, 'instructions': '', 'bundleMembers': copy.deepcopy(members)}

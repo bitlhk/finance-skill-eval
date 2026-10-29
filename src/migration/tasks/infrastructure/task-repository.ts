@@ -10,22 +10,24 @@ export class FileMigrationTaskRepository implements MigrationTaskRepository {
   constructor(private root: string) { }
   private taskFile(id: string) {
     bundleIdSchema.parse(id);
-    return path.join(this.root, 'migration-bundles', 'tasks', id + '.json');
+    return path.join(this.root, 'migration-tasks', 'tasks', id + '.json');
   }
   private snapshotFile(id: string, revision: string) {
     bundleIdSchema.parse(id);
     if (!/^(source|candidate-[a-f0-9-]+)$/.test(revision)) bundleError('版本标识无效', 400);
-    return path.join(this.root, 'migration-bundles', 'snapshots', id, revision + '.json');
+    return path.join(this.root, 'migration-tasks', 'snapshots', id, revision + '.json');
   }
   async list() {
-    const files = await listJsonFiles(path.join(this.root, 'migration-bundles', 'tasks'));
-    return (await Promise.all(files.map((file) => readJson<BundleTask>(file)))).sort((a, b) =>
+    const files = await listJsonFiles(path.join(this.root, 'migration-tasks', 'tasks'));
+    return (await Promise.all(files.map((file) => readJson<BundleTask>(file)))).filter(task=>task.schemaVersion==='finance.skill-migration.task.v1').sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),
     );
   }
   async get(id: string): Promise<BundleTask> {
     try {
-      return await readJson<BundleTask>(this.taskFile(id));
+      const task=await readJson<BundleTask>(this.taskFile(id));
+      if(task.schemaVersion!=='finance.skill-migration.task.v1')bundleError('该记录不属于当前任务协议',409);
+      return task;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') bundleError('迁移任务不存在', 404);
       throw e;

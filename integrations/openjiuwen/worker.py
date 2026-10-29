@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import platform
 from pathlib import Path
 import sys
 import time
@@ -84,12 +85,14 @@ async def runtime_capabilities():
     default_model = runtime_config.get('defaultModelId') or (models[0]['modelId'] if models else None)
     if not models or not default_model:
         raise HTTPException(503, 'Runtime has no enabled execution model')
-    return {'schemaVersion': 'finance.skill-eval.runtime-capabilities.v1',
+    return {'schemaVersion': 'finance.runtime-capabilities.v1',
+            'instanceSchemaVersion':'finance.runtime-instance.v1',
+            'platform':{'os':platform.system().lower(),'arch':{'amd64':'x64','x86_64':'x64','aarch64':'arm64'}.get(platform.machine().lower(),platform.machine().lower()),'isolation':'trusted_local_process'},
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
             'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
-                         'externalMcp': True, 'inlineSecrets': True, 'multiSkill': True},
-            'limits': {'maxArchiveBytes': instances.max_archive_bytes, 'maxFiles': instances.max_files,
+                         'externalMcp': True, 'inlineSecrets': True},
+            'limits': {'maxSkills':10, 'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 
 

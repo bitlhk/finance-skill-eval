@@ -14,9 +14,7 @@ import { configuredModelRole, loadServiceConfig, type ServiceConfig } from "./co
 import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import {simpleMigrationSuiteSchema,simpleMigrationCases} from '../migration/domain/simple-migration-suite.js';
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
-import { registerMigrationRoutes } from "../interfaces/http/migration-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
-import {RuntimeDeliveryCoordinator} from './runtime-delivery-coordinator.js';
 import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
 import { EvaluationRunManager } from "./run-manager.js";
@@ -130,19 +128,11 @@ export async function createEvaluationService(
   const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
     analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
     toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
-  const runtimeDeliveries=new RuntimeDeliveryCoordinator(migrations,environments);
   const bundles=createMigrationTaskService({root:config.dataDirectory,skills,environments,managed:config.managedWorkspace,ports:bundlePorts,logger:app.log});
   await bundles.initialize();
   app.addHook('preClose',()=>bundles.close());
-  registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),migrations);
+  registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),skills);
   app.addHook('preClose',()=>migrations.shutdown());
-  registerMigrationRoutes(app, {
-    migrations,
-    skills,
-    environments,
-    runtimeDeliveries,
-    privateWorkspaceEnabled: !config.publicDemo && Boolean(config.accessToken),
-  });
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));

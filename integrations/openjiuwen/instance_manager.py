@@ -20,57 +20,6 @@ class InstanceManager:
         self.instances = {}
         self.idempotency = {}
 
-    def _hydrate_archive(self, request):
-        skill = request.get('skill')
-        if not skill or not skill.get('archiveBase64'):
-            return
-        try:
-            archive = base64.b64decode(skill.pop('archiveBase64'), validate=True)
-        except (ValueError, TypeError):
-            raise ValueError('Skill archive is not valid base64') from None
-        if len(archive) > self.max_archive_bytes:
-            raise ValueError('Skill archive exceeds the Runtime limit')
-        archive_digest = skill.get('archiveSha256')
-        if not isinstance(archive_digest, str) or len(archive_digest) != 64:
-            raise ValueError('Skill archive digest is missing or invalid')
-        if hashlib.sha256(archive).hexdigest() != archive_digest:
-            raise ValueError('Skill archive digest does not match the transferred archive')
-        try:
-            with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
-                members = [member for member in bundle.infolist() if not member.is_dir()]
-                if len(members) > self.max_files:
-                    raise ValueError('Skill archive contains too many files')
-                if sum(member.file_size for member in members) > self.max_uncompressed_bytes:
-                    raise ValueError('Uncompressed Skill archive exceeds the Runtime limit')
-                supplied = skill.get('files', {})
-                files = {}
-                seen = set()
-                for member in members:
-                    path = PurePosixPath(member.filename.replace('\\', '/'))
-                    if path.is_absolute() or '..' in path.parts:
-                        raise ValueError('Skill archive contains an unsafe path')
-                    normalized = path.as_posix()
-                    if normalized in seen:
-                        raise ValueError('Skill archive contains duplicate paths')
-                    seen.add(normalized)
-                    content = bundle.read(member)
-                    try:
-                        files[normalized] = content.decode('utf-8')
-                    except UnicodeDecodeError:
-                        # The current worker materializes text assets. Binary assets remain
-                        # represented by the verified archive but are not passed to the agent.
-                        continue
-                if any(name not in files or files[name] != content for name, content in supplied.items()):
-                    raise ValueError('Skill files do not match the transferred archive')
-                entrypoint = skill.get('skillFile', 'SKILL.md')
-                if not isinstance(entrypoint, str) or entrypoint not in files or PurePosixPath(entrypoint).name != 'SKILL.md':
-                    raise ValueError('Skill document entrypoint is missing or invalid')
-                if files[entrypoint] != skill.get('instructions'):
-                    raise ValueError('Skill instructions do not match the document entrypoint')
-                skill['files'] = files
-        except zipfile.BadZipFile:
-            raise ValueError('Skill archive is not a valid zip file') from None
-
     def _digest(self, request):
         public = copy.deepcopy(request)
         public['secrets'] = {'mode': request.get('secrets', {}).get('mode', 'inline'),
@@ -79,14 +28,14 @@ class InstanceManager:
 
     def create(self, request, idempotency_key):
         self.expire()
-        if request.get('schemaVersion') not in ('finance.skill-eval.runtime-instance.v1', 'finance.skill-eval.runtime-instance.v2'):
+        if request.get('schemaVersion') != 'finance.runtime-instance.v1':
             raise ValueError('Unsupported Runtime instance contract')
         request = copy.deepcopy(request)
-        if request['schemaVersion'] == 'finance.skill-eval.runtime-instance.v2':
-            from .skill_set import hydrate_skill_set
-            hydrate_skill_set(request, self)
-        elif request.get('bundle') is not None:
-            raise ValueError('Bundles require the v2 instance contract')
+        required = {'schemaVersion','runId','side','modelId','environment','configuration','secrets','limits','skills','contentDigest'}
+        if not required <= set(request) or set(request) - required - {'assets','entryInstructionsFile','generation'}:
+            raise ValueError('Unsupported Runtime instance fields')
+        from .skill_set import hydrate_skill_set
+        hydrate_skill_set(request, self)
         if not isinstance(request.get('runId'), str) or not request['runId'] or request.get('side') not in ('left', 'right'):
             raise ValueError('Invalid Runtime run identity')
         if not isinstance(request.get('modelId'), str) or not request['modelId']:
@@ -107,7 +56,6 @@ class InstanceManager:
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in secrets.get('values', {}).items()):
             raise ValueError('Runtime secrets must be string values')
         request = copy.deepcopy(request)
-        self._hydrate_archive(request)
         digest = self._digest(request)
         request_digest = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
         previous = self.idempotency.get(idempotency_key)

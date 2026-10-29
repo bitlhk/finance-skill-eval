@@ -1,40 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "finance.runtime-build-requirements.v2",
+  "$id": "finance.runtime-build-requirements.v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
     "requestId",
-    "source",
     "target",
     "requiredCapabilities",
-    "requirementsDigest"
+    "requirementsDigest",
+    "executionRequirements"
   ],
   "properties": {
     "schemaVersion": {
-      "const": "finance.runtime-build-requirements.v2"
+      "const": "finance.runtime-build-requirements.v3"
     },
     "requestId": {
       "type": "string",
       "minLength": 1
-    },
-    "source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "assetId",
-        "artifactSha256"
-      ],
-      "properties": {
-        "assetId": {
-          "type": "string",
-          "minLength": 1
-        },
-        "artifactSha256": {
-          "$ref": "#/$defs/sha256"
-        }
-      }
     },
     "target": {
       "type": "object",
@@ -74,7 +57,7 @@
           "required": [
             "deploymentId",
             "artifactSha256",
-            "solutionRevisionId"
+            "capabilitiesDigest"
           ],
           "properties": {
             "deploymentId": {
@@ -84,7 +67,7 @@
             "artifactSha256": {
               "$ref": "#/$defs/sha256"
             },
-            "solutionRevisionId": {
+            "capabilitiesDigest": {
               "$ref": "#/$defs/sha256"
             }
           }
@@ -122,15 +105,15 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "jobId",
+              "evidenceRef",
               "summary"
             ],
             "properties": {
-              "jobId": {
+              "evidenceRef": {
                 "type": "string",
                 "minLength": 1
               },
-              "caseId": {
+              "probeRef": {
                 "type": "string",
                 "minLength": 1
               },
@@ -147,8 +130,85 @@
     "requirementsDigest": {
       "$ref": "#/$defs/sha256"
     },
-    "extensions": {
-      "type": "object"
+    "executionRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "features",
+        "limits"
+      ],
+      "properties": {
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "os",
+            "arch",
+            "isolation"
+          ],
+          "properties": {
+            "os": {
+              "enum": [
+                "linux",
+                "windows",
+                "darwin"
+              ]
+            },
+            "arch": {
+              "type": "string",
+              "minLength": 1
+            },
+            "isolation": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "streaming",
+              "packagedMcp",
+              "externalMcp",
+              "inlineSecrets",
+              "multiTurn",
+              "toolProcessEvidence",
+              "mcpResultChannels",
+              "mcpPrepare"
+            ]
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxSkills",
+            "maxFiles",
+            "maxArchiveBytes",
+            "maxTimeoutMs"
+          ],
+          "properties": {
+            "maxSkills": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxFiles": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxArchiveBytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxTimeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -167,10 +227,10 @@
       ],
       "properties": {
         "capabilities": {
-          "const": "finance.skill-eval.runtime-capabilities.v1"
+          "const": "finance.runtime-capabilities.v1"
         },
         "instance": {
-          "const": "finance.skill-eval.runtime-instance.v2"
+          "const": "finance.runtime-instance.v1"
         },
         "execution": {
           "const": "finance.skill-eval.runtime-case.v1"

@@ -1,12 +1,31 @@
 {
-  "schemaVersion": "finance.skill-eval.runtime-instance.v1",
+  "schemaVersion": "finance.runtime-instance.v1",
   "runId": "run-01",
   "side": "right",
   "modelId": "execution",
-  "variant": { "mode": "skill_version", "skillId": "finance-review", "version": "1.0.0", "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-  "skill": { "skillId": "finance-review", "version": "1.0.0", "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "instructions": "Review the supplied financial document." },
-  "environment": { "environmentId": "env-builder-01", "requiredToolNames": ["read_document"] },
+  "environment": {
+    "environmentId": "env-builder-01",
+    "requiredToolNames": [
+      "read_document"
+    ]
+  },
   "configuration": {},
-  "secrets": { "mode": "inline", "values": {} },
-  "limits": { "timeoutMs": 300000 }
+  "secrets": {
+    "mode": "inline",
+    "values": {}
+  },
+  "limits": {
+    "timeoutMs": 300000
+  },
+  "skills": [
+    {
+      "id": "skill-1",
+      "skillId": "policy",
+      "skillFile": "skills/policy/SKILL.md",
+      "version": "r1",
+      "artifactSha256": "767192dde9979bfb4fdc475d994a519d84748beaee724067a276c71fb491eda6",
+      "instructions": "---\nname: policy\ndescription: Assess a request using the stated policy.\n---\nAssess only; do not execute approvals or payments.\n"
+    }
+  ],
+  "contentDigest": "767192dde9979bfb4fdc475d994a519d84748beaee724067a276c71fb491eda6"
 }

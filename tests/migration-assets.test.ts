@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,31 +46,15 @@ it('detects changed on-disk snapshots instead of trusting metadata',async()=>{
   await writeFile(path.join(dir,'skills/assets',record.assetId,'SKILL.md'),'changed');
   await expect(store.readArchive(record.assetId)).rejects.toThrow('摘要不一致');
 });
-it('edits a separate version, retains unsupported files and exports them inertly without claiming release',async()=>{
-  const dir=await directory();
-  const app=await createEvaluationService({dataDirectory:dir,rootDirectory:path.resolve('.'),accessToken:'private-test',publicDemo:false});
-  const headers={authorization:'Bearer private-test'};
-  const source='---\nname: readonly-method\nversion: 1.0.0\n---\nRead facts.';
-  try {
-    const upload=await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},
-      payload:Buffer.from(zipSync({'method/skill.md':strToU8(source),'helper.py':strToU8('raise Exception("not executed")')}))});
-    expect(upload.statusCode).toBe(200);const asset=upload.json();
-    const create=await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'Local fixture'}});
-    const id=create.json().id;
-    const edit=(text:string,baseAssetId=asset.assetId)=>app.inject({method:'POST',url:`/api/migrations/${id}/drafts`,headers,
-      payload:{source:text,notes:'Format-only synthetic change',baseAssetId}});
-    expect((await edit(source)).statusCode).toBe(409);
-    const next=await edit(source.replace('1.0.0','1.0.1'));expect(next.statusCode).toBe(200);
-    expect(next.json().source).toEqual(asset);expect(next.json().candidate.fileCount).toBe(2);
-    expect(await readFile(path.join(dir,'skills/assets',asset.assetId,'method/skill.md'),'utf8')).toBe(source);
-    expect((await edit(source.replace('1.0.0','1.0.2'))).statusCode).toBe(409);
-    const analyze=await app.inject({method:'POST',url:`/api/migrations/${id}/analyze`,headers});
-    expect(analyze.json().fileInventory.find((f:{name:string})=>f.name==='helper.py').executableReviewRequired).toBe(true);
-    const exported=await app.inject({url:`/api/migrations/${id}/export`,headers});expect(exported.statusCode).toBe(200);
-    const archive=unzipSync(exported.rawPayload);
-    expect(Buffer.from(archive['helper.py']!).toString()).toBe('raise Exception("not executed")');
-    expect(archive['migration-manifest.json']).toBeUndefined();
-    expect(archive['migration-report.json']).toBeUndefined();
-    expect((await app.inject({method:'POST',url:`/api/migrations/${id}/releases`,headers})).statusCode).toBe(409);
-  } finally {await app.close();}
+it("freezes source and candidate separately and exports unsupported resources without executing them",async()=>{
+
+ const f=await taskHttpFixture({files:{...standardFiles,'helper.py':encode('raise Exception("must not execute")')}});
+ const before=await f.get();f.control.files={...f.files,'skills/method/SKILL.md':encode(Buffer.from(f.files['skills/method/SKILL.md']!,'base64').toString()+'\nRevised guidance.')};
+ const next=await f.candidate();expect(next.source).toEqual(before.source);expect(next.currentCandidateId).not.toBeNull();
+ expect(await f.file('skills/method/SKILL.md')).not.toContain('Revised guidance');
+ expect(await f.file('skills/method/SKILL.md',next.currentCandidateId!)).toContain('Revised guidance');
+ const archive=await f.exported();expect(Buffer.from(archive['package/helper.py']!).toString()).toBe('raise Exception("must not execute")');
+ expect((await f.api('GET',f.url()+'/export?verified=true')).statusCode).toBe(409);
+ expect((await f.start('generate',{baseCandidateId:null})).statusCode).toBe(409);
+
 });

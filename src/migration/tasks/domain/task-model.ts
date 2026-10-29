@@ -5,7 +5,7 @@ import { unzipSync, zipSync } from 'fflate';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { simpleMigrationSuiteSchema } from '../../domain/simple-migration-suite.js';
 import type { RuntimeExecutionEvidence } from '../../../contracts.js';
-import type { RuntimeBuildRequirements, RuntimeBuildResult } from '../../../shared/contracts/runtime-builder.js';
+import { runtimeRequirementsIssues, type RuntimeBuildRequirements, type RuntimeBuildResult } from '../../../shared/contracts/runtime-builder.js';
 import type { RuntimeLauncherBinding } from '../../../shared/contracts/environment.js';
 
 export const bundleIdSchema = z.string().regex(/^bundle-[a-f0-9-]+$/);
@@ -107,6 +107,7 @@ export type BundleAttempt = {
 };
 export type BundleVerdict = { passed: boolean; reason: string; };
 export type BundleRun = {
+  judgeDigest?: string;
   runtimeSelectionRevision?: string;
   builderBindingId?: string;
   id: string;
@@ -120,25 +121,27 @@ export type BundleRun = {
   status: 'RUNNING' | 'PASSED' | 'FAILED' | 'INCOMPLETE' | 'CANCELLED';
   createdAt: string;
   finishedAt?: string;
-  cases: Array<{ id: string; passed: boolean; reason: string; evidence?: RuntimeExecutionEvidence; failureStage?: 'RUNTIME' | 'JUDGE'; }>;
+  cases: Array<{ id: string; passed: boolean; reason: string; evidence?: RuntimeExecutionEvidence; failureStage?: 'RUNTIME' | 'EXECUTION' | 'JUDGE'; }>;
   finalization?: unknown;
   runtimeSnapshot?: unknown;
 };
 export type BundleTask = {
+  /** Derived on read; export still verifies the online Runtime independently. */
+  verifiedRunId?: string;
+  currentJudgeDigest?: string;
   runtimeSelectionRevision?: string;
   runtimeBuildRequests?: TaskBuildRequest[];
   selectedRuntimeBuildRequestId?: string;
   runtimeDeliveries?: TaskRuntimeDelivery[];
   runtimeDelivery?: TaskRuntimeDelivery;
   builderStatus?: 'NONE' | 'PENDING' | 'BOUND' | 'STALE';
-  schemaVersion: 'finance.skill-migration.bundle.v1';
+  schemaVersion: 'finance.skill-migration.task.v1';
   id: string;
   name: string;
   goal: string;
   target: string;
   createdAt: string;
   source: Omit<BundleSnapshot, 'files'>;
-  origin?: { kind: 'legacy-project'; projectId: string; assetId: string; selection: 'source' | 'candidate'; };
   requestId?: string;
   analysis?: BundleAnalysis;
   currentCandidateId: string | null;
@@ -159,9 +162,7 @@ export type TaskBuildRequest = {
 export type TaskRuntimeDelivery = {
   id: string;
   requestId: string;
-  candidateId: string;
-  candidateDigest: string;
-  configurationDigest: string;
+  requirementsDigest: string;
   environmentSnapshot: unknown;
   launcher: RuntimeLauncherBinding;
   result: RuntimeBuildResult;
@@ -313,6 +314,7 @@ export function verifiedRun(task: BundleTask) {
     .reverse()
     .find(
       (run) =>
+        run.judgeDigest === task.currentJudgeDigest &&
         run.candidateId === task.currentCandidateId &&
         run.runtimeSelectionRevision === task.runtimeSelectionRevision &&
         run.builderBindingId === (task.selectedRuntimeBuildRequestId ? task.runtimeDelivery?.id : undefined) &&
@@ -326,22 +328,28 @@ export function verifiedRun(task: BundleTask) {
 export function taskBuilderStatus(task: BundleTask): NonNullable<BundleTask['builderStatus']> {
   if (!task.selectedRuntimeBuildRequestId) return 'NONE';
   const request = task.runtimeBuildRequests?.find(r => r.requirements.requestId === task.selectedRuntimeBuildRequestId);
-  if (!request || request.candidateId !== task.currentCandidateId || request.candidateDigest !== currentCandidate(task)?.digest) return 'STALE';
+  if (!request) return 'STALE';
   const binding = task.runtimeDelivery;
   if (!binding || binding.requestId !== request.requirements.requestId)
-    return request.baseConfigurationDigest === canonicalSha256(task.configuration ?? null) ? 'PENDING' : 'STALE';
+    return 'PENDING';
   if (binding.launcher.expiresAt && Date.parse(binding.launcher.expiresAt) <= Date.now()) return 'STALE';
-  return binding.candidateId === task.currentCandidateId && binding.candidateDigest === currentCandidate(task)?.digest
-    && binding.configurationDigest === canonicalSha256(task.configuration ?? null) ? 'BOUND' : 'STALE';
+  return binding.requirementsDigest === request.requirements.requirementsDigest ? 'BOUND' : 'STALE';
 }
 export function requireTaskBuilderBinding(task: BundleTask) {
   const status = taskBuilderStatus(task);
-  if (status === 'PENDING' || status === 'STALE') bundleError('Builder 交付尚未绑定当前候选及运行配置，请重新导出需求并接收交付，或明确切换为已有环境');
+  if (status === 'PENDING' || status === 'STALE') bundleError('Runtime 交付尚未就绪或已失效，请接收有效交付或选择已有环境');
 }
 export function requireBuilderEnvironment(task: BundleTask, snapshot: unknown) {
   requireTaskBuilderBinding(task);
   if (task.selectedRuntimeBuildRequestId && task.runtimeDelivery?.launcher.expiresAt && Date.parse(task.runtimeDelivery.launcher.expiresAt) <= Date.now())
     bundleError('Builder 交付已过期，请重新接收有效交付');
-  if (task.selectedRuntimeBuildRequestId && canonicalSha256(task.runtimeDelivery?.environmentSnapshot ?? null) !== canonicalSha256(snapshot))
-    bundleError('Builder 绑定的运行环境已变化，请重新导出需求并接收交付');
+  if (!task.selectedRuntimeBuildRequestId) return;
+  const live = snapshot as {launcherId?:string;delivery?:RuntimeLauncherBinding;capabilities?:unknown};
+  const binding=task.runtimeDelivery!.launcher;
+  if(live.launcherId!==binding.environmentId || live.delivery?.deploymentId!==binding.deploymentId
+    ||live.delivery?.artifactSha256!==binding.artifactSha256 ||live.delivery?.resultDigest!==binding.resultDigest
+    ||canonicalSha256(live.capabilities)!==binding.capabilitiesDigest) bundleError('Runtime deployment or capabilities changed; receive a new delivery');
+  const request=task.runtimeBuildRequests!.find(r=>r.requirements.requestId===task.selectedRuntimeBuildRequestId)!;
+  const issues=runtimeRequirementsIssues(request.requirements,live.capabilities as Parameters<typeof runtimeRequirementsIssues>[1]);
+  if(issues.length)bundleError('Runtime requirements are not satisfied: '+issues.join(', '));
 }

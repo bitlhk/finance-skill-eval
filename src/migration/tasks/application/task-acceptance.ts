@@ -21,6 +21,7 @@ export async function acceptMigrationTask(
     suite = task.suite!,
     bundle = await context.readSnapshot(task.id, candidate.id);
   const run: BundleRun = {
+    judgeDigest: context.judge.identity?.(),
     ...(task.runtimeSelectionRevision ? { runtimeSelectionRevision: task.runtimeSelectionRevision } : {}),
     ...(task.selectedRuntimeBuildRequestId ? { builderBindingId: task.runtimeDelivery!.id } : {}),
     id: 'bundle-run-' + randomUUID(),
@@ -81,8 +82,7 @@ export async function acceptMigrationTask(
         signal,
       });
       evidence = observed;
-      const valid =
-        evidence.status === 'completed' &&
+      const verifiedExecution =
         evidence.streamCompleted &&
         evidence.runtimeIdentityVerified &&
         evidence.metadata.contentDigest === bundle.digest &&
@@ -91,11 +91,13 @@ export async function acceptMigrationTask(
             (loaded) => loaded.skillId === m.skillId && loaded.version === m.version,
           ),
         );
+      const valid = evidence.status === 'completed' && verifiedExecution;
       const verdict = valid
         ? await context.judge({ evalCase, evidence, signal, correlation: { taskId: task.id, attemptId: attempt.id, runId: run.id, requestId: attempt.requestId } })
         : { passed: false, reason: '执行未完成，或整组装载证据不完整' };
       if(!valid)incomplete=true;
-      run.cases.push({ id: evalCase.caseId, ...verdict, evidence, ...(!valid ? {failureStage:'RUNTIME' as const} : {}) });
+      if (run.judgeDigest !== context.judge.identity?.()) bundleError('Judge 配置在验收期间发生变化，请重新验收');
+      run.cases.push({ id: evalCase.caseId, ...verdict, evidence, ...(!valid ? {failureStage:verifiedExecution ? 'EXECUTION' as const : 'RUNTIME' as const} : {}) });
       context.logger?.info({
         event: 'bundle_case_finished', taskId: task.id, attemptId: attempt.id, requestId: attempt.requestId, runId: run.id,
         caseId: evalCase.caseId, passed: verdict.passed, elapsedMs: evidence.elapsedMs

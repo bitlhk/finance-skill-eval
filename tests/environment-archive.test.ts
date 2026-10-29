@@ -143,7 +143,7 @@ it('does not recreate or revive an archived Builder deployment and sends no conf
     schemaVersion:'finance.runtime-launcher-delivery-record.v1',buildId:result.buildId,requestId:result.requestId,
     deploymentId:result.launcher.deploymentId,artifactSha256:result.launcher.artifactSha256,
     capabilitiesDigest:result.launcher.capabilitiesDigest,resultDigest:result.resultDigest,builder:result.builder,
-    acceptedAt:now,expiresAt:null,evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']},
+    acceptedAt:now,expiresAt:null,evalConformance:{runId:'platform-probe',instanceSchemaVersion:'finance.runtime-instance.v1',probeDigest:'a'.repeat(64),status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']},
   }});
   const file=path.join(directory,'environments',`${record.environmentId}.json`);
   await writeFile(file,JSON.stringify(original));

@@ -4,9 +4,9 @@ export function ReadinessStage({ state }: { state: MigrationWorkbench; }) {
   if (!task) return null;
   return (
     <section className="stage-section">
-      <h3>验证能否运行</h3>
+      <h3>启动检查</h3>
       <p>
-        检查 Runtime 是否支持候选工作区装载、服务和容量要求。实际启动和工具调用在联合验收时验证。
+        创建实例并装载全部 Skill，核对运行配置与容量后释放实例。业务工具执行和结果由联合验收验证。
       </p>
       <div className="bundle-actions">
         <button
@@ -22,14 +22,14 @@ export function ReadinessStage({ state }: { state: MigrationWorkbench; }) {
             })
           }
         >
-          检查运行能力
+          执行启动检查
         </button>
         <button
           className="button secondary"
           disabled={!current || !task.configuration}
           onClick={() => setStage(5)}
         >
-          进入任务验收
+          进入联合验收
         </button>
       </div>
     </section>

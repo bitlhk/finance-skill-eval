@@ -1,4 +1,3 @@
-import { runtimeSkillSetFromFiles } from '../../../shared/contracts/runtime-skills.js';
 import type { EnvironmentStore } from '../../../service/environment-store.js';
 import { bundleError, configurationSchema } from '../domain/task-model.js';
 import type { TaskBuilderPort } from '../application/task-ports.js';
@@ -11,14 +10,8 @@ export function createTaskBuilder(environments: EnvironmentStore, options: { man
     if (options.managed && (services.length || request.settings.harnessTools.length)) bundleError('托管工作区的自定义工具需要先由环境维护者接入', 403);
     const accepted = await environments.acceptBuilderDelivery({
       requirements: request.requirements, result: input.result, trustReference: input.trustReference, name: input.name,
-      bundleConformance: {
-        skillSet: runtimeSkillSetFromFiles({ ...snapshot, entryInstructionsFile: request.settings.entryInstructionsFile }),
-        environment: { environmentId: 'builder-conformance', harnessToolNames: request.settings.harnessTools,
-          candidateMcpServices: services.map(s => ({ ...s, assetDigest: snapshot.digest })) },
-        modelId: request.settings.modelId, timeoutMs: request.settings.timeoutMs,
-      },
     });
-    const configuration = configurationSchema.parse({ ...request.settings, environmentId: accepted.environment.environmentId,
+    const configuration = configurationSchema.parse({ ...request.settings, ...input.configuration, environmentId: accepted.environment.environmentId,
       modelId: request.settings.modelId ?? accepted.capabilities.defaultModelId });
     const execution = await createBundleRuntime(environments, options)({ snapshot, services, configuration, signal: AbortSignal.timeout(60000) });
     const live = execution.environmentSnapshot as { capabilities: unknown };

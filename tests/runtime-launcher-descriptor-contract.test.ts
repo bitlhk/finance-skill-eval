@@ -19,7 +19,7 @@ it('publishes optional MCP feature flags without requiring them from older Launc
   const features={...(original.features as Record<string,unknown>),mcpResultChannels:true,mcpPrepare:true};
   expect(runtimeLauncherCapabilitiesSchema.parse({...original,features}).features).toMatchObject({mcpResultChannels:true,mcpPrepare:true});
   expect(()=>runtimeLauncherCapabilitiesSchema.parse({...original,features:{...features,mcpPrepare:'yes'}})).toThrow();
-  const schema=JSON.parse(await readFile(new URL('../contracts/runtime-launcher/finance.skill-eval.runtime-capabilities.v1.schema.json',import.meta.url),'utf8'));
+  const schema=JSON.parse(await readFile(new URL('../contracts/runtime-launcher/finance.runtime-capabilities.v1.schema.json',import.meta.url),'utf8'));
   for(const field of ['mcpResultChannels','mcpPrepare']){
     expect(schema.properties.features.properties[field].type).toBe('boolean');
     expect(schema.properties.features.required).not.toContain(field);
@@ -34,8 +34,8 @@ it("accepts a matching Builder-delivered Launcher descriptor and capabilities re
   const capabilities = await readExample("builder-capabilities.json");
 
   expect(runtimeLauncherDescriptorSchema.parse(descriptor)).toMatchObject({
-    deploymentId: "builder-job-01-runtime",
-    baseUrl: "https://runtime.example.test/deployments/builder-job-01-runtime/",
+    deploymentId: "builder-job-example-runtime",
+    baseUrl: "https://runtime.example.test/deployments/builder-job-example-runtime/",
     authentication: { type: "bearer" },
   });
   expect(runtimeLauncherCapabilitiesSchema.parse(capabilities).defaultModelId).toBe("execution");
@@ -64,7 +64,7 @@ it("detects delivery drift and requires observability for new Builder deliveries
 });
 
 it("publishes strict JSON Schemas for the Launcher delivery boundary", async () => {
-  for (const name of ["finance.runtime-launcher-descriptor.v1.schema.json", "finance.skill-eval.runtime-capabilities.v1.schema.json", "finance.skill-eval.runtime-instance.v1.schema.json", "finance.skill-eval.runtime-instance-state.v1.schema.json", "finance.skill-eval.runtime-case.v1.schema.json", "finance.skill-eval.runtime-evidence.v1.schema.json"]) {
+  for (const name of ["finance.runtime-launcher-descriptor.v2.schema.json", "finance.runtime-capabilities.v1.schema.json", "finance.runtime-instance.v1.schema.json", "finance.skill-eval.runtime-instance-state.v1.schema.json", "finance.skill-eval.runtime-case.v1.schema.json", "finance.skill-eval.runtime-evidence.v1.schema.json"]) {
     const schema = JSON.parse(await readFile(new URL(`../contracts/runtime-launcher/${name}`, import.meta.url), "utf8"));
     expect(schema).toMatchObject({ $schema: "https://json-schema.org/draft/2020-12/schema", $id: name.replace(".schema.json", "") });
   }
@@ -72,7 +72,7 @@ it("publishes strict JSON Schemas for the Launcher delivery boundary", async () 
 
 it('ships one complete Runtime Launcher lifecycle example',async()=>{
   const instance=await readExample('instance.create.json') as {schemaVersion?:string};
-  expect(instance.schemaVersion).toBe('finance.skill-eval.runtime-instance.v1');
+  expect(instance.schemaVersion).toBe('finance.runtime-instance.v1');
   expect(runtimeInstanceStateSchema.parse(await readExample('instance.ready.json')).status).toBe('ready');
   expect(runtimeCaseRequestSchema.parse(await readExample('case.execute.json')).workspaceFiles).toHaveLength(1);
   expect(runtimeExecutionEvidenceSchema.parse(await readExample('execution.evidence.json')).runtimeIdentityVerified).toBe(true);

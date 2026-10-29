@@ -41,7 +41,7 @@ function deploymentFixture(){
  const f=fixture();
  const delivery=(deploymentId:string)=>({schemaVersion:'finance.runtime-launcher-delivery-record.v1',buildId:'build',requestId:'request',deploymentId,
   artifactSha256:'d'.repeat(64),capabilitiesDigest:canonicalSha256(f.capabilities),resultDigest:'e'.repeat(64),builder:{name:'external',version:'1'},
-  acceptedAt:new Date().toISOString(),expiresAt:null,evalConformance:{status:'PASSED',testedAt:new Date().toISOString(),checks:['capabilities','create','status','execute','evidence','delete']}});
+  acceptedAt:new Date().toISOString(),expiresAt:null,evalConformance:{runId:'platform-probe',instanceSchemaVersion:'finance.runtime-instance.v1',probeDigest:'a'.repeat(64),status:'PASSED',testedAt:new Date().toISOString(),checks:['capabilities','create','status','execute','evidence','delete']}});
  Object.assign(f.launcher,{delivery:delivery('deployment-primary')});
  const other={...f.launcher,environmentId:'other',baseUrl:'http://127.0.0.1:19002/',delivery:delivery('deployment-other')};
  f.environmentRecords.set('other',other);
