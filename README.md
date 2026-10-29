@@ -51,6 +51,9 @@ pnpm test:ui:migration
 
 Builder 接收运行能力、平台和容量需求，交付独立运行的 Runtime。启动实例时通过 `skills[]` 注入 1～N 个 Skill 及可选资源，无需完整工程 ZIP。Skill 更新后复用满足能力要求的 Runtime，重新进行联合验收。新服务只接受标准协议，不转换旧任务。
 
+受管方法的独立生命周期探测需服务端明确声明 `managedMethodProbe` 与 `minPrimaryTools`。
+不支持无工具方法的环境仍按现有准入集合装配工具，探测本身必须零业务调用；不为探测启用通用文件读取或改变原环境权限。
+
 ## 目录
 
 ```text

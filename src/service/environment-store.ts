@@ -165,14 +165,20 @@ export class EnvironmentStore {
     if (!fileProbe&&!methodProbe) throw Object.assign(new Error('Runtime has no declared supported Skill-loading probe'), {statusCode:400});
     const probeId=`conformance-${randomUUID()}`, nonce=`RUNTIME_PROBE_${randomUUID()}`;
     const requiredTools=fileProbe?['read_file']:[];
+    const minimum=capabilities.limits.minPrimaryTools;
+    if(methodProbe&&minimum===undefined)throw Object.assign(new Error('Managed probe requires an explicit tool minimum'),{statusCode:400});
+    // Keep the server's complete admitted tool set when its atomic packs require
+    // tools. Installation is not permission to invoke them during this probe.
+    const mountedTools=fileProbe?requiredTools:minimum===0?[]:(capabilities.nativeToolNames??[]).filter(name=>!capabilities.auxiliaryToolNames?.includes(name));
+    if(methodProbe&&mountedTools.length<minimum!)throw Object.assign(new Error('Managed probe cannot satisfy the declared tool minimum'),{statusCode:400});
     const instructions=fileProbe
       ?'---\nname: runtime-conformance\ndescription: Verify isolated Runtime loading and tool execution.\n---\nRead conformance/probe.txt using read_file and return the exact file contents.'
-      :`---\nname: runtime-conformance\nallowed-tools: []\n---\nReturn exactly this platform verification marker: ${nonce}\nDo not call business tools or produce a business report.`;
+      :`---\nname: runtime-conformance\nallowed-tools: ${JSON.stringify(mountedTools)}\n---\nReturn exactly this platform verification marker: ${nonce}\nDo not call business tools or produce a business report.`;
     const digest=createHash('sha256').update('SKILL.md').update('\0').update(instructions).update('\0').digest('hex');
     const skillSet=runtimeSkillSetFromFiles({digest,files:{'SKILL.md':Buffer.from(instructions).toString('base64')},members:[{id:'runtime-conformance',skillId:'runtime-conformance',version:'1',skillFile:'SKILL.md',artifactSha256:digest}]});
     const variant:SkillVariant={mode:'skill_version',skillId:'bundle',version:'frozen',artifactSha256:digest};
     const adapter=new RuntimeLauncherAdapter({baseUrl:launcher.baseUrl,headers,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},
-      variant,skill:null,skillSet,environment:{environmentId:'runtime-conformance',requiredToolNames:requiredTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
+      variant,skill:null,skillSet,environment:{environmentId:'runtime-conformance',requiredToolNames:mountedTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
     try{
       await adapter.prepare({runId:probeId});
       const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant,evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:fileProbe?'Read conformance/probe.txt with read_file and return its exact content.':'Return the exact platform verification marker from the installed method. Do not call tools.',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools,workspaceFiles:fileProbe?[{path:'conformance/probe.txt',content:nonce}]:[],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:fileProbe?'Runtime loaded the verification Skill and read mounted data.':'Runtime executed independently installed managed instructions without business calls.',dimension:'business_completeness',weight:1,required:true,allOf:[nonce],anyOf:[],noneOf:[]}]}});
