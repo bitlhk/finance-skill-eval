@@ -206,8 +206,12 @@ docker compose up --build
 ### 本机配置边界
 
 - `.runtime.local.json`：本地 Runtime Launcher 的私有配置，包含 `models`、`defaultModelId` 和 Runtime 自身需要的 `mcp` 定义。模型的 API 地址和密钥只由 Runtime 读取。
-- `.env.local`：平台服务进程的本机环境变量，可配置 Analyzer、Judge、Optimizer、迁移开关、监听地址等。Node 不会为 `pnpm serve` 自动读取该文件；可以先导入当前终端环境，或使用 `node --env-file=.env.local dist/service/server.js`。Windows Runtime 启动脚本也会读取它，已经存在的系统环境变量优先。
+- `.env.local`：平台服务进程的本机环境变量，可配置 Analyzer、Judge、Optimizer、迁移开关、监听地址等。`pnpm serve` 自动读取该文件，已存在的进程环境变量优先。Windows Runtime 启动脚本也会读取它。
 - 页面中的“环境管理”：登记可连接的 Runtime Launcher 和外部 MCP，并可组合成执行环境；它不负责编辑远端 Runtime 内部的模型或 MCP 配置。
+
+日常使用统一将 `FINANCE_EVAL_DATA_DIR` 设为 `data`（未配置时也是此默认值），通过 `pnpm serve` 启动。迁移工程、Skill 资产、评测记录和环境登记必须一起保存；服务启动日志会打印实际数据目录。不要将日常目录指向临时目录或端到端测试目录。
+
+真实手工验收脚本统一将独立运行空间保存在 `.migration-workspace/acceptance/`，不再放入系统临时目录；自动化测试仍使用临时隔离数据，避免试验覆盖日常项目。需要归档验收结果时，停止相关服务，使用 `node scripts/consolidate-workspace.mjs <plan.json>`：计划提供 `target`、`archive`、按优先级从低到高排列的 `sources`，以及可选的 `projectSources`（项目 ID 到源目录的映射）和 `archiveSources`（额外只备份的目录）。目标及归档目录必须尚不存在；脚本完整备份源数据、记录文件摘要与冲突来源，并按完整项目快照选择版本，不拼接验收结果。检查归档报告后再将新目录作为日常目录。历史 Runtime 登记不等于当前服务仍在线，继续执行前应重新检查环境。
 
 外部 Runtime Builder 的交付入口使用服务端准入配置。浏览器只能选择 `reference`，不能提交目标地址或凭据环境变量；平台只会访问准入项允许的 URL 前缀，并在登记前完成 capabilities、创建、执行、证据校验和删除实例的生命周期验收：
 
@@ -227,6 +231,13 @@ FINANCE_EVAL_EXECUTION_BASE_URL / API_KEY / MODEL
 FINANCE_EVAL_JUDGE_BASE_URL / API_KEY / MODEL
 FINANCE_EVAL_OPTIMIZER_BASE_URL / API_KEY / MODEL
 ```
+
+模型网关如果要求 `Authorization: <密钥>`，在 `.env.local` 设置
+`FINANCE_EVAL_MODEL_AUTH_MODE=raw`；也可用 `FINANCE_EVAL_<角色>_AUTH_MODE`
+为 ANALYZER、EXECUTION、JUDGE、OPTIMIZER、MIGRATION 分别覆盖。
+OpenJiuwen Runtime 及其诊断、迁移 Agent 则在 `.runtime.local.json` 对应的
+`models` 条目中设置 `"authMode": "raw"`。两处省略时均保留默认 `bearer`
+方式，即 `Authorization: Bearer <密钥>`。密钥本身无需填写认证前缀。
 
 也可以使用统一的 `FINANCE_EVAL_MODEL_BASE_URL`、`FINANCE_EVAL_MODEL_API_KEY` 和 `FINANCE_EVAL_MODEL` 作为平台模型角色的默认配置。Skill 迁移的诊断与代码生成 Agent 使用 `.runtime.local.json` 中的模型；通过 `FINANCE_EVAL_AGENT_MODEL_ID` 选择模型条目，默认条目名为 `enterprise-model`。这与前端为候选效果评估选择的执行模型是两个用途。
 

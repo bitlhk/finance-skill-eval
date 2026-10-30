@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import {migrationActivityContext} from './migration-activity.js';
 import { modelTimeoutMs,type ModelRole } from '../../service/config.js';
 import { stageEnvelope,type StageEnvelope } from '../domain/migration-stage-envelope.js';
 
@@ -111,6 +112,10 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
   request:Record<string,unknown>,
   options:MigrationAgentOptions,
 ):Promise<AgentResult<T>>{
+  const activity=migrationActivityContext.getStore();
+  const signals=[options.signal,activity?.signal].filter((signal):signal is AbortSignal=>Boolean(signal));
+  options={...options,signal:signals.length?AbortSignal.any(signals):undefined};
+  if(options.signal?.aborted)throw new MigrationAgentUnavailable('agent cancelled');
   const program=interpreter(options.projectRoot);
   const entry=path.join(options.projectRoot,ENTRY[stage]);
   const runtimeConfig=process.env.FINANCE_RUNTIME_CONFIG?.trim()??path.join(options.projectRoot,'.runtime.local.json');
@@ -158,7 +163,20 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
       reject(new MigrationAgentUnavailable(`${stage} agent cancelled`));
     };
     options.signal?.addEventListener('abort',abort,{once:true});
-    child.stdout.on('data',chunk=>{stdout+=String(chunk)});
+    let pending='';child.stdout.setEncoding('utf8');
+    child.stdout.on('data',chunk=>{
+      pending+=String(chunk);let boundary:number;
+      while((boundary=pending.indexOf('\n'))>=0){
+        const line=pending.slice(0,boundary);pending=pending.slice(boundary+1);
+        try{const record=JSON.parse(line) as {activity?:{kind?:string;label?:string;text?:string}};
+          if(record.activity){const event=record.activity;
+            if(typeof event.kind==='string'&&typeof event.label==='string')activity?.emit(event.kind,event.label,typeof event.text==='string'?event.text:undefined);
+            continue;
+          }
+        }catch{/* Preserve existing final-result parsing for non-event output. */}
+        stdout+=line+'\n';
+      }
+    });
     child.stderr.on('data',chunk=>{stderr=(stderr+String(chunk)).slice(-4000)});
     child.on('error',error=>{
       if(settled)return;
@@ -168,6 +186,7 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
       reject(new MigrationAgentUnavailable(`${stage} agent could not start: ${error.message}`));
     });
     child.on('close',()=>{
+      stdout+=pending;
       if(settled)return;
       settled=true;
       clearTimeout(timer);

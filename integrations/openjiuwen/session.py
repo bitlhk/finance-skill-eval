@@ -10,7 +10,7 @@ import time
 import uuid
 from importlib.metadata import version as _package_version
 
-from model_config import resolve_model, request_settings
+from model_config import resolve_model, request_settings, bind_model_auth
 from package_runtime import start_candidate_service, absolute_script_command
 from execution_paths import execution_paths
 from skill_runtime import mount_skill_runtime
@@ -184,6 +184,7 @@ async def run(body):
                     if os.name == 'nt':
                         prompt += '\n当前命令 shell 是 Windows cmd，不支持 <<<、Unix here-doc 或单引号包围命令行参数。用上述 Python 管道提供 stdin，脚本绝对路径使用双引号。不能执行 ls 或 echo。'
             llm = Model(ModelClientConfig(client_provider="OpenAI", api_key=model["apiKey"], api_base=model["baseUrl"], verify_ssl=True), ModelRequestConfig(**model_settings))
+            llm = bind_model_auth(llm, model)
             settings = DeepAgentConfig(model=llm, max_iterations=20, system_prompt=prompt,
                 cwd=str(workspace_path), project_root=str(root_path), auto_create_workspace=False,
                 enable_task_loop=False, enable_plan_mode=False, enable_tool_resilience_rail=False,

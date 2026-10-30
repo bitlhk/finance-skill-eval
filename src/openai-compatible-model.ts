@@ -8,6 +8,7 @@ import {Agent} from 'undici';
 export type OpenAiCompatibleModelOptions = {
   adapterId?: string;
   apiKey: string;
+  authMode?: 'bearer' | 'raw';
   baseUrl: string;
   timeoutMs?: number;
   headers?: Record<string, string>;
@@ -56,7 +57,7 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
         : AbortSignal.timeout(timeoutMs),
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${this.options.apiKey}`,
+        authorization: this.options.authMode === 'raw' ? this.options.apiKey : `Bearer ${this.options.apiKey}`,
         ...this.options.headers,
       },
       body: JSON.stringify(body),

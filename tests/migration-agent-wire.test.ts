@@ -5,9 +5,21 @@ import {createServer} from 'node:http';
 import { afterEach,expect,it,vi } from 'vitest';
 import { analyzeWithAgent,implementWithAgent,runMigrationAgent } from '../src/migration/infrastructure/migration-agent.js';
 import {MigrationImplementationService} from '../src/migration/application/migration-implementation-service.js';
+import {MigrationActivityStore} from '../src/migration/infrastructure/migration-activity.js';
 
 const dirs:string[]=[];
 const saved=process.env.FINANCE_EVAL_MIGRATION_PYTHON;
+it('forwards subprocess activity before its final result without corrupting Unicode',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'migration-live-wire-'));dirs.push(root);
+  await mkdir(path.join(root,'integrations','openjiuwen'),{recursive:true});await writeFile(path.join(root,'.runtime.local.json'),'{}');
+  const event=JSON.stringify({activity:{kind:'tool_start',label:'调用工具：读取文件'}})+'\n';
+  await writeFile(path.join(root,'integrations/openjiuwen/analyze_agent.py'),`const b=Buffer.from(${JSON.stringify(event)});process.stdout.write(b.subarray(0,66));setTimeout(()=>process.stdout.write(b.subarray(66)),20);setTimeout(()=>process.stdout.write(JSON.stringify({result:{status:'PRODUCED',payload:{ok:true}}})+'\\n'),200);`);
+  process.env.FINANCE_EVAL_MIGRATION_PYTHON=process.execPath;
+  const store=new MigrationActivityStore(root);let seen=false;
+  const off=store.subscribe('p',()=>{void store.get('p').then(state=>{if(state?.status==='RUNNING'&&state.events.some(e=>e.label==='调用工具：读取文件'))seen=true;});});
+  const result=await store.run('p',()=>runMigrationAgent('A2',{assetDigest:'a'.repeat(64)},{projectRoot:root,modelId:'fixture'}));off();
+  expect(seen).toBe(true);expect(result.status).toBe('PRODUCED');
+});
 afterEach(async()=>{
   for(const dir of dirs.splice(0))await rm(dir,{recursive:true,force:true});
   if(saved===undefined)delete process.env.FINANCE_EVAL_MIGRATION_PYTHON;else process.env.FINANCE_EVAL_MIGRATION_PYTHON=saved;

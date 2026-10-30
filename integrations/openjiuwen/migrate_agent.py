@@ -169,7 +169,7 @@ async def run(body: dict) -> None:
         EditFileTool, GlobTool, ListDirTool, WriteFileTool,
     )
 
-    from model_config import resolve_model, request_settings, bind_agent_request_extensions
+    from model_config import resolve_model, request_settings, bind_agent_request_extensions, bind_model_auth
 
     started = time.monotonic()
     config = json.loads(Path(os.environ["FINANCE_RUNTIME_CONFIG"]).read_text(encoding="utf-8"))
@@ -217,7 +217,10 @@ async def run(body: dict) -> None:
             max_tokens=int(body.get("maxTokens", 32000)),
             timeout=int(body.get("modelTimeoutMs", 300_000)) / 1000,
         )
+        model = bind_model_auth(model, bound)
         model = bind_agent_request_extensions(model, settings, "MIGRATION")
+        from agent_activity import ActivityRail, stream_agent
+        activity = ActivityRail(protocol, [bound.get("apiKey", "")])
         agent = create_code_agent(
             model=model,
             system_prompt=SYSTEM_PROMPT.replace("@@WORKSPACE_ROOT@@", str(workspace)),
@@ -226,7 +229,7 @@ async def run(body: dict) -> None:
             workspace=str(workspace),
             max_iterations=budget,
             language=lang,
-            rails=[ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail(SKILL_DELIVERY)],
+            rails=[activity, ToolTraceRail(tool_trace), FilesystemOnlyRail(), skill_rail(SKILL_DELIVERY)],
             # `minimal` drops the WORKSPACE prompt section: it advertises the harness's own
             # agent-home files (AGENT.md, SOUL.md, ...) as things to read, and they are not the
             # source project. It also keeps the scaffold out of the model's way.
@@ -242,14 +245,14 @@ async def run(body: dict) -> None:
         decisions = json.dumps(body.get("decisions") or [], ensure_ascii=False)
         contracts = json.dumps(body.get("tools") or [], ensure_ascii=False)
         delivery = json.dumps(body.get("deliveryContract") or {}, ensure_ascii=False)
-        result = await agent.invoke({"query": (
+        result = await stream_agent(agent, {"query": (
             "按下面的逐 Tool 决策完成迁移，并让每个 Tool 通过编译与契约测试。\n"
             f"逐 Tool 决策：{decisions}\n"
             f"源 Tool 描述（含源契约 schema）：{contracts}\n"
             f"平台交付与加载契约：{delivery}\n"
             "先用 read/grep 读源实现和 Skill 文档，再写实现，然后调 compile_source 和 run_contract_test，失败就改；最后整理并写入 migration-skill/ 文档交付目录。"
             "最后按约定只输出一个 JSON 对象。"
-        )})
+        )}, activity)
         raw = str(result.get("output", ""))
         outcome_keys = sorted(result) if isinstance(result, dict) else []
         failure = ""

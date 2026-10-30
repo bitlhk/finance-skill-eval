@@ -1,9 +1,9 @@
 /** Manual UI acceptance host: real construction, no source/plan/verdict rewrites. */
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
-import {mkdtemp,mkdir,readFile,writeFile,cp} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,cp} from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import {createAcceptanceWorkspace} from './lib/acceptance-workspace.mjs';
 import net from 'node:net';
 import {pinnedBuilderSource} from './lib/pinned-builder-source.mjs';
 import {createEvaluationService} from '../dist/service/server.js';
@@ -16,7 +16,7 @@ assert(!git('status','--porcelain'),'Commit implementation before pinned accepta
 const original=process.env.CLOSEOUT_REBUILD_DATA,projectId=process.env.CLOSEOUT_REBUILD_PROJECT;
 const builderCommit=process.env.CLOSEOUT_BUILDER_COMMIT,codex=process.env.CLOSEOUT_CODEX_BIN;
 assert(original&&projectId&&builderCommit&&codex,'Explicit real candidate data, project, Builder commit and Codex executable required');
-const work=await mkdtemp(path.join(os.tmpdir(),'runtime-rebuild-ui-')),data=path.join(work,'data');
+const work=await createAcceptanceWorkspace('runtime-rebuild-ui-',root),data=path.join(work,'data');
 await cp(path.resolve(original),data,{recursive:true,errorOnExist:true});
 const projects=new MigrationProjectRepository(data),project=await projects.get(projectId);
 assert(project.candidate&&project.reuseProposal?.approvedAt,'A genuinely generated candidate and confirmed design are required');

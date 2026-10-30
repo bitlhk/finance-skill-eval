@@ -32,6 +32,21 @@ export function registerMigrationRoutes(app: FastifyInstance, dependencies: Migr
   });
 
   app.get("/api/migrations", () => migrations.list());
+  app.get<{Params:{id:string}}>('/api/migrations/:id/activity',async request=>{await migrations.get(request.params.id);return migrations.activity.get(request.params.id);});
+  app.post<{Params:{id:string}}>('/api/migrations/:id/activity/cancel',async request=>{await migrations.get(request.params.id);migrations.activity.cancel(request.params.id);return {ok:true};});
+  app.get<{Params:{id:string}}>('/api/migrations/:id/activity/events',async(request,reply)=>{
+    const id=request.params.id;await migrations.get(id);
+    reply.hijack();reply.raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache','X-Accel-Buffering':'no'});
+    let closed=false,reading=false,revision='',lastSent=0;
+    const send=async()=>{if(closed||reading||reply.raw.writableLength>256000)return;reading=true;
+      try{const state=await migrations.activity.get(id);const next=state?`${state.taskId}:${state.updatedAt}:${state.status}`:'empty';
+        if(!closed&&next!==revision){revision=next;lastSent=Date.now();reply.raw.write(`data: ${JSON.stringify(state)}\n\n`);}
+        else if(!closed&&Date.now()-lastSent>5000){lastSent=Date.now();reply.raw.write(': heartbeat\n\n');}
+      }catch{if(!closed)reply.raw.end();}finally{reading=false;}};
+    // Bounded snapshots coalesce token deltas without buffering the final response.
+    const timer=setInterval(()=>void send(),350);timer.unref();
+    reply.raw.once('close',()=>{closed=true;clearInterval(timer);});await send();
+  });
   app.get("/api/migrations-legacy",()=>migrations.listLegacy());
   app.get<{Params:{id:string}}>("/api/migrations-legacy/:id/export",async(request,reply)=>reply
     .type("application/json; charset=utf-8")

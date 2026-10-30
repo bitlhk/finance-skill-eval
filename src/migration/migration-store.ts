@@ -1,3 +1,4 @@
+import {MigrationActivityStore} from './infrastructure/migration-activity.js';
 import type { MigrationProject } from './domain/migration-project.js';
 import type { MigrationRuntimeReference } from './application/migration-runtime-configuration-service.js';
 import { migrationConflict as conflict } from './application/migration-errors.js';
@@ -6,16 +7,18 @@ import {createMigrationServices,type MigrationCompositionOptions,type MigrationS
 /** Stable migration facade; concrete adapters are assembled only by migration-composition. */
 export class MigrationStore {
   private readonly services:MigrationServices;
+  readonly activity:MigrationActivityStore;
   constructor(root:string, options:Omit<MigrationCompositionOptions,'root'>) {
     this.services=createMigrationServices({root,...options});
+    this.activity=new MigrationActivityStore(root);
   }
   async list() {return this.services.projectService.list();}
   async get(id:string):Promise<MigrationProject> {return this.services.projectService.get(id);}
   async listLegacy(){return this.services.projectService.listLegacy();}
   async readLegacy(id:string){return this.services.projectService.readLegacy(id);}
   async create(input:unknown) {return this.services.projectService.create(input);}
-  async diagnose(id:string,retry=false){return this.services.projectService.diagnose(id,retry);}
-  async inspect(id:string,sourceOnly=false,environmentId?:string){return this.services.inspectionService.inspect(id,sourceOnly,environmentId);}
+  async diagnose(id:string,retry=false){return this.activity.run(id,()=>this.services.projectService.diagnose(id,retry));}
+  async inspect(id:string,sourceOnly=false,environmentId?:string){return this.activity.run(id,()=>this.services.inspectionService.inspect(id,sourceOnly,environmentId));}
   async reuseRuntime(id:string,input:unknown){return this.services.planningService.reuseRuntime(id,input);}
   async dependencyData(id:string,dependencyId:string){
     return this.services.runtimeConfigurationService.dependencyData(id,dependencyId);
@@ -59,12 +62,12 @@ export class MigrationStore {
   async technicalValidations(id:string){return this.services.technicalValidation.list(id);}
   async validateOpenJiuwen(id:string,input:unknown){return this.services.openJiuwenService.validate(id,input);}
   async openJiuwenValidations(id:string){return this.services.openJiuwenService.validations(id);}
-  async generate(id:string,input:unknown){return this.services.generationService.generate(id,input);}
+  async generate(id:string,input:unknown){return this.activity.run(id,()=>this.services.generationService.generate(id,input));}
   async generationProgress(id:string){return this.services.generationService.executionProgress(id);}
   async candidate(id:string,input:unknown) {return this.services.candidateService.import(id,input);}
   async nativeCandidate(id:string,input:unknown,targets:import('../shared/contracts/native-tool-catalog.js').NativeBindingTarget[]){return this.services.nativeBindingService.bind(id,input,targets);}
   async draft(id:string,input:unknown) {return this.services.candidateService.saveDraft(id,input);}
-  async analyze(id:string) {return this.services.candidateService.analyze(id);}
+  async analyze(id:string) {return this.activity.run(id,()=>this.services.candidateService.analyze(id));}
   async review(id:string,input:unknown){return this.services.candidateService.review(id,input);}
   async createSuite(id:string,input:unknown) {return this.services.suiteService.create(id,input);}
   async importSimpleSuite(id:string,input:unknown){return this.services.suiteService.importSimple(id,input);}

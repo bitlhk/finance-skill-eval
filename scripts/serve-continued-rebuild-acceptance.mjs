@@ -1,9 +1,9 @@
 /** Continue an idle real Builder fixture without rebuilding or rewriting evidence. */
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile,cp} from 'node:fs/promises';
+import {readFile,writeFile,cp} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
-import os from 'node:os';
+import {createAcceptanceWorkspace} from './lib/acceptance-workspace.mjs';
 import {createEvaluationService} from '../dist/service/server.js';
 const root=process.cwd(),git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',windowsHide:true}).trim();
 assert(!git('status','--porcelain'),'Commit before continued acceptance');
@@ -23,7 +23,7 @@ assert(probe.ok,'Existing real Builder owner is unavailable');
 process.env.REBUILD_UI_BASELINE_TOKEN=baseline.token;
 const trust=[{reference:'rebuild-baseline',label:'受限基线部署',baseUrlPrefix:baseline.baseUrl,credentialEnv:'REBUILD_UI_BASELINE_TOKEN'},
  {reference:'rebuild-release',label:'Builder 新部署',baseUrlPrefix:`http://127.0.0.1:${releasePort}/oj/`,credentialEnv:'REBUILD_UI_RELEASE_TOKEN'}];
-const work=await mkdtemp(path.join(os.tmpdir(),'continued-rebuild-ui-')),data=path.join(work,'data');
+const work=await createAcceptanceWorkspace('continued-rebuild-ui-',root),data=path.join(work,'data');
 await cp(parent.data,data,{recursive:true,errorOnExist:true});
 const project=JSON.parse(await readFile(path.join(data,'migrations',`${prior.projectId}.json`),'utf8'));
 assert(project.candidate?.artifactSha256===prior.candidateDigest,'Candidate provenance must remain unchanged');

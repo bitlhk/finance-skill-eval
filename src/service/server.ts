@@ -421,6 +421,7 @@ async function registerWeb(app:FastifyInstance,config:ServiceConfig){
 async function main(): Promise<void> {
   const config = loadServiceConfig();
   const app = await createEvaluationService(config);
+  app.log.info({dataDirectory: config.dataDirectory, workspaceMode: config.workspaceMode}, 'Workspace data source');
   await app.listen({ host: config.host, port: config.port });
 }
 

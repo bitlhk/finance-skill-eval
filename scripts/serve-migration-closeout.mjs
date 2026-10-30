@@ -1,14 +1,14 @@
 /** Disposable, real-model service for manual browser acceptance. No seeded results. */
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
-import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import {createAcceptanceWorkspace} from './lib/acceptance-workspace.mjs';
 import {createEvaluationService} from '../dist/service/server.js';
 import {configuredModelRole} from '../dist/service/config.js';
 import {pinnedBuilderSource} from './lib/pinned-builder-source.mjs';
 
-const root=process.cwd(),work=await mkdtemp(path.join(os.tmpdir(),'migration-closeout-'));
+const root=process.cwd(),work=await createAcceptanceWorkspace('migration-closeout-',root);
 const builder=process.env.CLOSEOUT_BUILDER_ROOT??path.resolve(root,'../agent-store-builder-dev-wo-fork/community/finance/builder/finance-solution-builder');
 const python=process.env.CLOSEOUT_PACKAGE_PYTHON??'C:/fb-pkg-py317/Scripts/python.exe';
 const builderPython=process.env.CLOSEOUT_BUILDER_PYTHON??path.join(builder,'../.venv',process.platform==='win32'?'Scripts/python.exe':'bin/python');
