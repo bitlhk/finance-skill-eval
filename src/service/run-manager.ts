@@ -28,8 +28,10 @@ import {runtimeSkillPackage} from '../runtime-skill-package.js';
 import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from '../shared/skill-runtime-requirements.js';
 import {requireManagedRun} from './managed-workspace-policy.js';
 import type {EvaluationRunBudget} from './evaluation-run-budget.js';
+import type {OperationalLogger} from './logging.js';
 
 type RunManagerOptions = {
+  logger?: OperationalLogger;
   catalog: EvalPackCatalog;
   preparations: PreparationStore;
   skills: SkillStore;
@@ -68,6 +70,7 @@ function errorCode(error: unknown): string {
 }
 
 export class EvaluationRunManager {
+  private readonly loggedStatus = new Map<string, string>();
   private readonly queue: string[] = [];
   private readonly active = new Map<string, AbortController>();
   private readonly events = new EventEmitter();
@@ -146,6 +149,12 @@ export class EvaluationRunManager {
   }
 
   private emit(job: EvaluationJob): void {
+    if (this.loggedStatus.get(job.jobId) !== job.status) {
+      this.loggedStatus.set(job.jobId, job.status);
+      this.options.logger?.info({ event: 'evaluation_status', runId: job.jobId, status: job.status,
+        errorCode: job.error?.code });
+      if (['completed', 'failed', 'cancelled', 'interrupted'].includes(job.status)) this.loggedStatus.delete(job.jobId);
+    }
     this.events.emit(`job:${job.jobId}`, job);
   }
 

@@ -16,7 +16,9 @@ export async function pinnedBuilderSource({project,commit,destination}) {
   const archive=path.join(destination,'builder-source.tar');
   const exported=path.join(destination,'source');
   await mkdir(exported,{recursive:false});
-  git('-C',repository,'archive','--format=tar',`--output=${archive}`,commit,'--',relative);
+  // git archive applies checkout conversions too. Pin LF so Windows autocrlf
+  // cannot change the raw source identity consumed on a Linux Builder host.
+  git('-c','core.autocrlf=false','-C',repository,'archive','--format=tar',`--output=${archive}`,commit,'--',relative);
   execFileSync('tar',['-xf',archive,'-C',exported],{windowsHide:true,stdio:'pipe'});
   return path.join(exported,relative,path.basename(project));
 }

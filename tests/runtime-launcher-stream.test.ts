@@ -1,3 +1,4 @@
+import {standardSkills,standardCapabilities,released} from './runtime-standard-fixture.js';
 import Fastify from 'fastify';
 import {afterEach,expect,it} from 'vitest';
 import {RuntimeLauncherAdapter,RUNTIME_LAUNCHER_STREAM_LIMITS,summarizeRuntimeObservation} from '../src/runtime-launcher.js';
@@ -8,6 +9,7 @@ afterEach(async()=>{while(cleanup.length)await cleanup.pop()!();});
 
 async function launcher(mode:'oversized-frame'|'oversized-evidence'|'oversized-json-evidence'|'unfinished'){
   const app=Fastify();
+  app.get('/v1/runtime-capabilities',()=>standardCapabilities());
   app.post('/v1/runtime-instances',()=>({schemaVersion:'finance.skill-eval.runtime-instance-state.v1',instanceId:'instance',status:'ready',executeEndpoint:'/v1/runtime-instances/instance/execute',expiresAt:new Date(Date.now()+60_000).toISOString(),error:null,configurationDigest:'config'}));
   app.post('/v1/runtime-instances/instance/execute',(_request,reply)=>{
     if(mode==='oversized-json-evidence')return {output:'x'.repeat(RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes+1)};
@@ -17,10 +19,10 @@ async function launcher(mode:'oversized-frame'|'oversized-evidence'|'oversized-j
     else reply.raw.write(`data: ${JSON.stringify({evidence:{output:'x'.repeat(RUNTIME_LAUNCHER_STREAM_LIMITS.evidenceBytes+1)}})}\n\n`);
     reply.raw.end();
   });
-  app.delete('/v1/runtime-instances/instance',(_request,reply)=>reply.code(204).send());
+  app.delete('/v1/runtime-instances/instance',()=>released('instance'));
   await app.listen({host:'127.0.0.1',port:0});cleanup.push(()=>app.close());
   const address=app.server.address();if(!address||typeof address==='string')throw new Error('missing address');
-  const adapter=new RuntimeLauncherAdapter({baseUrl:`http://127.0.0.1:${address.port}/`,side:'right',model:{providerId:'test',modelId:'model',parameters:{}},variant:{mode:'without_target_skill',skillId:'skill'},skill:null,environment:{environmentId:'env'},timeoutMs:10_000});
+  const adapter=new RuntimeLauncherAdapter({baseUrl:`http://127.0.0.1:${address.port}/`,side:'right',model:{providerId:'test',modelId:'model',parameters:{}},variant:{mode:'without_target_skill',skillId:'skill'},skill:null,skillSet:standardSkills,environment:{environmentId:'env'},timeoutMs:10_000});
   await adapter.prepare({runId:'run'});cleanup.push(()=>adapter.cleanup());return adapter;
 }
 

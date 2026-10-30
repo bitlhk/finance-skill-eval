@@ -1,5 +1,5 @@
 import type {ProjectInspection,RuntimeHarnessCapability} from './migration-model.js';
-import {withRequirementsDigest,type RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
+import {withRequirementsDigest,type RuntimeBuildRequirements} from '../../shared/contracts/runtime-builder.js';
 import {RUNTIME_CAPABILITIES_SCHEMA_VERSION,RUNTIME_EXECUTION_SCHEMA_VERSION,RUNTIME_INSTANCE_SCHEMA_VERSION,RUNTIME_OBSERVATION_SCHEMA_VERSION} from '../../shared/contracts/runtime-protocol-versions.js';
 import {capabilityContractSchema,capabilityConstraintsSchema} from '../../shared/contracts/runtime-capability.js';
 
@@ -20,12 +20,12 @@ export function adaptableHarnessCapabilities(inspection:ProjectInspection):Runti
   return (inspection.runtimeCapabilities??[]).filter(isAdaptableHarnessCapability);
 }
 
-export type RuntimeBuildRequirementState=RuntimeBuildRequirementsV1|{
-  schemaVersion:'finance.runtime-build-requirements.v1';status:'INCOMPLETE_REQUIREMENTS';
+export type RuntimeBuildRequirementState=RuntimeBuildRequirements|{
+  schemaVersion:'finance.runtime-build-requirements.v3';status:'INCOMPLETE_REQUIREMENTS';
   missing:Array<{name:string;fields:string[]}>;
 };
 
-export function runtimeBuildRequirements(inspection:ProjectInspection, target:{runtimeType:string;requestId?:string}={runtimeType:'openjiuwen'}):RuntimeBuildRequirementState|null{
+export function runtimeBuildRequirements(inspection:ProjectInspection, target:{runtimeType:string;requestId?:string;executionRequirements?:RuntimeBuildRequirements["executionRequirements"]}={runtimeType:'openjiuwen'}):RuntimeBuildRequirementState|null{
   const capabilities=adaptableHarnessCapabilities(inspection);
   if(!capabilities.length)return null;
   const missing=capabilities.flatMap(capability=>{
@@ -35,11 +35,12 @@ export function runtimeBuildRequirements(inspection:ProjectInspection, target:{r
       ...(!capabilityConstraintsSchema.safeParse(capability.constraints).success?['constraints']:[])];
     return fields.length?[{name:capability.name,fields}]:[];
   });
-  if(missing.length)return {schemaVersion:'finance.runtime-build-requirements.v1',status:'INCOMPLETE_REQUIREMENTS',missing};
+  if(!target.executionRequirements)missing.push({name:'executionRequirements',fields:['platform','features','limits']});
+  if(missing.length)return {schemaVersion:'finance.runtime-build-requirements.v3',status:'INCOMPLETE_REQUIREMENTS',missing};
   return withRequirementsDigest({
-    schemaVersion:'finance.runtime-build-requirements.v1' as const,
+    schemaVersion:'finance.runtime-build-requirements.v3' as const,
     requestId:target.requestId??`${inspection.assetId}:${inspection.assetDigest.slice(0,12)}:${target.runtimeType}`,
-    source:{assetId:inspection.assetId,artifactSha256:inspection.assetDigest},
+    executionRequirements:target.executionRequirements!,
     target:{runtimeType:target.runtimeType,protocols:{capabilities:RUNTIME_CAPABILITIES_SCHEMA_VERSION,instance:RUNTIME_INSTANCE_SCHEMA_VERSION,execution:RUNTIME_EXECUTION_SCHEMA_VERSION,observation:RUNTIME_OBSERVATION_SCHEMA_VERSION}},
     requiredCapabilities:capabilities.map((capability,index)=>({
       id:`harness-${index+1}-${capability.name.toLowerCase().replace(/[^a-z0-9]+/gu,'-').replace(/^-|-$/gu,'')||'capability'}`,

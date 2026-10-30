@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import { createServer } from 'node:http';
 import { mkdtemp,readFile,rm,writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -157,22 +158,11 @@ it('drops an invented fixture case even when another case already covers the doc
   expect(calls).toBe(1);expect(result.cases).toHaveLength(1);expect(result.cases.every(item=>item.prompt.includes('ORDER-001'))).toBe(true);
 });
 
-it('grounds questions on frozen source analysis and skill-relative references after candidate inspection changes',async()=>{
-  const directory=await mkdtemp(path.join(os.tmpdir(),'migration-grounding-'));dirs.push(directory);
-  let grounding='',tools:string[]=[];
-  const app=await createEvaluationService({rootDirectory:path.resolve('.'),dataDirectory:directory,accessToken:'test',publicDemo:false,
-    migrationAnalyzer:analysisFixture([analyzedTool({name:'lookup',sample:{account_id:'A-1'}})]),
-    migrationSuite:async input=>{grounding=input.skillSource;tools=input.tools;return {summary:'source',cases:[{...evalCase,requiredTools:['lookup']}]};}});
-  const headers={authorization:'Bearer test'},post=(url:string,payload:unknown={})=>app.inject({method:'POST',url,headers,payload});
-  try{
-    const source=(await app.inject({method:'POST',url:'/api/migrations/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'skill/SKILL.md':strToU8(SKILL_MD),'tool/lookup.py':strToU8('def lookup(): pass'),'skill/references/policy.md':strToU8('POLICY_FROM_SOURCE')}))})).json();
-    const project=(await post('/api/migrations',{sourceAssetId:source.assetId,name:'grounding'})).json();
-    expect((await post(`/api/migrations/${project.id}/inspect`)).statusCode).toBe(200);
-    const recordPath=path.join(directory,'migrations',`${project.id}.json`),record=JSON.parse(await readFile(recordPath,'utf8'));
-    // Mimic candidate re-analysis replacing the current surface without altering source grounding.
-    record.inspection.tools[0].inputSchema={candidate_only:true};record.inspection.tools[0].samples=[];
-    await writeFile(recordPath,JSON.stringify(record));
-    const response=await post(`/api/migrations/${project.id}/suites/generated`,{baseAssetId:source.assetId});
-    expect(response.statusCode).toBe(200);expect(grounding).toContain('POLICY_FROM_SOURCE');expect(grounding).toContain('A-1');expect(grounding).not.toContain('candidate_only');expect(tools).toEqual(['lookup']);
-  }finally{await app.close();}
+it("grounds regeneration on immutable source and current candidate without exposing holdout cases",async()=>{
+
+ const f=await taskHttpFixture();await f.ready();const original=(await f.get()).source.digest;
+ f.control.files={...f.files,'shared/rules.json':encode('{"limit":200}')};const task=await f.finish('generate');
+ await f.finish('analysis');expect(f.seen.at(-1)?.source.digest).toBe(original);expect(f.seen.at(-1)?.base.digest).toBe(task.candidates.at(-1)?.digest);
+ expect(JSON.stringify(f.seen)).not.toContain('HOLDOUT_SECRET');expect(JSON.stringify(f.seen)).not.toContain('HOLDOUT_CRITERION');
+
 });

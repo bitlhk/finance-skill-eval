@@ -1,3 +1,5 @@
+import { standardExecutionRequirements } from './runtime-standard-fixture.js';
+import { canonicalSha256 } from '../src/shared/json-canonicalization.js';
 import { expect, it } from 'vitest';
 import { MigrationRuntimeRebuildService } from '../src/migration/application/migration-runtime-rebuild-service.js';
 import {MigrationReportService} from '../src/migration/application/migration-report-service.js';
@@ -14,10 +16,11 @@ const project={id:'migration-1234',source:asset,candidate:asset,runs:[{jobId:'jo
   solutionRevisions:{left:baseline,right:baseline}}]} as unknown as MigrationProject;
 const environment={environmentId:'env-1',type:'runtime_launcher',runtimeType:'openjiuwen',baseUrl:'https://example.test/launcher/',
   delivery:{deploymentId:'deployment-1',artifactSha256:'b'.repeat(64)}};
+const capabilities={platform:standardExecutionRequirements.platform,limits:standardExecutionRequirements.limits};
 const stores={
   projects:{runExclusive:async(_key:string,operation:()=>Promise<unknown>)=>operation(),get:async()=>project,save:async()=>undefined} as MigrationProjectStore,
   jobs:{get:()=>({status:'completed',report:{cases:[{caseId:'case-1',right:{status:'completed',toolCalls:[{name:'lookup',status:'failed'}]}}]}})} as MigrationEvaluationJobReader,
-  environments:{get:async()=>environment} as unknown as MigrationEnvironmentRepository,
+  environments:{get:async()=>environment,preflight:async()=>({status:'ready',capabilities})} as unknown as MigrationEnvironmentRepository,
 };
 
 it('creates an immutable Builder rebuild request linked to a real run and baseline Launcher',async()=>{
@@ -26,8 +29,10 @@ it('creates an immutable Builder rebuild request linked to a real run and baseli
   const proposal={jobId:'job-1',hypothesis:{id:'finding-1',issue:'Missing handoff',expectedBehavior:'Preserve state inside a case'},
     evidence:[{caseId:'case-1',summary:'The second call could not see the first result'}]};
   const request=await service.propose(project.id,proposal);
-  expect(request.rebuild?.baseline).toMatchObject({deploymentId:'deployment-1',artifactSha256:'b'.repeat(64),solutionRevisionId:baseline.revisionId});
-  expect(request.source).toMatchObject({assetId:'candidate',artifactSha256:asset.artifactSha256});
+  expect(request.rebuild?.baseline).toMatchObject({deploymentId:'deployment-1',artifactSha256:'b'.repeat(64),capabilitiesDigest:canonicalSha256(capabilities)});
+  expect(request).not.toHaveProperty('source');
+  expect(JSON.stringify(request.rebuild)).not.toContain('job-1');
+  expect(request.rebuild?.evidence[0]?.evidenceRef).toMatch(/^[a-f0-9]{64}$/);
   expect(project.runtimeRebuilds?.at(-1)?.requirements.requirementsDigest).toBe(request.requirementsDigest);
   await expect(service.propose(project.id,{...proposal,evidence:[{caseId:'invented',summary:'not executed'}]})).rejects.toThrow('实际执行');
 });

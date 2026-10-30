@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "finance.runtime-build-requirements.v1",
+  "schemaVersion": "finance.runtime-build-requirements.v3",
   "status": "INCOMPLETE_REQUIREMENTS",
   "missing": [
     {

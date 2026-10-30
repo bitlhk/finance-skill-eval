@@ -73,6 +73,17 @@ describe('migration architecture boundaries',()=>{
     expect(violations).toEqual([]);
   });
 
+  it('keeps unified task application and domain behind ports', () => {
+    const violations = ['application', 'domain'].flatMap(layer => {
+      const directory = path.join(migrationRoot, 'tasks', layer);
+      return migrationSourceFiles(directory).flatMap(file => imports(readFileSync(file, 'utf8'))
+        .filter(specifier => specifier.includes('/service/') || specifier.includes('/infrastructure/')
+          || (layer === 'domain' && specifier.includes('/application/')))
+        .map(specifier => `${path.relative(migrationRoot,file)} -> ${specifier}`));
+    });
+    expect(violations).toEqual([]);
+  });
+
   it('keeps the migration module free of static import cycles',()=>{
     const files=migrationSourceFiles(),known=new Set(files);
     const graph=new Map(files.map(file=>[file,imports(readFileSync(file,'utf8'))

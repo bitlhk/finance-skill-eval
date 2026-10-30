@@ -2,6 +2,7 @@ import {createHash,timingSafeEqual} from 'node:crypto';
 import {lstat,mkdir,readdir,readFile,writeFile,rename,rm} from 'node:fs/promises';
 import path from 'node:path';
 import Fastify,{type FastifyInstance} from 'fastify';
+import {requestLoggingOptions, installRequestId} from './logging.js';
 import type {ServiceConfig} from './config.js';
 import {WorkspaceRequestBudget,requiresWorkspaceBudget,isWorkspacePreflight} from './workspace-request-budget.js';
 
@@ -59,7 +60,12 @@ export async function createAccountWorkspaces(config:ServiceConfig,
   await mkdir(root,{recursive:true,mode:0o700});
   if((await lstat(root)).isSymbolicLink())fail('WORKSPACE_DIRECTORY_UNSAFE');
   const apps=new Map<string,Promise<FastifyInstance>>();
-  const app=Fastify({logger:true,bodyLimit:8*1024*1024});
+  const app=Fastify({...requestLoggingOptions(),bodyLimit:8*1024*1024});
+  installRequestId(app);
+  app.setErrorHandler((error, request, reply) => {
+    request.log.error({event:'request_failed',err:error});
+    reply.code(error.statusCode ?? 500).send({error:'WORKSPACE_ERROR',requestId:request.id});
+  });
   let closing=false;
 
   async function open(subject:string){
@@ -125,7 +131,7 @@ export async function createAccountWorkspaces(config:ServiceConfig,
   });
   app.get('/api/health',async()=>({status:'ready',deploymentMode:'account-workspaces'}));
   app.all('/api/*',async(_request,reply)=>reply.code(404).send({error:'NOT_FOUND'}));
-  app.addHook('onClose',async()=>{
+  app.addHook('preClose',async()=>{
     closing=true;
     await Promise.all([...apps.values()].map(async value=>{const child=await value.catch(()=>null);await child?.close();}));
   });

@@ -1,4 +1,5 @@
 import {configuredModelRole} from '../service/config.js';
+import {MigrationActivityStore} from './infrastructure/migration-activity.js';
 import {FileExecutionConfigurationRepository} from '../execution-configuration/file-execution-configuration-repository.js';
 import type {MigrationAnalyzer,MigrationImplementer} from './application/migration-agent-port.js';
 import {MigrationCandidateInspectionService} from './application/migration-candidate-inspection-service.js';
@@ -112,6 +113,7 @@ export function createMigrationServices(options:MigrationCompositionOptions){
   const suiteService=new MigrationSuiteService(projects,skills,analyzer,suiteGenerator,agentResults,preparations);
   reuseAcceptance=new MigrationReuseAcceptanceService({projects,configs:runtimeConfigs,environments,suites:suiteService,execution:openJiuwenService,jobs,runs,skills,model:options.reuseAcceptanceModel??runReuseAcceptanceModel});
   return {
+    activity:new MigrationActivityStore(root),
     nativeBindingService:new MigrationNativeBindingService(projects,skills),
     reuseAcceptance,
     projectService,

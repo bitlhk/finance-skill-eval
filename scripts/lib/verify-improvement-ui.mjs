@@ -43,7 +43,7 @@ export async function verifyImprovementThroughUi({page,api,base,suite,environmen
   assert.equal((await api('GET',base+'/improvement-tasks')).at(-1).status,'ADOPTED');
   await persistEvidence?.({adoptedReport:await api('GET',base+'/report')});
   // Refresh exercises persisted task rendering rather than only component state.
-  await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+  await page.reload();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'旧版任务记录',exact:true}).click();
   await page.locator('.migration-project').filter({has:page.getByText(project.name,{exact:true})}).getByRole('button',{name:'继续处理',exact:true}).click();
   await page.getByRole('navigation',{name:'迁移步骤'}).getByRole('button',{name:/验证实际效果/}).click();
   await expect(page.getByText('已采用',{exact:true}).first()).toBeVisible({timeout:30_000});

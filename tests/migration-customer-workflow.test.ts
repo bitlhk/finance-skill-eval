@@ -1,3 +1,4 @@
+import { taskHttpFixture, standardFiles, encode } from './task-http-fixture.js';
 import {it,expect} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
@@ -47,16 +48,10 @@ it('imports a migration ZIP without judging its layout',async()=>{
   }finally{await rm(dir,{recursive:true,force:true});}
 });
 
-it('does not export an uploaded credential file alongside a candidate',async()=>{
-  const dir=await mkdtemp(path.join(os.tmpdir(),'migration-secrets-'));
-  const app=await createEvaluationService({rootDirectory:process.cwd(),dataDirectory:dir,accessToken:'private',publicDemo:false});
-  const headers={authorization:'Bearer private'};
-  try{
-    const asset=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: method\nversion: 1.0.0\n---\nSummarize facts.'),'.env':strToU8('EXAMPLE=not-a-real-credential')}))})).json();
-    const project=(await app.inject({method:'POST',url:'/api/migrations',headers,payload:{sourceAssetId:asset.assetId,name:'secret-path-test'}})).json();
-    const candidate=(await app.inject({method:'POST',url:'/api/skills/upload',headers:{...headers,'content-type':'application/zip'},payload:Buffer.from(zipSync({'SKILL.md':strToU8('---\nname: method\nversion: 2.0.0\n---\nSummarize facts.'),'.env':strToU8('EXAMPLE=not-a-real-credential')}))})).json();
-    expect((await app.inject({method:'POST',url:`/api/migrations/${project.id}/candidates`,headers,payload:{assetId:candidate.assetId,notes:'credential export guard'}})).statusCode).toBe(200);
-    const response=await app.inject({url:`/api/migrations/${project.id}/export`,headers});
-    expect(response.statusCode).toBe(409);expect(response.body).not.toContain('not-a-real-credential');
-  }finally{await app.close();await rm(dir,{recursive:true,force:true});}
+it("blocks credential-bearing candidate export through the standard task endpoint",async()=>{
+
+ const f=await taskHttpFixture({files:{...standardFiles,'.env':encode('API_KEY=sk-live-secret-do-not-export-123456789')}});
+ await f.candidate();const result=await f.api('GET',f.url()+'/export');expect(result.statusCode).toBe(409);
+ expect(result.body).not.toContain('sk-live-secret-do-not-export');
+
 });

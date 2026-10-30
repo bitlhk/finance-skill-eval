@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import path from "node:path";
 import { unlink } from "node:fs/promises";
 import { KeyedQueue } from "../shared/keyed-queue.js";
@@ -14,8 +14,9 @@ import { RuntimeLauncherAdapter, runtimeLauncherCapabilitiesSchema, type Runtime
 import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult } from '../shared/contracts/runtime-builder.js';
 import {nativeToolCatalogSchema} from '../shared/contracts/native-tool-catalog.js';
 import {readBoundedJson,runtimeLauncherResponseError} from '../runtime-launcher.js';
-import type {ResolvedSkillSource} from '../direct-model-runtime.js';
 import type {SkillVariant} from '../contracts.js';
+import { runtimeSkillSetFromFiles } from '../shared/contracts/runtime-skills.js';
+import { canonicalSha256 } from '../shared/json-canonicalization.js';
 
 function headersFor(record: EnvironmentRecord): Record<string, string> {
   if(record.type==='execution_environment')return {};
@@ -117,8 +118,7 @@ export class EnvironmentStore {
     });
   }
 
-  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string;
-    conformance?:{skill:ResolvedSkillSource;requiredTools:string[]}}):Promise<{
+  async acceptBuilderDelivery(input:{requirements:unknown;result:unknown;trustReference:string;name?:string}):Promise<{
     environment:Extract<EnvironmentRecord,{type:'runtime_launcher'}>;capabilities:RuntimeLauncherCapabilities;created:boolean;
   }>{
     const requirements=runtimeBuildRequirementsSchema.parse(input.requirements);
@@ -160,19 +160,33 @@ export class EnvironmentStore {
     if(issues.length)throw Object.assign(new Error(`Builder 交付未通过验收: ${issues.join(', ')}`),{statusCode:400,issues});
     const headers:Record<string,string>=authorization?{authorization}:{};
     const model=capabilities.models.find(item=>item.modelId===capabilities.defaultModelId)!;
-    const skill=input.conformance?.skill??null;
-    const variant:SkillVariant=skill?{mode:'skill_version',skillId:skill.skillId,version:skill.version,artifactSha256:skill.artifactSha256}
-      :{mode:'without_target_skill',skillId:'finance-eval-conformance'};
-    const requiredTools=input.conformance?.requiredTools??[];
-    const probeFiles=!skill||requiredTools.includes('read_case_file');
+    const fileProbe=capabilities.nativeToolNames?.includes('read_file')===true;
+    const methodProbe=!fileProbe&&capabilities.features.managedMethodProbe===true;
+    if (!fileProbe&&!methodProbe) throw Object.assign(new Error('Runtime has no declared supported Skill-loading probe'), {statusCode:400});
+    const probeId=`conformance-${randomUUID()}`, nonce=`RUNTIME_PROBE_${randomUUID()}`;
+    const requiredTools=fileProbe?['read_file']:[];
+    const minimum=capabilities.limits.minPrimaryTools;
+    if(methodProbe&&minimum===undefined)throw Object.assign(new Error('Managed probe requires an explicit tool minimum'),{statusCode:400});
+    // The server selects a complete atomic component from its actual catalog.
+    // Mounting the entire catalog can exceed a single method's existing limits.
+    const declaredProbeTools=capabilities.managedMethodProbeToolNames;
+    if(methodProbe&&(!declaredProbeTools||new Set(declaredProbeTools).size!==declaredProbeTools.length||declaredProbeTools.some(name=>!capabilities.nativeToolNames?.includes(name)||capabilities.auxiliaryToolNames?.includes(name))))throw Object.assign(new Error('Managed probe tool declaration is missing or invalid'),{statusCode:400});
+    const mountedTools=fileProbe?requiredTools:declaredProbeTools!;
+    if(methodProbe&&mountedTools.length<minimum!)throw Object.assign(new Error('Managed probe cannot satisfy the declared tool minimum'),{statusCode:400});
+    const instructions=fileProbe
+      ?'---\nname: runtime-conformance\ndescription: Verify isolated Runtime loading and tool execution.\n---\nRead conformance/probe.txt using read_file and return the exact file contents.'
+      :`---\nname: runtime-conformance\nallowed-tools: ${JSON.stringify(mountedTools)}\n---\nReturn exactly this platform verification marker: ${nonce}\nDo not call business tools or produce a business report.`;
+    const digest=createHash('sha256').update('SKILL.md').update('\0').update(instructions).update('\0').digest('hex');
+    const skillSet=runtimeSkillSetFromFiles({digest,files:{'SKILL.md':Buffer.from(instructions).toString('base64')},members:[{id:'runtime-conformance',skillId:'runtime-conformance',version:'1',skillFile:'SKILL.md',artifactSha256:digest}]});
+    const variant:SkillVariant={mode:'skill_version',skillId:'bundle',version:'frozen',artifactSha256:digest};
     const adapter=new RuntimeLauncherAdapter({baseUrl:launcher.baseUrl,headers,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},
-      variant,skill,environment:{environmentId:`conformance-${launcher.deploymentId}`,requiredToolNames:requiredTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
-    const probeId=`conformance-${randomUUID()}`;
+      variant,skill:null,skillSet,environment:{environmentId:'runtime-conformance',requiredToolNames:mountedTools},configuration:{},secrets:{mode:'inline',values:{}},timeoutMs:Math.min(capabilities.limits.maxTimeoutMs,300_000),requireStatusPoll:true});
     try{
       await adapter.prepare({runId:probeId});
-      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant,evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:probeFiles?'仅核验案例文件：读取 conformance/probe.txt 并返回其内容。不要办理业务。':'这是生命周期连通检查，请只回复 CONFORMANCE_OK，不调用业务工具。',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools,workspaceFiles:probeFiles?[{path:'conformance/probe.txt',content:'CONFORMANCE_OK'}]:[],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:'Launcher completed the isolated lifecycle.',dimension:'business_completeness',weight:1,required:true,allOf:['CONFORMANCE_OK'],anyOf:[],noneOf:[]}]}});
-      if(evidence.status!=='completed'||!evidence.runtimeIdentityVerified||!evidence.streamCompleted||!evidence.output.includes('CONFORMANCE_OK'))throw new Error(evidence.error??'Launcher conformance execution did not complete with the mounted probe data');
-      if(skill&&probeFiles&&!evidence.toolCalls.some(call=>call.name==='read_case_file'&&call.status==='completed'))throw new Error('Lifecycle probe did not execute the declared file tool');
+      const evidence=await adapter.execute({runId:probeId,side:'right',model:{providerId:'launcher-conformance',modelId:model.modelId,parameters:{}},variant,evalCase:{caseId:'launcher-lifecycle',name:'Launcher lifecycle conformance',taskMode:'single_turn',prompt:fileProbe?'Read conformance/probe.txt with read_file and return its exact content.':'Return the exact platform verification marker from the installed method. Do not call tools.',evaluationGoal:'Verify the complete Launcher lifecycle.',requiredTools,workspaceFiles:fileProbe?[{path:'conformance/probe.txt',content:nonce}]:[],rubric:[{criterionId:'lifecycle',label:'Lifecycle',description:fileProbe?'Runtime loaded the verification Skill and read mounted data.':'Runtime executed independently installed managed instructions without business calls.',dimension:'business_completeness',weight:1,required:true,allOf:[nonce],anyOf:[],noneOf:[]}]}});
+      if(evidence.status!=='completed'||!evidence.runtimeIdentityVerified||!evidence.streamCompleted||!evidence.output.includes(nonce))throw new Error(evidence.error??'Launcher conformance execution did not return the mounted probe data');
+      if(fileProbe&&!evidence.toolCalls.some(call=>call.name==='read_file'&&call.status==='completed'))throw new Error('Lifecycle probe did not execute the file tool');
+      if(methodProbe&&(evidence.output.trim()!==nonce||evidence.toolCalls.length!==0||evidence.metadata.skillSetInstallation!=='COMPILED_INTO_MANAGED_METHOD'))throw new Error('Managed method probe did not verify exact instructions without business calls');
     }catch(error){conformanceError=error instanceof Error?error:new Error(String(error));}
     try{await adapter.cleanup();}catch(error){conformanceError=new Error(`${conformanceError?`${conformanceError.message}; `:''}实例清理失败: ${error instanceof Error?error.message:String(error)}`);}
     if(conformanceError)throw Object.assign(new Error(`Launcher 生命周期验收失败: ${conformanceError.message}`),{statusCode:400});
@@ -201,7 +215,9 @@ export class EnvironmentStore {
           buildId:result.buildId,requestId:result.requestId,requirementsDigest:result.requirementsDigest,deploymentId:launcher.deploymentId,
           artifactSha256:launcher.artifactSha256,capabilitiesDigest:launcher.capabilitiesDigest,resultDigest:result.resultDigest,
           builder:result.builder,acceptedAt:now,expiresAt:launcher.expiresAt,
-          evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete']}},
+          evalConformance:{status:'PASSED',testedAt:now,checks:['capabilities','create','status','execute','evidence','delete'],
+            probeKind:methodProbe?'MANAGED_METHOD_INSTRUCTION_NONCE':'WORKSPACE_FILE_READ',
+            runId:probeId,instanceSchemaVersion:'finance.runtime-instance.v1',probeDigest:digest}},
       }) as Extract<EnvironmentRecord,{type:'runtime_launcher'}>;
       await writeJsonAtomic(path.join(this.directory,`${environment.environmentId}.json`),environment);
       return {environment,capabilities,created:true};

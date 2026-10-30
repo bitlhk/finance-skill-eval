@@ -72,7 +72,7 @@ try{
   const url=await app.listen({host:'127.0.0.1',port:0});browser=await chromium.launch({headless:true});
   page=await browser.newPage({viewport:{width:1440,height:1100}});const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(url);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();
-  await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'继续处理',exact:true}).click();
+  await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'旧版任务记录',exact:true}).click();await page.getByRole('button',{name:'继续处理',exact:true}).click();
   const nav=page.getByRole('navigation',{name:'迁移步骤'});
   if(!continued){
   await nav.getByRole('button',{name:/验证能否运行/}).click();

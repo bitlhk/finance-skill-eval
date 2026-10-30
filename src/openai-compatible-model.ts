@@ -3,7 +3,7 @@ import type {
   ModelCompletionRequest,
   ModelCompletionResponse,
 } from "./adapters.js";
-import {Agent} from 'undici';
+import {Agent, EnvHttpProxyAgent} from 'undici';
 
 export type OpenAiCompatibleModelOptions = {
   adapterId?: string;
@@ -44,7 +44,11 @@ export class OpenAiCompatibleModelAdapter implements ModelAdapter {
     // the Analyzer's explicit deadline is longer. Own and close this request pool.
     // The connector also defaults to a hidden 10s deadline. All HTTP phases must
     // obey the explicit request deadline, including TCP/TLS establishment.
-    const dispatcher=new Agent({connect:{timeout:timeoutMs},headersTimeout:timeoutMs,bodyTimeout:timeoutMs});
+    const options={connect:{timeout:timeoutMs},headersTimeout:timeoutMs,bodyTimeout:timeoutMs};
+    // A per-request dispatcher overrides Node's global proxy setting. Honor the
+    // service's explicit proxy configuration while retaining deadline ownership.
+    const proxied=process.env.HTTPS_PROXY||process.env.https_proxy||process.env.HTTP_PROXY||process.env.http_proxy;
+    const dispatcher=proxied ? new EnvHttpProxyAgent({...options,proxyTls:{timeout:timeoutMs},requestTls:{timeout:timeoutMs}}) : new Agent(options);
     try{
     const init={
       method: "POST",

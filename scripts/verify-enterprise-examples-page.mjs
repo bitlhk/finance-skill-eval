@@ -1,3 +1,4 @@
+import { seedLegacyMigration } from './lib/legacy-migration-ui.mjs';
 import {approveMigrationPlanThroughUi} from './lib/verify-reuse-plan-ui.mjs';
 /** Four enterprise fixtures through the real migration UI, Runtime and configured models. */
 import assert from 'node:assert/strict';
@@ -108,8 +109,8 @@ try{
  for(current of selectedCases){
   const outcome={name:current,passed:false,checks:[],provenance:{diagnosis:process.env.ENTERPRISE_TEST_A2_RECORD??'fresh real model',candidateAnalysis:recordedCandidateAnalysis??'fresh real model',reuseProposal:process.env.ENTERPRISE_TEST_REUSE_RECORD??'fresh real model',candidateReview:recordedReviewDirectory??'fresh real model',generation:process.env.ENTERPRISE_TEST_A4_RECORD??'fresh real model',evaluation:'NOT_RUN'}};let phase='import';const ctx=await browser.newContext({acceptDownloads:true,viewport:{width:1440,height:1000}});await ctx.tracing.start({screenshots:true,snapshots:true});const page=await ctx.newPage();page.setDefaultTimeout(30000);const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
   try{
-   await page.goto(url);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();await page.getByRole('button',{name:'新建迁移',exact:true}).click();
-   phase='diagnosis';const inspect=page.waitForResponse(r=>r.url().endsWith('/inspect')&&r.request().method()==='POST',{timeout:900000});inspect.catch(()=>{});await page.locator('input[type=file]').first().setInputFiles({name:current+'.zip',mimeType:'application/zip',buffer:await readFile(path.join(fixtures,current,'source.zip'))});assert.ok((await inspect).ok());
+   await page.goto(url);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
+   phase='diagnosis';await seedLegacyMigration(page,await readFile(path.join(fixtures,current,'source.zip')));
    const projects=await api('GET','/api/migrations');
    // The newly uploaded project is identified by the source archive digest, independently of display name.
    const ordered=projects.sort((a,b)=>b.createdAt.localeCompare(a.createdAt));const active=ordered[0],base='/api/migrations/'+active.id;outcome.projectId=active.id;

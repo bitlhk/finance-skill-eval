@@ -57,3 +57,29 @@ it('refuses existing destinations and overlapping source paths',async()=>{
   await expect(consolidateWorkspace(plan)).rejects.toThrow('already exists');
   await expect(consolidateWorkspace({...plan,target:path.join(plan.a,'nested')})).rejects.toThrow('Overlapping');
 });
+
+it('selects a unified task and its snapshots from one source, including explicit selection',async()=>{
+  const plan=await fixture(),id='bundle-aaaaaaaa';
+  for(const [root,digest] of [[plan.a,'digest-a'],[plan.b,'digest-b']] as const){
+    await put(root,`migration-tasks/tasks/${id}.json`,{schemaVersion:'finance.skill-migration.task.v1',id,source:{digest},candidates:[]});
+    await put(root,`migration-tasks/snapshots/${id}/source.json`,{digest});
+    await put(root,`migration-activity/${id}.json`,{source:root});
+  }
+  const result=await consolidateWorkspace({...plan,projectSources:{[id]:plan.a}});
+  expect(result.projects).toBe(1);
+  expect(JSON.parse(await readFile(path.join(plan.target,`migration-tasks/snapshots/${id}/source.json`),'utf8')).digest).toBe('digest-a');
+  expect(JSON.parse(await readFile(path.join(plan.target,`migration-activity/${id}.json`),'utf8')).source).toBe(plan.a);
+});
+it('does not mix an older snapshot into the selected newer task',async()=>{
+  const plan=await fixture(),id='bundle-aaaaaaaa';
+  for(const root of [plan.a,plan.b])await put(root,`migration-tasks/tasks/${id}.json`,{schemaVersion:'finance.skill-migration.task.v1',id,source:{digest:'same'},candidates:[]});
+  await put(plan.a,`migration-tasks/snapshots/${id}/source.json`,{digest:'same'});
+  await expect(consolidateWorkspace(plan)).rejects.toThrow('Missing task snapshot');
+  await expect(access(plan.target)).rejects.toThrow();
+});
+it('rejects a task whose saved snapshot differs from its bound digest',async()=>{
+  const plan=await fixture(),id='bundle-aaaaaaaa';
+  await put(plan.a,`migration-tasks/tasks/${id}.json`,{schemaVersion:'finance.skill-migration.task.v1',id,source:{digest:'expected'},candidates:[]});
+  await put(plan.a,`migration-tasks/snapshots/${id}/source.json`,{digest:'different'});
+  await expect(consolidateWorkspace(plan)).rejects.toThrow('Task snapshot digest mismatch');
+});

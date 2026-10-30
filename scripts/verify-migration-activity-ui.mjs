@@ -13,7 +13,7 @@ try{
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
   const realFetch=window.fetch;window.fetch=async(input,init)=>{
-   if(String(input).endsWith('/activity/cancel')){window.cancelCalled=true;return new Response('{}',{status:window.cancelFails?500:200});}
+   if(String(input).endsWith('/cancel')){window.cancelCalled=true;return new Response('{}',{status:window.cancelFails?500:200});}
    if(String(input).endsWith('/activity/events'))return new Response(new ReadableStream({start(controller){
     const now=Date.now();window.activity??={taskId:'fixture',status:'RUNNING',startedAt:new Date(now-120000).toISOString(),updatedAt:new Date(now).toISOString(),events:Array.from({length:40},(_,i)=>({id:i,at:new Date(now-1000*(40-i)).toISOString(),kind:'tool_end',label:'工具结束：read_file '+i}))};
     window.connections=(window.connections??0)+1;window.disconnectActivity=()=>controller.close();

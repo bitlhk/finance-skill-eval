@@ -18,6 +18,8 @@ export * from "./execution-configuration/execution-configuration.js";
 export * from "./execution-configuration/file-execution-configuration-repository.js";
 export * from "./mcp-preflight.js";
 export * from "./shared/contracts/runtime-builder.js";
+export * from "./shared/contracts/runtime-skills.js";
+export * from "./shared/contracts/runtime-skill-member.js";
 export * from "./shared/contracts/runtime-launcher.js";
 export * from "./shared/contracts/runtime-observation.js";
 export * from "./shared/contracts/runtime-protocol-versions.js";

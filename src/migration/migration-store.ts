@@ -1,4 +1,4 @@
-import {MigrationActivityStore} from './infrastructure/migration-activity.js';
+import type {MigrationActivityPort} from './application/migration-activity-port.js';
 import type { MigrationProject } from './domain/migration-project.js';
 import type { MigrationRuntimeReference } from './application/migration-runtime-configuration-service.js';
 import { migrationConflict as conflict } from './application/migration-errors.js';
@@ -7,10 +7,10 @@ import {createMigrationServices,type MigrationCompositionOptions,type MigrationS
 /** Stable migration facade; concrete adapters are assembled only by migration-composition. */
 export class MigrationStore {
   private readonly services:MigrationServices;
-  readonly activity:MigrationActivityStore;
+  readonly activity:MigrationActivityPort;
   constructor(root:string, options:Omit<MigrationCompositionOptions,'root'>) {
     this.services=createMigrationServices({root,...options});
-    this.activity=new MigrationActivityStore(root);
+    this.activity=this.services.activity;
   }
   async list() {return this.services.projectService.list();}
   async get(id:string):Promise<MigrationProject> {return this.services.projectService.get(id);}

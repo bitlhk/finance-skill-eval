@@ -1,17 +1,29 @@
 {
-  "schemaVersion": "finance.runtime-build-requirements.v1",
-  "requestId": "migration-example:revision-1",
-  "source": {
-    "assetId": "asset-example",
-    "artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  },
+  "schemaVersion": "finance.runtime-build-requirements.v3",
+  "requestId": "runtime-request-example",
   "target": {
     "runtimeType": "openjiuwen",
     "protocols": {
-      "capabilities": "finance.skill-eval.runtime-capabilities.v1",
-      "instance": "finance.skill-eval.runtime-instance.v1",
+      "capabilities": "finance.runtime-capabilities.v1",
+      "instance": "finance.runtime-instance.v1",
       "execution": "finance.skill-eval.runtime-case.v1",
       "observation": "finance.runtime-observation.v1"
+    }
+  },
+  "executionRequirements": {
+    "platform": {
+      "os": "linux",
+      "arch": "x64",
+      "isolation": "trusted_local_process"
+    },
+    "features": [
+      "streaming"
+    ],
+    "limits": {
+      "maxSkills": 10,
+      "maxFiles": 1000,
+      "maxArchiveBytes": 8388608,
+      "maxTimeoutMs": 300000
     }
   },
   "requiredCapabilities": [
@@ -61,5 +73,5 @@
       ]
     }
   ],
-  "requirementsDigest": "5acb6e8ff603833e2f683cd38a977aa8298e0bdc4da96ba55130a451d85c4d03"
+  "requirementsDigest": "602f2b3491e0d149534c59f3e609ea2aa58a75da1858bef4316ec0e343462e6e"
 }

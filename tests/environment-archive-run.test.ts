@@ -140,10 +140,10 @@ it('catalog offers exactly two active runtimes while retaining four archived reg
   for(let index=1;index<6;index++)records.push(await f.environments.create({...launcherInput,
     name:index<2?'Acceptance active':'Ordinary archived',baseUrl:`http://127.0.0.1:9000/fixture-${index}/`}));
   for(const record of records.slice(2))await f.environments.setArchived(record.environmentId,{archived:true});
-  const capabilities={schemaVersion:'finance.skill-eval.runtime-capabilities.v1',runtime:{type:'openjiuwen',version:'0.1.15'},
+  const capabilities={schemaVersion:'finance.runtime-capabilities.v1',instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},runtime:{type:'openjiuwen',version:'0.1.15'},
     models:[{modelId:'execution',upstreamModelId:'synthetic-model'}],defaultModelId:'execution',nativeToolNames:['fixture_read','fixture_describe'],
     features:{streaming:false,asyncLaunch:true,packagedMcp:false,externalMcp:false,inlineSecrets:false},
-    limits:{maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
+    limits:{maxSkills:10,maxArchiveBytes:1024,maxFiles:20,maxTimeoutMs:300000,maxConcurrentInstances:2}};
   const contacted:string[]=[];
   vi.stubGlobal('fetch',vi.fn(async(url:URL|string)=>{contacted.push(String(url));return Response.json(capabilities);}));
   const app=await createEvaluationService({dataDirectory:f.directory,rootDirectory:path.resolve('.'),accessToken:'test-only'});

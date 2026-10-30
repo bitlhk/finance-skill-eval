@@ -1,0 +1,63 @@
+name: finance-skill-eval
+x-common: &common
+  image: ${FINANCE_EVAL_IMAGE:?Set an immutable image tag or digest}
+  build:
+    context: ../..
+    dockerfile: deploy/docker/Dockerfile
+  env_file:
+    - path: ${FINANCE_EVAL_CONFIG_DIR:?Set the absolute private configuration directory}/production.env
+      format: raw
+  environment: &environment
+    FINANCE_EVAL_DATA_DIR: /app/data
+    FINANCE_RUNTIME_CONFIG: /run/config/runtime.json
+    FINANCE_EVAL_MIGRATION_PYTHON: /app/.venv-openjiuwen/bin/python
+    FINANCE_EVAL_HOST: 0.0.0.0
+    FINANCE_RUNTIME_HOST: 0.0.0.0
+    FINANCE_EVAL_PORT: "56361"
+    FINANCE_RUNTIME_PORT: "56362"
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 75s
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: 20m
+      max-file: "10"
+services:
+  api:
+    <<: *common
+    command: [node, deploy/run.mjs, api]
+    ports: ["127.0.0.1:${FINANCE_EVAL_PUBLISH_PORT:-56361}:56361"]
+    volumes:
+      - api-data:/app/data
+      - api-cache:/app/cache
+      - ${FINANCE_EVAL_CONFIG_DIR}/runtime.json:/run/config/runtime.json:ro
+    depends_on:
+      runtime:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:56361/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      start_period: 90s
+      retries: 5
+  runtime:
+    <<: *common
+    command: [node, deploy/run.mjs, runtime]
+    volumes:
+      - runtime-data:/app/data
+      - runtime-cache:/app/cache
+      - ${FINANCE_EVAL_CONFIG_DIR}/runtime.json:/run/config/runtime.json:ro
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:56362/v1/runtime-capabilities').then(async r=>process.exit(r.ok&&(await r.json()).features.multiSkill?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      start_period: 90s
+      retries: 5
+volumes:
+  api-data:
+  runtime-data:
+  api-cache:
+  runtime-cache:

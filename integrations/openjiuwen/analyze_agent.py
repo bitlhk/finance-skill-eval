@@ -24,6 +24,8 @@ from pathlib import Path
 protocol = sys.stdout
 sys.stdout = sys.stderr
 logging.disable(logging.INFO)
+from operational_logging import configure_sdk_logging
+configure_sdk_logging()
 
 from pathlib import Path as _Path  # noqa: E402
 
@@ -35,7 +37,7 @@ from migration_tools import build_grep_tool, build_run_scanner  # noqa: E402
 
 SYSTEM_PROMPT_TEMPLATE = """你是企业 Skill 迁移平台的检查诊断分析员。工作区里是一个待迁移的源工程，它的目录结构不固定。
 
-**路径规则（重要）**：运行在 Windows 上。文件工具要**绝对路径**（工具说明里也写了），根目录只有一个：
+**路径规则（重要）**：文件工具要**绝对路径**（工具说明里也写了），根目录只有一个：
 
     @@WORKSPACE_ROOT@@
 

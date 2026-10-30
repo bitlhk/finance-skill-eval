@@ -12,7 +12,7 @@ import type { SkillAssetRecord } from "../../shared/contracts/skill-asset.js";
 import type { StageEnvelope } from "./migration-stage-envelope.js";
 import type {RuntimeLauncherBinding} from "../../shared/contracts/environment.js";
 import type {SolutionRevision} from './migration-solution-revision.js';
-import type {RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
+import type {RuntimeBuildRequirements} from '../../shared/contracts/runtime-builder.js';
 import type {MigrationImprovementPlan} from './migration-improvement-plan.js';
 import type {MigrationImprovementTask} from './migration-improvement-task.js';
 
@@ -112,10 +112,11 @@ export type MigrationProject = {
   }>;
   assessment: "NOT_VALIDATED";
   nativeBindings?:{candidateDigest:string;bindings:import('../../shared/contracts/native-tool-catalog.js').NativeSkillBindings;recordedAt:string};
+  runtimeExecutionRequirements?: RuntimeBuildRequirements["executionRequirements"];
   runtimeDelivery?: RuntimeLauncherBinding;
   runtimeDeliveries?: Record<string,RuntimeLauncherBinding>;
   runtimeReuse?:RuntimeReuse;
-  runtimeRebuilds?: Array<{candidateDigest:string;requirements:RuntimeBuildRequirementsV1;createdAt:string}>;
+  runtimeRebuilds?: Array<{candidateDigest:string;requirements:RuntimeBuildRequirements;createdAt:string}>;
   improvementPlans?: MigrationImprovementPlan[];
   improvementTasks?:MigrationImprovementTask[];
   toolOptimizationAttempts?: Array<{

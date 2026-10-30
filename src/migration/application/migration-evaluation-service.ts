@@ -15,13 +15,13 @@ import { resolveMigrationEnvironment,verifyRuntimeReuse, type MigrationEnvironme
 import { solutionRevision } from '../domain/migration-solution-revision.js';
 import type { SkillAssetRecord } from '../../shared/contracts/skill-asset.js';
 import type {EvalPack} from '../../contracts.js';
-import type {RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
+import type {RuntimeBuildRequirements} from '../../shared/contracts/runtime-builder.js';
 import {unresolvedMigrationRuntimeRequirements} from './migration-runtime-requirements.js';
 import {currentRuntimeReuse,reusedCapabilitiesDigest} from '../domain/migration-runtime-reuse.js';
 import {currentReuseProposal} from '../domain/migration-reuse-design.js';
 
 /** Internal-only experiment context; HTTP callers cannot bypass candidate or holdout guards. */
-export type MigrationExperimentContext={candidate:SkillAssetRecord;expectedPackFingerprint:string;frozenSuite?:EvalPack;finalVerification?:boolean;runtimeRequirements?:RuntimeBuildRequirementsV1};
+export type MigrationExperimentContext={candidate:SkillAssetRecord;expectedPackFingerprint:string;frozenSuite?:EvalPack;finalVerification?:boolean;runtimeRequirements?:RuntimeBuildRequirements};
 
 export function frozenSuiteFingerprint(pack:EvalPack){
   return fingerprint({cases:pack.cases,holdoutCases:pack.holdoutCases??[],judgeProfile:pack.judgeProfile,metadata:pack.metadata});

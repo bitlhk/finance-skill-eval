@@ -2,7 +2,7 @@ import type {SkillAssetRecord} from '../../shared/contracts/skill-asset.js';
 import type {TechnicalValidation,ProjectInspection} from './migration-model.js';
 import type {MigrationRunDeclaration} from './migration-run-declaration.js';
 import type {EvalPack} from '../../contracts.js';
-import type {RuntimeBuildRequirementsV1} from '../../shared/contracts/runtime-builder.js';
+import type {RuntimeBuildRequirements} from '../../shared/contracts/runtime-builder.js';
 import type {RuntimeLauncherBinding} from '../../shared/contracts/environment.js';
 
 export type MigrationImprovementTask={
@@ -25,7 +25,7 @@ export type MigrationImprovementTask={
   bestJobId:string;
   bestValidations:TechnicalValidation[];
   bestInspection?:ProjectInspection;
-  runtimeRequirements?:RuntimeBuildRequirementsV1;
+  runtimeRequirements?:RuntimeBuildRequirements;
   originalRuntimeDelivery?:RuntimeLauncherBinding;
   remainingDurationMs?:number;
   rebaselinePending?:boolean;
