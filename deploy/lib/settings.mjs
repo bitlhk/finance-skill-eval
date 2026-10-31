@@ -6,7 +6,7 @@ import { parseEnv } from 'node:util';
 import { spawnSync } from 'node:child_process';
 import net from 'node:net';
 
-export const releaseRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const fail = code => { throw new Error(code); };
 export function args(argv = process.argv.slice(2)) {
   const options = {};
@@ -19,12 +19,15 @@ export function args(argv = process.argv.slice(2)) {
   }
   return options;
 }
-export async function settings(file, inherited = process.env, root = releaseRoot) {
-  const values = file ? parseEnv(await readFile(path.resolve(file), 'utf8')) : {};
+export async function settings(file, inherited = process.env, root = projectRoot) {
+  const configFile = path.resolve(root, file || '.env.local');
+  const values = parseEnv(await readFile(configFile, 'utf8'));
   const env = { ...inherited, ...values, NODE_ENV: 'production', FINANCE_EVAL_ROOT: root,
     FINANCE_EVAL_MIGRATION_PROJECT_ROOT: root, PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' };
   const python = env.FINANCE_EVAL_MIGRATION_PYTHON || path.join(root, '.venv-openjiuwen', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   env.FINANCE_EVAL_MIGRATION_PYTHON = python;
+  env.FINANCE_EVAL_DATA_DIR = path.resolve(root, env.FINANCE_EVAL_DATA_DIR || 'data');
+  env.FINANCE_RUNTIME_CONFIG = path.resolve(root, env.FINANCE_RUNTIME_CONFIG || '.runtime.local.json');
   env.FINANCE_EVAL_MIGRATION_AGENT = 'on';
   env.FINANCE_EVAL_HOST ||= '127.0.0.1';
   env.FINANCE_EVAL_PORT ||= '56361';
@@ -32,7 +35,7 @@ export async function settings(file, inherited = process.env, root = releaseRoot
   env.FINANCE_RUNTIME_PORT ||= '56362';
   env.PATH = [path.dirname(python), path.dirname(process.execPath), env.PATH || env.Path || ''].join(path.delimiter);
   if (process.platform === 'win32') delete env.Path;
-  return { env, root, python, file: file ? path.resolve(file) : null };
+  return { env, root, python, file: configFile };
 }
 export function validateValues(env, component = 'all') {
   const required = name => {

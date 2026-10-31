@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 import path from 'node:path';
+import os from 'node:os';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { validateValues, validateRuntime, portAvailable, settings } from '../lib/settings.mjs';
 const valid = () => ({
   FINANCE_EVAL_DATA_DIR: path.resolve('data'), FINANCE_RUNTIME_CONFIG: path.resolve('runtime.json'),
@@ -35,8 +37,17 @@ test('detects a genuinely occupied port and accepts it after close', async () =>
   await portAvailable('127.0.0.1', port);
 });
 test('defaults loopback and prepends runtime interpreter without shell evaluation', async () => {
-  const config = await settings(undefined, { ...valid(), PATH: 'original-path' });
-  assert.equal(config.env.NODE_ENV, 'production');
-  assert.equal(config.env.FINANCE_EVAL_HOST, '127.0.0.1');
-  assert(config.env.PATH.endsWith('original-path'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'finance-settings-'));
+  try {
+    await writeFile(path.join(root, '.env.local'), 'FINANCE_EVAL_DATA_DIR=existing-data\nFINANCE_EVAL_MODEL=project-model\n');
+    const config = await settings(undefined, { PATH: 'original-path', FINANCE_EVAL_MODEL: 'stale-process-model' }, root);
+    assert.equal(config.env.NODE_ENV, 'production');
+    assert.equal(config.env.FINANCE_EVAL_HOST, '127.0.0.1');
+    assert(config.env.PATH.endsWith('original-path'));
+    assert.equal(config.file, path.join(root, '.env.local'));
+    assert.equal(config.env.FINANCE_EVAL_MODEL, 'project-model');
+    assert.equal(config.env.FINANCE_EVAL_DATA_DIR, path.join(root, 'existing-data'));
+    assert.equal(config.env.FINANCE_RUNTIME_CONFIG, path.join(root, '.runtime.local.json'));
+    await assert.rejects(settings('missing.env', {}, root), /ENOENT/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

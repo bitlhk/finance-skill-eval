@@ -1,5 +1,6 @@
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import { HistoryPanel } from '../history/HistoryPanel';
 export function TaskList({ state }: { state: MigrationWorkbench; }) {
   const { assets, setAssets, catalog, api, tasks, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, zipInput, filesInput, list, select, act, uploadZip, uploadMembers } = state;
   return (
@@ -147,6 +148,7 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
           <p>尚未创建迁移任务。</p>
         )}
       </section>
+      <HistoryPanel kind="tasks" api={api}/>
     </>
   );
 }

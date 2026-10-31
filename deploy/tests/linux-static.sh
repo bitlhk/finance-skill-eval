@@ -9,7 +9,7 @@ cleanup() {
 trap cleanup EXIT
 for service in api runtime; do
   # Validate systemd syntax/relationships without pretending to install Node.
-  sed 's|@NODE@|/usr/bin/true|g' "deploy/linux/finance-eval-$service.service.in" > "$directory/finance-eval-$service.service"
+  sed -e 's|@NODE@|/usr/bin/true|g' -e 's|@PROJECT@|/opt/finance-skill-eval|g' "deploy/linux/finance-eval-$service.service.in" > "$directory/finance-eval-$service.service"
 done
 systemd-analyze verify "$directory/finance-eval-api.service" "$directory/finance-eval-runtime.service"
 cp deploy/examples/production.env "$directory/production.env"

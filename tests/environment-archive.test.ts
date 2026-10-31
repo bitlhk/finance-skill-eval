@@ -22,6 +22,21 @@ const launcherInput={name:'Acceptance is just a name',type:'runtime_launcher',ru
 const mcpInput={name:'Ordinary service',type:'mcp_streamable_http',endpoint:'http://127.0.0.1:9001/mcp'};
 const archivedError={statusCode:409,code:'ENVIRONMENT_ARCHIVED'};
 
+it('retains retired bundle-protocol registrations without admitting them or breaking current listings',async()=>{
+  const {store,directory}=await fixture();
+  const current=await store.create(launcherInput);
+  const legacy={...current,environmentId:'env-retired',delivery:{evalConformance:{
+    status:'PASSED',instanceSchemaVersion:'finance.skill-eval.runtime-instance.v2',bundleDigest:'a'.repeat(64),
+  }}};
+  const file=path.join(directory,'environments','env-retired.json');
+  const bytes=JSON.stringify(legacy);
+  await writeFile(file,bytes);
+  expect(await store.list({includeArchived:true})).toEqual([current]);
+  expect(await store.get('env-retired')).toBeNull();
+  await expect(store.requireAvailable('env-retired')).rejects.toMatchObject({statusCode:404});
+  expect(await readFile(file,'utf8')).toBe(bytes);
+});
+
 it('defaults legacy metadata to active without rewriting original bytes',async()=>{
   const {store,directory}=await fixture();
   const current=await store.create(launcherInput);

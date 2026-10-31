@@ -15,6 +15,8 @@ import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import {simpleMigrationSuiteSchema,simpleMigrationCases} from '../migration/domain/simple-migration-suite.js';
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
+import { HistoryStore } from './history-store.js';
+import { registerHistoryRoutes } from '../interfaces/http/history-routes.js';
 import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
 import { EvaluationRunManager } from "./run-manager.js";
@@ -132,6 +134,7 @@ export async function createEvaluationService(
   await bundles.initialize();
   app.addHook('preClose',()=>bundles.close());
   registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),skills);
+  registerHistoryRoutes(app,new HistoryStore(config.dataDirectory),!config.publicDemo&&Boolean(config.accessToken));
   app.addHook('preClose',()=>migrations.shutdown());
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));

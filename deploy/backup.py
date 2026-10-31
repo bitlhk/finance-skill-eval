@@ -21,11 +21,17 @@ def digest(stream):
     return value.hexdigest()
 
 
-def create(archive, data, config):
-    data, config, archive = data.resolve(), config.resolve(), archive.resolve()
-    if not data.is_dir() or not config.is_dir():
+def create(archive, data, config=None, config_files=None):
+    data, archive = data.resolve(), archive.resolve()
+    config = config.resolve() if config else None
+    files = [Path(f) for f in (config_files or [])]
+    if not data.is_dir() or (config and not config.is_dir()) or (not config and not files):
         raise ValueError('DATA_AND_CONFIG_DIRECTORIES_REQUIRED')
-    if archive == data or data in archive.parents or config in archive.parents:
+    if any(f.is_symlink() or not f.is_file() for f in files):
+        raise ValueError('REGULAR_CONFIG_FILES_REQUIRED')
+    if len({f.name for f in files}) != len(files) or (config and files):
+        raise ValueError('AMBIGUOUS_CONFIG_FILES')
+    if archive == data or data in archive.parents or (config and config in archive.parents) or archive in [f.resolve() for f in files]:
         raise ValueError('BACKUP_MUST_BE_OUTSIDE_SOURCE_DIRECTORIES')
     # Supervisors remove state files only after their child exits. A leftover
     # state must be investigated by the operator, never silently backed up live.
@@ -34,7 +40,7 @@ def create(archive, data, config):
     manifest = {'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'files': {}}
     fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'wb') as output, zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zipped:
-        for prefix, root in [('data', data), ('config', config)]:
+        for prefix, root in [('data', data)] + ([('config', config)] if config else []):
             for file in sorted(root.rglob('*')):
                 if file.is_symlink():
                     raise ValueError('BACKUP_SYMLINK_NOT_SUPPORTED')
@@ -46,6 +52,13 @@ def create(archive, data, config):
                 zipped.write(file, name)
                 with file.open('rb') as source:
                     manifest['files'][name] = digest(source)
+        for file in files:
+            name = 'config/' + file.name
+            if not safe_name(name):
+                raise ValueError('UNSAFE_BACKUP_PATH')
+            zipped.write(file, name)
+            with file.open('rb') as source:
+                manifest['files'][name] = digest(source)
         zipped.writestr('manifest.json', json.dumps(manifest))
     verify(archive)
 
@@ -91,13 +104,14 @@ def main():
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--data', type=Path)
     parser.add_argument('--config', type=Path)
+    parser.add_argument('--config-file', type=Path, action='append')
     parser.add_argument('--destination', type=Path)
     args = parser.parse_args()
     try:
         if args.command == 'create':
-            if not args.data or not args.config:
+            if not args.data or not (args.config or args.config_file):
                 raise ValueError('DATA_AND_CONFIG_REQUIRED')
-            create(args.archive, args.data, args.config)
+            create(args.archive, args.data, args.config, args.config_file)
         elif args.command == 'verify':
             verify(args.archive)
         else:

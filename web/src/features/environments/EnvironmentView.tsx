@@ -1,3 +1,4 @@
+import {HistoryPanel} from '../history/HistoryPanel';
 import {useState,type ReactNode} from 'react';
 import {Activity,Archive,ArchiveRestore,Boxes,Link2,Network,Plus,ServerCog,Pencil,Trash2,Save} from 'lucide-react';
 import {api} from '../../api-client';
@@ -51,5 +52,5 @@ export function EnvironmentView({catalog,onChanged}:{catalog:Catalog;onChanged()
  <section className="asset-section"><div className="section-title"><div><h2><Link2 size={18}/> MCP 连接</h2><p>独立登记工具服务；绑定到执行环境后，由 Launcher 在本轮动态装配。</p></div><span>{mcps.length} 个</span></div>{rows(mcps,<Boxes size={20}/>,item=>item.type==='mcp_streamable_http'?item.endpoint:'')}</section>
  <section className="asset-section"><div className="section-title"><div><h2><Network size={18}/> 执行环境</h2><p>组合一个 Runtime、所需 MCP 和默认模型；普通评测与 Skill 迁移共用。</p></div><span>{profiles.length} 个</span></div>{rows(profiles,<Network size={20}/>,item=>{if(item.type!=='execution_environment')return '';const option=catalog.executionRuntimes.find(value=>value.runtimeId===item.environmentId);const model=option?.models.find(value=>value.modelId===(item.defaultModelId??option.defaultModelId));return `${launchers.find(value=>value.environmentId===item.launcherEnvironmentId)?.name??'Runtime 不可用'} · ${item.mcpEnvironmentIds.length} 个 MCP · ${model?.upstreamModelId??'Runtime 默认模型'}`})}</section>
  {archived.length?<details className="asset-section"><summary>已归档 · {archived.length} 个</summary>{rows(archived,<Archive size={20}/>,item=>`${item.type==='mcp_streamable_http'?'MCP 连接':item.type==='execution_environment'?'执行环境':runtimeLabel(item.runtimeType)} · 已归档，历史记录保留`)}</details>:null}
- </div>;
+ <HistoryPanel kind="environments" api={api}/></div>;
 }

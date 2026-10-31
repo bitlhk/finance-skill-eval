@@ -21,18 +21,18 @@
 
 ## 配置与预检
 
-复制 deploy/examples/production.env 和 .runtime.local.example.json 到私有配置目录，填写 API 令牌、Analyzer/Judge 地址与密钥、Runtime 执行模型。FINANCE_EVAL_AGENT_MODEL_ID 必须匹配 runtime.json 中启用的别名；迁移 Agent 使用该模型，Judge 使用 JUDGE 三项或通用 MODEL 配置。
+Windows/Linux 原生部署在 Git 项目根目录使用 `.env.local`（模板 `.env.local.example`）和 `.runtime.local.json`（模板 `.runtime.local.example.json`），不另建配置或发布副本。Docker 的独立挂载配置仍按容器指南使用 `deploy/examples/production.env`。填写 API 令牌、平台模型地址与密钥、Runtime 执行模型。FINANCE_EVAL_AGENT_MODEL_ID 必须匹配 runtime.json 中启用的别名；迁移 Agent 使用该模型，Judge 使用 JUDGE 三项或通用 MODEL 配置。
 
 dotenv 作为数据解析，不由 shell source/执行。配置不进入 Git、镜像或普通日志。Linux 权限 0640（服务组可读）或 0600；Windows 限制 ACL；容器挂载的 runtime.json 必须允许 UID 1000 读取。
 
 模型出口依赖代理时，在服务的受保护 env 中显式设置 `HTTP_PROXY`、`HTTPS_PROXY`，并用 `NO_PROXY=localhost,127.0.0.1,::1` 排除本机 Runtime；容器还应排除 `runtime` 等内部服务名。Python Agent 和 Node Judge 都支持这些变量，Judge 的独立请求连接池会保留超时限制并遵循代理配置。不要依赖交互终端或 WSL 自动注入的代理：systemd/SCM 环境可能不同。使用同一服务实例完成真实模型验收，单独在终端请求成功不能证明服务出网正常。
 
 ```sh
-node deploy/preflight.mjs --env /absolute/private/production.env --ports
-node deploy/health.mjs --env /absolute/private/production.env
+node deploy/preflight.mjs --ports
+node deploy/health.mjs
 ```
 
-预检覆盖占位符、绝对路径、端口、构建文件、真实 Python 导入和直接依赖固定版本、目录权限、磁盘。服务运行后不要对自身端口使用 --ports。健康检查验证 API、匿名请求拒绝、令牌访问、多 Skill Runtime 能力；**不调用模型，也不证明模型权限和业务验收成功**。
+原生部署上述命令默认读取脚本所属项目的 `.env.local`，相对数据/Runtime 配置路径按项目根目录解析。预检覆盖占位符、解析后的绝对路径、端口、构建文件、真实 Python 导入和直接依赖固定版本、目录权限、磁盘。服务运行后不要对自身端口使用 --ports。健康检查验证 API、匿名请求拒绝、令牌访问、多 Skill Runtime 能力；**不调用模型，也不证明模型权限和业务验收成功**。
 
 在 UI 目标环境中填写服务端可达的 Runtime 地址：原生部署通常为 http://127.0.0.1:56362，Compose 为 http://runtime:56362。浏览器只连接 API。
 

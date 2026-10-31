@@ -30,6 +30,6 @@ export async function privateTree(directory, boundary = directory) {
   return files.length;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  try { console.log('Private release files detached: ' + await privateTree(process.argv[2], process.argv[3])); }
+  try { console.log('Shared dependency files detached: ' + await privateTree(process.argv[2], process.argv[3])); }
   catch { console.error('Private tree preparation failed; check file links and permissions.'); process.exitCode = 1; }
 }

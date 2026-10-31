@@ -1,0 +1,17 @@
+.history-panel { margin-top: 24px; padding: 22px; background: #fff; border: 1px solid #dce2e8; border-radius: 12px; min-width: 0; }
+.history-panel header, .history-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.history-panel h3, .history-panel h4 { margin: 0 0 10px; }
+.history-panel p { line-height: 1.65; overflow-wrap: anywhere; }
+.history-panel header > div, .history-row > div { min-width: 0; }
+.history-panel button { flex-shrink: 0; }
+.history-row { padding: 18px 0; border-top: 1px solid #e6eaf0; }
+.history-row strong, .history-detail h4 { overflow-wrap: anywhere; }
+.history-badge { display: inline-block; margin-left: 10px; padding: 3px 8px; background: #eef1f5; border-radius: 5px; font-size: 12px; color: #4b5563; }
+.history-notice { background: #fff8e7; border-left: 3px solid #bd8524; padding: 16px; margin: 18px 0; }
+.history-detail section, .history-detail details { margin: 16px 0; }
+.history-panel summary { cursor: pointer; overflow-wrap: anywhere; line-height: 1.6; }
+.history-panel pre { background: #f5f7fa; padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 500px; overflow: auto; font-size: 12px; }
+.history-files { display: flex; flex-wrap: wrap; gap: 8px; }
+.history-files button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.history-panel select { display: block; max-width: 100%; margin-top: 8px; padding: 8px; }
+@media (max-width: 640px) { .history-panel { padding: 14px; } .history-panel header, .history-row { flex-direction: column; } }

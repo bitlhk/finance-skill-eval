@@ -69,4 +69,4 @@ tests/、scripts/          回归测试与端到端验证
 
 私有配置使用 `.env.local` / `.runtime.local.json`，本地运行报告写入 `reports/`；这些内容默认不提交 Git。
 
-本地启动、模型认证和验收数据归档见 [本地开发](docs/local-development.md)。`pnpm serve` 自动读取 `.env.local`，已有进程环境变量优先。
+本地启动、模型认证和验收数据归档见 [本地开发](docs/local-development.md)。`pnpm serve` 自动读取 `.env.local`，已有进程环境变量优先。Windows/Linux 后台服务直接使用同一项目代码和 `.env.local`，不另建发布副本；版本通过 Git 管理，更新前停机、备份，更新后构建并重启。

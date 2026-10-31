@@ -4,7 +4,7 @@
 
 本机 Eval 的保留目录为 `C:/Users/Administrator/Documents/code_projects/finance-skill-eval`。本次整合分支为 `feat/consolidate-eval-workspace`，包含主线统一迁移流程与原目录的本地改动。Git 工作区与运行数据目录是两回事；归档代码工作区不会自动迁移业务任务，也不会转换旧协议记录。
 
-发布前检查分支、`git status --short` 和 `git rev-parse HEAD`；确认使用已验证且已提交的源码。打包应从指定提交导出源码（例如 `git archive <提交号>`），并记录源码提交号及包摘要，不能仅凭目录名、`0.5.1` 版本号或生成日期判断版本。已有离线包不会随代码整合自动更新。
+版本由 Git commit/tag 管理。手动启动、Windows 服务和 Linux 服务都直接运行指定项目目录的代码，读取该目录 `.env.local`。不再维护发布副本；修改源码后须构建并重启，切换 Git 版本前须停服务并备份数据。
 
 `pnpm serve` 自动读取当前目录的 `.env.local`，已有进程环境变量优先。日常数据默认写入 `data`，也可通过 `FINANCE_EVAL_DATA_DIR` 显式配置；启动日志打印实际数据目录。迁移任务、Skill 资产、评测记录和环境登记应一起备份，不要把日常服务指向测试数据目录。
 
@@ -22,7 +22,7 @@ OpenJiuwen Runtime 与迁移 Agent 使用 `.runtime.local.json` 中模型条目�
 
 计划字段：`target` 和 `archive` 为尚不存在的目标、备份目录；`sources` 按优先级从低到高排列；可选 `projectSources` 指定任务 ID 对应的来源；`archiveSources` 指定只备份的其他目录。统一任务使用 `bundle-*` ID，任务与全部快照必须来自同一来源，缺失快照或摘要不匹配会拒绝合并。脚本保留源数据、文件摘要与冲突来源，不拼接验收结论。
 
-旧 `migration-*` 记录仅作为离线数据留档，归档不会使其变成新版可操作任务。检查归档结果后再启用新数据目录，并重新验证 Runtime 是否在线。
+旧 `migration-bundles`、`migrations` 及不兼容任务记录可在迁移任务页的“历史迁移任务”中只读查看；旧环境登记在“测试环境”的“历史环境登记”中展示。历史分析、候选、验收证据和可用文件快照保持原样，可下载历史留档。页面说明无法继续执行的原因，后端拒绝修改与执行；历史通过不代表当前协议验收通过。使用原始 Skill 新建任务后才能按当前协议重新验收。检查归档结果后再启用新数据目录，并重新验证 Runtime 是否在线。
 
 基础环境要求：Node.js 22 或更高版本、pnpm。使用本地 OpenJiuwen Runtime 或 Skill 迁移能力时，还需要 Python 3.11–3.13 和 `uv`。
 
@@ -62,7 +62,7 @@ pnpm serve
 ## 本机配置边界
 
 - `.runtime.local.json`：本地 Runtime Launcher 的私有配置，包含 `models`、`defaultModelId` 和 Runtime 自身需要的 `mcp` 定义。模型的 API 地址和密钥只由 Runtime 读取。
-- `.env.local`：平台服务进程的本机环境变量，可配置 Analyzer、Judge、Optimizer、迁移开关、监听地址等。Node 不会为 `pnpm serve` 自动读取该文件；可以先导入当前终端环境，或使用 `node --env-file=.env.local dist/service/server.js`。Windows Runtime 启动脚本也会读取它，已经存在的系统环境变量优先。
+- `.env.local`：平台服务进程的本机环境变量，可配置 Analyzer、Judge、Optimizer、迁移开关、监听地址等。`pnpm serve` 自动读取该文件；Windows/Linux 后台服务也明确读取项目中的同一文件。Windows Runtime 启动脚本也会读取它，已经存在的系统环境变量优先。
 - 页面中的“环境管理”：登记可连接的 Runtime Launcher 和外部 MCP，并可组合成执行环境；它不负责编辑远端 Runtime 内部的模型或 MCP 配置。
 
 Builder 接入和服务端信任配置见 [Builder 接入](runtime-builder-integration.md)。
