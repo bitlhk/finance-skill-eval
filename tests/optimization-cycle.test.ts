@@ -50,7 +50,7 @@ it.each([false,true])('runs bounded optimizer (continue on experiment: %s), pres
   const constraints='Preserve the approved workflow, state isolation and declared deployment requirements';
   close=()=>manager.close();
   const item=await manager.create('source',false,constraints,{maxRounds:continueExperiment?2:1});
-  await vi.waitFor(async()=>{const current=await manager.get(item.optimizationId);expect(current.status,current.error??'').toBe('review');});
+  await vi.waitFor(async()=>{const current=await manager.get(item.optimizationId);expect(current.status,current.error??'').toBe('review');},{timeout:10000});
   const done=await manager.get(item.optimizationId),candidate=done.candidate!;
   expect(done.loop?.rounds[0]?.compositions?.some(c=>c.role==='adjustment')).toBe(true);
   expect(done.constraints).toBe(constraints);

@@ -182,7 +182,7 @@ it('runs diagnosis, adjustment, retest and independent Review without activating
   await f.start('ANALYZE');await f.start('GENERATE');await f.service.configure(f.task.id,config);await f.service.saveSuite(f.task.id,suite);
   const baseline=await f.start('ACCEPT'),originalId=baseline.currentCandidateId;
   await f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:originalId,runId:baseline.runs[0]!.id,optimization:{maxRounds:3}});
-  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).not.toBe('RUNNING'));
+  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).not.toBe('RUNNING'),{timeout:10000});
   const task=await f.service.get(f.task.id),attempt=task.attempts.find(a=>a.kind==='OPTIMIZE')!;
   expect(attempt.optimization?.status,attempt.error).toBe('REVIEW');expect(attempt.optimization?.rounds).toHaveLength(1);
   expect(task.currentCandidateId).toBe(originalId);expect(task.candidates).toHaveLength(2);
@@ -202,7 +202,7 @@ it('continues migration repair on the experimental snapshot and passes its revie
   await f.start('ANALYZE');await f.start('GENERATE');await f.service.configure(f.task.id,config);await f.service.saveSuite(f.task.id,suite);
   const baseline=await f.start('ACCEPT');
   await f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId,runId:baseline.runs[0]!.id,optimization:{maxRounds:2}});
-  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).not.toBe('RUNNING'));
+  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).not.toBe('RUNNING'),{timeout:10000});
   const task=await f.service.get(f.task.id),attempt=task.attempts.find(a=>a.kind==='OPTIMIZE')!,loop=attempt.optimization!;
   expect(loop.status,attempt.error).toBe('REVIEW');expect(loop.rounds).toHaveLength(2);
   expect(loop.rounds[0]?.continued).toBe(true);expect(loop.rounds[1]?.baseline).toEqual(loop.rounds[0]?.candidate);

@@ -1,0 +1,1 @@
+只返回 JSON：{status:"PROPOSED",hypothesis:{layer,issue,expectedBehavior,evidenceCaseIds,validation,risk,confidence,toolIds?,projectPaths?,requiredCapabilities?}} 或 {status:"ABSTAINED",reason}。HARNESS 时 requiredCapabilities 必填且非空。projectPaths 只引用输入工程中存在、需要调整的源文件。
