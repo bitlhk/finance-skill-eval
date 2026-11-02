@@ -120,6 +120,7 @@ export type MigrationProject = {
   improvementPlans?: MigrationImprovementPlan[];
   improvementTasks?:MigrationImprovementTask[];
   toolOptimizationAttempts?: Array<{
+    agentComposition?:import('../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
     attemptId:string;
     planId:string;
     baseAssetId:string;

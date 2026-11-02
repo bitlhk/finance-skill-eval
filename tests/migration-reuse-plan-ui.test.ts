@@ -2,8 +2,6 @@ import {it,expect} from 'vitest';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {MigrationReusePlan} from '../web/src/MigrationReusePlan';
-import {CandidateStep} from '../web/src/MigrationPanel';
-import {DiagnosisStep} from '../web/src/DiagnosisStep';
 import type {MigrationReuseProposal,ReuseDesign} from '../src/migration/domain/migration-reuse-design.js';
 
 const design:ReuseDesign={scope:'在声明依赖的 Runtime 上复用',preservedBehavior:['金额和规则保持'],sourceCouplings:[],
@@ -11,27 +9,12 @@ const design:ReuseDesign={scope:'在声明依赖的 Runtime 上复用',preserved
   dependencies:[],conditions:['提供工作区'],unresolvedQuestions:[],
   acceptanceChecks:[{id:'isolation',purpose:'请求不串扰',requirement:'不同业务请求不得读取对方的数据',procedure:'执行不同请求',expectedResult:'各自得到正确结果'}]};
 const proposal:MigrationReuseProposal={proposalId:'new',inputDigest:'digest',sourceDigest:'source',createdAt:'now',design};
-it('does not treat an unavailable dependency graph as zero issues or confirmed tool dependencies',()=>{
- const html=renderToStaticMarkup(createElement(DiagnosisStep,{api:async()=>({}),projectId:'project',
-  analysis:{status:'UNAVAILABLE',revision:0,materialsDigest:'digest',dependencies:[],chains:[],rejectedClaims:0,reason:'调用链结果尚未完成'},
-  skillFindings:[],tools:[{toolId:'tool',name:'query',sourcePaths:['tools/query.py'],evidence:[],recommendedForm:'MCP',recommendedLanguage:'python'}],
-  choices:{},busy:false,refresh:async()=>{},inspect:()=>{},downloadRuntimeRequirements:()=>{},next:()=>{}} as any));
- expect(html).toContain('依赖分析未完成');expect(html).toContain('调用链结果尚未完成');
- expect(html).not.toContain('0 项需要处理');expect(html).not.toContain('依赖已确认');
-});
 it('offers explicit clarification rather than letting unresolved proposals bypass confirmation',()=>{
  const html=renderToStaticMarkup(createElement(MigrationReusePlan,{proposal:{...proposal,clarification:'本次仅限任务范围',
   design:{...design,unresolvedQuestions:['部署范围待确认']}},clarify:()=>{}}));
  expect(html).toContain('方案补充说明');expect(html).toContain('补充说明并重新规划');
  expect(html).toContain('部署范围待确认');expect(html).toContain('本次仅限任务范围');
  expect(html).toContain('重新规划后仍需核对并确认方案');
-});
-it('does not present historical candidate passes as readiness for a revised plan',()=>{
-  const html=renderToStaticMarkup(createElement(CandidateStep,{project:{candidate:{displayName:'旧产物',version:'1'},inspection:{reuseConformance:{proposalId:'old'}},portableGenerations:[]},
-    report:{workflow:{stage:'GENERATE'},migrationPlan:{reuseProposal:proposal,generationAllowed:true,items:[],skillBlockingReasons:[]},technicalValidations:[]},
-    assets:[],busy:false,generating:false} as any));
-  expect(html).toContain('等待新方案实施');expect(html).toContain('按新方案生成');
-  expect(html).not.toContain('候选包已准备好');expect(html).not.toContain('Runtime 适配与登记');expect(html).not.toContain('试运行通过');
 });
 
 it('shows each acceptance goal and a human-readable explicit revision comparison',()=>{

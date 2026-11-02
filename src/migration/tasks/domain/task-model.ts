@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { parse as parseYaml } from 'yaml';
+import {sourceFrontmatter} from './source-frontmatter.js';
 import { unzipSync, zipSync } from 'fflate';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
+import { reuseDesignSchema } from '../../domain/migration-reuse-design.js';
+import {taskDiagnosisSchema} from './task-diagnosis.js';
+import {standardizationSchema,deliveredToolSchema,conformanceSchema,contractEvidenceSchema,conformancePassed} from './task-standardization.js';
+import {runtimeInputValuesSchema} from './task-runtime-inputs.js';
+import { capabilityRequirementSchema } from '../../../shared/contracts/runtime-builder.js';
 import { simpleMigrationSuiteSchema } from '../../domain/simple-migration-suite.js';
 import type { RuntimeExecutionEvidence } from '../../../contracts.js';
 import { runtimeRequirementsIssues, type RuntimeBuildRequirements, type RuntimeBuildResult } from '../../../shared/contracts/runtime-builder.js';
@@ -39,6 +44,7 @@ export const memberSchema = z.strictObject({
   skillFile: pathSchema,
   version: z.string(),
   artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceWarnings:z.array(z.string()).optional(),
 });
 export type BundleMember = z.infer<typeof memberSchema>;
 export type BundleFiles = Record<string, string>; // canonical base64, including binary resources
@@ -49,6 +55,7 @@ export type BundleSnapshot = {
   entryInstructionsFile?: string;
 };
 export const configurationSchema = z.strictObject({
+  runtimeInputs:runtimeInputValuesSchema.optional(),
   environmentId: z.string().min(1),
   modelId: z.string().min(1),
   timeoutMs: z.number().int().min(10000).max(900000).default(310000),
@@ -60,13 +67,31 @@ export const configurationSchema = z.strictObject({
 });
 export type BundleConfiguration = z.infer<typeof configurationSchema>;
 export const bundleSuiteSchema = simpleMigrationSuiteSchema;
+const membership = { memberIds: z.array(z.string().min(1)).default([]) };
+/** Same proposal format for every project; empty memberIds means shared project scope. */
+export const migrationPlanSchema = reuseDesignSchema.extend({
+  conditions: z.array(reuseDesignSchema.shape.conditions.element),
+  changes: z.array(reuseDesignSchema.shape.changes.element.extend(membership)),
+  sourceCouplings: z.array(reuseDesignSchema.shape.sourceCouplings.element.extend(membership)),
+  dependencies: z.array(reuseDesignSchema.shape.dependencies.element.extend(membership)),
+  acceptanceChecks: z.array(reuseDesignSchema.shape.acceptanceChecks.element.extend(membership)).min(1),
+  requiredCapabilities: z.array(capabilityRequirementSchema).default([]),
+});
+export type MigrationPlan = z.infer<typeof migrationPlanSchema>;
 export const analysisSchema = z.strictObject({
   summary: z.string().min(1).max(20000),
   changes: z.array(z.strictObject({ paths: z.array(pathSchema).min(1), reason: z.string().min(1) })).max(100),
   missing: z.array(z.string()).max(50),
+  // Older tasks retain their original prose; new Agent output includes a structured plan.
+  plan: migrationPlanSchema.optional(),
+  diagnosis: taskDiagnosisSchema.optional(),
+  standardization: standardizationSchema.optional(),
 });
 export const deliverySchema = z.strictObject({
   summary: z.string().min(1).max(20000),
+  tools:z.array(deliveredToolSchema).optional(),
+  conformance:conformanceSchema.optional(),
+  contractEvidence:z.array(contractEvidenceSchema).optional(),
   services: z
     .array(
       z.strictObject({
@@ -86,17 +111,27 @@ export type BundleCandidate = Omit<BundleSnapshot, 'files'> & {
   parentId: string | null;
   createdAt: string;
   summary: string;
+  planRevisionId?: string;
   services: BundleDelivery['services'];
   diff: Array<{ path: string; kind: 'ADDED' | 'CHANGED' | 'REMOVED'; }>;
   checks: string[];
+  tools?:BundleDelivery['tools'];
+  conformance?:BundleDelivery['conformance'];
+  contractEvidence?:BundleDelivery['contractEvidence'];
 };
 export type BundleAttempt = {
+  resumeRequests?:Array<{key:string;digest:string}>;
+  optimizationInputs?:{suiteDigest:string;planDigest:string;judgeDigest?:string};
+  optimizationGoal?:import('../../../improvement/domain/optimization-loop.js').OptimizationGoal;
+  optimization?:import('../../../improvement/domain/optimization-loop.js').OptimizationLoop;
+  resultCandidateId?:string;
+  agentCompositions?:import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt[];
   id: string;
-  kind: 'ANALYZE' | 'GENERATE' | 'REPAIR' | 'ACCEPT';
+  kind: 'ANALYZE' | 'GENERATE' | 'REPAIR' | 'ACCEPT' | 'OPTIMIZE';
   key: string;
   requestDigest: string;
   baseCandidateId: string | null;
-  status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
+  status: 'RUNNING' | 'WAITING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
   startedAt: string;
   finishedAt?: string;
   message: string;
@@ -104,8 +139,9 @@ export type BundleAttempt = {
   runId?: string;
   requestId?: string;
   agentRunId?: string;
+  clarification?: string;
 };
-export type BundleVerdict = { passed: boolean; reason: string; };
+export type BundleVerdict = { passed: boolean; reason: string; requirementResults?:Array<{id:string;passed:boolean;reason:string}>; };
 export type BundleRun = {
   judgeDigest?: string;
   runtimeSelectionRevision?: string;
@@ -121,11 +157,33 @@ export type BundleRun = {
   status: 'RUNNING' | 'PASSED' | 'FAILED' | 'INCOMPLETE' | 'CANCELLED';
   createdAt: string;
   finishedAt?: string;
-  cases: Array<{ id: string; passed: boolean; reason: string; evidence?: RuntimeExecutionEvidence; failureStage?: 'RUNTIME' | 'EXECUTION' | 'JUDGE'; }>;
+  cases: Array<{ id: string; passed: boolean; reason: string; requirementResults?:BundleVerdict['requirementResults']; evidence?: RuntimeExecutionEvidence;
+    executionChecks?:import('../../../evaluation/domain/execution-checks.js').EvidenceCheck[];
+    judgeComposition?:import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
+    failureStage?: 'RUNTIME' | 'EXECUTION' | 'JUDGE'; }>;
+  requirementCoverage?:Array<{id:string;status:'PASSED'|'FAILED'|'UNVERIFIED';caseIds:string[]}>;
   finalization?: unknown;
   runtimeSnapshot?: unknown;
 };
+export {hasCandidateFailures} from './task-verdict.js';
+export type TaskPlanRevision = { id: string; digest: string; analysis: BundleAnalysis; baseCandidateId: string | null;
+  createdAt: string; clarification?: string; approvedAt?: string; };
+export type TaskRuntimeReview = { candidateId: string; configurationDigest: string; planDigest?: string; runtimeSelectionRevision?: string;
+  checkedAt: string; status: 'PASSED' | 'FAILED' | 'INCOMPLETE';
+  items: Array<{ name: string; status: 'SATISFIED' | 'UNSATISFIED' | 'UNVERIFIED'; reason: string }>;
+  environmentDigest?: string; };
 export type BundleTask = {
+  planRevisions?: TaskPlanRevision[];
+  planRevisionId?: string;
+  currentPlanDigest?: string;
+  planApproved?: boolean;
+  candidatePlanCurrent?: boolean;
+  runtimeReview?: TaskRuntimeReview;
+  runtimeReviewCurrent?: boolean;
+  /** Display checkpoint only; never substitutes for fresh runtime verification. */
+  startupCheck?: { id: string; candidateId: string; configurationDigest: string; runtimeSelectionRevision?: string; builderBindingId?: string;
+    status: 'RUNNING' | 'PASSED' | 'FAILED' | 'INTERRUPTED'; startedAt: string; message: string; };
+  startupCheckCurrent?: boolean;
   /** Derived on read; export still verifies the online Runtime independently. */
   verifiedRunId?: string;
   currentJudgeDigest?: string;
@@ -147,11 +205,14 @@ export type BundleTask = {
   currentCandidateId: string | null;
   candidates: BundleCandidate[];
   configuration?: BundleConfiguration;
+  /** An explicit saved choice, distinct from defaults supplied during upload. */
+  configurationConfirmed?: boolean;
   suite?: z.infer<typeof bundleSuiteSchema>;
   attempts: BundleAttempt[];
   runs: BundleRun[];
 };
 export type TaskBuildRequest = {
+  optimizationAttemptId?:string;
   requirements: RuntimeBuildRequirements;
   candidateId: string;
   candidateDigest: string;
@@ -168,17 +229,33 @@ export type TaskRuntimeDelivery = {
   result: RuntimeBuildResult;
 };
 export const createBundleSchema = z.strictObject({
-  name: z.string().trim().min(1).max(120),
-  goal: z.string().trim().min(1).max(8000),
-  target: z.string().trim().min(1).max(2000),
-  sourceAssetIds: z.array(z.string().min(1)).min(1).max(10),
+  name: z.string().trim().max(120).default(''),
+  goal: z.string().trim().max(8000).default(''),
+  target: z.string().trim().max(2000).default(''),
+  configuration: configurationSchema.optional(),
+  sourceAssetIds: z.array(z.string().min(1)).min(1),
   assets: z.record(pathSchema, z.string()).optional(),
 });
+export function defaultTaskDescription(source: BundleSnapshot) {
+  const descriptions = source.members.map(member => {
+    const content = readText(source.files, member.skillFile);
+    const metadata = sourceFrontmatter(content,true);
+    return `${member.skillId}：${String(metadata.description).trim().slice(0, 600)}`;
+  });
+  return {
+    name: (source.members.map(member => member.skillId).join('、').slice(0, 110) + ' 迁移'),
+    goal: '完成企业标准化，解除特定 Agent 框架耦合，保留原 Skill 的完整业务能力、工具行为及实际调用链。仅做必要改造，使同一份产物能被不同框架快速复用。以下源描述须结合源码核实，未知事实明确记录：\n' + descriptions.join('\n'),
+    target: '交付框架无关的 Skill 和可独立调用的工具。建议 Script 或 MCP，比较改造、部署与维护成本，已有合格形式优先保留。声明运行条件，具体 Runtime 仅用于接入和验证，不以其私有实现定义迁移目标。',
+  };
+}
 export const operationSchema = z.strictObject({
+  resumeAttemptId:z.string().min(1).optional(),
   key: z.string().min(1).max(100),
   baseCandidateId: z.string().nullable(),
   runId: z.string().optional(),
   phase: z.enum(['development', 'holdout']).default('development'),
+  clarification: z.string().trim().min(1).max(4000).optional(),
+  optimization: z.unknown().optional(),
 });
 export function bundleError(message: string, statusCode = 409): never {
   throw Object.assign(new Error(message), { statusCode });
@@ -216,11 +293,10 @@ export function snapshot(files: BundleFiles, version: string, previous?: BundleS
   const entries = Object.keys(files)
     .filter((name) => /(^|\/)SKILL\.md$/.test(name))
     .sort();
-  if (entries.length < 1 || entries.length > 10) bundleError('整体迁移需要 1–10 个独立 SKILL.md 入口', 400);
+  if (entries.length < 1) bundleError('工程中需要至少一个 SKILL.md 入口', 400);
   const members = entries.map((skillFile, index) => {
     const content = readText(files, skillFile);
-    const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\s|$)/);
-    const metadata = match ? parseYaml(match[1]!) : {};
+    const metadata = sourceFrontmatter(content,!previous);
     if (
       !metadata ||
       typeof metadata.name !== 'string' ||
@@ -241,6 +317,7 @@ export function snapshot(files: BundleFiles, version: string, previous?: BundleS
       skillFile,
       version: old?.artifactSha256 === digest ? old.version : version,
       artifactSha256: digest,
+      ...(metadata.warnings?{sourceWarnings:metadata.warnings}:{}),
     });
   });
   if (new Set(members.map((m) => m.skillId.toLowerCase())).size !== members.length)
@@ -307,7 +384,17 @@ export function bundleDiff(before: BundleFiles, after: BundleFiles): BundleCandi
 export function currentCandidate(task: BundleTask) {
   return task.candidates.find((candidate) => candidate.id === task.currentCandidateId);
 }
+export function approvedTaskPlan(task: BundleTask) {
+  const revision = task.planRevisions?.find(item => item.id === task.planRevisionId);
+  return Boolean(revision?.approvedAt && task.analysis && revision.digest === canonicalSha256(task.analysis));
+}
+export function candidateUsesCurrentPlan(task: BundleTask) {
+  if (!task.planRevisionId) return true; // Existing records retain their original evidence.
+  return approvedTaskPlan(task) && currentCandidate(task)?.planRevisionId === task.planRevisionId;
+}
 export function verifiedRun(task: BundleTask) {
+  if (!candidateUsesCurrentPlan(task)) return undefined;
+  if(task.analysis?.standardization&&!conformancePassed(currentCandidate(task)?.conformance))return undefined;
   if (!task.configuration || !task.suite) return undefined;
   if (task.selectedRuntimeBuildRequestId && taskBuilderStatus(task) !== 'BOUND') return undefined;
   const latest = [...task.runs]
@@ -321,7 +408,7 @@ export function verifiedRun(task: BundleTask) {
         run.configurationDigest === canonicalSha256(task.configuration) &&
         run.suiteDigest === canonicalSha256(task.suite),
     );
-  return latest?.status === 'PASSED' && (!task.suite.holdoutCases?.length || latest.phase === 'holdout')
+  return latest?.status === 'PASSED' && (!task.analysis?.standardization || task.analysis.standardization.requirements.every(r=>latest.requirementCoverage?.some(c=>c.id===r.id&&c.status==='PASSED'))) && (!task.suite.holdoutCases?.length || latest.phase === 'holdout')
     ? latest
     : undefined;
 }

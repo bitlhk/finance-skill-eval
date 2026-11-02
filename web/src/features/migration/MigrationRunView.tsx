@@ -4,10 +4,12 @@ export function MigrationRunView({
   run,
   currentCandidateId,
   configurationMatches,
+  experimental=false,
 }: {
   run: BundleRun;
   currentCandidateId: string | null;
   configurationMatches: boolean;
+  experimental?:boolean;
 }) {
   return (
     <div className="bundle-run">
@@ -16,7 +18,7 @@ export function MigrationRunView({
         {run.phase === 'holdout' ? run.suite.holdoutCases?.length : run.suite.cases.length} 个案例通过
       </h4>
       {run.candidateId !== currentCandidateId && (
-        <p className="bundle-notice">历史候选的验收记录；当前候选需重新验收。</p>
+        <p className="bundle-notice">{experimental?'这是优化实验候选的复测记录，尚未替换当前版本。':'历史候选的验收记录；当前候选需重新验收。'}</p>
       )}
       {!configurationMatches && (
         <p className="bundle-notice">Runtime 选择、运行配置、测试集或 Judge 已变化；此记录不能作为当前交付的验收结论。</p>

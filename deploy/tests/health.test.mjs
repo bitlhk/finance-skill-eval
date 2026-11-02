@@ -42,7 +42,9 @@ test('health verifies the current task route and rejects incorrect authenticatio
     await assert.rejects(run(), error => error.stderr.includes('AUTHENTICATED_WORKSPACE_NOT_READY'));
     await writeFile(file, 'FINANCE_EVAL_ACCESS_TOKEN=fixture-token\n');
     runtime.limits.maxSkills = 1;
-    await assert.rejects(run(), error => error.stderr.includes('MULTI_SKILL_RUNTIME_NOT_READY'));
+    assert.equal(JSON.parse((await run()).stdout).status, 'PASSED');
+    delete runtime.limits.maxSkills;
+    assert.equal(JSON.parse((await run()).stdout).status, 'PASSED');
     runtime.limits.maxSkills = 10;
     catalogStatus = 400;
     await assert.rejects(run(), error => error.stderr.includes('WORKSPACE_CATALOG_NOT_READY'));

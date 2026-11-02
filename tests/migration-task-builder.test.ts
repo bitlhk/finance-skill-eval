@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it,vi } from 'vitest';
 import { unzipSync } from 'fflate';
 import { EnvironmentStore } from '../src/service/environment-store.js';
 import { createMigrationTaskService } from '../src/migration/tasks/composition.js';
@@ -16,19 +16,20 @@ import { taskBuilderLauncher, taskBuilderResult } from '../scripts/lib/task-buil
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { while(cleanups.length) await cleanups.pop()!(); });
-async function setup(count=3) {
+async function setup(count=3,ports:NonNullable<Parameters<typeof createMigrationTaskService>[0]['ports']>={},extraFiles:Record<string,string>={}) {
   const root = await mkdtemp(path.join(os.tmpdir(),'task-builder-')); cleanups.push(()=>rm(root,{recursive:true,force:true}));
   const host = await taskBuilderLauncher(); cleanups.push(()=>host.app.close());
   const environments = new EnvironmentStore(root,[{reference:'builder-local',label:'Local',baseUrlPrefix:host.baseUrl,credentialEnv:null}]); await environments.initialize();
   const logs: Record<string,unknown>[]=[];
   const options = { root, environments, skills:{get:async()=>null,readArchive:async()=>({})}, logger:{info:(x:Record<string,unknown>)=>logs.push(x),warn:(x:Record<string,unknown>)=>logs.push(x),error:(x:Record<string,unknown>)=>logs.push(x)},
     ports:{agent:async(input:any)=> input.mode==='ANALYZE' ? {status:'PRODUCED' as const,analysis:{summary:'Analyze members',changes:[],missing:[]}}
-      : {status:'PRODUCED' as const,files:input.base.files,delivery:{summary:'Candidate',services:[]}},judge:async()=>({passed:true,reason:'Fixture business assertion'})} };
+      : {status:'PRODUCED' as const,files:input.base.files,delivery:{summary:'Candidate',services:[]}},judge:async()=>({passed:true,reason:'Fixture business assertion'}),...ports} };
   const service=createMigrationTaskService(options); cleanups.push(()=>service.close());
   await service.initialize();
-  const files = Object.fromEntries(Array.from({length:count},(_,i)=>[`skills/s${i}/SKILL.md`,Buffer.from(`---\nname: s${i}\ndescription: skill ${i}\n---\nBusiness instructions`).toString('base64')]));
+  const files = {...Object.fromEntries(Array.from({length:count},(_,i)=>[`skills/s${i}/SKILL.md`,Buffer.from(`---\nname: s${i}\ndescription: skill ${i}\n---\nBusiness instructions`).toString('base64')])),...extraFiles};
   let task=await service.upload({name:'Builder task',goal:'Business',target:'OpenJiuwen'},bundleZip(files));
-  async function finish(kind:'ANALYZE'|'GENERATE'|'ACCEPT', extra={}){
+  async function finish(kind:'ANALYZE'|'GENERATE'|'ACCEPT'|'OPTIMIZE', extra={}){
+    if(kind==='GENERATE') await service.approvePlan(task.id,{analysisDigest:(await service.get(task.id)).currentPlanDigest});
     task=await service.get(task.id);
     await service.start(task.id,kind,{key:randomUUID(),baseCandidateId:task.currentCandidateId,...extra});
     for(let i=0;i<200;i++) { task=await service.get(task.id); if(!task.attempts.some(a=>a.status==='RUNNING')) return task; await new Promise(r=>setTimeout(r,10)); }
@@ -46,6 +47,48 @@ async function setup(count=3) {
   const accept=(result:unknown,trustReference='builder-local')=>app.inject({method:'POST',url:url+'/runtime-deliveries',payload:{result,trustReference},headers:{'x-request-id':'builder-http-request'}});
   return {root,options,host,environments,service,app,url,id:task.id,request,accept,finish,logs};
 }
+
+it.each([{editCode:false,approve:true},{editCode:true,approve:true},{editCode:true,approve:false}])('waits for Builder, resumes and reviews the entire solution ($editCode / $approve)',async({editCode,approve})=>{
+  let upgraded=false;
+  const diagnose=vi.fn(async()=>({judgement:{status:'PROPOSED' as const,hypothesis:{layer:'HARNESS' as const,issue:'Execution loop budget too small',expectedBehavior:'Complete the workflow',evidenceCaseIds:['dev'],validation:'Run the frozen business case',risk:'Low',confidence:'HIGH' as const,...(editCode?{projectPaths:['agent/runtime.py']}: {})}}}));
+  const review=vi.fn(async()=>({status:'PRODUCED' as const,review:{recommendation:approve?'KEEP_CANDIDATE' as const:'KEEP_BASELINE' as const,reason:'Independent review of the whole solution',improvements:['Workflow complete'],regressions:[],evidenceIds:['dev']}}));
+  const f=await setup(1,{improvementAgents:()=>({diagnose,review}),judge:async()=>({passed:upgraded,reason:upgraded?'Completed':'Loop stopped early'}),
+    agent:async input=>input.mode==='ANALYZE'?{status:'PRODUCED',analysis:{summary:'Preserve behavior',changes:[],missing:[]}}:
+      {status:'PRODUCED',files:{...input.base.files,...(input.mode==='REPAIR'?{'agent/runtime.py':Buffer.from('MAX_STEPS = 4').toString('base64')}:{})},delivery:{summary:'Project code',services:[]}},
+  },{'agent/runtime.py':Buffer.from('MAX_STEPS = 2').toString('base64')});
+  const originalRequest=await f.request();expect((await f.accept(taskBuilderResult(originalRequest,f.host,withResultDigest,canonicalSha256))).statusCode).toBe(200);
+  await f.service.saveSuite(f.id,{name:'Frozen',cases:[{id:'dev',input:'Run the business workflow',criteria:['Complete']}]});
+  const baseline=await f.finish('ACCEPT'),before=baseline.currentCandidateId;
+  const waiting=await f.finish('OPTIMIZE',{runId:baseline.runs.at(-1)!.id,optimization:{maxRounds:1}});
+  const attempt=waiting.attempts.find(a=>a.kind==='OPTIMIZE')!;
+  expect(attempt.status,attempt.error).toBe('WAITING');expect(attempt.optimization?.waiting?.kind).toBe('BUILDER');
+  expect(waiting.currentCandidateId).toBe(before);expect(waiting.candidates).toHaveLength(editCode?2:1);expect(review).not.toHaveBeenCalled();
+  await expect(f.service.start(f.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:before,resumeAttemptId:attempt.id})).rejects.toThrow('交付');
+  await expect(f.service.saveSuite(f.id,{name:'Changed',cases:[{id:'dev',input:'Changed',criteria:['New']}] })).rejects.toThrow('冻结');
+  const workspace=await f.app.inject(f.url+'/optimization-workspace?attemptId='+attempt.id);
+  expect(workspace.statusCode).toBe(200);
+  expect(Buffer.from(unzipSync(workspace.rawPayload)['agent/runtime.py']!).toString()).toBe(editCode?'MAX_STEPS = 4':'MAX_STEPS = 2');
+  const req=await f.request({baseCandidateId:attempt.optimization!.waiting!.candidate.id});
+  expect(req.rebuild?.hypothesis.issue).toBe('Execution loop budget too small');
+  expect((await f.accept(taskBuilderResult(req,f.host,withResultDigest,canonicalSha256))).statusCode).not.toBe(200);
+  expect((await f.accept(taskBuilderResult(req,f.host,withResultDigest,canonicalSha256,'2'))).statusCode).toBe(200);
+  upgraded=true;
+  const restarted=createMigrationTaskService(f.options);cleanups.push(()=>restarted.close());await restarted.initialize();
+  expect((await restarted.get(f.id)).attempts.find(a=>a.id===attempt.id)?.status).toBe('WAITING');
+  const resume={key:randomUUID(),baseCandidateId:before,resumeAttemptId:attempt.id};
+  await restarted.start(f.id,'OPTIMIZE',resume);await restarted.start(f.id,'OPTIMIZE',resume);
+  await vi.waitFor(async()=>expect((await restarted.get(f.id)).attempts.find(a=>a.id===attempt.id)?.status).toBe('COMPLETED'));
+  const done=await restarted.get(f.id),loop=done.attempts.find(a=>a.id===attempt.id)!.optimization!;
+  expect(loop.status,loop.reason).toBe(approve?'REVIEW':'STOPPED');expect(loop.rounds).toHaveLength(1);expect(loop.targetReached).toBe(approve);
+  expect(diagnose).toHaveBeenCalledTimes(1);expect(review).toHaveBeenCalledTimes(1);expect(loop.contextChanges?.[0]?.reference).toBe(req.requestId);
+  expect(JSON.stringify(review.mock.calls)).toContain('contextChanges');expect(done.currentCandidateId).toBe(before);
+  if(approve){const selected=await restarted.selectOptimization(f.id,{attemptId:attempt.id});expect(selected.currentCandidateId).toBe(loop.best.id);}
+  else{
+    expect(done.configuration).toEqual(baseline.configuration);expect(done.runtimeDelivery?.id).toBe(baseline.runtimeDelivery?.id);
+    expect(done.selectedRuntimeBuildRequestId).toBe(originalRequest.requestId);expect(done.runtimeDeliveries).toHaveLength(2);
+    await expect(restarted.selectOptimization(f.id,{attemptId:attempt.id})).rejects.toThrow();
+  }
+});
 
 it.each([1,3])('binds %i members through independent Runtime admission, persists, accepts and exports the exact Builder revision',async count=>{
   const f=await setup(count),req=await f.request();

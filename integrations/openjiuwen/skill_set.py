@@ -9,8 +9,8 @@ def hydrate_skill_set(request, manager):
     if any(key in request for key in ('bundle', 'skill', 'variant')):
         raise ValueError('The instance accepts skills[] and optional assets; legacy fields are not allowed')
     skills = request.get('skills')
-    if not isinstance(skills, list) or not 1 <= len(skills) <= 10:
-        raise ValueError('The instance requires 1 to 10 Skills')
+    if not isinstance(skills, list) or not skills:
+        raise ValueError('The instance requires at least one Skill')
     files, members, ids, names, paths = {}, [], set(), set(), set()
 
     def decode(value):

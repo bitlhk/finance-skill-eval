@@ -1,29 +1,45 @@
 import type { MigrationActivityPort } from '../../application/migration-activity-port.js';
 import { exportMigrationTask } from './task-export.js';
 import { acceptMigrationTask } from './task-acceptance.js';
+import {optimizeMigrationTask} from './task-optimization.js';
+import {activateOptimizationRun,prepareOptimizationResume,waitingOptimization} from './task-optimization-state.js';
+import {assertMigrationExportSafe} from '../../domain/migration-export-safety.js';
+import {optimizationGoalSchema} from '../../../improvement/domain/optimization-loop.js';
+import type {ImprovementAgents} from '../../../improvement/application/improvement-agents.js';
 import { randomUUID } from 'node:crypto';
 import { operationalError } from '../../../shared/operational-error.js';
 import { canonicalSha256 } from '../../../shared/json-canonicalization.js';
 import { simpleMigrationCases } from '../../domain/simple-migration-suite.js';
 import type { BundleAgent, BundleRuntimeFactory, BundleJudge, MigrationTaskRepository, MigrationSourceAssets, MigrationLogger, TaskBuilderPort } from './task-ports.js';
 import { TaskBuilderService } from './task-builder.js';
+import { z } from 'zod';
+import { evidenceIssues } from '../../domain/migration-reuse-design.js';
+import {sourceEvidencePath} from '../../domain/migration-source-evidence.js';
+import { reviewPlanEnvironment } from '../domain/task-runtime-review.js';
+import {standardizationIssues,standardDeliveryIssues,conformancePassed} from '../domain/task-standardization.js';
+import {runtimeInputIssues} from '../domain/task-runtime-inputs.js';
 import {
   analysisSchema,
   deliverySchema,
   bundleError,
   createBundleSchema,
+  defaultTaskDescription,
   operationSchema,
   configurationSchema,
   bundleSuiteSchema,
   snapshot,
+  bundleZip,
   decodeBundleZip,
   bundleDiff,
   currentCandidate,
+  hasCandidateFailures,
+  approvedTaskPlan, candidateUsesCurrentPlan,
   readText,
   taskBuilderStatus, requireTaskBuilderBinding, requireBuilderEnvironment, verifiedRun,
   type BundleTask,
   type BundleAttempt,
   type BundleFiles,
+  type BundleConfiguration,
 } from '../domain/task-model.js';
 
 /** One task owns one full workspace. Persisted candidates and run inputs are immutable. */
@@ -40,14 +56,24 @@ export class MigrationTaskService {
     private logger?: MigrationLogger,
     builder?: TaskBuilderPort,
     readonly activity?: MigrationActivityPort,
+    private improvementAgents?:()=>ImprovementAgents,
   ) { this.builder = builder ? new TaskBuilderService(repository, builder, logger) : undefined; }
   readonly builder?: TaskBuilderService;
   async initialize() {
     for (const task of await this.repository.list()) {
       let changed = false;
+      if (task.startupCheck?.status === 'RUNNING') {
+        task.startupCheck.status = 'INTERRUPTED';
+        task.startupCheck.message = '服务重启，启动检查中断，请重新检查';
+        changed = true;
+      }
       for (const attempt of task.attempts)
         if (attempt.status === 'RUNNING') {
+          if(attempt.optimization?.status==='WAITING'){
+            attempt.status='WAITING';attempt.message=attempt.optimization.reason??'等待外部调整';changed=true;continue;
+          }
           attempt.status = 'INTERRUPTED';
+          if(attempt.optimization?.status==='RUNNING'){attempt.optimization.status='INTERRUPTED';attempt.optimization.reason='服务重启，优化中断，实验候选未自动采纳';}
           attempt.message = '服务已重启，本次操作中断；可重新发起';
           attempt.finishedAt = new Date().toISOString();
           changed = true;
@@ -66,7 +92,18 @@ export class MigrationTaskService {
   }
   private view(task: BundleTask): BundleTask {
     const current = { ...task, currentJudgeDigest: this.judge.identity?.(), builderStatus: taskBuilderStatus(task) };
-    return { ...current, verifiedRunId: verifiedRun(current)?.id };
+    const check = task.startupCheck;
+    const startupCheckCurrent = Boolean(candidateUsesCurrentPlan(task) && check && task.configuration && check.candidateId === task.currentCandidateId
+      && check.configurationDigest === canonicalSha256(task.configuration)
+      && check.runtimeSelectionRevision === task.runtimeSelectionRevision
+      && check.builderBindingId === (task.selectedRuntimeBuildRequestId ? task.runtimeDelivery?.id : undefined)
+      && !['PENDING', 'STALE'].includes(current.builderStatus));
+    const currentPlanDigest = task.analysis ? canonicalSha256(task.analysis) : undefined;
+    const runtimeReviewCurrent = Boolean(task.runtimeReview && task.configuration && candidateUsesCurrentPlan(task)
+      && task.runtimeReview.candidateId === task.currentCandidateId && task.runtimeReview.configurationDigest === canonicalSha256(task.configuration)
+      && task.runtimeReview.planDigest === currentPlanDigest && task.runtimeReview.runtimeSelectionRevision === task.runtimeSelectionRevision);
+    return { ...current, currentPlanDigest, planApproved: approvedTaskPlan(task), candidatePlanCurrent: candidateUsesCurrentPlan(task),
+      runtimeReviewCurrent, startupCheckCurrent, verifiedRunId: verifiedRun(current)?.id };
   }
   async list() { return (await this.repository.list()).map(task => this.view(task)); }
   async get(id: string) { return this.view(await this.repository.get(id)); }
@@ -96,17 +133,23 @@ export class MigrationTaskService {
     return this.createFiles(parsed, files, requestId);
   }
   async upload(input: unknown, zip: Buffer, requestId?: string) {
+    if (input && typeof input === 'object' && 'configuration' in input && typeof input.configuration === 'string') {
+      try { input = { ...input, configuration: JSON.parse(input.configuration) }; }
+      catch { bundleError('运行配置格式无效', 400); }
+    }
     const parsed = createBundleSchema.omit({ sourceAssetIds: true }).parse(input);
     return this.createFiles(parsed, decodeBundleZip(zip), requestId);
   }
-  private async createFiles(input: { name: string; goal: string; target: string; }, files: BundleFiles, requestId?: string) {
+  private async createFiles(input: { name: string; goal: string; target: string; configuration?: BundleConfiguration }, files: BundleFiles, requestId?: string) {
     const id = 'bundle-' + randomUUID(),
       source = snapshot(files, 'source');
     const { files: _, ...sourceInfo } = source;
+    const defaults = defaultTaskDescription(source);
     const task: BundleTask = {
       schemaVersion: 'finance.skill-migration.task.v1',
       id,
-      name: input.name, goal: input.goal, target: input.target,
+      name: input.name || defaults.name, goal: input.goal || defaults.goal, target: input.target || defaults.target,
+      ...(input.configuration ? { configuration: input.configuration } : {}),
       requestId,
       createdAt: new Date().toISOString(),
       source: sourceInfo,
@@ -124,13 +167,48 @@ export class MigrationTaskService {
     const configuration = configurationSchema.parse(input);
     return this.update(id, (task) => {
       this.idle(task);
+      const issues=runtimeInputIssues(task,configuration);if(issues.length)bundleError(issues.join('；'));
       task.configuration = configuration;
+      task.configurationConfirmed = true;
+    });
+  }
+  async approvePlan(id: string, input: unknown) {
+    const { analysisDigest } = z.strictObject({analysisDigest:z.string().regex(/^[a-f0-9]{64}$/)}).parse(input);
+    return this.update(id, task => {
+      this.idle(task);
+      if(waitingOptimization(task))bundleError('优化正在等待外部调整；修改方案前请先停止优化');
+      if (!task.analysis || canonicalSha256(task.analysis) !== analysisDigest) bundleError('方案已变化，请刷新后重新确认');
+      if (task.analysis.missing.length || task.analysis.plan?.unresolvedQuestions.length) bundleError('请先补充方案中的待确认事项');
+      let revision = task.planRevisions?.find(item => item.id === task.planRevisionId);
+      if (!revision) {
+        revision = {id:'plan-'+randomUUID(),digest:analysisDigest,analysis:structuredClone(task.analysis),baseCandidateId:task.currentCandidateId,createdAt:new Date().toISOString()};
+        (task.planRevisions ??= []).push(revision); task.planRevisionId=revision.id;
+        // Adopt the unchanged existing plan without rewriting its candidate files or evidence.
+        const candidate=currentCandidate(task); if(candidate && !candidate.planRevisionId) candidate.planRevisionId=revision.id;
+      }
+      if (revision.digest !== analysisDigest) bundleError('方案版本不一致，请重新分析后确认');
+      revision.approvedAt = new Date().toISOString();
+    });
+  }
+  async reviewRuntime(id: string) {
+    const task=await this.get(id), candidate=currentCandidate(task);
+    if (!candidate || !task.configuration || !candidateUsesCurrentPlan(task)) bundleError('请先确认方案、生成当前结果并选择运行环境');
+    const execution=await this.runtime({snapshot:await this.readSnapshot(id,candidate.id),services:candidate.services,configuration:task.configuration,signal:AbortSignal.timeout(60000)});
+    requireBuilderEnvironment(task,execution.environmentSnapshot);
+    const review=reviewPlanEnvironment(task,execution.environmentSnapshot);
+    return this.update(id,current=>{
+      this.idle(current);
+      if(current.currentCandidateId!==candidate.id || canonicalSha256(current.configuration)!==canonicalSha256(task.configuration)
+        || (current.analysis?canonicalSha256(current.analysis):undefined)!==task.currentPlanDigest || current.runtimeSelectionRevision!==task.runtimeSelectionRevision)
+        bundleError('方案、结果或环境配置已变化，请重新核对');
+      current.runtimeReview=review;
     });
   }
   async saveSuite(id: string, input: unknown) {
     const suite = bundleSuiteSchema.parse(input);
     return this.update(id, (task) => {
       this.idle(task);
+      if(waitingOptimization(task))bundleError('优化正在等待外部调整；测试集保持冻结，请先停止优化再修改');
       task.suite = suite;
     });
   }
@@ -138,22 +216,48 @@ export class MigrationTaskService {
     const task = await this.get(id),
       candidate = currentCandidate(task);
     if (!candidate || !task.configuration) bundleError('请先生成候选并配置运行环境');
+    if (!candidateUsesCurrentPlan(task)) bundleError('当前结果对应旧方案，请确认并生成最新方案');
+    const inputIssues=runtimeInputIssues(task,task.configuration,true);if(inputIssues.length)bundleError(inputIssues.join('；')+'。请在准备运行环境中补充，尚不能进行运行验证。');
     requireTaskBuilderBinding(task);
-    const result = await this.runtime({
-      snapshot: await this.readSnapshot(id, candidate.id),
-      services: candidate.services,
-      configuration: task.configuration,
-      signal: AbortSignal.timeout(60000),
+    const checkId = randomUUID();
+    await this.update(id, current => {
+      this.idle(current);
+      if (current.currentCandidateId !== candidate.id || canonicalSha256(current.configuration) !== canonicalSha256(task.configuration))
+        bundleError('候选或运行配置已变化，请刷新后重试');
+      current.startupCheck = { id: checkId, candidateId: candidate.id, configurationDigest: canonicalSha256(task.configuration),
+        runtimeSelectionRevision: task.runtimeSelectionRevision, builderBindingId: task.selectedRuntimeBuildRequestId ? task.runtimeDelivery?.id : undefined,
+        status: 'RUNNING', startedAt: new Date().toISOString(), message: '正在启动并检查实例' };
     });
-    requireBuilderEnvironment(task, result.environmentSnapshot);
-    try { await result.runtime.prepare?.({runId:'startup-'+randomUUID(),signal:AbortSignal.timeout(task.configuration.timeoutMs)}); }
-    finally { await result.runtime.cleanup?.(); }
-    return {
-      status: 'READY',
-      scope: 'INSTANCE_START_AND_RELEASE',
-      message: '全部 Skill 已完成启动检查并释放实例；业务结果由联合验收核验',
-      runtime: result.environmentSnapshot,
-    };
+    try {
+      const result = await this.runtime({
+        snapshot: await this.readSnapshot(id, candidate.id),
+        services: candidate.services,
+        configuration: task.configuration,
+        signal: AbortSignal.timeout(60000),
+      });
+      try {
+        requireBuilderEnvironment(task, result.environmentSnapshot);
+        const review=reviewPlanEnvironment(task,result.environmentSnapshot);
+        await this.update(id,current=>{ if(current.startupCheck?.id===checkId) current.runtimeReview=review; });
+        if(review.status==='FAILED') bundleError('运行环境不满足迁移方案要求，请查看环境核对结果');
+        await result.runtime.prepare?.({runId:'startup-'+randomUUID(),signal:AbortSignal.timeout(task.configuration.timeoutMs)});
+      }
+      finally { await result.runtime.cleanup?.(); }
+      await this.update(id, current => {
+        if (current.startupCheck?.id === checkId) { current.startupCheck.status = 'PASSED'; current.startupCheck.message = '启动检查已通过，实例已释放'; }
+      });
+      return {
+        status: 'READY',
+        scope: 'INSTANCE_START_AND_RELEASE',
+        message: '全部 Skill 已完成启动检查并释放实例；业务结果由联合验收核验',
+        runtime: result.environmentSnapshot,
+      };
+    } catch (error) {
+      await this.update(id, current => {
+        if (current.startupCheck?.id === checkId) { current.startupCheck.status = 'FAILED'; current.startupCheck.message = '启动检查失败，请检查环境配置后重试'; }
+      });
+      throw error;
+    }
   }
   async start(id: string, kind: BundleAttempt['kind'], input: unknown, requestId?: string) {
     if (this.closing) bundleError('服务正在关闭', 503);
@@ -176,14 +280,17 @@ export class MigrationTaskService {
     trackExecution: (done: Promise<void>) => void, requestId?: string,
   ) {
     const parsed = operationSchema.parse(input);
+    const optimizationGoal=kind==='OPTIMIZE'?optimizationGoalSchema.parse(parsed.optimization??{}):undefined;
+    const agents=kind==='OPTIMIZE'?this.improvementAgents?.():undefined;
+    if(kind==='OPTIMIZE'&&!agents)bundleError('优化诊断与独立审查尚未配置');
     const requestDigest = canonicalSha256({ kind, input: parsed });
     let duplicate = false,
       reserved = false;
     const task = await this.update(id, (task) => {
       signal.throwIfAborted();
-      const existing = task.attempts.find((a) => a.key === parsed.key);
+      const existing = task.attempts.find((a) => a.key === parsed.key||a.resumeRequests?.some(r=>r.key===parsed.key));
       if (existing) {
-        if (existing.requestDigest !== requestDigest) bundleError('请求标识已用于其他操作');
+        if ((existing.resumeRequests?.find(r=>r.key===parsed.key)?.digest??existing.requestDigest) !== requestDigest) bundleError('请求标识已用于其他操作');
         duplicate = true;
         return;
       }
@@ -191,10 +298,33 @@ export class MigrationTaskService {
       this.idle(task);
       if (MigrationTaskService.executing >= 2) bundleError('整组任务执行资源繁忙，请稍后重试', 429);
       if (parsed.baseCandidateId !== task.currentCandidateId) bundleError('候选已变化，请刷新后重试');
+      if(parsed.resumeAttemptId){
+        if(kind!=='OPTIMIZE'||parsed.optimization!==undefined)bundleError('恢复时不能更改优化目标或预算');
+        const waiting=task.attempts.find(a=>a.id===parsed.resumeAttemptId);
+        if(!waiting||waiting.kind!=='OPTIMIZE')bundleError('优化任务不存在');
+        prepareOptimizationResume(task,waiting,this.judge.identity?.());
+        (waiting.resumeRequests??=[]).push({key:parsed.key,digest:requestDigest});
+        MigrationTaskService.executing++;reserved=true;return;
+      }
+      if(waitingOptimization(task))bundleError('优化正在等待外部调整，请继续或停止该优化任务');
       if (kind === 'GENERATE' && (!task.analysis || task.analysis.missing.length))
         bundleError('请先完成整体分析并解决缺失信息');
+      if (kind === 'GENERATE' && !approvedTaskPlan(task)) bundleError('请先确认当前迁移方案');
+      if (['ACCEPT','REPAIR','OPTIMIZE'].includes(kind) && !candidateUsesCurrentPlan(task)) bundleError('方案已更新，请先确认并生成对应结果');
+      if(kind==='OPTIMIZE'){
+        const run=task.runs.find(r=>r.id===parsed.runId);
+        if(!run||run.phase!=='development'||run.candidateId!==task.currentCandidateId||!['PASSED','FAILED'].includes(run.status)
+          ||run.cases.some(c=>c.failureStage)||!run.cases.length)bundleError('请先对当前候选完成完整的开发集评测');
+        if(run.configurationDigest!==canonicalSha256(task.configuration)||run.suiteDigest!==canonicalSha256(task.suite)
+          ||run.judgeDigest!==this.judge.identity?.()||run.runtimeSelectionRevision!==task.runtimeSelectionRevision)
+          bundleError('环境、评测标准或运行条件已变化，请重新评测');
+        if(task.runs.some(r=>r.phase==='holdout'&&r.suiteDigest===run.suiteDigest))bundleError('这份留出集已使用；继续优化前请准备新的独立留出集');
+        requireTaskBuilderBinding(task);
+      }
       if (kind === 'REPAIR') {
         const run = task.runs.find((r) => r.id === parsed.runId);
+        const reviewRepair=!parsed.runId&&task.analysis?.standardization&&!conformancePassed(currentCandidate(task)?.conformance);
+        if(!reviewRepair){
         if (
           !run ||
           run.candidateId !== task.currentCandidateId ||
@@ -207,8 +337,12 @@ export class MigrationTaskService {
           bundleError('评审服务未完成评分，请先修复评审服务后重新验收，不应据此修改候选');
         if(run.cases.some(c=>c.failureStage==='RUNTIME'))
           bundleError('Runtime 未完成可信执行，请先排查启动、模型连接和证据，再重新验收');
+        if(!hasCandidateFailures(run))bundleError('尚有要求未验证，请补充测试；没有候选失败证据，不应据此修改代码');
+        }
       }
       if (kind === 'ACCEPT') {
+        if(task.configuration){const issues=runtimeInputIssues(task,task.configuration,true);if(issues.length)bundleError(issues.join('；'));}
+        if(task.analysis?.standardization&&!conformancePassed(currentCandidate(task)?.conformance))bundleError('候选尚未通过标准化审查，请先修复');
         requireTaskBuilderBinding(task);
         if (!task.currentCandidateId || !task.configuration || !task.suite)
           bundleError('请先生成候选、配置环境并保存验收用例');
@@ -220,12 +354,15 @@ export class MigrationTaskService {
       task.attempts.push({
         id: 'attempt-' + randomUUID(),
         kind,
+        ...(optimizationGoal?{optimizationGoal}:{}),
+        ...(kind==='OPTIMIZE'?{optimizationInputs:{suiteDigest:canonicalSha256(task.suite),planDigest:canonicalSha256(task.analysis??null),judgeDigest:this.judge.identity?.()}}:{}),
         requestId,
         ...(kind !== 'ACCEPT' ? { agentRunId: 'agent-' + randomUUID() } : {}),
         key: parsed.key,
         requestDigest,
         baseCandidateId: parsed.baseCandidateId,
         ...(parsed.runId ? { runId: parsed.runId } : {}),
+        ...(kind === 'ANALYZE' && parsed.clarification ? { clarification: parsed.clarification } : {}),
         status: 'RUNNING',
         startedAt: new Date().toISOString(),
         message: kind === 'ACCEPT' ? '准备整组联合验收' : '准备完整工作区',
@@ -235,12 +372,12 @@ export class MigrationTaskService {
       throw error;
     });
     if (duplicate) return task;
-    const attempt = task.attempts[task.attempts.length - 1]!;
+    const attempt = parsed.resumeAttemptId?task.attempts.find(a=>a.id===parsed.resumeAttemptId)!:task.attempts[task.attempts.length - 1]!;
     this.logger?.info({
       event: 'bundle_operation_started', taskId: id, attemptId: attempt.id, requestId: attempt.requestId, agentRunId: attempt.agentRunId,
       kind, candidateId: attempt.baseCandidateId
     });
-    const done = this.execute(task, attempt, parsed.phase, signal).finally(() => {
+    const done = this.execute(task, attempt, parsed.phase, signal,agents).finally(() => {
       MigrationTaskService.executing--;
     });
     trackExecution(done);
@@ -253,11 +390,11 @@ export class MigrationTaskService {
       attempt.message = message;
     });
   }
-  private execute(task: BundleTask, attempt: BundleAttempt, phase: 'development' | 'holdout', signal: AbortSignal) {
-    const work = () => this.executeOperation(task, attempt, phase, signal);
+  private execute(task: BundleTask, attempt: BundleAttempt, phase: 'development' | 'holdout', signal: AbortSignal,agents?:ImprovementAgents) {
+    const work = () => this.executeOperation(task, attempt, phase, signal,true,undefined,agents);
     return this.activity ? this.activity.run(task.id, work, {
       signal, taskId: attempt.id,
-      terminalStatus: async () => (await this.repository.get(task.id)).attempts.find(a => a.id === attempt.id)!.status,
+      terminalStatus: async () => {const status=(await this.repository.get(task.id)).attempts.find(a => a.id === attempt.id)!.status;return status==='WAITING'?'COMPLETED':status;},
     }) : work();
   }
   private async executeOperation(
@@ -265,10 +402,40 @@ export class MigrationTaskService {
     attempt: BundleAttempt,
     phase: 'development' | 'holdout',
     signal: AbortSignal,
+    promote=true,
+    diagnosis?:unknown,
+    agents?:ImprovementAgents,
   ) {
     try {
       signal.throwIfAborted();
-      if (attempt.kind === 'ACCEPT') await acceptMigrationTask({ update: this.update.bind(this), readSnapshot: this.readSnapshot.bind(this), progress: this.progress.bind(this), runtime: this.runtime, judge: this.judge, logger: this.logger }, task, attempt, phase, signal);
+      if(attempt.kind==='OPTIMIZE'){
+        const state=await optimizeMigrationTask(task,attempt,{
+          get:()=>this.repository.get(task.id),snapshot:id=>this.readSnapshot(task.id,id),
+          activate:runId=>this.update(task.id,t=>{const run=t.runs.find(r=>r.id===runId);if(!run)bundleError('缺少评测上下文');activateOptimizationRun(t,run);}).then(()=>{}),
+          save:state=>this.update(task.id,t=>{const a=t.attempts.find(a=>a.id===attempt.id)!;a.optimization=state;a.message=`第 ${state.rounds.length} / ${state.goal.maxRounds} 轮 · ${state.stage}${state.reason?' · '+state.reason:''}`;}).then(()=>{}),
+          adjust:async(current,runId,diagnosis,childSignal)=>{
+            const child:BundleAttempt={id:'attempt-'+randomUUID(),kind:'REPAIR',key:randomUUID(),requestDigest:randomUUID(),
+              baseCandidateId:current.currentCandidateId,runId,agentRunId:'agent-'+randomUUID(),status:'RUNNING',startedAt:new Date().toISOString(),message:'优化候选调整'};
+            await this.update(task.id,t=>{t.attempts.push(child);});
+            await this.executeOperation(current,child,'development',childSignal,false,diagnosis);
+            const updated=await this.repository.get(task.id),completed=updated.attempts.find(a=>a.id===child.id)!;
+            if(completed.status!=='COMPLETED'||!completed.resultCandidateId)bundleError(completed.error??'候选调整未完成');
+            return updated.candidates.find(c=>c.id===completed.resultCandidateId)!;
+          },
+          evaluate:async(current,childSignal)=>{
+            requireTaskBuilderBinding(current);
+            await acceptMigrationTask({update:this.update.bind(this),readSnapshot:this.readSnapshot.bind(this),progress:this.progress.bind(this),runtime:this.runtime,judge:this.judge,logger:this.logger},current,attempt,'development',childSignal);
+            const updated=await this.repository.get(task.id),runId=updated.attempts.find(a=>a.id===attempt.id)!.runId;
+            return updated.runs.find(r=>r.id===runId)!;
+          },
+        },agents!,signal);
+        if(['FAILED','CANCELLED'].includes(state.status))bundleError(state.reason??'优化未完成');
+        if(state.status==='WAITING'){
+          await this.update(task.id,t=>{const a=t.attempts.find(a=>a.id===attempt.id)!;a.status='WAITING';a.message=state.reason??'等待外部调整';delete a.finishedAt;});
+          return;
+        }
+      }
+      else if (attempt.kind === 'ACCEPT') await acceptMigrationTask({ update: this.update.bind(this), readSnapshot: this.readSnapshot.bind(this), progress: this.progress.bind(this), runtime: this.runtime, judge: this.judge, logger: this.logger }, task, attempt, phase, signal);
       else {
         const source = await this.readSnapshot(task.id, null),
           base = await this.readSnapshot(task.id, attempt.baseCandidateId);
@@ -288,7 +455,7 @@ export class MigrationTaskService {
               modelId: prior.configuration.modelId,
             },
           }
-          : undefined;
+          : attempt.kind==='REPAIR'?{conformance:currentCandidate(task)?.conformance}:undefined;
         await this.progress(
           task.id,
           attempt.id,
@@ -300,26 +467,68 @@ export class MigrationTaskService {
         // signal to a new agent whose abort listener has not been registered yet.
         signal.throwIfAborted();
         const result = await this.agent({
+          onComposition: receipt => this.update(task.id, t => {
+            const current = t.attempts.find(a => a.id === attempt.id)!;
+            current.agentCompositions = [...(current.agentCompositions ?? []).filter(c => c.role !== receipt.role), receipt];
+          }).then(() => {}),
           correlation: { taskId: task.id, attemptId: attempt.id, requestId: attempt.requestId, agentRunId: attempt.agentRunId! },
           mode: attempt.kind,
+          ...(diagnosis?{adjustmentCapabilities:['document','tool','runtime'] as Array<'document'|'tool'|'runtime'>}:{}),
           source,
           base,
           goal: task.goal,
           target: task.target,
           analysis: task.analysis,
-          feedback,
+          clarification: attempt.clarification,
+          feedback:diagnosis?{...feedback,diagnosis}:feedback,
           signal,
         });
         signal.throwIfAborted();
         if (result.status !== 'PRODUCED') bundleError(result.reason ?? 'Agent 需要补充信息');
         if (attempt.kind === 'ANALYZE') {
           const analysis = analysisSchema.parse(result.analysis);
+          const standardIssues=standardizationIssues(analysis,source.files);
+          if(standardIssues.length)bundleError('标准化方案检查失败：'+standardIssues.join('；'));
+          if(analysis.diagnosis){
+            const d=analysis.diagnosis,ids=new Set(d.tools.map(tool=>tool.id)),members=new Set(base.members.map(member=>member.id));
+            if(ids.size!==d.tools.length || new Set(d.dependencies.map(dep=>dep.id)).size!==d.dependencies.length) bundleError('工具诊断含重复标识');
+            if([...d.skillChanges,...d.tools].some(item=>item.memberIds.some(id=>!members.has(id)))) bundleError('工具诊断引用了工程之外的 Skill');
+            if(d.dependencies.some(dep=>dep.toolIds.some(id=>!ids.has(id)))) bundleError('依赖引用了未识别的工具');
+            const resolve=(file:string)=>sourceEvidencePath(file,base.files)??bundleError('工具诊断引用了不存在或不唯一的源文件');
+            for(const item of d.skillChanges)item.paths=item.paths.map(resolve);
+            for(const tool of d.tools)tool.sourcePaths=tool.sourcePaths.map(resolve);
+            if(base.members.some(member=>!d.skillChanges.some(item=>item.paths.includes(member.skillFile)))) bundleError('工具诊断遗漏了工程中的 Skill 指令');
+            const claims=[...d.dependencies.flatMap(dep=>dep.evidence),...d.tools.flatMap(tool=>[...tool.evidence,...tool.callChain.flatMap(node=>node.evidence)])];
+            const issues=evidenceIssues(claims,Object.fromEntries(Object.entries(base.files).map(([name,encoded])=>[name,Buffer.from(encoded,'base64').toString('utf8')])));
+            if(issues.length) bundleError('工具诊断源码依据无法核对：'+issues.join('；'));
+          }
+          if(analysis.plan) {
+            const plan=analysis.plan;
+            for(const ids of [plan.changes.map(item=>item.id),plan.dependencies.map(item=>item.key),plan.acceptanceChecks.map(item=>item.id),plan.requiredCapabilities.map(item=>item.id)])
+              if(new Set(ids).size!==ids.length) bundleError('迁移方案中存在重复的条目标识');
+            const memberIds=new Set(base.members.map(member=>member.id));
+            if([...plan.changes,...plan.dependencies,...plan.sourceCouplings,...plan.acceptanceChecks,...(analysis.standardization?.requirements??[])].some(item=>item.memberIds.some(id=>!memberIds.has(id))))
+              bundleError('迁移方案引用了工程之外的 Skill');
+            const evidence=[...plan.changes,...plan.sourceCouplings].flatMap(item=>item.evidence);
+            const issues=evidenceIssues(evidence,Object.fromEntries(Object.entries(base.files).map(([name,encoded])=>[name,Buffer.from(encoded,'base64').toString('utf8')])));
+            if(issues.length) bundleError('方案源码依据无法核对：'+issues.join('；'));
+          }
           await this.update(task.id, (t) => {
+            if(t.analysis && !t.planRevisionId) {
+              const previous={id:'plan-'+randomUUID(),digest:canonicalSha256(t.analysis),analysis:structuredClone(t.analysis),baseCandidateId:t.currentCandidateId,createdAt:t.createdAt};
+              (t.planRevisions ??= []).push(previous);
+              const candidate=currentCandidate(t);if(candidate&&!candidate.planRevisionId)candidate.planRevisionId=previous.id;
+            }
+            const revision={id:'plan-'+randomUUID(),digest:canonicalSha256(analysis),analysis:structuredClone(analysis),baseCandidateId:attempt.baseCandidateId,
+              createdAt:new Date().toISOString(),...(attempt.clarification?{clarification:attempt.clarification}:{})};
+            (t.planRevisions ??= []).push(revision);t.planRevisionId=revision.id;
             t.analysis = analysis;
           });
         } else {
           const delivery = deliverySchema.parse(result.delivery);
           if (!result.files) bundleError('Agent 没有交付完整候选文件');
+          const deliveryIssues=task.analysis?standardDeliveryIssues(task.analysis,delivery,result.files):[];
+          if(deliveryIssues.length)bundleError('交付契约检查失败：'+deliveryIssues.join('；'));
           const revision = snapshot(result.files, 'r' + (task.candidates.length + 1), base);
           for (const service of delivery.services)
             for (const file of service.filePaths)
@@ -333,7 +542,11 @@ export class MigrationTaskService {
             digest: revision.digest,
             members: revision.members,
             summary: delivery.summary,
+            planRevisionId: task.planRevisionId,
             services: delivery.services,
+            ...(delivery.tools?{tools:delivery.tools}:{}),
+            ...(delivery.conformance?{conformance:delivery.conformance}:{}),
+            ...(delivery.contractEvidence?{contractEvidence:delivery.contractEvidence}:{}),
             diff: bundleDiff(base.files, revision.files),
             checks: ['MEMBER_ENTRIES', 'FRONTMATTER', 'PATHS', 'TOOL_NAMES'],
           };
@@ -343,7 +556,8 @@ export class MigrationTaskService {
           await this.update(task.id, (t) => {
             signal.throwIfAborted();
             t.candidates.push(candidate);
-            t.currentCandidateId = candidate.id;
+            t.attempts.find(a=>a.id===attempt.id)!.resultCandidateId=candidate.id;
+            if(promote)t.currentCandidateId = candidate.id;
           });
         }
       }
@@ -384,7 +598,27 @@ export class MigrationTaskService {
     const results = await Promise.allSettled(operations.map(operation => operation.done));
     const failure = results.find(result => result.status === 'rejected');
     if (failure?.status === 'rejected') throw failure.reason;
+    await this.update(id,task=>{
+      const waiting=waitingOptimization(task);if(!waiting)return;
+      const loop=waiting.optimization!,run=task.runs.find(r=>r.id===loop.bestEvaluationId);
+      if(run)activateOptimizationRun(task,run);
+      waiting.status='CANCELLED';waiting.finishedAt=new Date().toISOString();waiting.message='已停止等待，实验和 Builder 交付历史已保留';
+      loop.status='CANCELLED';loop.reason=waiting.message;loop.finishedAt=waiting.finishedAt;
+    });
     return this.get(id);
+  }
+  async selectOptimization(id:string,input:unknown){
+    const {attemptId}=z.strictObject({attemptId:z.string().min(1)}).parse(input);
+    return this.update(id,task=>{
+      this.idle(task);
+      const loop=task.attempts.find(a=>a.id===attemptId)?.optimization;
+      if(!loop||loop.status!=='REVIEW'||loop.bestEvaluationId===loop.baselineEvaluationId||task.currentCandidateId!==loop.baseline.id)bundleError('没有可选择的审查通过候选，或基线已经变化');
+      const run=task.runs.find(r=>r.id===loop.bestEvaluationId);
+      if(!run||run.configurationDigest!==canonicalSha256(task.configuration)||run.suiteDigest!==canonicalSha256(task.suite)
+        ||run.judgeDigest!==this.judge.identity?.()||run.runtimeSelectionRevision!==task.runtimeSelectionRevision
+        ||task.candidates.find(c=>c.id===loop.best.id)?.planRevisionId!==task.planRevisionId)bundleError('评测条件已变化，请重新验证候选');
+      task.currentCandidateId=loop.best.id;
+    });
   }
   async close() {
     this.closing = true;
@@ -395,6 +629,16 @@ export class MigrationTaskService {
   async files(id: string, candidateId: string | null, name: string) {
     const bundle = await this.readSnapshot(id, candidateId);
     return { path: name, content: readText(bundle.files, name) };
+  }
+  async optimizationWorkspace(id:string,attemptId:string){
+    const task=await this.repository.get(id),attempt=task.attempts.find(a=>a.id===attemptId),loop=attempt?.optimization;
+    if(!loop)bundleError('优化任务不存在',404);
+    const candidate=loop.waiting?.candidate??loop.working??loop.best;
+    const snapshot=await this.readSnapshot(id,candidate.id);
+    const metadata={candidate,diagnosis:loop.rounds.at(-1)?.diagnosis,goal:loop.goal,requestId:loop.waiting?.requestId};
+    const files={...snapshot.files,'optimization-handoff.json':Buffer.from(JSON.stringify(metadata,null,2)).toString('base64')};
+    assertMigrationExportSafe(Object.fromEntries(Object.entries(files).map(([path,value])=>[path,Buffer.from(value,'base64')])));
+    return bundleZip(files);
   }
   export(id: string, verified = false) { return exportMigrationTask(this.repository, this.runtime, id, verified, this.judge.identity?.()); }
 }

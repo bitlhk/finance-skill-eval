@@ -25,6 +25,7 @@ export type MigrationImprovementTask={
   bestJobId:string;
   bestValidations:TechnicalValidation[];
   bestInspection?:ProjectInspection;
+  working?:{candidate:SkillAssetRecord;jobId:string;validations:TechnicalValidation[];inspection?:ProjectInspection};
   runtimeRequirements?:RuntimeBuildRequirements;
   originalRuntimeDelivery?:RuntimeLauncherBinding;
   remainingDurationMs?:number;
@@ -32,8 +33,10 @@ export type MigrationImprovementTask={
   pendingRuntimeFingerprint?:string;
   contextChanges?:Array<{at:string;environmentId:string;modelId:string;configurationDigest:string}>;
   iterations:Array<{iteration:number;planId:string;layer:string;candidateAssetId?:string;jobId?:string;
+    review?:import('../../improvement/domain/effect-review.js').EffectReviewResult;
+    reviewComposition?:import('../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
     changedPaths?:string[];summary?:string;
-    optimizationId?:string;attemptId?:string;outcome:'PENDING'|'PROMOTED'|'RETAINED'|'TECHNICAL_FAILED';passed?:number;total?:number}>;
+    optimizationId?:string;attemptId?:string;outcome:'PENDING'|'PROMOTED'|'CONTINUED'|'RETAINED'|'TECHNICAL_FAILED';passed?:number;total?:number}>;
   events:Array<{sequence:number;at:string;stage:string;message:string;jobId?:string}>;
   activeJobId?:string;
   activeOptimizationId?:string;

@@ -19,6 +19,7 @@ export type MigrationGenerationAttempt={
   version:string;
   progress:MigrationGenerationProgress;
   delivery?:{
+    agentComposition?:import('../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
     implementations?:Record<string,import('./generated-tool-implementation.js').GeneratedToolImplementation>;
     skillDelivery?:import('./migration-candidate-artifact.js').SkillDocumentDelivery;
     generationStats:{agentAttempts:number;outputCorrectionAttempts:number};

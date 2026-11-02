@@ -16,9 +16,11 @@
  * skill/migration records keep the digests they already had. Those are other people's formats or
  * stored history, not stage hand-offs.
  */
+import type { AgentCompositionReceipt } from '../../shared/contracts/agent-composition.js';
 export const STAGE_ENVELOPE_VERSION = "finance.skill-eval.stage-envelope.v1";
 
-export type StageId = "A1" | "A2" | "A3" | "A4";
+/** Historical identifiers remain readable; new executions use role names. */
+export type StageId = "A1" | "A2" | "A3" | "A4" | 'diagnosis' | 'migration' | 'adjustment' | 'standardization-review';
 export type StageProducer = "RULES" | "MODEL" | "AGENT" | "HUMAN";
 export type StageStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
 
@@ -34,11 +36,11 @@ export type StageEnvelope<T> = {
   status: StageStatus;
   trace?: { rounds: Array<Record<string, unknown>> };
   /** Facts about producing it: which model, how long, and why if it did not. */
-  run?: { modelId?: string; elapsedMs?: number; error?: string; outputCorrectionAttempts?: number };
+  run?: { modelId?: string; elapsedMs?: number; error?: string; outputCorrectionAttempts?: number; composition?:AgentCompositionReceipt };
   payload: T;
 };
 
-const STAGES: readonly StageId[] = ["A1", "A2", "A3", "A4"];
+const STAGES: readonly StageId[] = ["A1", "A2", "A3", "A4", 'diagnosis', 'migration', 'adjustment', 'standardization-review'];
 const PRODUCERS: readonly StageProducer[] = ["RULES", "MODEL", "AGENT", "HUMAN"];
 const STATUSES: readonly StageStatus[] = ["PRODUCED", "ABSTAINED", "FAILED"];
 
@@ -50,7 +52,7 @@ export function stageEnvelope<T>(input: {
   payload: T;
   inputDigests?: Record<string, string>;
   trace?: { rounds: Array<Record<string, unknown>> };
-  run?: { modelId?: string; elapsedMs?: number; error?: string; outputCorrectionAttempts?: number };
+  run?: StageEnvelope<unknown>['run'];
   producedAt?: string;
 }): StageEnvelope<T> {
   // A product that cannot say what it was built from cannot be invalidated when that changes, so

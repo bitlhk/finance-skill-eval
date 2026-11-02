@@ -155,7 +155,7 @@ export const toolCallEvidenceSchema = z.strictObject({
   status: z.enum(["completed", "failed"]),
 });
 
-export const RUNTIME_EXECUTION_EVIDENCE_LIMITS={serializedBytes:262_144,outputCharacters:131_072,errorCharacters:8_192,toolCalls:1_024,loadedSkills:256} as const;
+export const RUNTIME_EXECUTION_EVIDENCE_LIMITS={serializedBytes:262_144,outputCharacters:131_072,errorCharacters:8_192,toolCalls:1_024} as const;
 export const runtimeExecutionEvidenceSchema = z.strictObject({
   runId: z.string().min(1).max(200),
   side: z.enum(["left", "right"]),
@@ -169,7 +169,7 @@ export const runtimeExecutionEvidenceSchema = z.strictObject({
   loadedSkills: z.array(z.strictObject({
     skillId: z.string().min(1).max(200),
     version: z.string().min(1).max(200),
-  })).max(RUNTIME_EXECUTION_EVIDENCE_LIMITS.loadedSkills).default([]),
+  })).default([]),
   usage: evaluationUsageSchema.nullable().default(null),
   runtimeIdentityVerified: z.boolean(),
   streamCompleted: z.boolean(),

@@ -1,10 +1,10 @@
 # Runtime Launcher contracts
 
-The only accepted startup format is [finance.runtime-instance.v1](finance.runtime-instance.v1.schema.json): `skills[]` plus optional shared assets and entry instructions. One or more members use the same admission, workspace, execution, evidence and cleanup. No multiSkill flag or cardinality-driven mode exists. `limits.maxSkills` expresses capacity.
+The only accepted startup format is [finance.runtime-instance.v1](finance.runtime-instance.v1.schema.json): `skills[]` plus optional shared assets and entry instructions. One or more members use the same admission, workspace, execution, evidence and cleanup. No multiSkill flag or cardinality-driven mode exists. Skill count is not capped; legacy `limits.maxSkills` metadata is optional and is not used for admission.
 
 Member digests cover exact UTF-8 instructions and decoded resource bytes; contentDigest covers all mounted bytes. `skill`, `variant`, `bundle`, old instance versions and migration extensions are rejected at the wire boundary. Original paths and newline bytes are preserved. Full project bundles are optional input packaging, never mandatory protocol input.
 
-Capabilities use `finance.runtime-capabilities.v1`, including instanceSchemaVersion, platform and maxSkills. Descriptor uses `finance.runtime-launcher-descriptor.v2`. Case execution and observation versions are unchanged. Runtime evidence must contain the exact collection digest and complete loadedSkillMembers. Cleanup must return an explicit matching RELEASED receipt; empty/404 alone is not success.
+Capabilities use `finance.runtime-capabilities.v1`, including instanceSchemaVersion and platform; legacy maxSkills metadata is optional. Descriptor uses `finance.runtime-launcher-descriptor.v2`. Case execution and observation versions are unchanged. Runtime evidence must contain the exact collection digest and complete loadedSkillMembers. Cleanup must return an explicit matching RELEASED receipt; empty/404 alone is not success.
 
 ## Lifecycle and availability
 
@@ -202,4 +202,4 @@ Upgrade strict receiver schemas before enabling these optional v1 fields.
 
 ## Uniform Skill collection
 
-The standard instance request carries one or more `skills`, optional resources and shared assets. Capacity is declared through `limits.maxSkills`; no separate feature flag or legacy decoder exists. See [migration workflow](../../docs/multi-skill-migration.md).
+The standard instance request carries one or more `skills`, optional resources and shared assets. Skill count has no maximum check; no separate feature flag or legacy decoder exists. See [migration workflow](../../docs/multi-skill-migration.md).

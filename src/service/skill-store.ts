@@ -177,7 +177,7 @@ export class SkillStore {
   async uploadMigrationZip(buffer: Buffer): Promise<SkillAssetRecord> {
     // Import stays thin: unzip, digest, safety limits. It does not judge the
     // directory layout -- real source projects do not follow a fixed one, and
-    // A2 is an agent that can inspect the tree itself. Credential files are not
+    // the diagnosis agent can inspect the tree itself. Credential files are not
     // rejected here; the export path is the gate that matters.
     if (buffer.byteLength === 0 || buffer.byteLength > 8 * 1024 * 1024) {
       throw new Error("迁移 ZIP 大小必须在 1 字节到 8 MB 之间");

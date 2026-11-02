@@ -2,11 +2,11 @@ import { runtimeSkillSetFromFiles } from '../src/shared/contracts/runtime-skills
 import Fastify from 'fastify';
 import { expect, it } from 'vitest';
 import { RuntimeLauncherAdapter } from '../src/runtime-launcher.js';
-import { snapshot, bundleZip } from '../src/migration/bundle/bundle-model.js';
+import { snapshot, bundleZip } from '../src/migration/tasks/domain/task-model.js';
 import { evalCaseSchema } from '../src/contracts.js';
-it('sends inline v2 Skills without an archive over HTTP and rejects partial or forged load receipts', async () => {
+it.each([2, 11, 257])('sends %i Skills despite legacy maxSkills metadata and rejects forged load receipts', async (count) => {
   const files = Object.fromEntries(
-    ['budget', 'rules'].map((name) => [
+    Array.from({length: count}, (_, i) => `skill-${i}`).map((name) => [
       'skills/' + name + '/SKILL.md',
       Buffer.from('---\nname: ' + name + '\ndescription: test\n---\nUse tools.').toString('base64'),
     ]),
@@ -40,7 +40,7 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
       inlineSecrets: true,
 
     },
-    limits: { maxSkills:10, maxArchiveBytes: 8388608, maxFiles: 1000, maxTimeoutMs: 900000, maxConcurrentInstances: 2 },
+    limits: { maxSkills:1, maxArchiveBytes: 8388608, maxFiles: 1000, maxTimeoutMs: 900000, maxConcurrentInstances: 2 },
   }));
   server.post('/v1/runtime-instances', (request,reply) => {
     const key=request.headers['idempotency-key'] as string;
@@ -97,7 +97,7 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
     await runtime.prepare({ runId: 'run' });
     expect(created.schemaVersion).toBe('finance.runtime-instance.v1');
     expect(created).not.toHaveProperty('skill');expect(created).not.toHaveProperty('variant');expect(created).not.toHaveProperty('bundle');
-    expect(created.skills).toHaveLength(2);expect(created.assets).toBeUndefined();
+    expect(created.skills).toHaveLength(count);expect(created.assets).toBeUndefined();
     await runtime.prepare({runId:'run'});expect(keys[1]).toBe(keys[0]);
     const evalCase = evalCaseSchema.parse({
       caseId: 'case',
@@ -111,7 +111,7 @@ it('sends inline v2 Skills without an archive over HTTP and rejects partial or f
     });
     expect(
       (await runtime.execute({ runId: 'run', side: 'right', model, variant, evalCase })).loadedSkills,
-    ).toHaveLength(2);
+    ).toHaveLength(count);
     broken = true;
     await expect(runtime.execute({ runId: 'run', side: 'right', model, variant, evalCase })).rejects.toThrow(
       '清单',

@@ -19,6 +19,10 @@ export interface TaskBuilderPort {
 }
 export type MigrationCorrelation = { taskId: string; attemptId: string; requestId?: string; agentRunId: string; };
 export type BundleAgentInput = {
+  /** Optimization grants a combined engineering adjustment, without creating separate editors. */
+  adjustmentCapabilities?:Array<'document'|'tool'|'runtime'>;
+  roleVersion?: string;
+  onComposition?: (receipt: import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt) => Promise<void> | void;
   correlation?: MigrationCorrelation;
   mode: 'ANALYZE' | 'GENERATE' | 'REPAIR';
   source: BundleSnapshot;
@@ -26,6 +30,7 @@ export type BundleAgentInput = {
   goal: string;
   target: string;
   analysis?: BundleAnalysis;
+  clarification?: string;
   feedback?: unknown;
   signal: AbortSignal;
 };
@@ -45,9 +50,12 @@ export type BundleRuntimeFactory = (input: {
   signal: AbortSignal;
 }) => Promise<BundleExecution>;
 export type BundleJudge = ((input: {
+  onComposition?:(receipt:import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt)=>Promise<void>|void;
   correlation?: { taskId: string; attemptId: string; runId: string; requestId?: string; };
   evalCase: EvalCase;
   evidence: RuntimeExecutionEvidence;
+  requirements?:import('../domain/task-standardization.js').Standardization['requirements'];
+  tools?:BundleDelivery['tools'];
   signal: AbortSignal;
 }) => Promise<BundleVerdict>) & { identity?: () => string };
 

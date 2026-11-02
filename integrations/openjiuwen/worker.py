@@ -9,6 +9,9 @@ import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager, suppress
 
+from .environment_check import check_environment
+check_environment()
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from importlib.metadata import PackageNotFoundError, version
@@ -91,8 +94,8 @@ async def runtime_capabilities():
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
             'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
-                         'externalMcp': True, 'inlineSecrets': True},
-            'limits': {'maxSkills':10, 'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
+                         'externalMcp': True, 'inlineSecrets': True, 'toolEnvironment': True},
+            'limits': {'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 
 

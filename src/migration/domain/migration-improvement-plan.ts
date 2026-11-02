@@ -1,21 +1,8 @@
-import { z } from 'zod';
-import {capabilityRequirementSchema} from '../../shared/contracts/runtime-builder.js';
+import type {ImprovementHypothesis} from '../../improvement/domain/diagnosis.js';
+export {improvementHypothesisSchema, type ImprovementHypothesis} from '../../improvement/domain/diagnosis.js';
 
-/** A reviewable hypothesis, not an instruction to mutate files or deploy a Launcher. */
-export const improvementHypothesisSchema=z.strictObject({
-  layer:z.enum(['SKILL','TOOL','CONFIGURATION','HARNESS','EVALUATION','UNKNOWN']),
-  issue:z.string().min(1).max(2000),
-  expectedBehavior:z.string().min(1).max(2000),
-  evidenceCaseIds:z.array(z.string().min(1)).min(1).max(20),
-  validation:z.string().min(1).max(2000),
-  risk:z.string().min(1).max(2000),
-  confidence:z.enum(['LOW','MEDIUM','HIGH']),
-  toolIds:z.array(z.string().min(1)).max(5).optional(),
-  requiredCapabilities:z.array(capabilityRequirementSchema).min(1).max(8).optional(),
-});
-
-export type ImprovementHypothesis=z.infer<typeof improvementHypothesisSchema>;
 export type MigrationImprovementPlan={
+  agentComposition?:import('../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
   planId:string;
   sourceJobId:string;
   baseSolutionRevisionId:string;

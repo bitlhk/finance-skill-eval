@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { canonicalJson, canonicalSha256 } from '../src/shared/json-canonicalization.js';
-import { runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult, withRequirementsDigest, withResultDigest } from '../src/shared/contracts/runtime-builder.js';
+import { runtimeRequirementsIssues, runtimeBuildRequirementsSchema, runtimeBuildResultSchema, validateRuntimeBuildResult, withRequirementsDigest, withResultDigest } from '../src/shared/contracts/runtime-builder.js';
 import { RUNTIME_CAPABILITIES_SCHEMA_VERSION, RUNTIME_EXECUTION_SCHEMA_VERSION, RUNTIME_INSTANCE_SCHEMA_VERSION, RUNTIME_OBSERVATION_SCHEMA_VERSION } from '../src/shared/contracts/runtime-protocol-versions.js';
 
 function fixtures() {
@@ -92,4 +92,13 @@ it.each(['platform','permissions','capacity','feature'])('refuses incompatible r
   if(kind==='feature')capabilities.features.streaming=false;
   if(kind==='capacity')expect(()=>validateRuntimeBuildResult(requirements,result,capabilities)).toThrow();
   else expect(validateRuntimeBuildResult(requirements,result,capabilities).length).toBeGreaterThan(0);
+});
+
+
+it('ignores legacy Skill capacity while preserving file and timeout limits', () => {
+  const {requirements, capabilities} = fixtures();
+  requirements.executionRequirements.limits.maxSkills = 257;
+  expect(runtimeRequirementsIssues(requirements, capabilities)).toEqual([]);
+  requirements.executionRequirements.limits.maxFiles = 2;
+  expect(runtimeRequirementsIssues(requirements, capabilities)).toEqual(['CAPACITY_INSUFFICIENT_maxFiles']);
 });

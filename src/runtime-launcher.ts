@@ -212,7 +212,7 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     if (!capabilityResponse.ok) throw await responseError(capabilityResponse);
     const capabilities=runtimeLauncherCapabilitiesSchema.parse(await readBoundedJson(capabilityResponse,262144,'Runtime capabilities'));
     const stats=skillSetFileStats(this.options.skillSet);
-    if (this.options.skillSet.skills.length>capabilities.limits.maxSkills || stats.count>capabilities.limits.maxFiles || stats.bytes>capabilities.limits.maxArchiveBytes || this.options.timeoutMs>capabilities.limits.maxTimeoutMs)
+    if (stats.count>capabilities.limits.maxFiles || stats.bytes>capabilities.limits.maxArchiveBytes || this.options.timeoutMs>capabilities.limits.maxTimeoutMs)
       throw new Error('实例输入超过 Runtime 容量限制');
     const common:RuntimeInstanceCommon={runId:context.runId,side:this.options.side,modelId:this.options.model.modelId,
       environment:extracted.environment,configuration:this.options.configuration??{},secrets:extracted.secrets,

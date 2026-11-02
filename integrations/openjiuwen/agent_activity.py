@@ -43,7 +43,7 @@ class ActivityRail(AgentRail):
     async def after_tool_call(self, ctx):
         result = getattr(ctx.inputs, 'tool_result', None)
         payload = result if isinstance(result, dict) else getattr(result, 'data', None)
-        failed = getattr(result, 'success', None) is False or (isinstance(payload, dict) and payload.get('passed') is False)
+        failed = getattr(result, 'success', None) is False or (isinstance(payload, dict) and (payload.get('passed') is False or payload.get('accepted') is False))
         self.send('tool_error' if failed else 'tool_end',
                   ('工具失败：' if failed else '工具结束：') + str(getattr(ctx.inputs, 'tool_name', '工具')),
                   str((payload.get('error') or payload.get('stderr') or '') if isinstance(payload, dict) else getattr(result, 'error', '') or '')[:1500] if failed else None)

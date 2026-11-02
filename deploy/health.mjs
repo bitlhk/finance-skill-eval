@@ -14,7 +14,7 @@ try {
   const capabilities = await get(runtime + '/v1/runtime-capabilities');
   if (!capabilities.ok) fail('MULTI_SKILL_RUNTIME_NOT_READY');
   const parsed = runtimeLauncherCapabilitiesSchema.safeParse(await capabilities.json());
-  if (!parsed.success || parsed.data.limits.maxSkills < 2) fail('MULTI_SKILL_RUNTIME_NOT_READY');
+  if (!parsed.success) fail('MULTI_SKILL_RUNTIME_NOT_READY');
   console.log(JSON.stringify({ status: 'PASSED', checks: ['api', 'authentication', 'workspace-catalog', 'multi-skill-runtime'], modelExecution: 'NOT_TESTED' }));
 } catch (error) {
   console.error(JSON.stringify({ status: 'FAILED', code: /^[A-Z0-9_]+$/.test(error.message) ? error.message : 'HEALTH_CONNECTION_FAILED' }));

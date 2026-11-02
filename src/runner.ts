@@ -4,7 +4,9 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EvaluationSide, RuntimeAdapter, RuntimeEvent } from "./adapters.js";
-import { RuntimeCaseNotExecutedError, RuntimeExecutionFailure } from "./adapters.js";
+import {executeEvaluationCase} from './evaluation/application/execute-case.js';
+import {EvaluationCancelledError} from './evaluation/domain/errors.js';
+export {EvaluationCancelledError} from './evaluation/domain/errors.js';
 import type { EvalPack, RuntimeExecutionEvidence } from "./contracts.js";
 import type { PairwiseJudge } from "./judge.js";
 import { buildReport, type EvaluationReport } from "./report.js";
@@ -31,13 +33,6 @@ type WorkerExecuteMessage = {
 type WorkerTerminalMessage =
   | { type: "completed" }
   | { type: "error"; error: string };
-
-export class EvaluationCancelledError extends Error {
-  constructor(message = "Evaluation cancelled") {
-    super(message);
-    this.name = "EvaluationCancelledError";
-  }
-}
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new EvaluationCancelledError();
@@ -76,9 +71,7 @@ async function executeRuntime(input: {
   if (!evalCase) throw new Error(`Unknown evaluation case: ${input.caseId}`);
   const model = input.pack.models.execution[input.side];
   const variant = input.pack.variants[input.side];
-  const startedAt = Date.now();
-  try {
-    return await input.runtime.execute({
+  return executeEvaluationCase({runtime:input.runtime,failureMode:'evidence',request:{
       runId: input.runId,
       side: input.side,
       evalCase,
@@ -86,29 +79,7 @@ async function executeRuntime(input: {
       variant,
       signal: input.signal,
       onEvent: input.onEvent,
-    });
-  } catch (error) {
-    if (input.signal?.aborted || error instanceof EvaluationCancelledError) throw error;
-    return {
-      runId: input.runId,
-      side: input.side,
-      caseId: input.caseId,
-      status: "failed",
-      modelId: model.modelId,
-      skillVersion: variant.mode === "skill_version" ? variant.version : null,
-      output: "",
-      elapsedMs: Date.now() - startedAt,
-      toolCalls: [],
-      loadedSkills: [],
-      usage: null,
-      runtimeIdentityVerified: false,
-      streamCompleted: false,
-      error: error instanceof Error ? error.message : String(error),
-      metadata: error instanceof RuntimeCaseNotExecutedError
-        ? {executionDisposition: 'NOT_EXECUTED', blockedByCaseId: error.failedCaseId}
-        : error instanceof RuntimeExecutionFailure ? error.metadata : {},
-    };
-  }
+    }});
 }
 
 async function runPromptfooWorker(input: {

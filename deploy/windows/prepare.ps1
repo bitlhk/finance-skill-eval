@@ -18,5 +18,7 @@ try {
         $env:UV_PROJECT_ENVIRONMENT = Join-Path $Root '.venv-openjiuwen'
         & uv sync --locked --project integrations/openjiuwen --python $Python --no-dev --link-mode copy
         if ($LASTEXITCODE) { throw 'Runtime dependency installation failed.' }
+        & node scripts/openjiuwen.mjs --check
+        if ($LASTEXITCODE) { throw 'Runtime environment check failed.' }
     } finally { $env:UV_PROJECT_ENVIRONMENT = $Previous }
 } finally { Pop-Location }

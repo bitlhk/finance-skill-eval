@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import {checkOpenJiuwenEnvironment} from './lib/openjiuwen-environment.mjs';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -10,10 +10,7 @@ import { validateMcpTool } from '../dist/mcp-preflight.js';
 
 const execFileAsync = promisify(execFile);
 /** The agents' interpreter, the same one the platform spawns them with. */
-const interpreterPath = process.platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python'];
-const PYTHON = process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim()
-  || [path.resolve('integrations/openjiuwen/.venv', ...interpreterPath), path.resolve('.venv-openjiuwen', ...interpreterPath)].find(existsSync)
-  || (process.platform === 'win32' ? 'python' : 'python3');
+const {python:PYTHON}=checkOpenJiuwenEnvironment();
 
 /**
  * Execute the MCP skeletons the skill package hands the agent.
@@ -26,7 +23,7 @@ const PYTHON = process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim()
  *
  * A skeleton that fails here is a doc bug, not a test bug: the agent will copy it.
  */
-const TEMPLATES = path.resolve('skills/enterprise-migration-delivery/references/service-templates.md');
+const TEMPLATES = path.resolve('agent-roles/v1/references/service-templates.md');
 const TOOL_NAME = 'lookup';
 const INPUT_SCHEMA = { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false };
 const ARGUMENTS = { id: 'A10001' };
@@ -81,7 +78,7 @@ const freePort = () => new Promise((resolve, reject) => {
 });
 
 /**
- * Run the same skeleton through the A4 agent's own contract test.
+ * Run the same skeleton through the engineering Agent agent's own contract test.
  *
  * The preflight below proves the skeleton works. This proves the *gate the agent is judged by*
  * accepts it -- a different claim. `run_contract_test` starts the service from an argv the agent
@@ -123,7 +120,7 @@ async function contractTest(workspace, contract, start, prepare) {
     ({ stdout } = await execFileAsync(PYTHON, [driver, path.resolve('integrations/openjiuwen'), request], {
       maxBuffer: 8 * 1024 * 1024,
       // A gate that never returns is worse than one that fails: this is the only place the tool is
-      // executed outside a real A4 run, so a hang here would read as "the whole verifier is slow".
+      // executed outside a real engineering Agent run, so a hang here would read as "the whole verifier is slow".
       timeout: 240_000,
       killSignal: 'SIGKILL',
     }));
@@ -199,14 +196,14 @@ async function verify(language, markdown) {
         throw new Error('Python ToolResult text and structuredContent did not preserve the same actual business result');
     }
 
-    // The same service again, this time the way A4 is judged on it. `prepare` is skipped: the
+    // The same service again, this time the way engineering Agent is judged on it. `prepare` is skipped: the
     // project is already installed/built above.
-    process.stdout.write(`      A4 contract gate\n`);
+    process.stdout.write(`      engineering Agent contract gate\n`);
     const gate = await contractTest(root, {
       form: 'MCP', toolName: TOOL_NAME, inputSchema: INPUT_SCHEMA, sampleInput: ARGUMENTS,
     }, [start.program, ...start.args], null);
     if (gate.passed !== true)
-      throw new Error(`the A4 contract test rejected the skeleton it will be judged on: ${JSON.stringify(gate)}`);
+      throw new Error(`the engineering Agent contract test rejected the skeleton it will be judged on: ${JSON.stringify(gate)}`);
 
     return { language: language.id, protocol: result.protocolVersion, tool: advertised.name,
       schema: advertised.inputSchema, contractGate: gate.passed,...(language.id==='python'?{resultChannelsMatch:true}:{}) };

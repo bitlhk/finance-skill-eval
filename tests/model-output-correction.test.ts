@@ -2,7 +2,7 @@ import {expect,it,vi} from 'vitest';
 import {z} from 'zod';
 import {OpenAiCompatibleModelAdapter} from '../src/openai-compatible-model.js';
 import {CodexCliModelAdapter} from '../src/codex-cli-model.js';
-import {correctModelOutput} from '../src/migration/infrastructure/model-output-correction.js';
+import {correctModelOutput} from '../src/agents/model-output-correction.js';
 
 const model={providerId:'test',modelId:'test-model',label:'test',parameters:{}};
 const schema=z.object({status:z.enum(['PRODUCED','ABSTAINED']),value:z.string().optional()});

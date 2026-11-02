@@ -1,16 +1,32 @@
+import { useState } from 'react';
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
 import { BuilderPanel } from './BuilderPanel';
+import { MarkdownContent } from '../../MarkdownContent';
+import {RuntimeRequirements} from './RuntimeRequirements';
+import {runtimeInputIssues} from '../../../../src/migration/tasks/domain/task-runtime-inputs';
+import {sameConfiguration} from './presentation';
 export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
-  const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled } = state;
+  const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled, current } = state;
+  const [showBuilder, setShowBuilder] = useState(["PENDING", "STALE"].includes(task?.builderStatus ?? ""));
   if (!task) return null;
+  const configurationSaved=sameConfiguration(config,task.configuration);
+  const inputIssues=runtimeInputIssues(task,config,true);
   return (
-    <section className="stage-section">
-      <h3>已选 Runtime 与实例配置</h3>
-      <p>当前 Skill 集合在启动时一次性注入，成员数量不改变 Runtime 执行流程。修改启动输入后需重新联合验收。</p>
+    <section className="migration-stage">
+      <div className="migration-stage-heading"><div><h3>准备运行环境</h3><p>根据迁移结果的依赖与运行要求选择候选环境。保存选择后还需验证，环境已登记不代表满足本次迁移要求。</p></div></div>
+      {current && <details className="stage-detail runtime-migration-notes"><summary>查看迁移结果说明</summary><MarkdownContent compact content={current.summary}/></details>}
+      <RuntimeRequirements task={{...task,runtimeReviewCurrent:Boolean(task.runtimeReviewCurrent&&configurationSaved)}}/>
+      {!!task.analysis?.standardization?.configurationInputs?.length&&<section className="stage-secondary-card"><h4>补充运行配置</h4><p>填写迁移结果实际需要的配置。缺少必填项时仍可查看方案和源码，但不能进行运行验证；填写完成也不代表调用已通过。</p>
+        {task.analysis.standardization.configurationGroups?.map((group,index)=><p key={index}>{group.label}：任选一组填写。{group.alternatives.map(option=>option.map(name=>task.analysis!.standardization!.configurationInputs!.find(field=>field.name===name)?.label??name).join('、')).join('；或 ')}</p>)}
+        <div className="bundle-fields">{task.analysis.standardization.configurationInputs.map(field=>{const input=config.runtimeInputs?.[field.name];return <label key={field.name}>{field.label}{field.required?'（必填）':task.analysis?.standardization?.configurationGroups?.some(group=>group.alternatives.some(option=>option.includes(field.name)))?'（按配置组选填）':'（可选）'}
+          <input disabled={disabled} value={input?('value' in input?input.value:input.secretEnv):''} autoComplete="off" placeholder={field.sensitive?'填写环境中已有的凭证配置名称，不填密钥':field.label} onChange={e=>setConfig(c=>{const values={...c.runtimeInputs};if(!e.target.value.trim())delete values[field.name];else values[field.name]=field.sensitive?{secretEnv:e.target.value}:{value:e.target.value};return {...c,runtimeInputs:values};})}/>
+          <small>{field.description}{field.sensitive?'。实际凭证由环境维护者配置，不会写入迁移源码。':''}</small></label>;})}</div>
+        {!!inputIssues.length&&<p role="status">{inputIssues.join('；')}</p>}
+      </section>}
       <div className="bundle-fields">
         <label>
-          已登记执行环境
+          候选运行环境
           <select
             aria-label="已登记执行环境"
             value={config.environmentId}
@@ -31,6 +47,9 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             ))}
           </select>
         </label>
+      </div>
+      <details className="stage-detail" open={Boolean(config.environmentId && !config.modelId)}><summary>高级运行设置</summary>
+      <div className="bundle-fields">
         <label>
           执行模型
           <select
@@ -88,9 +107,10 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
         已有的共享外部 MCP 通过执行环境绑定；包内 MCP
         按迁移产物启动。入口指令仅支持文本业务指令，不执行工作流配置。
       </p>
+      </details>
       <button
         className="button primary"
-        disabled={disabled || !config.environmentId || !config.modelId}
+        disabled={disabled || !config.environmentId || !config.modelId || task.candidatePlanCurrent === false}
         onClick={() =>
           void act(async () => {
             setTask(
@@ -99,13 +119,14 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
                 body: JSON.stringify(config),
               }),
             );
-            setStage(4);
+            setTask(await api<BundleTask>('/api/migration-tasks/'+task.id+'/runtime-review',{method:'POST',body:'{}'}));
           })
         }
       >
-        保存运行配置
+        核对所选环境
       </button>
-      <BuilderPanel key={task.id} state={state} />
+      {configurationSaved&&task.runtimeReviewCurrent&&task.runtimeReview?.status!=='FAILED'&&<button className="button primary" disabled={disabled} onClick={()=>setStage(4)}>下一步：验证能否运行</button>}
+      <details className="stage-detail" open={showBuilder} onToggle={event => setShowBuilder(event.currentTarget.open)}><summary>接入其他运行环境</summary><BuilderPanel key={task.id} state={state} /></details>
     </section>
   );
 }

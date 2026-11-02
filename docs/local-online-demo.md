@@ -22,7 +22,8 @@
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
-UV_PROJECT_ENVIRONMENT=.venv-openjiuwen uv sync --locked --project integrations/openjiuwen
+pnpm setup:openjiuwen
+pnpm check:openjiuwen
 node scripts/bootstrap-local.mjs /path/to/model.env /path/to/wealth-skill
 ```
 
@@ -37,8 +38,8 @@ node scripts/bootstrap-local.mjs /path/to/model.env /path/to/wealth-skill
 分别在独立终端运行：
 
 ```bash
-.venv-openjiuwen/bin/python integrations/openjiuwen/reference_mcp.py
-.venv-openjiuwen/bin/uvicorn integrations.openjiuwen.worker:app --host 127.0.0.1 --port 56362
+pnpm python:openjiuwen integrations/openjiuwen/reference_mcp.py
+pnpm serve:openjiuwen
 node --env-file=.env.local dist/service/server.js
 ```
 
@@ -127,7 +128,7 @@ curl http://127.0.0.1:56362/health
 pnpm check
 pnpm test
 pnpm build
-.venv-openjiuwen/bin/python -m unittest integrations.openjiuwen.test_reference_mcp
+pnpm python:openjiuwen -m unittest integrations.openjiuwen.test_reference_mcp
 ```
 
 覆盖 SSE 分块、答案泄漏隔离、基线装配校验、MCP 生命周期、候选路径与身份约束、冻结留出集、取消和旧回放兼容。真实模型可用性、浏览器渲染及子进程回收仍需在线验证，不能用单元测试替代。

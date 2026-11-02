@@ -53,6 +53,7 @@ export async function taskHttpFixture(options:{files?:BundleFiles;count?:number;
   async function get(){const response=await api('GET',url());expect(response.statusCode,response.body).toBe(200);task=response.json();return task;}
   async function start(route:string,body:Record<string,unknown>={}){await get();return api('POST',url()+'/'+route,{key:randomUUID(),baseCandidateId:task.currentCandidateId,...body});}
   async function finish(route:string,body:Record<string,unknown>={}){
+    if(route==='generate') { await get(); if(task.analysis&&!task.analysis.missing.length&&!task.planApproved){const approval=await api('POST',url()+'/plan/approval',{analysisDigest:task.currentPlanDigest});expect(approval.statusCode,approval.body).toBe(200);} }
     const response=await start(route,body);expect(response.statusCode,response.body).toBe(202);
     for(let i=0;i<200;i++){await get();if(!task.attempts.some(a=>a.status==='RUNNING'))return task;await new Promise(r=>setTimeout(r,10));}
     throw Error('Task did not finish');

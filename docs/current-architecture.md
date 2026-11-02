@@ -2,9 +2,11 @@
 
 本文描述单 Skill / 多 Skill 统一迁移后的实际实现。历史方案见 `2.0/`；使用方式见 [迁移说明](multi-skill-migration.md)，部署从 [生产部署](production-deployment.md) 开始。
 
+底层公共能力与迁移／优化的关系见 [Agent 组成说明](agent-role-composition.md#迁移和优化到底是什么关系)。当前优化入口共享 `round-workflow.ts`，平台工程 Agent 共享 `agent_execution.py`，模型判断角色共享 `model-role.ts`。保留的后台接口是业务适配，不再各维护一套循环或 Agent 初始化。
+
 ## 一条新任务流程
 
-新任务有 1–10 个 Skill，成员数量不选择另一套编排。Runtime 通过 `finance.runtime-instance.v1` 接收 skills[] 和可选 assets，Agent 工作区只装载这些已选择的说明、依赖与入口指令，不要求完整工程 ZIP；每轮生成不可变候选，按任务验收，失败后修复工程再验收。单成员使用同一实例合同；Eval、Builder 与 Runtime 需按[标准协议](runtime-contract-boundary.md)同步升级，不能仅凭旧版本号判定兼容。
+新任务有 一个或多个 Skill，成员数量不选择另一套编排。Runtime 通过 `finance.runtime-instance.v1` 接收 skills[] 和可选 assets，Agent 工作区只装载这些已选择的说明、依赖与入口指令，不要求完整工程 ZIP；每轮生成不可变候选，按任务验收，失败后修复工程再验收。单成员使用同一实例合同；Eval、Builder 与 Runtime 需按[标准协议](runtime-contract-boundary.md)同步升级，不能仅凭旧版本号判定兼容。
 
 验收区分业务未通过与基础设施未完成：Runtime 或 Judge 异常记录为 `INCOMPLETE`，保存已取得的执行证据及 `failureStage`。
 Judge 格式不完整时最多重试一次，保持已经明确返回的判定；完整的业务不通过不重试。
@@ -33,18 +35,20 @@ src/migration/tasks/
   infrastructure/             文件存储、模型和 Runtime 适配器
         ↓
 integrations/openjiuwen/
+  platform_agent.py            平台工程 Agent 唯一进程入口
+  agent_execution.py           公共模型、工具权限及 SDK 装配
   bundle_agent.py              所选 Skill 及依赖的分析/生成/修复
   skill_set.py                 skills[]、可选资源、摘要与路径核验
   bundle_runtime.py            冻结文件完整性及旧归档辅助函数
   worker.py / session.py       会话执行、模型、工具与结果
 ```
 
-`application/domain` 不依赖 `service` 或具体 `infrastructure`。装配入口注入实现，架构测试约束方向并检查迁移模块的静态循环依赖。`src/migration/bundle/` 是旧导入路径兼容门面，不再维护第二套编排。Bundle 类型名、`bundle-*` ID、磁盘目录和 v1 存储版本保留，避免无必要的数据重写。
+`application/domain` 不依赖 `service` 或具体 `infrastructure`。装配入口注入实现，架构测试约束方向并检查迁移模块的静态循环依赖。旧 MigrationStore、旧业务编排、A2/A4 Agent 和 `src/migration/bundle/` 兼容构造入口均已删除。仍使用的扫描、契约测试接入统一工程 Agent；历史服务环境解析独立为只读适配。Bundle 数据类型名、历史 ID、磁盘目录和存储版本保持原样。
 
 ## 升级与历史数据
 
-- 新服务只接受 `/api/migration-tasks` 和当前标准合同，不提供旧记录 UI、旧 API 别名或「转入统一迁移」。`/api/migrations`、`/api/migration-bundles` 和旧转换接口返回 404。
-- 历史文件不自动删除，但文件保留不等于旧任务还能访问、继续处理或导出。文件仓库只加载当前任务存储协议；存储版本及 ID 未变化也不代表旧 Runtime 或 Builder 合同可继续使用。
+- 新执行只接受 `/api/migration-tasks` 和当前标准合同。`/api/migrations`、`/api/migration-bundles` 和旧转换接口返回 404；历史页面使用独立只读接口展示和下载原始记录。
+- 历史文件及快照保持不变，可查看或下载留档，但不能恢复旧执行或继承验收结论。执行仓库只加载当前任务存储协议；存储版本及 ID 未变化也不代表旧 Runtime 或 Builder 合同可继续使用。
 - 升级前停止流量和任务、备份私有数据与配置，并同步发布 Eval、Builder 和 Runtime。需要继续处理的业务重新导入 Skill、生成标准需求、绑定 Result 并重新验收；不转换旧任务或继承旧结论。操作步骤见[协议升级](production-deployment.md#协议升级)。
 - 统一流程支持整体改造、需求导出 / 交付回填 / 版本绑定与任务验收。Builder 交付须完成标准生命周期准入，不能用旧逐 Tool 或旧单成员验收替代。
 

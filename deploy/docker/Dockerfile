@@ -20,6 +20,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
 COPY --from=build /app/packs ./packs
 COPY integrations ./integrations
+COPY agent-roles ./agent-roles
 COPY deploy ./deploy
 ENV NODE_ENV=production PYTHONUTF8=1 PYTHONUNBUFFERED=1
 ENV FINANCE_EVAL_DATA_DIR=/app/data FINANCE_RUNTIME_CONFIG=/run/config/runtime.json

@@ -76,7 +76,7 @@ class PackageRuntimeTests(unittest.IsolatedAsyncioTestCase):
             (root / "uv.lock").write_text("")
             target = root / "tool.py"
             target.write_text("print('{}')")
-            self.assertEqual(script_command(root, target, {"kind": "PYTHON"})[1:], ["run", "--project", ".", "--locked", "python", "-I", "tool.py"])
+            self.assertEqual(script_command(root, target, {"kind": "PYTHON"})[1:], ["run", "--project", ".", "--locked", "python", "-I", "-X", "utf8", "tool.py"])
             with self.assertRaisesRegex(ValueError, "entrypoint"):
                 script_command(root, target, {"kind": "PYTHON", "launch": {"program": "uv", "args": ["run", "other.py"]}})
 

@@ -45,3 +45,11 @@
   .activity-latest { bottom: 70px; }
 }
 @media (prefers-reduced-motion: reduce) { .activity-spinner { animation: none; } }
+.bundle-panel .activity-compact { margin:0 0 20px;font-size:13px;line-height:1.6;background:#fff; }
+.bundle-panel .activity-compact > .activity-heading { padding:12px 16px;background:#f6f7f8; }
+.bundle-panel .activity-compact > .activity-heading p { margin:6px 0 0;font-size:13px; }
+.bundle-panel .activity-compact > .activity-details { margin:0; }
+.activity-compact > .activity-details > summary { padding:10px 16px; }
+.activity-compact .activity-scroll { height:240px;padding:14px 16px; }
+.activity-compact > footer { padding:8px 16px; }
+.activity-compact .button { font-size:12px; }

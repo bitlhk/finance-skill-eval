@@ -14,7 +14,9 @@
 
 OpenJiuwen Runtime 与迁移 Agent 使用 `.runtime.local.json` 中模型条目的 `authMode`，默认 `bearer`，可设为 `raw`。平台角色环境变量和 Runtime 模型条目是两套独立配置；统一任务分析、生成、修复均使用同一套迁移模型绑定。
 
-统一迁移页面显示模型响应、工具执行和阶段活动，支持滚动跟随、展开响应、断线重连和取消。活动接口为 `/api/migration-tasks/:id/activity` 与 `/activity/events`，取消仍走任务的 `/:id/cancel`，由任务生命周期统一等待执行与落盘结束。活动记录保存在数据目录的 `migration-activity/`，与尝试 ID 关联；进程重启后未完成活动显示中断，不代表自动继续执行。活动内容按私有任务数据管理，不提交 Git。
+统一迁移页面在“执行过程”展开项中显示模型响应、工具执行和阶段活动，支持滚动跟随、展开响应、断线重连和取消。活动接口为 `/api/migration-tasks/:id/activity` 与 `/activity/events`，取消仍走任务的 `/:id/cancel`，由任务生命周期统一等待执行与落盘结束。活动记录保存在数据目录的 `migration-activity/`，与尝试 ID 关联；进程重启后未完成活动显示中断，不代表自动继续执行。活动内容按私有任务数据管理，不提交 Git。
+
+新建任务统一上传工程 ZIP，将 Skill 说明、源码、依赖声明及资源按原目录一起打包，不再单独上传依赖文件。ZIP 名称不限，工程中需包含 至少一个有效 SKILL.md；仍可展开复用已有 Skill。无需先填写业务目标和环境描述。名称及默认业务说明从 Skill 元数据提取，默认保留原有业务能力；额外要求可在“补充要求”中填写。上传时不自动绑定登记环境；生成迁移结果后，在“准备运行环境”阶段按依赖和运行要求选择候选环境，高级配置默认折叠。保存选择不代表环境就绪，进度需由匹配当前候选及配置的启动检查或验收结果确认。迁移列表和操作页面分开，沿用改造前的连线步骤条与页面样式。顶部阶段条从新建时就展示全部流程，浏览页面不代表完成阶段。启动检查结果单独保存，仅在候选和配置匹配时显示有效；当前验收与交付状态以有效验收记录为准。
 
 ## 验收数据归档
 
@@ -25,6 +27,22 @@ OpenJiuwen Runtime 与迁移 Agent 使用 `.runtime.local.json` 中模型条目�
 旧 `migration-bundles`、`migrations` 及不兼容任务记录可在迁移任务页的“历史迁移任务”中只读查看；旧环境登记在“测试环境”的“历史环境登记”中展示。历史分析、候选、验收证据和可用文件快照保持原样，可下载历史留档。页面说明无法继续执行的原因，后端拒绝修改与执行；历史通过不代表当前协议验收通过。使用原始 Skill 新建任务后才能按当前协议重新验收。检查归档结果后再启用新数据目录，并重新验证 Runtime 是否在线。
 
 基础环境要求：Node.js 22 或更高版本、pnpm。使用本地 OpenJiuwen Runtime 或 Skill 迁移能力时，还需要 Python 3.11–3.13 和 `uv`。
+
+### 统一的 OpenJiuwen 环境
+
+本项目的 OpenJiuwen 只维护根目录 `.venv-openjiuwen`，SDK 版本以 `integrations/openjiuwen/pyproject.toml` 为准（当前 `0.1.17.post1`），传递依赖由同目录 `uv.lock` 锁定。系统 Python、其他 Conda 环境及 `integrations/openjiuwen/.venv` 不作为自动备用环境。`scripts/.venv` 属于独立的静态扫描器，不装载 OpenJiuwen，继续保留。
+
+```powershell
+pnpm setup:openjiuwen
+pnpm check:openjiuwen
+pnpm test:python
+# 运行指定 Python 测试或脚本，也经过同一个版本检查：
+pnpm python:openjiuwen -m unittest tests.test_agent_roles
+```
+
+安装入口固定同步到根目录环境，不受遗留 `UV_PROJECT_ENVIRONMENT` 重定向。默认选择 Python 3.12；需要指定创建环境的基础解释器时，设置 `FINANCE_OPENJIUWEN_PYTHON`。部署若显式设置 `FINANCE_EVAL_MIGRATION_PYTHON`，须使用绝对路径且通过相同版本检查；它不是遇错时的备用解释器。
+
+检查不调用模型、不读取凭据。版本不匹配时停止并提示修复，不会偷偷回退到系统 Python。Worker、迁移诊断／改造和执行 Session 在启动时也会检查版本，绕过启动脚本同样不能加载旧 SDK。不要通过卸载系统 Python 包修复项目问题。
 
 ```bash
 pnpm install
@@ -45,6 +63,8 @@ Windows 下启动本地 Runtime：
 ```powershell
 scripts\start-openjiuwen.cmd
 ```
+
+该入口与 `pnpm serve:openjiuwen` 使用同一个启动器。首次使用先运行 `pnpm setup:openjiuwen`；也可以运行 `scripts\start-openjiuwen.cmd --setup` 安装后启动。
 
 Runtime 默认监听 `http://127.0.0.1:56362`，并通过 `/v1/runtime-capabilities` 向平台公布可选模型。前端展示和选择的是 Runtime 实际公布的模型，而不是一条写死在前端或平台环境变量中的模型名称。
 
