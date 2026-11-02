@@ -39,6 +39,21 @@ def request(secret='token-value'):
 
 
 class InstanceManagerTests(unittest.TestCase):
+    def test_tool_configuration_is_instance_local_and_secrets_stay_private(self):
+        manager = InstanceManager()
+        configured = request()
+        configured['configuration'] = {'tool.env.MEETINGROOM_BASE_URL': 'http://localhost:19000'}
+        configured['secrets']['values']['tool.env.MODEL_API_KEY'] = 'private-model-value'
+        item = manager.create(configured, 'configured-tools')
+        other = manager.create(request(), 'other-tools')
+        case = {'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'case', 'query': 'query', 'requiredTools': []}
+        execution = manager.execution(item['instanceId'], case)
+        self.assertEqual(execution['environment']['_toolEnvironment'],
+                         {'MEETINGROOM_BASE_URL': 'http://localhost:19000', 'MODEL_API_KEY': 'private-model-value'})
+        self.assertEqual(manager.execution(other['instanceId'], case)['environment']['_toolEnvironment'], {})
+        self.assertNotIn('private-model-value', str(manager.public(item)))
+        self.assertNotIn('_toolEnvironment', item['_request']['environment'])
+
     def test_nested_document_preserves_resource_paths(self):
         from integrations.openjiuwen.bundle_runtime import files_digest
         value=request()

@@ -23,7 +23,7 @@ it('rejects a relative deployment code override',()=>{
 it('reports missing installed entry before starting a subprocess',async()=>{
   vi.stubEnv('FINANCE_EVAL_MIGRATION_PYTHON',process.execPath);
   vi.stubEnv('FINANCE_RUNTIME_CONFIG',new URL('../package.json',import.meta.url).pathname);
-  const result=await runner.runMigrationAgent('A2',{assetDigest:'a'.repeat(64)},
+  const result=await runner.runMigrationAgent('diagnosis',{assetDigest:'a'.repeat(64)},
     {projectRoot:'/missing-eval-code',modelId:'not-called'});
   expect(result.status).toBe('FAILED');
   expect(result.run.error).toBe('MIGRATION_AGENT_ENTRY_MISSING: check the installed migration code directory');

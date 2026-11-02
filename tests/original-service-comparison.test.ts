@@ -5,7 +5,6 @@ import {ModelServiceComparisonJudge} from '../src/service-comparison-judge.js';
 import {runtimeExecutionEvidenceSchema} from '../src/contracts.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
 import {simpleMigrationCases,simpleMigrationSuiteSchema} from '../src/migration/domain/simple-migration-suite.js';
-import {MigrationAssessmentStep} from '../web/src/MigrationAssessmentStep.js';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createElement} from 'react';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
@@ -56,22 +55,6 @@ it('identifies the invalid quote on retry without accepting concatenated or rewr
  expect((await judge.compare({evalCase:definition,left:{...right,side:'left',output:'{"balance":1000}'},right,profile:{} as any})).serviceComparison?.verdict).toBe('PASS');
  expect(JSON.parse(requests[1].messages[1].content).previousResponseError).toContain('余额为1000元');
  expect(JSON.parse(requests[1].messages[1].content).previousResponseError).toContain('不要改写或拼接');
-});
-it('shows the two choices before configuration and shows request/response mapping only in comparison mode',()=>{
- const props={api:async()=>({} as any),projectId:'project',suites:[],experiments:[],busy:false,refresh:async()=>{},runtimeId:'launcher',setRuntimeId:()=>{},runtimes:[{runtimeId:'launcher',name:'Runtime Launcher',runtimeType:'openjiuwen' as const,endpoint:'http://127.0.0.1:56362/',transport:'runtime_launcher' as const,defaultModelId:'execution-model',models:[{providerId:'internal-provider-id',modelId:'execution-model',label:'企业执行模型',upstreamModelId:'deepseek-v4-flash'}]}],modelKey:'execution-model',setModelKey:()=>{},packId:'',setPackId:()=>{},run:()=>{},next:()=>{}};
- const initial=renderToStaticMarkup(createElement(MigrationAssessmentStep,props));expect(initial).toContain('提供测试集和目标');expect(initial).toContain('接入原服务做对比');expect(initial).not.toContain('请求 JSON 模板');expect(initial).not.toContain('选择 JSON 测试集');
- const comparison=renderToStaticMarkup(createElement(MigrationAssessmentStep,{...props,initialMode:'service'}));expect(comparison).toContain('请求 JSON 模板');expect(comparison).toContain('/data/answer');expect(comparison).toContain('AI 生成');expect(comparison).toContain('deepseek-v4-flash');expect(comparison).not.toContain('internal-provider-id');
- expect(()=>originalServiceSchema.parse({endpoint:'http://localhost',requestTemplate:{task:'static'}})).toThrow();
-});
-it('shows assessment history newest first and keeps result details collapsible',()=>{
- const base={api:async()=>({} as any),projectId:'project',candidateDigest:'candidate',suites:[],busy:false,refresh:async()=>{},runtimeId:'',setRuntimeId:()=>{},runtimes:[],modelKey:'',setModelKey:()=>{},packId:'',setPackId:()=>{},run:()=>{},next:()=>{},initialMode:'goals' as const};
- const experiments=[
-  {jobId:'older',candidateDigest:'candidate',execution:'failed',createdAt:'2026-09-18T00:00:00.000Z',report:null,error:{message:'older-result'}},
-  {jobId:'newer',candidateDigest:'candidate',execution:'failed',createdAt:'2026-09-19T00:00:00.000Z',report:null,error:{message:'newer-result'}},
- ];
- const html=renderToStaticMarkup(createElement(MigrationAssessmentStep,{...base,experiments}));
- expect(html.indexOf('newer-result')).toBeLessThan(html.indexOf('older-result'));expect(html).toContain('<details class="migration-result" open="">');
- expect(html).not.toContain('不读取“测试环境”');expect(html).not.toContain('Judge');
 });
 it('exports two-side answers and grounded comparison results without misleading win scores',()=>{
  const html=renderHtmlReport({pack:{targetSkillId:'test',packId:'pack',version:'1'},variants:{left:request.variant,right:request.variant},summary:{headline:'原服务对比',leftWins:0,rightWins:0,ties:1},cases:[{caseId:'a',name:'余额',prompt:'查询',evaluationGoal:'余额正确',left:{...right,side:'left',metadata:{baselineService:{}}},right,judge:{serviceComparison:{verdict:'PASS',reason:'一致',checks:[{criterion:'余额',verdict:'PASS',reason:'相同',originalEvidence:'1000',candidateEvidence:'1000'}]},dimensions:[]}}]} as any);

@@ -143,6 +143,7 @@ export function configuredModelRole(
       ? new OpenAiCompatibleModelAdapter({
         adapterId: `service-${role.toLowerCase()}-openai-compatible-v1`,
         apiKey: environment.apiKey,
+        authMode: z.enum(['bearer','raw']).parse(process.env[`FINANCE_EVAL_${role}_AUTH_MODE`] ?? process.env.FINANCE_EVAL_MODEL_AUTH_MODE ?? 'bearer'),
         baseUrl: environment.baseUrl,
         requestDefaults: z.record(z.unknown()).parse(JSON.parse(process.env[`FINANCE_EVAL_${role}_REQUEST_DEFAULTS`] ?? "{}")),
         timeoutMs: modelTimeoutMs(role),

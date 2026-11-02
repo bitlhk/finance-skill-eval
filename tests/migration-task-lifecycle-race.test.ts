@@ -6,6 +6,7 @@ import { MigrationTaskService } from '../src/migration/tasks/application/task-se
 import { FileMigrationTaskRepository } from '../src/migration/tasks/infrastructure/task-repository.js';
 import { bundleZip } from '../src/migration/tasks/domain/task-model.js';
 import type { BundleAgent } from '../src/migration/tasks/application/task-ports.js';
+import { MigrationActivityStore } from '../src/migration/infrastructure/migration-activity.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -20,7 +21,7 @@ async function fixture() {
   const agent = vi.fn<BundleAgent>(async () => ({ status: 'PRODUCED', analysis: { summary: 'Analyzed', changes: [], missing: [] } }));
   const runtime = vi.fn(async () => { throw new Error('Unexpected Runtime startup'); });
   const service = new MigrationTaskService(repository, { get: async () => null, readArchive: async () => ({}) },
-    agent, runtime, async () => ({ passed: true, reason: 'unused' }));
+    agent, runtime, async () => ({ passed: true, reason: 'unused' }), undefined, undefined, new MigrationActivityStore(root));
   cleanups.push(async () => { await service.close(); await rm(root, { recursive: true, force: true }); });
   const create = () => service.upload({ name: 'Race', goal: 'Analyze', target: 'openjiuwen' },
     bundleZip({ 'SKILL.md': Buffer.from('---\nname: race\ndescription: Registration race\n---\nRead inputs.').toString('base64') }));

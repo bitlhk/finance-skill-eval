@@ -1,93 +1,42 @@
 import {it,expect,vi} from 'vitest';
-import {strToU8} from 'fflate';
-import {createServer} from 'node:http';
-import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,writeFile,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {analyzeDependencies} from '../src/migration/infrastructure/migration-dependencies.js';
-import {serviceEnvironment,runtimeInjection,migrationExecutionConfig} from '../src/migration/domain/migration-runtime-rules.js';
+import {createHistoricalServiceEnvironmentResolver} from '../src/execution-configuration/historical-service-environment.js';
 import {FileExecutionConfigurationRepository} from '../src/execution-configuration/file-execution-configuration-repository.js';
 import {executionConfigurationDigest as configurationDigest} from '../src/execution-configuration/execution-configuration.js';
-import type {ConnectionCheck} from '../src/migration/application/migration-runtime-configuration-repository.js';
-import {runtimeToolConfigTemplate,validateAgentRuntimeDelivery} from '../src/migration/domain/migration-delivery-contract.js';
-import {inspectionFixture,toolFixture} from './analysis-fixture.js';
-import {LocalMigrationValidationRunner} from '../src/migration/infrastructure/migration-technical-validator.js';
-import {MigrationStore} from '../src/migration/migration-store.js';
 import {EvaluationRunManager} from '../src/service/run-manager.js';
 import {runConfigurationSchema} from '../src/service/contracts.js';
-import {buildMigrationPlan} from '../src/migration/domain/migration-model.js';
-import {MigrationOpenJiuwenService} from '../src/migration/application/migration-openjiuwen-service.js';
+import type {Dependency} from '../src/migration/domain/migration-dependency.js';
 
-function fixture(name='BUSINESS_SERVICE_URL'){
- const tool=toolFixture({name:'lookup',sourcePaths:['lookup.mjs'],kind:'MCP'}),inspection=inspectionFixture([tool]);
- const source='/** @type {string} */ const service_url = runtime.service_url; fetch(service_url);',ref={toolName:'lookup',path:'lookup.mjs',snippet:'fetch(service_url)'};
- const payload={dependencyAnalysis:{dependencies:[{key:'service-url',name:'业务服务地址',kind:'CONFIG',owner:'RUNTIME',action:'INJECT',contractStatus:'KNOWN',sensitive:false,binding:{kind:'SERVICE_ENV',name},purpose:'业务接口的部署地址',availability:'MISSING',references:[ref],schema:{type:'string'},schemaCompleteness:'COMPLETE',schemaEvidence:[{path:'lookup.mjs',snippet:'/** @type {string} */'}]}],chains:[{toolName:'lookup',nodes:[{id:'call',title:'请求',detail:'请求业务服务',dependencyKeys:['service-url'],evidence:[ref]}]}]}};
- inspection.dependencyAnalysis=analyzeDependencies(payload,inspection,{'lookup.mjs':source},[],0,'materials');
- const deps=inspection.dependencyAnalysis.dependencies,dep=deps[0]!;
- const decisions=[{toolId:tool.toolId,form:'MCP' as const,language:'node',reason:'',baseAssetId:'asset',decidedAt:'now'}];
- return {tool,inspection,deps,dep,decisions};
-}
-
-it('diagnoses a startup contract without real values and keeps it out of Headers, arguments and context',()=>{
- const {inspection,deps,dep,tool,decisions}=fixture();
- expect(inspection.dependencyAnalysis!.status).toBe('COMPLETE');
- expect(buildMigrationPlan(inspection,decisions,'asset').items[0]!.blockingReasons).toEqual([]);
- expect(runtimeInjection(deps,{},'HTTP_HEADER')).toEqual({headers:{},context:{},missing:[]});
- expect(migrationExecutionConfig(deps,{},[tool]).context).toEqual({});
- expect(()=>serviceEnvironment(deps,{})).toThrow('请先填写服务配置');
- const values={[dep.id]:'https://business.example/v1'};
- expect(serviceEnvironment(deps,values)).toEqual({BUSINESS_SERVICE_URL:values[dep.id]});
- const template=runtimeToolConfigTemplate(inspection,decisions);
- expect(template.requiredEnvironment).toEqual([]);expect(template.serviceEnvironment[0]!.name).toBe('BUSINESS_SERVICE_URL');
- expect(JSON.stringify(template)).not.toContain(values[dep.id]);
- const report={tools:[{toolId:tool.toolId,compilePassed:true,contractPassed:true,runtimeBindings:[],serviceEnvironment:[{key:dep.key,name:dep.binding!.name}]}]};
- expect(validateAgentRuntimeDelivery(report,inspection,decisions)).toEqual([]);
- report.tools[0]!.serviceEnvironment[0]!.name='WRONG';expect(validateAgentRuntimeDelivery(report,inspection,decisions).join()).toContain('服务环境变量');
-});
-
-it('rejects reserved environment names, non-scalar values and conflicting shared-service variables',()=>{
- expect(fixture('PORT').inspection.dependencyAnalysis!.status).toBe('PARTIAL');
- const {deps,dep}=fixture();
- expect(()=>serviceEnvironment(deps,{[dep.id]:{url:'x'}})).toThrow('格式不合法');
- expect(()=>serviceEnvironment([...deps,{...dep,id:'another'}],{[dep.id]:'first',another:'second'})).toThrow('冲突');
- expect(serviceEnvironment([{...dep,schema:{type:'integer'},binding:{kind:'SERVICE_ENV',name:'BUSINESS_TIMEOUT_MS'}}],{[dep.id]:3000})).toEqual({BUSINESS_TIMEOUT_MS:'3000'});
-});
-
-it('does not request a Runtime context extension for MCP startup configuration, including retries',async()=>{
- const {inspection,dep,tool}=fixture(),asset={assetId:'asset',artifactSha256:'a'.repeat(64)};
- const project={id:'migration-1',candidate:asset,inspection,sourceInspection:inspection,portableGenerations:[{toolId:tool.toolId,toolName:tool.name,form:'MCP',start:['node','mcp/server.mjs'],files:['mcp/server.mjs']}]};
- const validate=vi.fn(async(_id,input)=>input);
- const service=new MigrationOpenJiuwenService({get:async()=>project} as any,{readArchive:async()=>({'mcp/server.mjs':strToU8('server')})} as any,
-  {currentState:async()=>({ready:true,reasons:[]})} as any,{validate} as any,{} as any,{} as any,
-  {get:async()=>({environmentId:'runtime',type:'runtime_launcher',runtimeType:'openjiuwen'})} as any,
-  {get:async()=>({revision:1,values:{[dep.id]:'https://fixture.invalid'},checks:[]})} as any);
- const result:any=await service.validate(project.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'},runtimeToolConfig:{context:{},providers:{},tools:{lookup:{contextBindings:{}}}}}});
- expect(result.configuration.runtimeToolConfig).toBeUndefined();
- expect(result.configuration.runtimeMcpBindings.right[0].environmentReference).toMatchObject({migrationId:project.id,revision:1});
- // Actual header injection still requires the extension; it is not silently dropped.
- dep.binding={kind:'HTTP_HEADER',name:'X-Test-Identity'};
- const injected:any=await service.validate(project.id,{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'}}});
- expect(injected.configuration.runtimeToolConfig.tools.lookup.contextBindings).toEqual({'X-Test-Identity':`context.${dep.id}`});
-});
-
-it('resolves a revision-bound reference for selected tools and rejects changed configuration',async()=>{
- const root=await mkdtemp(path.join(os.tmpdir(),'service-env-reference-'));
- const {inspection,dep,deps}=fixture(),id='migration-1234',assetDigest='a'.repeat(64);
+it('reads historical service bindings without rewriting records and rejects changed or unknown bindings',async()=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'historical-service-'));
  try{
-  await mkdir(path.join(root,'migrations'));
-  const configs=new FileExecutionConfigurationRepository<ConnectionCheck>(root,'migration-runtime-config',scope=>/^migration-[a-f0-9-]+$/u.test(scope)),config=await configs.saveValue(id,dep.id,'https://business.example',0);
-  const ref={migrationId:id,revision:config.revision,assetDigest,configurationDigest:configurationDigest(config,deps)};
-  const asset=(assetId:string,artifactSha256:string)=>({schemaVersion:'finance.skill-eval.skill-asset.v1',assetId,skillId:'fixture',version:'1.0.0',displayName:'Fixture',description:'Fixture',sourceType:'uploaded',artifactSha256,skillFile:'SKILL.md',fileCount:1,createdAt:'2026-09-30T00:00:00.000Z'});
-  await writeFile(path.join(root,'migrations',id+'.json'),JSON.stringify({id,schemaVersion:'finance.skill-migration.v2',name:'Fixture migration',createdAt:'2026-09-30T00:00:00.000Z',source:asset('source','b'.repeat(64)),candidate:asset('candidate',assetDigest),candidateNotes:'fixture',assessment:'NOT_VALIDATED',inspection,sourceInspection:inspection,runs:[{jobId:'job',pair:'AB',candidateDigest:assetDigest,comparisonFingerprint:'comparison',packFingerprint:'pack',runtimeConfigurationDigest:ref.configurationDigest,declaredPlan:{configuration:{runtime:{type:'runtime_launcher',environmentId:'runtime'}}}}]}));
-  const runtime={environmentId:'runtime',type:'runtime_launcher',runtimeType:'openjiuwen'};
-  const store=new MigrationStore(root,{skills:{} as never,runs:{} as never,jobs:{get:()=>({status:'failed'})} as never,catalog:{} as never,environments:{get:async()=>runtime} as never});
-  expect(await store.resolveServiceEnvironment(ref,['lookup'])).toEqual({configuration:{BUSINESS_SERVICE_URL:'https://business.example'},secrets:{}});
-  await expect(store.resolveServiceEnvironment(ref,['unknown'])).rejects.toThrow('未知工具');
-  expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(true);
-  await configs.saveValue(id,dep.id,'https://changed.example',1);
-  expect((await store.report(id)).openJiuwenValidations[0]!.current).toBe(false);
-  await expect(store.resolveServiceEnvironment(ref,['lookup'])).rejects.toThrow('已变化');
- }finally{await rm(root,{recursive:true,force:true})}
+  const id='migration-1234',digest='a'.repeat(64);
+  const dependency={id:'service',key:'service',name:'Service',kind:'CONFIG',owner:'RUNTIME',action:'INJECT',
+   contractStatus:'KNOWN',sensitive:false,binding:{kind:'SERVICE_ENV',name:'BUSINESS_SERVICE_URL'},toolIds:['lookup'],
+   purpose:'Business connection',availability:'MISSING',provided:'NONE',blocking:true,evidence:[],resolvedPaths:[],
+   schema:{type:'string'},schemaCompleteness:'COMPLETE'} as Dependency;
+  const secret={...dependency,id:'secret',key:'secret',sensitive:true,binding:{kind:'SERVICE_ENV' as const,name:'BUSINESS_TOKEN'}};
+  const deps=[dependency,secret];
+  const asset={schemaVersion:'finance.skill-eval.skill-asset.v1',assetId:'asset',skillId:'skill',version:'1',
+   displayName:'Skill',description:'',sourceType:'zip',artifactSha256:digest,skillFile:'SKILL.md',fileCount:1,createdAt:'now'};
+  const record={schemaVersion:'finance.skill-migration.v2',id,name:'Historical',createdAt:'now',source:asset,candidate:asset,
+   candidateNotes:'',runs:[],assessment:'NOT_VALIDATED',sourceInspection:{dependencyAnalysis:{dependencies:deps}},
+   inspection:{tools:[{toolId:'lookup',name:'lookup'}]},historicalExtra:{preserve:'exact bytes'}};
+  await mkdir(path.join(root,'migrations'));const file=path.join(root,'migrations',id+'.json');
+  const original=JSON.stringify(record,null,3);await writeFile(file,original);
+  const configs=new FileExecutionConfigurationRepository(root,'migration-runtime-config',v=>v===id);
+  await configs.saveValue(id,'service','https://business.test',0);const config=await configs.saveValue(id,'secret','PRIVATE_TOKEN',1);
+  const ref={migrationId:id,assetDigest:digest,revision:2,configurationDigest:configurationDigest(config,deps)};
+  const resolve=createHistoricalServiceEnvironmentResolver(root);
+  expect(await resolve(ref,['lookup'])).toEqual({configuration:{BUSINESS_SERVICE_URL:'https://business.test'},secrets:{BUSINESS_TOKEN:'PRIVATE_TOKEN'}});
+  await expect(resolve(ref,['unknown'])).rejects.toThrow('未知工具');
+  await expect(resolve({...ref,assetDigest:'b'.repeat(64)},['lookup'])).rejects.toThrow('已变化');
+  await configs.saveValue(id,'service','https://changed.test',2);
+  await expect(resolve(ref,['lookup'])).rejects.toThrow('已变化');
+  expect(await readFile(file,'utf8')).toBe(original);
+ }finally{await rm(root,{recursive:true,force:true});}
 });
 
 it('resolves environment values only in the trusted Runtime transport, keeping the run configuration value-free',async()=>{
@@ -105,22 +54,4 @@ it('resolves environment values only in the trusted Runtime transport, keeping t
  const runtime=await (manager as any).runtimeFor(configuration,pack);
  expect((runtime as any).options.environment.candidateMcpServices[0].environment).toEqual({BUSINESS_SERVICE_URL:'https://private-business.example'});
  expect(JSON.stringify(configuration)).not.toContain('private-business');expect(resolved).toBe(1);expect(resolveLauncher).toHaveBeenCalledOnce();
-});
-
-it('starts MCP with process-scoped service configuration and invokes the real business endpoint',async()=>{
- const seen:Array<{path:string;header?:string}>=[];
- const business=createServer((req,res)=>{seen.push({path:req.url!,header:req.headers['x-service-url'] as string|undefined});res.writeHead(200,{'content-type':'application/json'}).end('{"balance":100}')});
- await new Promise<void>(resolve=>business.listen(0,'127.0.0.1',resolve));
- const port=(business.address() as {port:number}).port;
- const code=`import http from 'node:http';http.createServer(async(req,res)=>{let text='';for await(const c of req)text+=c;const m=JSON.parse(text||'{}');if(!m.id){res.writeHead(202).end();return}let result={};if(m.method==='initialize')result={protocolVersion:'2025-06-18',serverInfo:{name:'fixture',version:'1'}};if(m.method==='tools/list')result={tools:[{name:'lookup',inputSchema:{type:'object',properties:{account_id:{type:'string'}}}}]};if(m.method==='tools/call'){if(Object.keys(m.params.arguments).join()!=='account_id')throw Error('unexpected arguments');const response=await fetch(process.env.BUSINESS_SERVICE_URL+'/balance');result={content:[{type:'text',text:JSON.stringify(await response.json())}]}}res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify({jsonrpc:'2.0',id:m.id,result}))}).listen(Number(process.env.PORT),'127.0.0.1');`;
- const service=new LocalMigrationValidationRunner(),{tool}=fixture(),before=process.env.BUSINESS_SERVICE_URL;
- try{
-  for(const prefix of ['first','second']){
-   const value=`http://127.0.0.1:${port}/${prefix}`;
-   const result=await service.validateMcp({asset:{assetId:'fixture',artifactSha256:'a'.repeat(64)} as never,tool,archive:{'mcp/server.mjs':strToU8(code)},service:{start:['node','mcp/server.mjs']},environment:{BUSINESS_SERVICE_URL:value},arguments:{account_id:'A1'}});
-   expect(result.status,JSON.stringify(result)).toBe('PASSED');expect(JSON.stringify(result)).not.toContain(value);
-  }
-  expect(seen).toEqual([{path:'/first/balance',header:undefined},{path:'/second/balance',header:undefined}]);
-  expect(process.env.BUSINESS_SERVICE_URL).toBe(before);
- }finally{await new Promise<void>(resolve=>business.close(()=>resolve()))}
 });

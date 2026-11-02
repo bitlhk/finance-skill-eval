@@ -1,3 +1,4 @@
+import {createHistoricalServiceEnvironmentResolver} from '../execution-configuration/historical-service-environment.js';
 import { readFile } from "node:fs/promises";
 import { requestLoggingOptions, installRequestId, operationalError } from './logging.js';
 import { installShutdown, registerStreamShutdown } from './shutdown.js';
@@ -15,19 +16,14 @@ import { manualPreparationSchema, prepareSkillSchema } from "./contracts.js";
 import {simpleMigrationSuiteSchema,simpleMigrationCases} from '../migration/domain/simple-migration-suite.js';
 import { registerEnvironmentRoutes } from "../interfaces/http/environment-routes.js";
 import { EnvironmentStore } from "./environment-store.js";
+import { HistoryStore } from './history-store.js';
+import { registerHistoryRoutes } from '../interfaces/http/history-routes.js';
 import { EvaluationJobStore } from "./job-store.js";
 import { PreparationStore } from "./preparation-store.js";
 import { EvaluationRunManager } from "./run-manager.js";
 import { SkillStore } from "./skill-store.js";
 import { OptimizationManager } from "./optimization-manager.js";
 import { DemoAccess } from "./demo-access.js";
-import { MigrationStore } from '../migration/migration-store.js';
-import { MigrationDiagnostics } from '../migration/infrastructure/migration-diagnostics.js';
-import type { MigrationAnalyzer, MigrationImplementer } from '../migration/application/migration-agent-port.js';
-import type { MigrationSuiteGenerator } from '../migration/application/migration-suite-generator.js';
-import type { ImprovementPlanner } from '../migration/application/migration-improvement-planning-service.js';
-import type {ToolOptimizationProposer} from '../migration/application/migration-tool-optimization-service.js';
-import type {MigrationReusePlanner} from '../migration/application/migration-reuse-planner.js';
 import { runConfigurationSchema } from "./contracts.js";
 import {createAccountWorkspaces} from './account-workspaces.js';
 import {managedWorkspaceOperation} from './managed-workspace-policy.js';
@@ -74,9 +70,9 @@ function bearerToken(header: string | string[] | undefined): string | null {
 }
 
 export async function createEvaluationService(
-  overrides: Partial<ServiceConfig> & {bundlePorts?:{agent?:BundleAgent;runtime?:BundleRuntimeFactory;judge?:BundleJudge};runBudget?:EvaluationRunBudget;migrationAnalyzer?:MigrationAnalyzer;migrationImplementer?:MigrationImplementer;migrationSuite?:MigrationSuiteGenerator;migrationImprovementPlanner?:ImprovementPlanner;migrationToolOptimizationProposer?:ToolOptimizationProposer;migrationReusePlanner?:MigrationReusePlanner} = {},
+  overrides: Partial<ServiceConfig> & {bundlePorts?:{agent?:BundleAgent;runtime?:BundleRuntimeFactory;judge?:BundleJudge;improvementAgents?:()=>import('../improvement/application/improvement-agents.js').ImprovementAgents};runBudget?:EvaluationRunBudget} = {},
 ): Promise<FastifyInstance> {
-  const {bundlePorts,runBudget,migrationAnalyzer,migrationImplementer,migrationSuite,migrationImprovementPlanner,migrationToolOptimizationProposer,migrationReusePlanner,...configOverrides}=overrides;
+  const {bundlePorts,runBudget,...configOverrides}=overrides;
   const config = { ...loadServiceConfig(), ...configOverrides };
   if(config.workspaceMode==='account'){
     const sharedBudget=new EvaluationRunBudget(config.maxConcurrentRuns);
@@ -119,22 +115,23 @@ export async function createEvaluationService(
     runBudget,
     logger: app.log,
     resolveMigrationRuntime:async runtimeId=>await environments.get(runtimeId),
-    resolveServiceEnvironment:(reference,toolNames)=>migrations.resolveServiceEnvironment(reference,toolNames),
+    resolveServiceEnvironment:createHistoricalServiceEnvironmentResolver(config.dataDirectory),
   });
-  const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations });
+  const optimizations = new OptimizationManager({ dataDirectory: config.dataDirectory, skills, jobs, runs: manager, catalog, preparations,
+    runtimeIdentity:async configuration=>{
+      const ids=configuration.runtimeBindings?[configuration.runtimeBindings.left.environmentId,configuration.runtimeBindings.right.environmentId]:configuration.runtime.type==='runtime_launcher'?[configuration.runtime.environmentId]:[];
+      return Promise.all([...new Set(ids)].map(id=>environments.get(id)));
+    },
+  });
   const demo = new DemoAccess(config.dataDirectory);
-  const diagnostics = new MigrationDiagnostics(config.rootDirectory,config.dataDirectory,skills);
-  app.addHook('preClose',async()=>{await manager.close();await diagnostics.close();});
-  const migrations:MigrationStore = new MigrationStore(config.dataDirectory,{skills,runs:manager,jobs,catalog,preparations,optimizers:optimizations,diagnostics,environments,
-    analyzer:migrationAnalyzer,implementer:migrationImplementer,suiteGenerator:migrationSuite,improvementPlanner:migrationImprovementPlanner,
-    toolOptimizationProposer:migrationToolOptimizationProposer,reusePlanner:migrationReusePlanner});
+  app.addHook('preClose',async()=>{await optimizations.close();await manager.close();});
   const bundles=createMigrationTaskService({root:config.dataDirectory,skills,environments,managed:config.managedWorkspace,ports:bundlePorts,logger:app.log});
   await bundles.initialize();
   app.addHook('preClose',()=>bundles.close());
   registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),skills);
-  app.addHook('preClose',()=>migrations.shutdown());
+  registerHistoryRoutes(app,new HistoryStore(config.dataDirectory),!config.publicDemo&&Boolean(config.accessToken));
 
-  app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId)));
+  app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId,false,undefined,request.body??{})));
   app.get<{ Params: { jobId: string } }>("/api/runs/:jobId/optimization", async request => optimizations.forSource(request.params.jobId));
   app.get<{ Params: { id: string } }>("/api/optimizations/:id", async request => optimizations.get(request.params.id));
   app.post<{ Params: { id: string } }>("/api/optimizations/:id/reevaluate", async (request, reply) => reply.code(202).send(await optimizations.reevaluate(request.params.id)));
@@ -425,6 +422,7 @@ async function registerWeb(app:FastifyInstance,config:ServiceConfig){
 async function main(): Promise<void> {
   const config = loadServiceConfig();
   const app = await createEvaluationService(config);
+  app.log.info({dataDirectory: config.dataDirectory, workspaceMode: config.workspaceMode}, 'Workspace data source');
   installShutdown(app);
   await app.listen({ host: config.host, port: config.port });
   app.log.info({ event: 'service_ready', version: FINANCE_SKILL_EVAL_VERSION, workspaceMode: config.workspaceMode });

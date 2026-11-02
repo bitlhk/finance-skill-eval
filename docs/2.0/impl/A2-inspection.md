@@ -134,6 +134,8 @@ A2 的 runner 是**可注入的 seam**（`MigrationAnalyzer`），测试用它�
 
 ### ③ 技能包从来没挂上过（这才是真相）
 
+> 以下为当时接线问题的历史记录。当前实现已统一到 `agent_roles.py` + `agent_execution.py`：平台在创建 Agent 前按角色清单完整加载指导及参考文件，不再使用下文的 `skill_rail`。被测业务 Runtime 的原生 Skill 加载不受影响。
+
 提示词里**按路径**写规则，模型就去 `glob` 工作区——这是表症。真因在接线：
 
 `create_*_agent(skills=[路径])` **只把 `bool(skills)` 当开关**（`(SkillUseRail, bool(skills) or …, _make_skill_rail)`），

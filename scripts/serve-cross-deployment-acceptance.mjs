@@ -1,9 +1,9 @@
 /** Isolated real Builder admission; browser drives all migration operations. */
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
-import {mkdtemp,mkdir,readFile,writeFile,cp} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,cp} from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import {createAcceptanceWorkspace} from './lib/acceptance-workspace.mjs';
 import {pinnedBuilderSource} from './lib/pinned-builder-source.mjs';
 import {createEvaluationService} from '../dist/service/server.js';
 import {EnvironmentStore} from '../dist/service/environment-store.js';
@@ -11,7 +11,7 @@ import {SkillStore} from '../dist/service/skill-store.js';
 import {runtimeSkillPackage} from '../dist/runtime-skill-package.js';
 import {configuredModelRole} from '../dist/service/config.js';
 
-const root=process.cwd(),work=await mkdtemp(path.join(os.tmpdir(),'cross-deployment-'));
+const root=process.cwd(),work=await createAcceptanceWorkspace('cross-deployment-',root);
 const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',windowsHide:true}).trim();
 assert(!git('status','--porcelain'),'Commit acceptance implementation before testing');
 const builder=process.env.CLOSEOUT_BUILDER_ROOT??path.resolve(root,'../agent-store-builder-dev-wo-fork/community/finance/builder/finance-solution-builder');

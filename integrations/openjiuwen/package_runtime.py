@@ -34,13 +34,13 @@ def script_command(root, target, spec):
             command = [executable("uv"), "run", "--project", directory.relative_to(root).as_posix()]
             if (directory / "uv.lock").is_file():
                 command.append("--locked")
-            return [*command, "python", "-I", relative]
+            return [*command, "python", "-I", "-X", "utf8", relative]
         if directory == root:
             break
         directory = directory.parent
     if re.search(r"^#\s*///\s*script\s*$", target.read_text(encoding="utf-8"), re.M):
         return [executable("uv"), "run", "--no-project", relative]
-    return [executable("uv"), "run", "--no-project", "python", "-I", relative]
+    return [executable("uv"), "run", "--no-project", "python", "-I", "-X", "utf8", relative]
 
 
 def absolute_script_command(root, target, spec):
@@ -98,6 +98,21 @@ def service_environment(values):
         if not isinstance(name, str) or not re.fullmatch(r'[A-Z][A-Z0-9_]{0,99}', name) or re.fullmatch(r'PORT|PATH|PATHEXT|HOME|USERPROFILE|SYSTEMROOT|COMSPEC|NODE_OPTIONS|PYTHON.*|LD_.*|DYLD_.*', name) or not isinstance(value, str) or '\x00' in value or len(value.encode()) > 128000:
             raise ValueError('Invalid service environment variable')
     return dict(values)
+
+
+def declared_tool_environment(configuration, secrets=None):
+    """Instance-local process configuration, never model arguments or inherited host credentials."""
+    values = {}
+    for source in (configuration or {}, secrets or {}):
+        if not isinstance(source, dict):
+            raise ValueError('Invalid tool configuration')
+        for key, value in source.items():
+            if isinstance(key, str) and key.startswith('tool.env.'):
+                name = key[len('tool.env.'):]
+                if name.startswith('FINANCE_') or name in values:
+                    raise ValueError('Reserved or duplicate tool configuration')
+                values[name] = value
+    return service_environment(values)
 
 
 async def start_candidate_service(root, service):

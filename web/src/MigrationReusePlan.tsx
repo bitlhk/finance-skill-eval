@@ -1,4 +1,5 @@
 import {CheckCircle2,AlertTriangle} from 'lucide-react';
+import {MarkdownContent} from './MarkdownContent';
 import {useEffect,useState} from 'react';
 import type {MigrationReuseProposal,ReuseConformance} from '../../src/migration/domain/migration-reuse-design';
 import type {ReusePlannerTelemetry} from '../../src/migration/domain/migration-reuse-telemetry';
@@ -31,16 +32,17 @@ function ReviewTiming({telemetry}:{telemetry?:ReusePlannerTelemetry}){
   </details>;
 }
 
-export function MigrationReusePlan({proposal,stale=false,busy=false,clarify}:{proposal:MigrationReuseProposal|null|undefined;stale?:boolean;busy?:boolean;clarify?:(clarification:string)=>void}){
+export function MigrationReusePlan({proposal,stale=false,busy=false,clarify,members}:{proposal:MigrationReuseProposal|null|undefined;stale?:boolean;busy?:boolean;clarify?:(clarification:string)=>void;members?:Array<{id:string;skillId:string}>}){
   const [clarification,setClarification]=useState('');
   useEffect(()=>setClarification(''),[proposal?.proposalId]);
   if(!proposal)return <section className="diagnosis-plan"><h3>可复用迁移方案</h3><p>完成工具选择后生成方案，查看改造内容、运行条件和验收方式。</p></section>;
   const d=proposal.design;
+  const membership=(item:unknown)=>{if(!members)return null;const ids=(item as {memberIds?:string[]}).memberIds??[];return <p className="plan-members">适用：{ids.length?ids.map(id=>members.find(member=>member.id===id)?.skillId??id).join('、'):'整个工程（共享）'}</p>;};
   return <section className="diagnosis-plan" aria-label="可复用迁移方案"><header><h3>可复用迁移方案</h3><span className={`diagnosis-status${stale||d.unresolvedQuestions.length?' attention':''}`}>{stale||d.unresolvedQuestions.length?<AlertTriangle size={14}/>:<CheckCircle2 size={14}/>} {stale?'工具选择已变化，需要更新方案':d.unresolvedQuestions.length?'有待确认事项':proposal.approvedAt?'方案已确认':'等待确认方案'}</span></header>
-    <PlanRevision proposal={proposal}/><h4>复用范围</h4><p>{d.scope}</p>
-    <div className="diagnosis-plan-grid"><article><h4>具体改造</h4>{d.changes.map(change=><div key={change.id}><strong>{change.title}</strong><p>{change.implementation}</p><details><summary>源码依据</summary>{change.evidence.map((e,i)=><div key={i}><small>{e.path}</small><pre>{e.snippet}</pre></div>)}</details></div>)}</article>
-      <article><h4>运行条件与依赖</h4><ul>{d.conditions.map((condition,i)=><li key={i}>{condition}</li>)}</ul>{!!d.dependencies.length&&<details><summary>查看 {d.dependencies.length} 项依赖配置</summary>{d.dependencies.map(dep=><div key={dep.key}><strong>{dep.name}</strong><p>{dep.contract}</p><p>{dep.configuration}</p></div>)}</details>}</article>
-      <article><h4>验收方式（{d.acceptanceChecks.length} 项）</h4>{d.acceptanceChecks.map(check=><details key={check.id}><summary>{check.purpose}</summary>{check.requirement&&<p>验证目标：{check.requirement}</p>}<p>{check.procedure}</p><p>预期：{check.expectedResult}</p></details>)}<p className="diagnosis-plan-note">方案确认后实施；这些检查尚未运行。</p></article></div>
+    <PlanRevision proposal={proposal}/><h4>复用范围</h4><MarkdownContent compact content={d.scope}/>
+    <div className="diagnosis-plan-grid"><article><h4>具体改造</h4>{d.changes.map(change=><div key={change.id}><strong>{change.title}</strong>{membership(change)}<MarkdownContent compact content={change.implementation}/><details><summary>源码依据</summary>{change.evidence.map((e,i)=><div key={i}><small>{e.path}</small><pre>{e.snippet}</pre></div>)}</details></div>)}</article>
+      <article><h4>运行条件与依赖</h4><ul>{d.conditions.map((condition,i)=><li key={i}>{condition}</li>)}</ul>{!!d.dependencies.length&&<details><summary>查看 {d.dependencies.length} 项依赖配置</summary>{d.dependencies.map(dep=><div key={dep.key}><strong>{dep.name}</strong>{membership(dep)}<MarkdownContent compact content={dep.contract}/><MarkdownContent compact content={dep.configuration}/></div>)}</details>}</article>
+      <article><h4>验收方式（{d.acceptanceChecks.length} 项）</h4>{d.acceptanceChecks.map(check=><details key={check.id}><summary>{check.purpose}</summary>{membership(check)}{check.requirement&&<p>验证目标：{check.requirement}</p>}<p>{check.procedure}</p><p>预期：{check.expectedResult}</p></details>)}<p className="diagnosis-plan-note">此处为计划验收项，执行结果请查看“验证实际效果”。</p></article></div>
     {proposal.clarification&&<details><summary>本次规划的补充说明</summary><p>{proposal.clarification}</p></details>}
     {!!d.unresolvedQuestions.length&&<div role="alert"><h4>确认方案前需要补充</h4><ul>{d.unresolvedQuestions.map((question,i)=><li key={i}>{question}</li>)}</ul></div>}
     {clarify&&<details open={!!d.unresolvedQuestions.length}><summary>补充说明并调整方案</summary><label>方案补充说明<textarea aria-label="方案补充说明" value={clarification} maxLength={4000} disabled={busy} onChange={e=>setClarification(e.target.value)}/></label><p>说明本次复用范围或回答待确认事项，不要填写凭证。重新规划后仍需核对并确认方案；原问题和测试记录保留。</p><button className="button secondary" disabled={busy||!clarification.trim()} onClick={()=>clarify(clarification.trim())}>补充说明并重新规划</button></details>}

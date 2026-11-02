@@ -24,51 +24,42 @@ try {
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(url);await page.getByLabel('访问令牌').fill(token);await page.getByRole('button',{name:'进入工作区',exact:true}).click();
   await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
-  await expect(page.getByRole('button',{name:'单个 Skill 迁移',exact:true})).toHaveCount(0);
-  await page.getByLabel('任务名称',{exact:true}).fill('单 Skill 导入');
-  await page.getByLabel('业务目标',{exact:true}).fill('验证业务数据');
-  await page.getByLabel('目标环境与要求',{exact:true}).fill('OpenJiuwen');
+  const newTask=async()=>{
+    await page.getByRole('button',{name:'新建迁移',exact:true}).click();
+    await expect(page.getByRole('button',{name:'上传工程 ZIP',exact:true})).toBeVisible();
+    await expect(page.getByLabel('添加依赖文件',{exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'导入 Skill 文件',exact:true})).toHaveCount(0);
+  };
   const input=()=>page.locator('.bundle-panel input[type=file]');
-  await input().nth(1).setInputFiles([
-    zip({'repo/SKILL.md':source('nested-import'),'repo/tool.py':'print(1)'},'nested.zip'),
-    {name:'broken.zip',mimeType:'application/zip',buffer:Buffer.from('broken')},
-    {name:'standalone.md',mimeType:'text/markdown',buffer:Buffer.from(source('markdown-import'))},
-  ]);
-  await expect(page.getByRole('status')).toContainText('已导入 2 个 Skill');
-  await expect(page.getByRole('status')).toContainText('broken.zip');
+  await newTask();
+  await input().setInputFiles({name:'broken.zip',mimeType:'application/zip',buffer:Buffer.from('broken')});
+  await expect(page.locator('.bundle-upload').getByRole('alert')).toBeVisible();
   assert.equal((await tasks()).length,0);
-  pass('mixed_upload_reports_individual_failures_without_creating_separate_tasks');
-  const selections=page.locator('.bundle-member-options input[type=checkbox]');
-  await expect(selections).toHaveCount(2);await selections.first().uncheck();
-  await page.getByText(/依赖文件（可选/).click();
-  await page.getByLabel('添加依赖文件',{exact:true}).setInputFiles({name:'rules.json',mimeType:'application/json',buffer:Buffer.from('{"limit":100}')});
-  await expect(page.getByLabel('依赖文件路径',{exact:true})).toHaveValue('shared/rules.json');
-  await page.getByLabel('依赖文件路径',{exact:true}).fill('shared/business-rules.json');
-  await page.setViewportSize({width:390,height:844});
-  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Optional dependency UI overflows mobile');
-  await page.screenshot({path:path.join(output,'optional-assets-mobile.png'),fullPage:true});
-  await page.setViewportSize({width:1440,height:1000});
-  await page.getByRole('button',{name:'创建迁移任务',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'单 Skill 导入',exact:true})).toBeVisible();
-  assert.equal((await tasks())[0].source.members.length,1);
-  const dependency=await fetch(url+'/api/migration-tasks/'+(await tasks())[0].id+'/file?path=shared/business-rules.json',{headers:{authorization:'Bearer '+token}});
-  assert.equal((await dependency.json()).content,'{"limit":100}');
-  pass('independent_skill_optional_dependency_and_editable_path_without_project_archive');
-  pass('one_selected_asset_creates_one_unified_task');
-  await page.getByRole('button',{name:'任务列表 / 新建',exact:true}).click();
-  await page.getByLabel('任务名称',{exact:true}).fill('工程整体导入');
-  await input().first().setInputFiles(zip({'repo/a/SKILL.md':source('a'),'repo/b/SKILL.md':source('b'),'repo/shared/tool.py':'print(2)'},'whole.zip'));
-  await expect(page.getByRole('heading',{name:'工程整体导入',exact:true})).toBeVisible();
-  const records=await tasks();assert.equal(records.length,2);
-  const whole=records.find(t=>t.name==='工程整体导入');assert.equal(whole.source.members.length,2);
-  const file=await fetch(url+'/api/migration-tasks/'+whole.id+'/file?path=repo/shared/tool.py',{headers:{authorization:'Bearer '+token}});
-  assert.equal((await file.json()).content,'print(2)');
-  pass('whole_project_keeps_members_shared_code_and_relative_paths');
-  await page.getByRole('button',{name:'任务列表 / 新建',exact:true}).click();
-  await input().nth(1).setInputFiles({name:'too-large.md',mimeType:'text/markdown',buffer:Buffer.alloc(8*1024*1024+1,65)});
-  await expect(page.getByRole('status')).toContainText('单个文件不能超过 8 MB');
-  assert.equal((await tasks()).length,2);
-  pass('oversize_import_does_not_create_tasks');
+  pass('invalid_project_does_not_create_task');
+  await input().setInputFiles(zip({'skill.md':source('lowercase')},'lowercase.zip'));
+  await expect(page.locator('.bundle-upload').getByRole('alert')).toContainText('lowercase.zip 导入失败');
+  await expect(page.locator('.bundle-upload').getByRole('alert')).toContainText('大写 SKILL.md');
+  assert.equal((await tasks()).length,0);
+  pass('strict_entry_name_error_is_shown_beside_upload_control');
+
+  const project={'project/features/a/SKILL.md':source('a'),'project/features/b/SKILL.md':source('b'),
+    'project/src/tool.py':'print(2)','project/shared/business-rules.json':'{"limit":100}',
+    'project/requirements.txt':'Pillow==11.0.0','project/resources/example.txt':'sample'};
+  await input().setInputFiles(zip(project,'my-project.zip'));
+  await expect(page.getByRole('button',{name:'开始诊断',exact:true})).toBeVisible();
+  const records=await tasks();assert.equal(records.length,1);
+  const whole=records[0];assert.equal(whole.source.members.length,2);
+  for(const [name,content] of Object.entries(project)){
+    const file=await fetch(url+'/api/migration-tasks/'+whole.id+'/file?path='+encodeURIComponent(name),{headers:{authorization:'Bearer '+token}});
+    assert(file.ok);assert.equal((await file.json()).content,content);
+  }
+  pass('one_project_zip_preserves_skills_sources_dependencies_resources_and_paths');
+  await page.getByRole('button',{name:'返回迁移列表',exact:true}).click();
+  await newTask();
+  await input().setInputFiles({name:'too-large.zip',mimeType:'application/zip',buffer:Buffer.alloc(8*1024*1024+1,65)});
+  await expect(page.locator('.bundle-upload').getByRole('alert')).toBeVisible();
+  assert.equal((await tasks()).length,1);
+  pass('oversize_project_does_not_create_task');
   await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));

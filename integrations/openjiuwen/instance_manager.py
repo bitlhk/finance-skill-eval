@@ -55,6 +55,8 @@ class InstanceManager:
             raise ValueError('Only inline Runtime secrets are supported')
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in secrets.get('values', {}).items()):
             raise ValueError('Runtime secrets must be string values')
+        from .package_runtime import declared_tool_environment
+        declared_tool_environment(request.get('configuration'), secrets.get('values'))
         request = copy.deepcopy(request)
         digest = self._digest(request)
         request_digest = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
@@ -131,6 +133,9 @@ class InstanceManager:
         request = copy.deepcopy(item['_request'])
         values = request.pop('secrets', {}).get('values', {})
         environment = request.get('environment') or {}
+        from .package_runtime import declared_tool_environment
+        # Hydrate into this execution copy only. Stored/public state never contains secret values.
+        environment['_toolEnvironment'] = declared_tool_environment(request.get('configuration'), values)
         for service in environment.get('mcpServers', []):
             if not isinstance(service, dict) or not isinstance(service.get('endpoint'), str) or not service['endpoint'].startswith(('http://', 'https://')):
                 raise ValueError('Invalid external MCP service')

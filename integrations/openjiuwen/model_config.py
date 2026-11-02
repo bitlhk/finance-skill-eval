@@ -5,6 +5,36 @@ import json
 import os
 
 
+def bind_model_auth(model, binding):
+    """Apply trusted per-model auth at the pinned SDK request-header boundary.
+
+    OpenJiuwen filters Authorization from custom_headers. Override only this
+    model instance's header builder, shared by invoke and stream, without
+    modifying site-packages, global SDK state or transport/retry behavior.
+    """
+    mode = binding.get("authMode", "bearer")
+    if mode not in {"bearer", "raw"}:
+        raise ValueError("Model authMode must be bearer or raw")
+    if mode == "bearer":
+        return model
+    key = binding.get("apiKey")
+    if not isinstance(key, str) or not key or "\r" in key or "\n" in key:
+        raise ValueError("Raw model authentication requires a valid API key")
+    client = getattr(model, "_client", None)
+    original = getattr(client, "_build_request_headers", None)
+    if not callable(original):
+        raise RuntimeError("Installed model SDK does not support raw authentication")
+
+    def headers(*args, **kwargs):
+        merged = {name: value for name, value in original(*args, **kwargs).items()
+                  if name.lower() != "authorization"}
+        merged["Authorization"] = key
+        return merged
+
+    client._build_request_headers = headers
+    return model
+
+
 def bind_agent_request_extensions(model, settings, role):
     """Forward operator-owned provider extensions through the SDK's call API.
 

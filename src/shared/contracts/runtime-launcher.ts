@@ -61,6 +61,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   features: z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),
+    toolEnvironment:z.boolean().optional(),
     multiTurn:z.boolean().optional(),
     toolProcessEvidence:z.boolean().optional(),
     mcpResultChannels:z.boolean().optional(),
@@ -68,7 +69,8 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     managedMethodProbe:z.boolean().optional(),
   }),
   limits: z.strictObject({
-    maxSkills: z.number().int().positive(),
+    // Legacy metadata only; Skill count is not capped.
+    maxSkills: z.number().int().positive().optional(),
     maxArchiveBytes: z.number().int().positive(), maxFiles: z.number().int().positive(),
     maxTimeoutMs: z.number().int().positive(), maxConcurrentInstances: z.number().int().positive(),
     minPrimaryTools:z.number().int().nonnegative().optional(),

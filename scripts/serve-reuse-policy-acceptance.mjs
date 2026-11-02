@@ -1,17 +1,17 @@
 /** Inspect a real-model plan revision through UI in a copy, never rewrite prior evidence. */
 import assert from 'node:assert/strict';
-import {mkdtemp,cp,readFile,writeFile} from 'node:fs/promises';
+import {cp,readFile,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
-import os from 'node:os';
+import {createAcceptanceWorkspace} from './lib/acceptance-workspace.mjs';
 import {createEvaluationService} from '../dist/service/server.js';
 
 const root=process.cwd(),sourceWork=process.env.REUSE_POLICY_SOURCE_WORK;
 assert(sourceWork,'Select the previous real UI host explicitly with REUSE_POLICY_SOURCE_WORK');
 const previous=JSON.parse(await readFile(path.join(sourceWork,'service.json'),'utf8'));
 assert.equal(path.resolve(previous.data),path.resolve(sourceWork,'data'));
-const work=await mkdtemp(path.join(os.tmpdir(),'reuse-policy-ui-')),data=path.join(work,'data');
+const work=await createAcceptanceWorkspace('reuse-policy-ui-',root),data=path.join(work,'data');
 await cp(previous.data,data,{recursive:true,errorOnExist:true});
 const app=await createEvaluationService({rootDirectory:root,dataDirectory:data,publicDirectory:path.join(root,'web-dist'),publicDemo:false,accessToken:'reuse-policy-ui'});
 app.log.level='error';const url=await app.listen({host:'127.0.0.1',port:0});

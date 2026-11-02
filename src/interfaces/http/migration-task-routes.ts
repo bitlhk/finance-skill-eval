@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { registerTaskActivityRoutes } from './migration-activity-routes.js';
 import { z } from 'zod';
 import type { MigrationTaskService } from '../../migration/tasks/application/task-service.js';
 import { stringify } from 'yaml';
@@ -14,6 +15,7 @@ export function registerMigrationTaskRoutes(
     if (!privateWorkspaceEnabled && ['/api/migration-tasks'].some(prefix => request.url.startsWith(prefix)))
       return reply.code(403).send({ message: '整组迁移仅限私有工作区。' });
   });
+  registerTaskActivityRoutes(app, bundles);
   for (const prefix of ['/api/migration-tasks']) {
     app.get(prefix+'/suite-example',()=>simpleMigrationSuiteExample);
     if(sourceAssets) app.post(prefix+'/assets',async request=>{
@@ -48,6 +50,8 @@ export function registerMigrationTaskRoutes(
     app.put<{ Params: { id: string; }; }>(prefix + '/:id/configuration', (request) =>
       bundles.configure(request.params.id, request.body),
     );
+    app.post<{Params:{id:string}}>(prefix+'/:id/plan/approval',request=>bundles.approvePlan(request.params.id,request.body));
+    app.post<{Params:{id:string}}>(prefix+'/:id/runtime-review',request=>bundles.reviewRuntime(request.params.id));
     app.put<{ Params: { id: string; }; }>(prefix + '/:id/suite', (request) =>
       bundles.saveSuite(request.params.id, request.body),
     );
@@ -59,6 +63,7 @@ export function registerMigrationTaskRoutes(
       ['generate', 'GENERATE'],
       ['repair', 'REPAIR'],
       ['acceptance', 'ACCEPT'],
+      ['optimize','OPTIMIZE'],
     ] as const) {
       app.post<{ Params: { id: string; }; }>(prefix + '/:id/' + route, async (request, reply) =>
         reply.code(202).send(await bundles.start(request.params.id, kind, request.body, request.id)),
@@ -67,6 +72,11 @@ export function registerMigrationTaskRoutes(
     app.post<{ Params: { id: string; }; }>(prefix + '/:id/cancel', (request) =>
       bundles.cancel(request.params.id),
     );
+    app.post<{Params:{id:string}}>(prefix+'/:id/optimization-selection',request=>bundles.selectOptimization(request.params.id,request.body));
+    app.get<{Params:{id:string}}>(prefix+'/:id/optimization-workspace',async(request,reply)=>{
+      const {attemptId}=z.strictObject({attemptId:z.string().min(1)}).parse(request.query);
+      return reply.type('application/zip').header('content-disposition','attachment; filename="optimization-project.zip"').send(await bundles.optimizationWorkspace(request.params.id,attemptId));
+    });
     app.get<{ Params: { id: string; }; }>(prefix + '/:id/file', (request) => {
       const query = z
         .strictObject({ candidateId: z.string().optional(), path: z.string() })

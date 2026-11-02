@@ -41,6 +41,19 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             backup.create(self.archive, self.data, self.config)
 
+    def test_project_configs_only_and_external_data_preserved(self):
+        project = self.root / 'project'
+        project.mkdir()
+        env, runtime = project / '.env.local', project / '.runtime.local.json'
+        env.write_text('FINANCE_EVAL_DATA_DIR=external-data')
+        runtime.write_text('{}')
+        (project / 'source.js').write_text('not backup content')
+        backup.create(self.archive, self.data, config_files=[env, runtime])
+        manifest = backup.verify(self.archive)
+        self.assertEqual(set(manifest['files']), {'data/任务.json', 'config/.env.local', 'config/.runtime.local.json'})
+        backup.restore(self.archive, self.root / 'restored-project')
+        self.assertEqual((self.root / 'restored-project/config/.env.local').read_bytes(), env.read_bytes())
+
     def test_rejects_traversal_and_digest_mismatch_before_restore(self):
         for name, digest in [('../escape', 'bad'), ('data/file', 'bad')]:
             archive = self.root / ('bad-' + str(len(name)) + '.zip')

@@ -136,7 +136,7 @@ export function runtimeRequirementsIssues(requirements: RuntimeBuildRequirements
     if (execution.platform[key] !== capabilities.platform[key]) issues.push(`PLATFORM_${key.toUpperCase()}_MISMATCH`);
   for (const feature of execution.features)
     if (capabilities.features[feature] !== true) issues.push(`FEATURE_UNAVAILABLE_${feature}`);
-  for (const key of ['maxSkills', 'maxFiles', 'maxArchiveBytes', 'maxTimeoutMs'] as const)
+  for (const key of ['maxFiles', 'maxArchiveBytes', 'maxTimeoutMs'] as const)
     if (execution.limits[key] > capabilities.limits[key]) issues.push(`CAPACITY_INSUFFICIENT_${key}`);
   for (const requirement of requirements.requiredCapabilities.filter(item => item.required)) {
     const target = requirement.preferredTargetCapability ?? requirement.name;

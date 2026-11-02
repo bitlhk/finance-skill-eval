@@ -6,24 +6,25 @@ import { afterEach, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import { unzipSync } from 'fflate';
 import { SkillStore } from '../src/service/skill-store.js';
-import { BundleMigrationService } from '../src/migration/bundle/bundle-service.js';
+import {MigrationTaskService} from '../src/migration/tasks/application/task-service.js';
+import {FileMigrationTaskRepository} from '../src/migration/tasks/infrastructure/task-repository.js';
 import {
   bundleZip,
   snapshot,
   decodeBundleZip,
   filesDigest,
   type BundleFiles,
-} from '../src/migration/bundle/bundle-model.js';
+} from '../src/migration/tasks/domain/task-model.js';
 import type {
   BundleAgent,
   BundleAgentInput,
   BundleRuntimeFactory,
   BundleJudge,
-} from '../src/migration/bundle/bundle-ports.js';
-import { registerBundleMigrationRoutes } from '../src/interfaces/http/bundle-migration-routes.js';
+} from '../src/migration/tasks/application/task-ports.js';
+import { registerMigrationTaskRoutes } from '../src/interfaces/http/migration-task-routes.js';
 
 const roots: string[] = [],
-  services: BundleMigrationService[] = [];
+  services: MigrationTaskService[] = [];
 afterEach(async () => {
   await Promise.all(services.splice(0).map((service) => service.close()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -52,7 +53,7 @@ const suite = {
   holdoutCases: [{ id: 'secret-holdout', input: 'HIDDEN_CASE', criteria: ['HIDDEN_CRITERION'] }],
 };
 const config = { environmentId: 'env-test', modelId: 'execution', timeoutMs: 10000 };
-async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeFactory, sourceFiles: BundleFiles = files, customJudge?:BundleJudge) {
+async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeFactory, sourceFiles: BundleFiles = files, customJudge?:BundleJudge,improvementAgents?:()=>import('../src/improvement/application/improvement-agents.js').ImprovementAgents) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'bundle-test-'));
   roots.push(root);
   const skills = new SkillStore(root);
@@ -124,10 +125,10 @@ async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeF
         }),
       },
     }));
-  const service = new BundleMigrationService(root, skills, agent, runtime, customJudge ?? (async ({ evidence }) => ({
+  const service = new MigrationTaskService(new FileMigrationTaskRepository(root), skills, agent, runtime, customJudge ?? (async ({ evidence }) => ({
     passed: evidence.output === 'REJECT',
     reason: 'Observed ' + evidence.output,
-  })));
+  })),undefined,undefined,undefined,improvementAgents);
   services.push(service);
   await service.initialize();
   const task = await service.upload(
@@ -139,6 +140,7 @@ async function fixture(customAgent?: BundleAgent, customRuntime?: BundleRuntimeF
     extra: Record<string, unknown> = {},
   ) {
     const latest = await service.get(task.id);
+    if(kind==='GENERATE' && latest.analysis && !latest.analysis.missing.length) await service.approvePlan(task.id,{analysisDigest:latest.currentPlanDigest});
     await service.start(task.id, kind, {
       key: randomUUID(),
       baseCandidateId: latest.currentCandidateId,
@@ -163,6 +165,77 @@ it('retains completed execution evidence and blocks candidate repair when Judge 
   expect(f.cleanup).toHaveBeenCalled();
   await expect(f.service.export(task.id,true)).rejects.toThrow();
   await expect(f.service.start(task.id,'REPAIR',{key:randomUUID(),baseCandidateId:task.currentCandidateId,runId:task.runs[0]!.id})).rejects.toThrow('评审服务');
+});
+
+it('runs diagnosis, adjustment, retest and independent Review without activating the experimental candidate',async()=>{
+  const diagnose=vi.fn(async(input:any)=>{
+    expect(JSON.stringify(input)).not.toContain('HIDDEN_CASE');
+    return {judgement:{status:'PROPOSED',hypothesis:{layer:'SKILL',issue:'Wrong unit',expectedBehavior:'Use yuan',evidenceCaseIds:['over-budget'],validation:'Retest',risk:'Low',confidence:'HIGH'}}} as any;
+  });
+  const review=vi.fn(async(input:any)=>{
+    expect(JSON.stringify(input)).not.toContain('HIDDEN_CASE');
+    expect(input.evidence[0].baseline.result.evidence.output).toBe('ACCEPT');
+    expect(input.evidence[0].candidate.result.evidence.output).toBe('REJECT');
+    return {status:'PRODUCED',review:{recommendation:'KEEP_CANDIDATE',reason:'Unit corrected',improvements:['Correct rejection'],regressions:[],evidenceIds:['over-budget']}} as any;
+  });
+  const f=await fixture(undefined,undefined,files,undefined,()=>({diagnose,review}));
+  await f.start('ANALYZE');await f.start('GENERATE');await f.service.configure(f.task.id,config);await f.service.saveSuite(f.task.id,suite);
+  const baseline=await f.start('ACCEPT'),originalId=baseline.currentCandidateId;
+  await f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:originalId,runId:baseline.runs[0]!.id,optimization:{maxRounds:3}});
+  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).not.toBe('RUNNING'),{timeout:10000});
+  const task=await f.service.get(f.task.id),attempt=task.attempts.find(a=>a.kind==='OPTIMIZE')!;
+  expect(attempt.optimization?.status,attempt.error).toBe('REVIEW');expect(attempt.optimization?.rounds).toHaveLength(1);
+  expect(task.currentCandidateId).toBe(originalId);expect(task.candidates).toHaveLength(2);
+  expect(diagnose).toHaveBeenCalledTimes(1);expect(review).toHaveBeenCalledTimes(1);
+  const selected=await f.service.selectOptimization(task.id,{attemptId:attempt.id});
+  expect(selected.currentCandidateId).toBe(attempt.optimization!.best.id);
+  expect(JSON.stringify(f.seen)).not.toContain('HIDDEN_CASE');
+  await f.service.configure(task.id,{...config,modelId:'different'});
+  await expect(f.service.selectOptimization(task.id,{attemptId:attempt.id})).rejects.toThrow();
+});
+
+it('continues migration repair on the experimental snapshot and passes its review focus to the next diagnosis',async()=>{
+  const diagnose=vi.fn(async()=>({judgement:{status:'PROPOSED',hypothesis:{layer:'SKILL',issue:'Refine unit handling',expectedBehavior:'Use yuan',evidenceCaseIds:['over-budget'],validation:'Retest',risk:'Low',confidence:'HIGH'}}} as any));
+  const review=vi.fn(async()=>({status:'PRODUCED',review:{recommendation:'KEEP_CANDIDATE',reason:'Verified',improvements:['Correct units'],regressions:[],evidenceIds:['over-budget']}} as any));
+  review.mockResolvedValueOnce({status:'PRODUCED',review:{recommendation:'CONTINUE_CANDIDATE',reason:'Promising; clarify the instructions',improvements:['Correct rejection'],regressions:[],evidenceIds:['over-budget'],nextFocus:['Clarify unit instruction']}});
+  const f=await fixture(undefined,undefined,files,undefined,()=>({diagnose,review}));
+  await f.start('ANALYZE');await f.start('GENERATE');await f.service.configure(f.task.id,config);await f.service.saveSuite(f.task.id,suite);
+  const baseline=await f.start('ACCEPT');
+  await f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId,runId:baseline.runs[0]!.id,optimization:{maxRounds:2}});
+  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).not.toBe('RUNNING'),{timeout:10000});
+  const task=await f.service.get(f.task.id),attempt=task.attempts.find(a=>a.kind==='OPTIMIZE')!,loop=attempt.optimization!;
+  expect(loop.status,attempt.error).toBe('REVIEW');expect(loop.rounds).toHaveLength(2);
+  expect(loop.rounds[0]?.continued).toBe(true);expect(loop.rounds[1]?.baseline).toEqual(loop.rounds[0]?.candidate);
+  const repairs=f.seen.filter(input=>input.mode==='REPAIR');
+  expect(repairs[1]?.base.digest).toBe(loop.rounds[0]?.candidate?.digest);
+  expect(JSON.stringify(diagnose.mock.calls[1])).toContain('Clarify unit instruction');
+  expect(JSON.stringify(review.mock.calls[1])).toContain('incumbent');
+  expect(task.currentCandidateId).toBe(baseline.currentCandidateId);
+});
+
+it.each(['resume','cancel'] as const)('waits for configuration without consuming another round (%s)',async action=>{
+  let configured=false;
+  const diagnose=vi.fn(async()=>({judgement:{status:'PROPOSED',hypothesis:{layer:'CONFIGURATION',issue:'Missing runtime option',expectedBehavior:'Configured execution',evidenceCaseIds:['over-budget'],validation:'Retest',risk:'Low',confidence:'HIGH'}}} as any));
+  const review=vi.fn(async()=>({status:'PRODUCED',review:{recommendation:'KEEP_CANDIDATE',reason:'Configuration verified',improvements:['Task passes'],regressions:[],evidenceIds:['over-budget']}} as any));
+  const f=await fixture(undefined,undefined,files,async()=>({passed:configured,reason:configured?'Ready':'Missing option'}),()=>({diagnose,review}));
+  await f.start('ANALYZE');await f.start('GENERATE');await f.service.configure(f.task.id,config);await f.service.saveSuite(f.task.id,suite);
+  const baseline=await f.start('ACCEPT');
+  await f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId,runId:baseline.runs[0]!.id,optimization:{maxRounds:1}});
+  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.kind==='OPTIMIZE')?.status).toBe('WAITING'));
+  const waiting=await f.service.get(f.task.id),attempt=waiting.attempts.find(a=>a.kind==='OPTIMIZE')!;
+  await expect(f.service.start(f.task.id,'GENERATE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId})).rejects.toThrow('等待');
+  await expect(f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId,resumeAttemptId:attempt.id})).rejects.toThrow('尚未调整');
+  await f.service.configure(f.task.id,{...config,timeoutMs:11000});configured=true;
+  if(action==='cancel'){
+    const cancelled=await f.service.cancel(f.task.id);expect(cancelled.attempts.find(a=>a.id===attempt.id)?.status).toBe('CANCELLED');
+    expect(cancelled.configuration).toEqual(baseline.configuration);expect(review).not.toHaveBeenCalled();
+    await expect(f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId,resumeAttemptId:attempt.id})).rejects.toThrow('等待');return;
+  }
+  await f.service.start(f.task.id,'OPTIMIZE',{key:randomUUID(),baseCandidateId:baseline.currentCandidateId,resumeAttemptId:attempt.id});
+  await vi.waitFor(async()=>expect((await f.service.get(f.task.id)).attempts.find(a=>a.id===attempt.id)?.status).toBe('COMPLETED'));
+  const done=await f.service.get(f.task.id),loop=done.attempts.find(a=>a.id===attempt.id)!.optimization!;
+  expect(loop.status,loop.reason).toBe('REVIEW');expect(loop.rounds).toHaveLength(1);expect(diagnose).toHaveBeenCalledTimes(1);expect(review).toHaveBeenCalledTimes(1);
+  expect(loop.contextChanges).toHaveLength(1);expect(done.configuration?.timeoutMs).toBe(11000);
 });
 
 it('migrates the whole workspace, repairs two members, freezes history and exports only current verified inputs', async () => {
@@ -345,13 +418,13 @@ it('rejects path traversal, case collisions, duplicate Skill names and nested en
 it('protects bundle APIs in public workspaces and exposes async operations inside private ones', async () => {
   const f = await fixture(),
     app = Fastify();
-  registerBundleMigrationRoutes(app, f.service, false);
+  registerMigrationTaskRoutes(app, f.service, false);
   expect((await app.inject('/api/migration-tasks')).statusCode).toBe(403);
   expect((await app.inject('/api/migration-tasks')).statusCode).toBe(403);
   expect((await app.inject({method:'POST',url:'/api/migration-tasks/from-legacy/migration-a',payload:{}})).statusCode).toBe(403);
   await app.close();
   const privateApp = Fastify();
-  registerBundleMigrationRoutes(privateApp, f.service, true);
+  registerMigrationTaskRoutes(privateApp, f.service, true);
   expect((await privateApp.inject('/api/migration-tasks/' + f.task.id)).json().source.members).toHaveLength(
     3,
   );
@@ -376,7 +449,7 @@ it.each([1, 3])('uses the same task lifecycle for %i Skill members with persiste
       : {status:'PRODUCED', files:input.base.files, delivery:{summary:'Complete candidate',services:[]}};
   }, undefined, sourceFiles);
   const app = Fastify({genReqId: () => 'server-generated-request'});
-  registerBundleMigrationRoutes(app, f.service, true);
+  registerMigrationTaskRoutes(app, f.service, true);
   try {
     const response = await app.inject({method:'POST',url:'/api/migration-tasks/'+f.task.id+'/analysis',
       headers:{'x-request-id':'untrusted-client-request'},payload:{key:randomUUID(),baseCandidateId:null}});
@@ -399,12 +472,12 @@ it.each([1, 3])('uses the same task lifecycle for %i Skill members with persiste
   } finally { await app.close(); }
 });
 
-it('accepts a standalone root SKILL.md and rejects empty or oversized member sets', () => {
+it('accepts a standalone root SKILL.md and more than ten members, but rejects an empty set', () => {
   const one = { 'SKILL.md':encoded('---\nname: single\ndescription: One\n---\nTask'), 'tool.py':encoded('print(1)') };
   expect(snapshot(one,'source').members).toHaveLength(1);
-  expect(() => snapshot({'readme.txt':encoded('no skill')},'source')).toThrow('1–10');
+  expect(() => snapshot({'readme.txt':encoded('no skill')},'source')).toThrow('至少一个 SKILL.md');
   const many = Object.fromEntries(Array.from({length:11},(_,i)=>['s'+i+'/SKILL.md',encoded('---\nname: s'+i+'\ndescription: One\n---\nTask')]));
-  expect(() => snapshot(many,'source')).toThrow('1–10');
+  expect(snapshot(many,'source').members).toHaveLength(11);
 });
 
 it.each(['.env', 'shared/private.json'])('retains the legacy export credential gate for unified candidates (%s)', async name => {

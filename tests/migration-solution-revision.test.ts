@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { solutionRevision } from '../src/migration/domain/migration-solution-revision.js';
-import type { ResolvedMigrationEnvironment } from '../src/migration/application/migration-environment-repository.js';
+type ResolvedMigrationEnvironment=Parameters<typeof solutionRevision>[0]['environment'];
 import type { RunConfiguration } from '../src/shared/contracts/run-configuration.js';
 import type { SkillAssetRecord } from '../src/shared/contracts/skill-asset.js';
 

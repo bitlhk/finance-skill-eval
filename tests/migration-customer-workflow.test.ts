@@ -5,18 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {zipSync,strToU8,unzipSync} from 'fflate';
 import {SkillStore} from '../src/service/skill-store.js';
-import {importMigrationFiles} from '../web/src/migration-import.js';
 import {createEvaluationService} from '../src/service/server.js';
 
-it('batch intake isolates failures, preserves content and bounds count without executing anything',async()=>{
-  const collected:Record<string,Uint8Array>[]=[];
-  const files=[new File([zipSync({'skill/SKILL.md':strToU8('plain instructions')})], 'method.zip'),new File(['bad'], 'bad.exe'),new File([zipSync({'skill/SKILL.md':strToU8('another method')})], 'another.zip')];
-  const result=await importMigrationFiles(files,async bytes=>{collected.push(unzipSync(bytes));});
-  expect(result.map(r=>r.status)).toEqual(['IMPORTED','FAILED','IMPORTED']);
-  expect(Buffer.from(collected[0]!['skill/SKILL.md']!).toString()).toBe('plain instructions');
-  expect(Buffer.from(collected[1]!['skill/SKILL.md']!).toString()).toBe('another method');
-  await expect(importMigrationFiles(Array(11).fill(files[0]),async()=>{})).rejects.toThrow('10');
-});
 
 it('does not silently select one Skill from a multi-Skill ZIP',async()=>{
   const dir=await mkdtemp(path.join(os.tmpdir(),'multi-skill-'));

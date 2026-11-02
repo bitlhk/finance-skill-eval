@@ -12,4 +12,4 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm check
 pnpm build
 UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT="$PWD/.venv-openjiuwen" uv sync --locked --project integrations/openjiuwen --python "${FINANCE_OPENJIUWEN_PYTHON:-python3.12}" --no-dev
-printf '%s\n' 'Release prepared. Run production preflight after configuring secrets.'
+printf '%s\n' 'Project prepared in place. Configure .env.local, then run deployment preflight.'

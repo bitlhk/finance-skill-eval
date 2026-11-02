@@ -9,15 +9,14 @@ StartLimitBurst=5
 Type=simple
 User=finance-eval
 Group=finance-eval
-WorkingDirectory=/opt/finance-skill-eval/current
-ExecStart=@NODE@ /opt/finance-skill-eval/current/deploy/run.mjs runtime --env /etc/finance-skill-eval/production.env
-ExecStop=@NODE@ /opt/finance-skill-eval/current/deploy/run.mjs stop runtime --env /etc/finance-skill-eval/production.env
+WorkingDirectory=@PROJECT@
+ExecStart=@NODE@ @PROJECT@/deploy/run.mjs runtime --env @PROJECT@/.env.local
+ExecStop=@NODE@ @PROJECT@/deploy/run.mjs stop runtime --env @PROJECT@/.env.local
 Environment=HOME=/var/lib/finance-skill-eval
 Environment=UV_CACHE_DIR=/var/cache/finance-skill-eval
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
 KillMode=control-group
 TimeoutStopSec=75
 Restart=on-failure

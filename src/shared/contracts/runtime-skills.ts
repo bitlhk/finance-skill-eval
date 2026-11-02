@@ -10,7 +10,7 @@ export const runtimeSkillSchema = runtimeSkillMemberSchema.extend({
 });
 /** Inline instructions plus optional resources; neither an archive nor a project is required. */
 export const runtimeSkillSetSchema = z.strictObject({
-  skills: z.array(runtimeSkillSchema).min(1).max(10),
+  skills: z.array(runtimeSkillSchema).min(1),
   assets: z.record(base64).optional(),
   contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
   entryInstructionsFile: z.string().min(1).optional(),

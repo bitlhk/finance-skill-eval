@@ -1,49 +1,24 @@
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
-export function TaskList({ state }: { state: MigrationWorkbench; }) {
-  const { assets, setAssets, catalog, api, tasks, name, setName, goal, setGoal, target, setTarget, selected, setSelected, busy, zipInput, filesInput, list, select, act, uploadZip, uploadMembers } = state;
+import { HistoryPanel } from '../history/HistoryPanel';
+export function TaskEntry({ state }: { state: MigrationWorkbench; }) {
+  const { catalog, api, name, setName, goal, setGoal, creationOptions, selected, setSelected, busy, zipInput, list, select, act, uploadZip, uploadingFile, uploadFileName, error } = state;
   return (
     <>
-      <section className="stage-section">
-        <h3>新建迁移任务</h3>
-        <div className="bundle-fields">
-          <label>
-            任务名称
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="例如：采购审核迁移"
-            />
-          </label>
-          <label>
-            目标环境与要求
-            <input
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              placeholder="目标平台、工具形式和运行限制"
-            />
-          </label>
-          <label className="bundle-full">
-            业务目标
-            <textarea
-              aria-label="业务目标"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="需要完成什么业务任务？"
-            />
-          </label>
-        </div>
-        <div className="bundle-actions">
+      <section className="migration-stage migration-entry">
+        <div className="migration-stage-heading"><div><h3>上传需要迁移的工程</h3>
+        <p>将 Skill 说明、源码、依赖声明和资源一起打包为一个 ZIP，保留原有目录结构。</p></div></div>
+        <div className="diagnostic-finding"><h4>准备工程包</h4><p>压缩包名称不限，支持原有工程目录。工程中需包含至少一个 SKILL.md，系统会自动识别。</p><p>诊断会分析说明、源码与依赖，不会执行原始工具或修改原文件。</p></div>
+        <div className="bundle-upload" aria-busy={Boolean(uploadingFile)}>
           <button className="button secondary" disabled={busy} onClick={() => zipInput.current?.click()}>
-            导入 Skill ZIP（可选）
+            {uploadingFile ? '正在上传…' : '上传工程 ZIP'}
           </button>
-          <button
-            className="button secondary"
-            disabled={busy}
-            onClick={() => filesInput.current?.click()}
-          >
-            导入 Skill 文件
-          </button>
+          {uploadingFile && <p role="status">正在上传并检查 {uploadingFile}，请稍候…</p>}
+          {error && <div role="alert" className="bundle-upload-error">
+            <strong>{uploadFileName ? `${uploadFileName} 导入失败` : '导入失败'}</strong>
+            <p>{error}</p>
+            {error.includes('SKILL.md 入口') && <p>请检查工程内的说明文件是否命名为大写 SKILL.md，再重新打包上传；当前任务尚未创建。</p>}
+          </div>}
         </div>
         <input
           ref={zipInput}
@@ -56,42 +31,18 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
             e.target.value = '';
           }}
         />
-        <input
-          ref={filesInput}
-          hidden
-          type="file"
-          multiple
-          accept=".zip,.md"
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            if (files.length) void act(() => uploadMembers(files));
-            e.target.value = '';
-          }}
-        />
-        <p>选择 1～10 个 Skill 即可创建任务，不需要完整工程。脚本与共享资源按需添加。</p>
-        <details><summary>依赖文件（可选，已选 {assets.length} 个）</summary>
-          <label>添加依赖文件<input aria-label="添加依赖文件" type="file" multiple onChange={e => {
-            const files=Array.from(e.target.files??[]); e.target.value='';
-            void act(async()=>{
-              const next=await Promise.all(files.map(async file=>({id:crypto.randomUUID(),path:'shared/'+file.name,
-                content:btoa(Array.from(new Uint8Array(await file.arrayBuffer()),byte=>String.fromCharCode(byte)).join(''))})));
-              setAssets(old=>[...old,...next]);
-            });
-          }}/></label>
-          <p>路径相对任务工作区；保留 Skill 引用的共享路径。没有依赖时留空。</p>
-          {assets.map(asset=><div className="bundle-fields" key={asset.id}>
-            <label>依赖文件路径<input aria-label="依赖文件路径" value={asset.path} onChange={e=>setAssets(old=>old.map(item=>item.id===asset.id?{...item,path:e.target.value}:item))}/></label>
-            <button className="button secondary" onClick={()=>setAssets(old=>old.filter(item=>item.id!==asset.id))}>移除依赖</button>
-          </div>)}
+        <details className="migration-extra-options"><summary>补充要求（可选）</summary>
+          <label>任务名称（可选）<input value={name} onChange={event => setName(event.target.value)} placeholder="留空时根据 Skill 名称生成"/></label>
+          <label>额外业务要求（可选）<textarea value={goal} onChange={event => setGoal(event.target.value)} placeholder="仅填写原 Skill 之外需要补充或改变的要求"/></label>
         </details>
-        <h4>从已有资产选择成员（已选 {selected.length}/10）</h4>
+        <details open={selected.length > 0}><summary>或复用已导入的 Skill（已选 {selected.length}）</summary>
+        <p className="bundle-member-hint">新工程请从上方整体上传，已有 Skill 仍可组合迁移。</p>
         <div className="bundle-member-options">
           {catalog.uploadedSkills.map((asset) => (
             <label key={asset.assetId}>
               <input
                 type="checkbox"
                 checked={selected.includes(asset.assetId)}
-                disabled={!selected.includes(asset.assetId) && selected.length >= 10}
                 onChange={(e) =>
                   setSelected((old) =>
                     e.target.checked ? [...old, asset.assetId] : old.filter((id) => id !== asset.assetId),
@@ -104,32 +55,39 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
         </div>
         <button
           className="button primary"
-          disabled={busy || !selected.length || selected.length > 10 || !name.trim() || !goal.trim() || !target.trim()}
+          disabled={busy || !selected.length}
           onClick={() =>
             void act(async () => {
-              if(new Set(assets.map(asset=>asset.path.toLowerCase())).size!==assets.length)throw new Error('依赖文件路径不能重复');
               select(
                 await api<BundleTask>('/api/migration-tasks', {
                   method: 'POST',
-                  body: JSON.stringify({ name, goal, target, sourceAssetIds: selected, assets:Object.fromEntries(assets.map(asset=>[asset.path,asset.content])) }),
+                  body: JSON.stringify({ ...creationOptions(), sourceAssetIds: selected }),
                 }),
               );
               await list();
             })
           }
         >
-          创建迁移任务
+          继续诊断
         </button>
+        </details>
       </section>
-      <section className="stage-section">
-        <h3>已有迁移任务</h3>
+    </>
+  );
+}
+
+export function TaskList({ state }: { state: MigrationWorkbench }) {
+  const { tasks, api, act, select } = state;
+  return <>
+      <section>
+        <h3>迁移记录</h3>
         {tasks.length ? (
-          tasks.map((item) => (
-            <article className="bundle-task-row" key={item.id}>
+          <div className="migration-project-list">{tasks.map((item) => (
+            <article className="migration-project" key={item.id}>
               <div>
                 <strong>{item.name}</strong>
                 <p>
-                  {item.source.members.length} 个 Skill · {item.candidates.length} 个候选 ·{' '}
+                  {item.source.members.length} 个 Skill · {item.candidates.length} 个版本 ·{' '}
                   {item.runs.length} 次验收
                 </p>
               </div>
@@ -142,11 +100,11 @@ export function TaskList({ state }: { state: MigrationWorkbench; }) {
                 继续处理
               </button>
             </article>
-          ))
+          ))}</div>
         ) : (
           <p>尚未创建迁移任务。</p>
         )}
       </section>
-    </>
-  );
+      <HistoryPanel kind="tasks" api={api}/>
+  </>;
 }

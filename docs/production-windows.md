@@ -1,51 +1,44 @@
-# Windows 服务部署
+# Windows 后台服务：直接运行 Git 项目
 
-需要 Windows Server、管理员 PowerShell 5.1+、系统级 Node >=22、pnpm 10.34.4、Python 3.11–3.13、uv 0.12.13。Node/Python 位于 LocalService 可读取的系统目录，不能依赖管理员个人目录、映射盘或交互 profile。
+手动启动和 Windows 服务使用同一份项目代码、项目根目录的 `.env.local`。不复制发布代码，不创建 `production.env`、`current.txt` 或 `releases` 目录。Git commit/tag 管理版本；`dist` 和 `web-dist` 是在项目内构建的产物。
 
-从 [WinSW 2.12.0 官方发布](https://github.com/winsw/winsw/releases/tag/v2.12.0) 获取 x64 可执行文件，按企业制品流程校验并记录 SHA256；安装器不静默下载第三方程序。
+## 配置与安装
 
-## 安装与启动
-
-在最终 release 目录 checkout 审核过的版本，用管理员 PowerShell 执行：
+在固定的 Git 项目目录安装 Node >=22、pnpm（版本见 package.json）、Python 3.11–3.13 和 uv。系统服务必须能读取这些工具及项目依赖，不能依赖交互终端的 PATH。
 
 ```powershell
-Set-Location C:/ProgramData/FinanceSkillEval/releases/VERSION
-./deploy/windows/prepare.ps1 -Python 'C:/Program Files/Python312/python.exe'
-./deploy/windows/manage.ps1 -Action install -Release $PWD.Path -Node 'C:/Program Files/nodejs/node.exe' -WinSW 'C:/Installers/WinSW-x64.exe'
-# 填写 C:/ProgramData/FinanceSkillEval/config/production.env 和 runtime.json
-./deploy/windows/manage.ps1 -Action preflight
-./deploy/windows/manage.ps1 -Action start
-./deploy/windows/manage.ps1 -Action health
-./deploy/windows/manage.ps1 -Action status
-./deploy/windows/manage.ps1 -Action logs
-icacls C:/ProgramData/FinanceSkillEval/config
+# 在项目根目录；已有配置不要覆盖
+Copy-Item .env.local.example .env.local
+Copy-Item .runtime.local.example.json .runtime.local.json
+# 填写 .env.local 的访问令牌、模型配置，以及 .runtime.local.json
+powershell -NoProfile -File deploy/windows/prepare.ps1 -Python C:/Path/To/python.exe
+# 管理员终端；WinSW 使用已验证的 2.12.0 x64 可执行文件
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action install -WinSW C:/Tools/WinSW-x64.exe
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action preflight
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action start
 ```
 
-安装生成两个 WinSW XML 并注册服务，创建 config/data/cache/logs/backups。默认 LocalService，ACL 限制为 Administrators、SYSTEM、LocalService：服务对 data/cache/logs 可写，对代码和配置只读。**Base 必须是应用专用目录**，安装会重置其子目录 ACL，不可指向共享目录。
+安装生成的 WinSW 配置直接指向当前项目的 `deploy/run.mjs` 和 `.env.local`。默认 Base 为 `C:/ProgramData/FinanceSkillEval`，只存放服务包装程序、日志、缓存和备份，不复制代码或另建运行配置。可用 `-Base` 更改，后续管理命令须使用相同 Base。`-ProjectDirectory` 可显式指定项目；省略时使用脚本所属项目，和当前终端目录无关。`configure` 仅生成配置用于审查/测试，不注册服务或修改权限。
 
-prepare 使用独立副本安装 Node/Python 依赖。应用 ACL 前，安装器先检查目录链接必须指向 Base 内部，并解除已有文件与包缓存之间的硬链接，防止权限变更影响其他工作区。权限重置逐个遍历实体目录；链接只使用非递归的 `icacls /L` 处理自身，避免 pnpm 链接结构被重复遍历。依赖文件较多时首次权限初始化可能耗时数分钟；安装日志完成后再启动服务，不要把尚未注册的服务误判为启动失败。
+账户为 `NT AUTHORITY/LocalService`，保留开机启动、失败重启和优雅停止。安装先解除项目依赖与包缓存的硬链接，再添加项目读取权限、数据/日志/缓存修改权限，保护两个配置文件；不会重置整个项目的所有权或显式子项权限。安装器只向项目父目录本身添加读取/遍历权限，不向同级项目传播。外部 Python 基础安装及外部依赖也必须允许 LocalService 访问。先预检，再验证实际服务健康；管理员身份预检不等于服务账户验证。
 
-WinSW 2.12 的账户字段是 `<domain>NT AUTHORITY</domain><user>LocalService</user>`，不是 `username`。安装器会读取 SCM 中的实际 `StartName` 并校正本安装的已停止服务；启动前再次检查身份，避免 XML 字段被忽略后以 LocalSystem 运行。现场检查可使用 `Get-CimInstance Win32_Service -Filter "Name LIKE 'finance-eval%'" | Select-Object Name,StartName,StartMode,State`。
+`.env.local` 的 `FINANCE_EVAL_DATA_DIR` 决定数据位置。迁移已有安装时填写原数据目录的绝对路径，保留原 Runtime 配置、访问令牌和其他必要设置；不要因为切换代码目录就切换数据目录。`FINANCE_RUNTIME_CONFIG` 默认是项目 `.runtime.local.json`，可显式指向现有文件。Runtime 模型配置仍是独立用途，不等于平台的模型角色配置。
 
-模板替换为 Windows 数据/配置路径，Python 默认从当前 release 的 venv 解析；配置路径用正斜杠。preflight 在操作者身份运行，不能替代 LocalService 权限验收，须实际服务启动并执行任务。LocalService 与其他同账户服务共享身份，需要更强隔离时由运维改专用账户并重新验收 ACL。
-
--Action configure 只生成审查模板，不安装服务、不改 ACL，供构建测试；可在相同 Base/release 上继续 install。重复 install 要求已有服务停止且路径属于本次安装，不覆盖其他安装。自定义 Base 后每次操作均传相同 -Base。venv 在最终目录构建，不移动到其他版本目录。
-
-## HTTPS、日志与恢复
-
-默认两个端口都绑定 loopback。使用企业 IIS/ARR 等网关终止 TLS，只代理 API 56361，配置流式响应和长请求超时；防火墙不放行 Runtime。网关不记录 Authorization、查询密钥和请求体，独立设置权限与保留期。
-
-WinSW stdout/stderr 按 20 MiB、10 文件滚动，目录 Base/logs；异常退出两次重启后停止重试。详见 [WinSW 日志配置](https://github.com/winsw/winsw/blob/v2.12.0/doc/loggingAndErrorReporting.md)。目标 Windows Server 仍需验收自启、重启恢复、服务身份、TLS 和真实业务任务。
+## 更新、回滚与管理
 
 ```powershell
-./deploy/windows/manage.ps1 -Action stop
-./deploy/windows/manage.ps1 -Action backup -Archive C:/ProgramData/FinanceSkillEval/backups/BEFORE.zip
-./deploy/windows/manage.ps1 -Action restore -Archive C:/ProgramData/FinanceSkillEval/backups/BEFORE.zip -Destination C:/ProgramData/FinanceSkillEval/restore-NEW
-# 新版本最终目录先执行 prepare.ps1
-./deploy/windows/manage.ps1 -Action upgrade -Release C:/ProgramData/FinanceSkillEval/releases/NEW
-./deploy/windows/manage.ps1 -Action rollback -Release C:/ProgramData/FinanceSkillEval/releases/OLD
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action stop
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action backup -Archive C:/Backups/before-update.zip
+# 先保存本地改动，再 git checkout <已确认的 commit/tag> 或 git pull --ff-only
+powershell -NoProfile -File deploy/windows/prepare.ps1 -Python C:/Path/To/python.exe
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action preflight
+powershell -NoProfile -File deploy/windows/manage.ps1 -Action start
 ```
 
-切换先预检、停机、备份，再更新 WinSW 启动路径；失败恢复旧配置并保持停机，判断数据兼容性。恢复只写新目录，真正替换 data/config 后重新检查 ACL，再启动。
+回滚使用相同流程，Git 切回目标提交后重新安装匹配依赖并构建。脚本不再提供切换发布目录的 `upgrade/rollback`。不要在服务运行时切换 Git 版本或重建依赖。仅修改配置时用 `-Action restart`；修改源码后先重新构建。`status`、`health`、`logs` 查看运行情况。
 
-WinSW 调用共享 stop：API 用 Node IPC，Runtime 用 stdin 通知 uvicorn，50 秒后强制回收进程树，WinSW 75 秒为外层期限。配置使用 startarguments/stoparguments，遵循 [WinSW XML 约束](https://github.com/winsw/winsw/blob/v2.12.0/doc/xmlConfigFile.md)。
+离线备份从 `.env.local` 解析实际数据位置，只归档业务数据、`.env.local` 和 Runtime 配置，不备份整个 Git 项目。`restore -Archive C:/Backups/before-update.zip -Destination C:/Restore/New` 校验后恢复到新空目录；停机后将 `data/` 恢复到配置的数据目录，将 `config/` 中的文件恢复到对应配置路径。切换 Git 版本不自动回滚业务数据。
+
+## 从旧的 releases 安装迁移
+
+先停旧服务并备份原配置和数据，再把原数据绝对路径及所需配置写入项目 `.env.local`。将旧 Runtime 配置保存到项目 `.runtime.local.json`，在项目内完成构建和预检。保持原 Base，重新执行 `install`（服务须已停止），然后 `start`、`health`。已有业务数据不移动。旧发布目录和配置只作为迁移前留档，不再被服务读取或维护；确认无其他依赖后可另行清理。

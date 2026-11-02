@@ -45,7 +45,7 @@ def _tool(name: str, description: str, params: dict[str, Any], fn: Callable[...,
 
 
 # --------------------------------------------------------------------------
-# A2: run_scanner
+# Diagnosis: read-only static scanner
 # --------------------------------------------------------------------------
 
 async def _scan(workspace: Path) -> dict[str, Any]:
@@ -117,7 +117,7 @@ def build_run_scanner(workspace: Path, capture: list[dict[str, Any]] | None = No
 
 
 # --------------------------------------------------------------------------
-# A4: compile and contract test
+# Engineering: compile and contract tests
 # --------------------------------------------------------------------------
 
 async def _run_process(workspace: Path, argv: list[str], timeout: float, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -129,8 +129,7 @@ async def _run_process(workspace: Path, argv: list[str], timeout: float, env: di
         )
     except OSError as exc:
         # A command that cannot be executed at all -- the toolchain is missing -- arrives as an
-        # exception, not an exit code. `service-launch.ts` reports the same case the same way; an
-        # exception here would leave the agent with a tool error instead of something to act on.
+        # exception, not an exit code. Return actionable evidence instead of an opaque tool error.
         return {"exitCode": None, "stdout": "", "stderr": f"PROGRAM_NOT_RUNNABLE: {argv[0]}: {exc}",
                 "timedOut": False}
     try:
@@ -237,6 +236,27 @@ def _shape_ok(value: Any, schema: Any) -> tuple[bool, str]:
     return True, ""
 
 
+def _declared_shape_ok(value: Any, schema: Any) -> tuple[bool, str]:
+    """Validate the declared delivery boundary without resolving external schemas."""
+    from jsonschema import Draft202012Validator
+    def local_refs(node):
+        if isinstance(node, dict):
+            if any(key in node and not str(node[key]).startswith('#') for key in ('$ref', '$dynamicRef')):
+                raise ValueError('External schema references are not supported')
+            for item in node.values():
+                local_refs(item)
+        elif isinstance(node, list):
+            for item in node:
+                local_refs(item)
+    try:
+        local_refs(schema)
+        Draft202012Validator.check_schema(schema)
+        error = next(Draft202012Validator(schema).iter_errors(value), None)
+        return (False, error.message) if error else (True, '')
+    except Exception as error:
+        return False, 'Invalid declared schema: ' + str(error)[:300]
+
+
 _PEP723 = re.compile(r"^#\s*///\s*script\s*$", re.MULTILINE)
 _LAUNCH_TIMEOUT = 180.0
 
@@ -267,7 +287,7 @@ def _python_argv(workspace: Path, entry: Path, *, isolated: bool) -> list[str]:
             args = ["run", "--project", _relative(workspace, directory)]
             if (directory / "uv.lock").is_file():
                 args.append("--locked")
-            guard = ["-I"] if isolated else []
+            guard = ["-I", "-X", "utf8"] if isolated else ["-X", "utf8"]
             return ["uv", *args, "python", *guard, _relative(workspace, entry)]
         if directory == workspace:
             break
@@ -275,7 +295,7 @@ def _python_argv(workspace: Path, entry: Path, *, isolated: bool) -> list[str]:
     relative = _relative(workspace, entry)
     if _PEP723.search(entry.read_text(encoding="utf-8", errors="replace")):
         return ["uv", "run", "--no-project", relative]
-    guard = ["-I"] if isolated else []
+    guard = ["-I", "-X", "utf8"] if isolated else ["-X", "utf8"]
     return ["uv", "run", "--no-project", "python", *guard, relative]
 
 
@@ -695,35 +715,41 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
 
     form = str(entry.get("form", "SCRIPT")).upper()
     dependencies=entry.get('dependencies', [])
+    environment_config = entry.get('scriptConfigurationMode') == 'ENVIRONMENT'
+    shape_check = _declared_shape_ok if entry.get('strictContract') else _shape_ok
     if form=='SCRIPT':
         source=(workspace / str(entrypoint or '')).resolve()
         if workspace.resolve() not in source.parents or not source.is_file():
             return {"passed":False,"toolId":tool_id,"error":f"ENTRYPOINT_MISSING: {entrypoint}"}
-        if _unsupported_script_injections(dependencies):
+        if _unsupported_script_injections(dependencies) and not environment_config:
             return {"passed":False,"toolId":tool_id,"error":"SCRIPT_RUNTIME_INJECTION_UNSUPPORTED: 需要运行依赖时请使用 MCP"}
     sample_missing=bool(entry.get('sampleMissing')) and 'sampleInput' not in entry
     if sample_missing and form=='SCRIPT':
         return {"passed":True,"toolId":tool_id,"callExecuted":False,"note":f"NO_SAMPLE: {entry['sampleMissing']}"}
     sample = entry.get("sampleInput") or {}
-    ok, detail = _shape_ok(sample, entry.get("inputSchema"))
+    ok, detail = shape_check(sample, entry.get("inputSchema", {}))
     if not ok and not sample_missing:
         return {"passed": False, "toolId": tool_id, "inputShapeOk": False, "error": f"SAMPLE_INPUT_SHAPE: {detail}"}
 
     form = str(entry.get("form", "SCRIPT")).upper()
     # `blocking` answers whether a missing contract prevents migration. It does not mean an actual
-    # invocation can run without the dependency value. A4 receives declarations, never credentials
+    # invocation can run without the dependency value. The engineering agent receives declarations, never credentials
     # or tenant data, so every Runtime injection remains pending until technical validation.
     runtime_pending = [d.get("name") or d.get("key") for d in entry.get("dependencies", [])
-                       if d.get("owner") == "RUNTIME" and d.get("action") == "INJECT"
+                       if d.get("owner") == "RUNTIME" and d.get("action") in ("INJECT", "MOVE_TO_RUNTIME")
                        and not (form == "SCRIPT" and _is_implicit_script_context(d))]
     if form == "MCP":
         outcome = await _mcp_contract(workspace, entry, sample, execute_call=not runtime_pending and not sample_missing)
     else:
+        if environment_config and runtime_pending:
+            return {'passed': True, 'toolId': tool_id, 'callExecuted': False,
+                    'runtimeDependenciesPending': runtime_pending,
+                    'note': 'WAIT_RUNTIME_INPUTS: 独立脚本需要使用者提供运行配置，未执行业务调用：' + '、'.join(runtime_pending)}
         chosen = str(entrypoint or "")
         source = (workspace / chosen).resolve()
         if workspace.resolve() not in source.parents or not source.is_file():
             return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {chosen}"}
-        if _unsupported_script_injections(entry.get('dependencies', [])):
+        if _unsupported_script_injections(entry.get('dependencies', [])) and not environment_config:
             return {"passed":False,"toolId":tool_id,"error":"SCRIPT_RUNTIME_INJECTION_UNSUPPORTED: 需要运行依赖时请使用 MCP"}
         outcome = await _script_contract(workspace, entry, source, sample)
     if not outcome.get("passed"):
@@ -731,9 +757,12 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
     # Drift from the baseline is reported, never a stop: migration adapts on purpose. The
     # reasons for what changed come from the agent's own delivery notes.
     drift = outcome.get("drift") or []
-    if form != "MCP" and outcome.get("callExecuted", True):
-        shape_ok, shape_detail = _shape_ok(outcome.get("produced"), entry.get("outputSchema"))
+    if (form != "MCP" or entry.get('strictContract')) and outcome.get("callExecuted", True):
+        shape_ok, shape_detail = shape_check(outcome.get("produced"), entry.get("outputSchema", {}))
         if not shape_ok:
+            if entry.get('strictContract'):
+                return {'passed': False, 'toolId': tool_id, 'callExecuted': True,
+                        'error': 'OUTPUT_SHAPE: ' + shape_detail}
             drift.append({"where": "outputShape", "baseline": entry.get("outputSchema"), "observed": shape_detail})
     return {
         "passed": True,

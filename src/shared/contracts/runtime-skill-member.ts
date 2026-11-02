@@ -4,5 +4,5 @@ export const runtimeSkillMemberSchema = z.strictObject({
   skillFile: z.string().min(1), version: z.string().min(1),
   artifactSha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
-export const runtimeSkillMembersSchema = z.array(runtimeSkillMemberSchema).min(1).max(10);
+export const runtimeSkillMembersSchema = z.array(runtimeSkillMemberSchema).min(1);
 export type RuntimeSkillMember = z.infer<typeof runtimeSkillMemberSchema>;

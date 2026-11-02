@@ -57,11 +57,14 @@ export class EnvironmentStore {
 
   async list(options: {includeArchived?: boolean} = {}): Promise<EnvironmentRecord[]> {
     const records = await Promise.all(
-      (await listJsonFiles(this.directory)).map(file => readJson<EnvironmentRecord>(file)),
+      (await listJsonFiles(this.directory)).map(async file => {
+        try { return environmentRecordSchema.safeParse(await readJson<unknown>(file)); }
+        catch { return null; }
+      }),
     );
-    // Unsupported legacy registrations remain on disk for historical references.
-    return records.filter(record => (record as {type:string}).type !== 'runtime_http')
-      .map(record => environmentRecordSchema.parse(record))
+    // Incompatible registrations are exposed by HistoryStore, with reasons and original records.
+    // They never become executable by merely displaying old conformance metadata.
+    return records.flatMap(record => record?.success ? [record.data] : [])
       .filter(record => options.includeArchived === true || !record.archived)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
@@ -70,10 +73,11 @@ export class EnvironmentStore {
     if (!/^[a-z0-9-]+$/u.test(environmentId)) return null;
     try {
       const record = await readJson<{type?:string}>(path.join(this.directory, `${environmentId}.json`));
-      if(record.type==='runtime_http')return null;
-      return environmentRecordSchema.parse(record);
+      const parsed = environmentRecordSchema.safeParse(record);
+      return parsed.success ? parsed.data : null;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (error instanceof SyntaxError) return null;
       throw error;
     }
   }

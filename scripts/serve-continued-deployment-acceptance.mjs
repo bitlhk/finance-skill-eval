@@ -1,8 +1,8 @@
 /** Continue real UI evidence in a copy; existing Launcher owners stay untouched. */
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile,cp} from 'node:fs/promises';
+import {readFile,writeFile,cp} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
-import os from 'node:os';
+import {createAcceptanceWorkspace} from './lib/acceptance-workspace.mjs';
 import path from 'node:path';
 import {createEvaluationService} from '../dist/service/server.js';
 import {OpenAiCompatibleModelAdapter} from '../dist/openai-compatible-model.js';
@@ -47,7 +47,7 @@ for(const [i,admitted] of prior.admitted.entries()){
  for(const field of ['deploymentId','artifactSha256','capabilitiesDigest'])assert.equal(saved.delivery?.[field],admitted[field]);
  assert.deepEqual(saved.delivery?.evalConformance,admitted.evalConformance);
 }
-const work=await mkdtemp(path.join(os.tmpdir(),'continued-deployment-ui-')),data=path.join(work,'data');
+const work=await createAcceptanceWorkspace('continued-deployment-ui-',root),data=path.join(work,'data');
 await cp(parent.data,data,{recursive:true,errorOnExist:true});
 const trust=privateDelivery.records.map((r,i)=>{
  const credentialEnv=`CLOSEOUT_DEPLOYMENT_${i}_TOKEN`;process.env[credentialEnv]=r.connection.token;

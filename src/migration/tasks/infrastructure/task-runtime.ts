@@ -4,6 +4,8 @@ import { RuntimeLauncherAdapter } from '../../../runtime-launcher.js';
 import { bundleError, readText } from '../domain/task-model.js';
 import type { BundleRuntimeFactory } from '../application/task-ports.js';
 import type { RuntimeEnvironmentDescriptor } from '../../../http-runtime.js';
+import {resolveRuntimeInputs} from '../domain/task-runtime-inputs.js';
+import {canonicalSha256} from '../../../shared/json-canonicalization.js';
 export function createBundleRuntime(
   environments: EnvironmentStore,
   options: { managed?: boolean; } = {},
@@ -21,6 +23,9 @@ export function createBundleRuntime(
     if (probe.status !== 'ready' || !('capabilities' in probe) || !probe.capabilities)
       bundleError('运行环境不可用');
     const capabilities = probe.capabilities;
+    const inputs=resolveRuntimeInputs(configuration);
+    const hasInputs=Object.keys(inputs.publicValues).length+Object.keys(inputs.secrets).length>0;
+    if(hasInputs&&!capabilities.features.toolEnvironment)bundleError('所选环境尚不支持声明的工具配置，请选择支持该能力的环境；已填写内容会保留。');
     if (!capabilities.models.some((m) => m.modelId === configuration.modelId))
       bundleError('运行环境不提供所选模型');
     if (configuration.timeoutMs > capabilities.limits.maxTimeoutMs)
@@ -28,7 +33,6 @@ export function createBundleRuntime(
     const skillSet=runtimeSkillSetFromFiles({...snapshot,entryInstructionsFile:configuration.entryInstructionsFile});
     const size=skillSetFileStats(skillSet);
     if (
-      skillSet.skills.length > capabilities.limits.maxSkills ||
       size.bytes > capabilities.limits.maxArchiveBytes ||
       size.count > capabilities.limits.maxFiles
     )
@@ -87,6 +91,8 @@ export function createBundleRuntime(
         candidateMcpServices: services.map((service) => ({ ...service, assetDigest: snapshot.digest })),
       },
       timeoutMs: configuration.timeoutMs,
+      configuration:inputs.publicValues,
+      secrets:{mode:'inline',values:inputs.secrets},
     });
     return {
       runtime,
@@ -99,6 +105,7 @@ export function createBundleRuntime(
         ...(launcher.delivery ? { delivery: launcher.delivery } : {}),
         externalVersions,
         capabilities,
+        ...(hasInputs?{toolConfigurationDigest:canonicalSha256({...inputs.publicValues,...inputs.secrets})}:{}),
       },
     };
   };

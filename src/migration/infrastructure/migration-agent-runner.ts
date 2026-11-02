@@ -2,10 +2,11 @@ import { spawn } from 'node:child_process';
 import { operationalEvent, operationalError, stderrExceptionType } from '../../service/logging.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import {migrationActivityContext} from './migration-activity.js';
 import { modelTimeoutMs,type ModelRole } from '../../service/config.js';
 import { stageEnvelope,type StageEnvelope } from '../domain/migration-stage-envelope.js';
 
-export type AgentStage='A2'|'A4';
+export type AgentStage='diagnosis'|'migration'|'adjustment'|'standardization-review';
 export type AgentStatus='PRODUCED'|'ABSTAINED'|'FAILED';
 
 type WireResult<T>={
@@ -18,6 +19,7 @@ type WireResult<T>={
   scanner?:Record<string,unknown>|null;
   trace?:{rounds:Array<Record<string,unknown>>};
   elapsedMs?:number;
+  composition?:import('../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
   modelId?:string;
   error?:string;
   rawOutput?:string;
@@ -49,11 +51,8 @@ export type MigrationAgentOptions={
   timeoutMs?:number;
 };
 
-const ENTRY:Record<AgentStage,string>={
-  A2:path.join('integrations','openjiuwen','analyze_agent.py'),
-  A4:path.join('integrations','openjiuwen','migrate_agent.py'),
-};
-const STAGE_ROLE:Record<AgentStage,ModelRole>={A2:'ANALYZER',A4:'MIGRATION'};
+const ENTRY=path.join('integrations','openjiuwen','platform_agent.py');
+const STAGE_ROLE:Record<AgentStage,ModelRole>={diagnosis:'MIGRATION',migration:'MIGRATION',adjustment:'MIGRATION','standardization-review':'MIGRATION'};
 
 function failureReason(wire:WireResult<unknown>,produced:boolean):string{
   const said=String(wire.error??'').trim();
@@ -65,7 +64,7 @@ function failureReason(wire:WireResult<unknown>,produced:boolean):string{
 export function agentIterations(stage:AgentStage):number{
   const configured=Number(process.env.FINANCE_EVAL_AGENT_MAX_ITERATIONS);
   if(Number.isFinite(configured)&&configured>0)return Math.floor(configured);
-  return stage==='A2'?60:120;
+  return 120;
 }
 
 export function agentMaxTokens(stage:AgentStage):number{
@@ -112,8 +111,12 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
   request:Record<string,unknown>,
   options:MigrationAgentOptions,
 ):Promise<AgentResult<T>>{
+  const activity=migrationActivityContext.getStore();
+  const signals=[options.signal,activity?.signal].filter((signal):signal is AbortSignal=>Boolean(signal));
+  options={...options,signal:signals.length?AbortSignal.any(signals):undefined};
+  if(options.signal?.aborted)throw new MigrationAgentUnavailable('agent cancelled');
   const program=interpreter(options.projectRoot);
-  const entry=path.join(options.projectRoot,ENTRY[stage]);
+  const entry=path.join(options.projectRoot,ENTRY);
   const runtimeConfig=process.env.FINANCE_RUNTIME_CONFIG?.trim()??path.join(options.projectRoot,'.runtime.local.json');
   const assetDigest=String(request.assetDigest??'');
   const failed=(error:string,elapsedMs=0):AgentResult<T>=>stageEnvelope({
@@ -123,13 +126,10 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
   if(!existsSync(entry))return failed('MIGRATION_AGENT_ENTRY_MISSING: check the installed migration code directory');
   if(!existsSync(program)||!existsSync(runtimeConfig))return failed('migration agent runtime is not available');
 
-  const requestedDecisions=stage==='A4'&&Array.isArray((request as {decisions?:unknown[]}).decisions)
-    ?(request as {decisions:unknown[]}).decisions.length:0;
-  const iterationBudget=options.maxIterations??(stage==='A4'
-    ?Math.min(agentIterations(stage),Math.max(28,20+requestedDecisions*8))
-    :agentIterations(stage));
+  const iterationBudget=options.maxIterations??agentIterations(stage);
   const body=JSON.stringify({
     stage,
+    agentRoleVersion:process.env.FINANCE_EVAL_AGENT_ROLE_VERSION?.trim()||'v1',
     model:{modelId:options.modelId,providerId:options.providerId??'service-execution'},
     maxIterations:iterationBudget,
     maxTokens:options.maxTokens??agentMaxTokens(stage),
@@ -161,20 +161,35 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
       if(settled)return;
       settled=true;
       options.signal?.removeEventListener('abort',abort);
+      const stopped=new Promise<void>(resolve=>child.once('close',()=>resolve()));
       killTree();
       operationalEvent('agent_process_timeout',{...correlation,elapsedMs:Date.now()-started});
-      reject(new MigrationAgentUnavailable(`${stage} agent exceeded ${options.timeoutMs??900_000}ms`));
+      void stopped.then(()=>reject(new MigrationAgentUnavailable(`${stage} agent exceeded ${options.timeoutMs??900_000}ms`)));
     },options.timeoutMs??900_000);
     const abort=()=>{
       if(settled)return;
       settled=true;
       clearTimeout(timer);
+      const stopped=new Promise<void>(resolve=>child.once('close',()=>resolve()));
       killTree();
       operationalEvent('agent_process_cancelled',{...correlation,elapsedMs:Date.now()-started});
-      reject(new MigrationAgentUnavailable(`${stage} agent cancelled`));
+      void stopped.then(()=>reject(new MigrationAgentUnavailable(`${stage} agent cancelled`)));
     };
     options.signal?.addEventListener('abort',abort,{once:true});
-    child.stdout.on('data',chunk=>{stdout+=String(chunk)});
+    let pending='';child.stdout.setEncoding('utf8');
+    child.stdout.on('data',chunk=>{
+      pending+=String(chunk);let boundary:number;
+      while((boundary=pending.indexOf('\n'))>=0){
+        const line=pending.slice(0,boundary);pending=pending.slice(boundary+1);
+        try{const record=JSON.parse(line) as {activity?:{kind?:string;label?:string;text?:string}};
+          if(record.activity){const event=record.activity;
+            if(typeof event.kind==='string'&&typeof event.label==='string')activity?.emit(event.kind,event.label,typeof event.text==='string'?event.text:undefined);
+            continue;
+          }
+        }catch{/* Preserve existing final-result parsing for non-event output. */}
+        stdout+=line+'\n';
+      }
+    });
     child.stderr.on('data',chunk=>{
       stderrBytes+=Buffer.byteLength(chunk);
       stderrTail=(stderrTail+String(chunk)).slice(-8192);
@@ -190,6 +205,7 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
     });
     child.on('close',(exitCode,signal)=>{
       operationalEvent('agent_process_exited',{...correlation,exitCode,signal,elapsedMs:Date.now()-started,stderrBytes,lastErrorType});
+      stdout+=pending;
       if(settled)return;
       settled=true;
       clearTimeout(timer);
@@ -217,6 +233,7 @@ export async function runMigrationAgent<T=Record<string,unknown>>(
           },
           ...(wire.trace?{trace:wire.trace}:{}),
           run:{
+            ...(wire.composition?{composition:wire.composition}:{}),
             ...(wire.modelId?{modelId:String(wire.modelId)}:{}),
             ...(typeof wire.elapsedMs==='number'?{elapsedMs:wire.elapsedMs}:{}),
             ...(reason?{error:reason}:{}),
