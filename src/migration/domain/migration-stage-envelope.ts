@@ -20,7 +20,7 @@ import type { AgentCompositionReceipt } from '../../shared/contracts/agent-compo
 export const STAGE_ENVELOPE_VERSION = "finance.skill-eval.stage-envelope.v1";
 
 /** Historical identifiers remain readable; new executions use role names. */
-export type StageId = "A1" | "A2" | "A3" | "A4" | 'diagnosis' | 'migration' | 'adjustment' | 'standardization-review';
+export type StageId = "A1" | "A2" | "A3" | "A4" | 'runtime-preparation' | 'diagnosis' | 'migration' | 'adjustment' | 'standardization-review';
 export type StageProducer = "RULES" | "MODEL" | "AGENT" | "HUMAN";
 export type StageStatus = "PRODUCED" | "ABSTAINED" | "FAILED";
 
@@ -40,7 +40,7 @@ export type StageEnvelope<T> = {
   payload: T;
 };
 
-const STAGES: readonly StageId[] = ["A1", "A2", "A3", "A4", 'diagnosis', 'migration', 'adjustment', 'standardization-review'];
+const STAGES: readonly StageId[] = ["A1", "A2", "A3", "A4", 'runtime-preparation', 'diagnosis', 'migration', 'adjustment', 'standardization-review'];
 const PRODUCERS: readonly StageProducer[] = ["RULES", "MODEL", "AGENT", "HUMAN"];
 const STATUSES: readonly StageStatus[] = ["PRODUCED", "ABSTAINED", "FAILED"];
 

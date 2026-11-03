@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {runtimeFeatureIssues} from './runtime-intake.js';
 import { canonicalSha256 } from "../json-canonicalization.js";
 import {capabilityContractSchema,capabilityConstraintsSchema as constraintsSchema} from './runtime-capability.js';
 import { runtimeLauncherCapabilitiesSchema, runtimeLauncherDescriptorSchema, validateRuntimeLauncherDelivery } from "./runtime-launcher.js";
@@ -25,7 +26,7 @@ export const capabilityRequirementSchema = z.strictObject({
 
 export const runtimeExecutionRequirementsSchema = z.strictObject({
   platform: z.strictObject({ os: z.enum(['linux', 'windows', 'darwin']), arch: z.string().min(1), isolation: z.string().min(1) }),
-  features: z.array(z.enum(['streaming', 'packagedMcp', 'externalMcp', 'inlineSecrets', 'multiTurn', 'toolProcessEvidence', 'mcpResultChannels', 'mcpPrepare'])),
+  features: z.array(z.enum(['processEvidence','streaming', 'packagedMcp', 'externalMcp', 'inlineSecrets', 'multiTurn', 'toolProcessEvidence', 'mcpResultChannels', 'mcpPrepare', 'otlpEvidence', 'otlpExport', 'projectExecution', 'artifactEvidence','caseStateLifecycle'])),
   limits: z.strictObject({ maxSkills: z.number().int().positive(), maxFiles: z.number().int().positive(), maxArchiveBytes: z.number().int().positive(), maxTimeoutMs: z.number().int().positive() }),
 });
 export const runtimeBuildRequirementsSchema = z.strictObject({
@@ -134,8 +135,7 @@ export function runtimeRequirementsIssues(requirements: RuntimeBuildRequirements
   const execution = requirements.executionRequirements;
   for (const key of ['os', 'arch', 'isolation'] as const)
     if (execution.platform[key] !== capabilities.platform[key]) issues.push(`PLATFORM_${key.toUpperCase()}_MISMATCH`);
-  for (const feature of execution.features)
-    if (capabilities.features[feature] !== true) issues.push(`FEATURE_UNAVAILABLE_${feature}`);
+  issues.push(...runtimeFeatureIssues(capabilities,execution.features));
   for (const key of ['maxFiles', 'maxArchiveBytes', 'maxTimeoutMs'] as const)
     if (execution.limits[key] > capabilities.limits[key]) issues.push(`CAPACITY_INSUFFICIENT_${key}`);
   for (const requirement of requirements.requiredCapabilities.filter(item => item.required)) {

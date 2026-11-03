@@ -22,6 +22,8 @@ export * from "./shared/contracts/runtime-skills.js";
 export * from "./shared/contracts/runtime-skill-member.js";
 export * from "./shared/contracts/runtime-launcher.js";
 export * from "./shared/contracts/runtime-observation.js";
+export * from "./shared/contracts/runtime-process.js";
+export * from "./evaluation/domain/runtime-process.js";
 export * from "./shared/contracts/runtime-protocol-versions.js";
 export * from "./shared/json-canonicalization.js";
 

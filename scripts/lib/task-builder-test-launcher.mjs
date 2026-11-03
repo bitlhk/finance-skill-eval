@@ -8,7 +8,7 @@ export async function taskBuilderLauncher() {
     schemaVersion: 'finance.runtime-capabilities.v1', instanceSchemaVersion:'finance.runtime-instance.v1',platform:{os:'linux',arch:'x64',isolation:'trusted_local_process'},nativeToolNames:['read_file'], runtime: { type: 'openjiuwen', version: 'fixture-1' },
     models: [{ modelId: 'execution', upstreamModelId: 'fixture' }], defaultModelId: 'execution',
     observability: { schemaVersion: 'finance.runtime-observation-capabilities.v1', profile: 'core', supportedKinds: ['execution.started', 'execution.completed', 'execution.failed'], nativeEvents: false, replayable: false },
-    features: { streaming: true, asyncLaunch: false, packagedMcp: true, externalMcp: false, inlineSecrets: true },
+    features: { processEvidence: true, streaming: true, asyncLaunch: false, packagedMcp: true, externalMcp: false, inlineSecrets: true },
     limits: { maxSkills:10, maxArchiveBytes: 8388608, maxFiles: 1000, maxTimeoutMs: 900000, maxConcurrentInstances: 2 },
   };
   const app = Fastify(), instances = new Map(), lifecycle = [], creations = [];
@@ -26,7 +26,8 @@ export async function taskBuilderLauncher() {
       status: control.failExecution ? 'failed' : 'completed', output: request.body.caseId === 'launcher-lifecycle' ? request.body.workspaceFiles[0].content : 'BUSINESS_OK',
       elapsedMs: 1, toolCalls: request.body.caseId==='launcher-lifecycle'?[{name:'read_file',status:'completed'}]:[], loadedSkills: members.map(m => ({skillId:m.skillId,version:m.version})), usage: null,
       runtimeIdentityVerified: true, streamCompleted: true, error: null,
-      metadata: { contentDigest: control.badDigest ? 'x'.repeat(64) : instance.contentDigest,
+      metadata: { process:{schemaVersion:'finance.runtime-process.v1',status:'UNAVAILABLE',scopes:[],records:[],reason:'Controlled fixture'}, contentDigest: control.badDigest ? 'x'.repeat(64) : instance.contentDigest,
+        ...(instance.executionMode === 'agent_project' && caps.features.projectExecution ? {projectExecution:true} : {}),
         loadedSkillMembers: control.badMembers ? members.slice(1) : members,
         instanceConfigurationDigest: state(request.params.id).configurationDigest, workspaceFilesDigest: workspaceDigest(request.body.workspaceFiles) } };
   });

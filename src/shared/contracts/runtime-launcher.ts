@@ -60,6 +60,7 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
   }).optional(),
   features: z.strictObject({
     streaming: z.boolean(), asyncLaunch: z.boolean(), packagedMcp: z.boolean(),
+    processEvidence:z.boolean().optional(),
     externalMcp: z.boolean(), inlineSecrets: z.boolean(),
     toolEnvironment:z.boolean().optional(),
     multiTurn:z.boolean().optional(),
@@ -67,6 +68,11 @@ export const runtimeLauncherCapabilitiesSchema = z.strictObject({
     mcpResultChannels:z.boolean().optional(),
     mcpPrepare:z.boolean().optional(),
     managedMethodProbe:z.boolean().optional(),
+    projectExecution:z.boolean().optional(),
+    otlpEvidence:z.boolean().optional(),
+    otlpExport:z.boolean().optional(),
+    artifactEvidence:z.boolean().optional(),
+    caseStateLifecycle:z.boolean().optional(),
   }),
   limits: z.strictObject({
     // Legacy metadata only; Skill count is not capped.

@@ -1,4 +1,4 @@
-import { runtimeSkillSetFromFiles, skillSetFileStats } from '../../../shared/contracts/runtime-skills.js';
+import { runtimeSkillSetFromFiles, runtimeSkillSetSchema, skillSetFileStats } from '../../../shared/contracts/runtime-skills.js';
 import type { EnvironmentStore } from '../../../service/environment-store.js';
 import { RuntimeLauncherAdapter } from '../../../runtime-launcher.js';
 import { bundleError, readText } from '../domain/task-model.js';
@@ -6,11 +6,12 @@ import type { BundleRuntimeFactory } from '../application/task-ports.js';
 import type { RuntimeEnvironmentDescriptor } from '../../../http-runtime.js';
 import {resolveRuntimeInputs} from '../domain/task-runtime-inputs.js';
 import {canonicalSha256} from '../../../shared/json-canonicalization.js';
+import {runtimeFeatureIssues} from '../../../shared/contracts/runtime-intake.js';
 export function createBundleRuntime(
   environments: EnvironmentStore,
   options: { managed?: boolean; } = {},
 ): BundleRuntimeFactory {
-  return async ({ snapshot, configuration, services, signal }) => {
+  return async ({ snapshot, configuration, services, signal, executionMode }) => {
     signal.throwIfAborted();
     if (options.managed && (services.length || configuration.harnessTools.length))
       bundleError(
@@ -30,7 +31,11 @@ export function createBundleRuntime(
       bundleError('运行环境不提供所选模型');
     if (configuration.timeoutMs > capabilities.limits.maxTimeoutMs)
       bundleError('验收超时设置超过 Runtime 限制');
-    const skillSet=runtimeSkillSetFromFiles({...snapshot,entryInstructionsFile:configuration.entryInstructionsFile});
+    const intakeIssues=runtimeFeatureIssues(capabilities,executionMode==='agent_project'?['projectExecution']:[]);
+    if(intakeIssues.length)bundleError('所选 Runtime 不支持完整 Agent 工程执行：'+intakeIssues.join(', '));
+    const skillSet=executionMode === 'agent_project'
+      ? runtimeSkillSetSchema.parse({executionMode,skills:[],assets:snapshot.files,contentDigest:snapshot.digest})
+      : runtimeSkillSetFromFiles({...snapshot,entryInstructionsFile:configuration.entryInstructionsFile});
     const size=skillSetFileStats(skillSet);
     if (
       size.bytes > capabilities.limits.maxArchiveBytes ||

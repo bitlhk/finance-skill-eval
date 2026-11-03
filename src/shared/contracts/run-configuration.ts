@@ -7,6 +7,8 @@ const runtimeSideSchema = z.strictObject({environmentId:z.string().min(1), skill
 
 export const serviceEnvironmentReferenceSchema=z.strictObject({migrationId:z.string().regex(/^migration-[a-f0-9-]+$/u),revision:z.number().int().nonnegative(),assetDigest:z.string().regex(/^[a-f0-9]{64}$/u),configurationDigest:z.string().min(1)});
 export const runConfigurationSchema = z.strictObject({
+  executionRepetitions:z.number().int().min(1).max(5).optional(),
+  repeatSafety:z.literal('read_only').optional(),
   originalService:originalServiceSchema.optional(),
   runtimeHarnessTools:z.array(z.enum(['read_file','glob','list_files','bash'])).max(4).optional(),
   runtimeToolConfig:runtimeToolConfigSchema.optional(),
@@ -41,6 +43,7 @@ export const runConfigurationSchema = z.strictObject({
   judgeModel: modelRefSchema.optional(),
   timeoutMs: z.number().int().min(10_000).max(900_000).default(310_000),
 }).superRefine((value, context) => {
+  if((value.executionRepetitions??1)>1&&value.runtime.type==='replay')context.addIssue({code:'custom',message:'冻结证据回放不能作为重复业务运行'});
   if((value.evaluationMode==='service_comparison')!==Boolean(value.originalService))context.addIssue({code:z.ZodIssueCode.custom,message:'原服务对比模式必须配置原服务，其他模式不能附带原服务配置'});
   const managedRuntime=value.runtime.type==='runtime_launcher';
   const runtimeComparison=value.evaluationMode==='candidate_runtime_comparison';

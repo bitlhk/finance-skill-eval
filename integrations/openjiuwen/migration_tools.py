@@ -714,6 +714,11 @@ async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str
                  **({"prepare": prepare} if prepare else {})}
 
     form = str(entry.get("form", "SCRIPT")).upper()
+    if form == 'CLI':
+        # Never reinterpret a command's argv as a JSON-stdin Script or use the platform's
+        # installed executable as proof of availability in the user's actual Runtime.
+        return {'passed': True, 'toolId': tool_id, 'callExecuted': False,
+                'note': 'WAIT_RUNTIME_CLI: CLI 需在目标 Runtime 核验安装版本、非交互参数、输出和退出码；未执行命令，不是调用通过证据'}
     dependencies=entry.get('dependencies', [])
     environment_config = entry.get('scriptConfigurationMode') == 'ENVIRONMENT'
     shape_check = _declared_shape_ok if entry.get('strictContract') else _shape_ok

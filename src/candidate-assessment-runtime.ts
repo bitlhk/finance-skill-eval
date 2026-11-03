@@ -9,6 +9,7 @@ export class CandidateAssessmentRuntimeAdapter implements RuntimeAdapter {
     this.adapterId=`candidate-assessment:${inner.adapterId}`;
   }
   prepare(context:import('./adapters.js').RuntimePrepareContext){return this.inner.prepare?.(context)??Promise.resolve();}
+  supportsCaseState(request:RuntimeExecutionRequest){return this.inner.supportsCaseState?.({...request,side:'right',variant:this.variant,model:this.model})===true;}
   async execute(request:RuntimeExecutionRequest){
     const key=`${request.runId}:${request.evalCase.caseId}`;
     let execution=this.runs.get(key);

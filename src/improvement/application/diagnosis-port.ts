@@ -17,10 +17,12 @@ export type ImprovementDiagnosisInput={
   previousExperiments?:Array<{layer:string;outcome:string;passed?:number;total?:number}>;
   codeEvidence?:Array<{origin:'source'|'candidate';path:string;content:string}>;
   runtimeEvidence?:Array<{path:string;content:string}>;
+  evaluationEvidence?:unknown;
   runtimeRequirements?:unknown;
   approvedReuseDesign?:unknown;
 };
 export type ImprovementDiagnosisResult={
+  investigation?:unknown[];
   judgement:ImprovementJudgement;
   agentComposition:AgentCompositionReceipt;
   outputCorrection:{attempts:number;originalDigest:string;acceptedDigest:string};

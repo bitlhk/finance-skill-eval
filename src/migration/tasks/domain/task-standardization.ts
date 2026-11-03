@@ -5,16 +5,16 @@ import {runtimeInputSchema,runtimeInputGroupSchema} from './task-runtime-inputs.
 
 const text=z.string().trim().min(1);
 const evidence=z.object({path:text,snippet:text});
-const form=z.enum(['SCRIPT','MCP']);
+const form=z.enum(['SCRIPT','MCP','CLI']);
 export const standardizationSchema=z.object({
-  version:z.literal('enterprise-standardization.v1'),
+  version:z.enum(['enterprise-standardization.v1','enterprise-standardization.v2']),
   configurationInputs:z.array(runtimeInputSchema).optional(),
   configurationGroups:z.array(runtimeInputGroupSchema).optional(),
   coverage:z.object({readPaths:z.array(text),gaps:z.array(z.object({path:text,reason:text,blocking:z.boolean()}))}),
   requirements:z.array(z.object({id:text,kind:z.enum(['BUSINESS','RUNTIME']),statement:text,
     toolIds:z.array(text),memberIds:z.array(text),evidence:z.array(evidence).min(1)})).min(1),
   tools:z.array(z.object({toolId:text,form,action:z.enum(['KEEP','ADAPT','CONVERT']),
-    alternatives:z.array(z.object({form,feasible:z.boolean(),reason:text,changeCost:text,deploymentCost:text,maintenanceCost:text})).length(2),
+    alternatives:z.array(z.object({form,feasible:z.boolean(),reason:text,changeCost:text,deploymentCost:text,maintenanceCost:text})).min(2).max(3),
     recommendation:text,assumptions:z.array(text),
     contract:z.object({inputSchema:z.record(z.unknown()),outputSchema:z.record(z.unknown()),
       errors:text,state:text,configuration:text,invocation:text,
@@ -37,8 +37,9 @@ export const enterprisePolicy=[
   '目标是一次企业标准化、跨框架快速复用，不是改成某个目标 Agent 框架的应用。只做消除复用障碍的必要修改。',
   'Skill 的业务流程、决策、失败处理、工具协作和输出要求不得缩水；Tool 的业务算法、输入输出语义、错误、副作用和必要状态保持。包装改变必须说明映射并同步 Skill。',
   '禁止把原框架的配置/Session/Context/返回对象换成目标框架私有对象；安装原 Agent SDK 不能代替解耦。普通业务库可保留，不能按库名机械删除。',
-  'Script/MCP 是推荐的通用调用形式。先比较可行性，再比较改造、部署及长期维护成本；已符合要求优先保留。无服务需求且成本相近时优先简单 Script；已有共享服务设施时 MCP 可能成本更低。不要虚构部署事实、费用或工时。',
-  '形式 form 与改造 action 分开。Script 可以远程调用；有状态不自动要求 MCP。不为了包装成服务而大规模重写。CLI 只识别预装要求，本期不新增专用适配。',
+  '逐项比较 MCP、CLI、Script 的适用性、收益、改造成本、部署和长期维护成本；已符合目标的形式优先保留。核实调用者、现有能力、运行条件、身份边界和治理需求，不能按是否 HTTP 或有状态机械选型，也不能把最低改动量等同长期最优。不要虚构部署事实、费用或工时。',
+  '形式 form 与改造 action 分开。Script/CLI 可以调用远程服务，MCP 也可本地运行；协议本身不证明身份隔离、审计或限流已实现。允许不同工具选择不同形式或必要的分层组合，每层说明价值，不为包装重写成熟业务。',
+  'CLI 交付声明真实可执行程序、安装来源/版本、参数和非交互调用、stdout/stderr、错误/退出码及超时。已有成熟 CLI 应优先评估复用而非重写 API。写操作按语义声明预览、确认、幂等和重试，不能用 --yes 绕过业务确认；只读命令不机械要求 dry-run 或回滚。通过 Runtime 已有命令执行能力验证，不能把 CLI 当作 stdin JSON 脚本测试。',
   'Script 推荐 stdin 一个 JSON object / stdout 一个 JSON value，日志 stderr；原工具已经返回的业务、配置、HTTP 和解析错误均保留对调用方可见的含义、消息与结果结构。不得将原有错误结果改成只有 stderr 或非零退出码；新增脚本协议错误才单独定义退出码，包装映射必须明确。声明脚本入口、解释器、依赖、cwd 和资源路径。',
   'MCP 声明真实工具名称、输入 Schema、输出/错误契约、连接启动和配置。当前验证服务支持 Streamable HTTP /mcp 与 PORT，这是接入约定，不是业务依赖。',
   'inputSchema/outputSchema 必须覆盖实际调用边界及所有合法分支：若成功返回对象而原错误返回字符串，用 anyOf 等准确表达，不能只在 description 写错误。源码透传的未知数据不得擅自限制为 array/object；脚本分发信封与业务参数应在 invocation 中明确区分，不能误把额外收紧的类型当成原业务契约。',
@@ -53,11 +54,12 @@ export const enterprisePolicy=[
   '原业务基线必须同时覆盖每个 SKILL.md 的智能体行为与工具实现，不能只提取工具算法。逐项核对触发/追问、步骤顺序、工具调用次数、多个输入协作、结果呈现、失败处理及隐私提示等原文要求；requirements 与 acceptanceChecks 中都应有可追踪条目。',
 ];
 export const standardizationExample={
-  version:'enterprise-standardization.v1',configurationInputs:[],configurationGroups:[],coverage:{readPaths:['真实读取的全部业务文件'],gaps:[]},
+  version:'enterprise-standardization.v2',configurationInputs:[],configurationGroups:[],coverage:{readPaths:['真实读取的全部业务文件'],gaps:[]},
   requirements:[{id:'check-1',kind:'BUSINESS',statement:'一项原业务要求；另用 RUNTIME 条目列具体运行前提',toolIds:['tool-1'],memberIds:[],evidence:[{path:'真实源文件',snippet:'原文'}]}],
   tools:[{toolId:'tool-1',form:'SCRIPT',action:'ADAPT',alternatives:[
     {form:'SCRIPT',feasible:true,reason:'结合实际使用方式',changeCost:'需要的具体修改与风险',deploymentCost:'依赖安装与分发条件',maintenanceCost:'升级与维护工作'},
-    {form:'MCP',feasible:true,reason:'是否需要共享服务',changeCost:'需要的具体修改与风险',deploymentCost:'服务部署与已有设施',maintenanceCost:'服务维护工作'}],
+    {form:'MCP',feasible:true,reason:'是否需要协议发现、共享和治理',changeCost:'需要的具体修改与风险',deploymentCost:'真实传输和部署条件',maintenanceCost:'服务维护工作'},
+    {form:'CLI',feasible:true,reason:'已有命令或人机共用稳定入口的收益',changeCost:'复用或新增命令边界的修改',deploymentCost:'安装、版本、平台和非交互条件',maintenanceCost:'分发、兼容和升级工作'}],
     recommendation:'比较两者后给出依据',assumptions:[],contract:{inputSchema:{type:'object',properties:{}},outputSchema:{},errors:'原业务错误与包装映射',state:'实际状态与隔离语义',configuration:'明确依赖配置来源，不填值',invocation:'实际标准调用约定',sampleInput:null,sampleReason:'没有无副作用样例时的原因'}}],
 };
 
@@ -80,7 +82,10 @@ export function standardizationIssues(analysis:StandardAnalysis, files:Record<st
   if(plan.acceptanceChecks.length!==reqIds.length||plan.acceptanceChecks.some(c=>!reqIds.includes(c.id)))issues.push('验收要求必须逐项对应原业务与运行要求');
   if(standard.tools.length!==toolIds.length||standard.tools.some(t=>!toolIds.includes(t.toolId)))issues.push('工具选型未完整对应诊断工具');
   for(const item of standard.tools){
-    if(new Set(item.alternatives.map(a=>a.form)).size!==2)issues.push(`${item.toolId} 缺少 Script/MCP 成本比较`);
+    const expected=standard.version==='enterprise-standardization.v2'?['SCRIPT','MCP','CLI']:['SCRIPT','MCP'];
+    if(item.alternatives.length!==expected.length||new Set(item.alternatives.map(a=>a.form)).size!==expected.length
+      ||expected.some(form=>!item.alternatives.some(a=>a.form===form)))issues.push(`${item.toolId} 缺少 ${expected.join('/')} 选型比较`);
+    if(standard.version==='enterprise-standardization.v1'&&item.form==='CLI')issues.push(`${item.toolId} CLI 选型需要三种形式比较的 v2 方案`);
     if(!item.alternatives.some(a=>a.form===item.form&&a.feasible))issues.push(`${item.toolId} 推荐了不可行形式`);
     if(diagnosis.tools.find(t=>t.id===item.toolId)?.targetForm!==item.form)issues.push(`${item.toolId} 诊断与选型形式不一致`);
     if(!standard.requirements.some(r=>r.kind==='BUSINESS'&&r.toolIds.includes(item.toolId)))issues.push(`${item.toolId} 缺少原业务基线`);
@@ -95,17 +100,25 @@ export function standardizationIssues(analysis:StandardAnalysis, files:Record<st
   if(plan.changes.some(c=>c.toolNames.some(n=>!diagnosis.tools.some(t=>t.name===n))))issues.push('改造项引用了未知工具');
   return issues;
 }
-export function standardDeliveryIssues(analysis:StandardAnalysis, delivery:StandardDelivery, files:Record<string,string>):string[]{
+export function deliveryToolIssues(analysis:StandardAnalysis, delivery:StandardDelivery, files:Record<string,string>):string[]{
   const standard=analysis.standardization;if(!standard)return [];
   const issues:string[]=[],tools=delivery.tools??[];
-  if(tools.length!==standard.tools.length||new Set(tools.map(t=>t.toolId)).size!==tools.length)issues.push('交付工具清单未完整对应已确认方案');
+  const missing=standard.tools.filter(t=>!tools.some(d=>d.toolId===t.toolId));
+  if(missing.length)issues.push('交付工具清单缺少已确认方案的 toolId：'+missing.map(t=>t.toolId).join('、'));
+  if(new Set(tools.map(t=>t.toolId)).size!==tools.length)issues.push('交付工具清单包含重复 toolId');
   for(const tool of tools){
     const selection=standard.tools.find(t=>t.toolId===tool.toolId);
-    if(!selection||selection.form!==tool.form)issues.push(`${tool.toolId} 交付形式与方案不同`);
+    if(!selection)issues.push(`未知交付 toolId：${tool.toolId}；必须使用已确认方案中的 toolId，而非工具名称`);
+    else if(selection.form!==tool.form)issues.push(`${tool.toolId} 交付形式应为 ${selection.form}，实际为 ${tool.form}`);
     if(tool.files.some(p=>!(p in files)))issues.push(`${tool.toolId} 交付文件不存在`);
     if(tool.form==='SCRIPT'&&(!(tool.entrypoint in files)||!tool.files.includes(tool.entrypoint)))issues.push(`${tool.toolId} 脚本入口不存在或未声明`);
     if(tool.form==='MCP'&&!delivery.services.some(s=>s.toolNames.includes(tool.entrypoint)))issues.push(`${tool.toolId} MCP 工具没有对应服务`);
   }
+  return issues;
+}
+export function standardDeliveryIssues(analysis:StandardAnalysis, delivery:StandardDelivery, files:Record<string,string>):string[]{
+  const standard=analysis.standardization;if(!standard)return [];
+  const issues=deliveryToolIssues(analysis,delivery,files);
   const review=delivery.conformance;
   if(!review)issues.push('缺少独立候选审查');
   else {

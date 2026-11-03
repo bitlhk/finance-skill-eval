@@ -6,5 +6,7 @@ export type CriterionJudgeInput={
   requirements?:ReadonlyArray<{id:string}>;tools?:unknown;
 };
 export type CriterionVerdict={passed:boolean;reason:string;
-  requirementResults?:Array<{id:string;passed:boolean;reason:string}>};
+  assessmentVersion?:string;answerProvenance?:unknown;
+  unverified?:boolean;investigation?:unknown[];criteria?:Array<{id:string;passed:boolean|null;reason:string;evidenceRefs:string[];scope?:'answer'|'execution'}>;
+  requirementResults?:Array<{id:string;passed:boolean|null;reason:string}>};
 export type CriterionJudge=(input:CriterionJudgeInput,options:RoleCallOptions)=>Promise<CriterionVerdict>;

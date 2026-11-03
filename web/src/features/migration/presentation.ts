@@ -7,6 +7,11 @@ export const stages = [
   '验证实际效果',
   '下载结果',
 ];
+/** Both original-project baseline and candidate execution honor the selected Runtime limit. */
+export function fitRuntimeTimeout<T extends {timeoutMs:number}>(configuration:T,maxTimeoutMs?:number):T {
+  return {...configuration,timeoutMs:Math.min(configuration.timeoutMs,maxTimeoutMs??configuration.timeoutMs)};
+}
+
 /** Compare the complete wire values, independent of object key insertion order. */
 export function sameConfiguration(left: unknown, right: unknown): boolean {
   const wire=(value:unknown)=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)

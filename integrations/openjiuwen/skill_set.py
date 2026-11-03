@@ -9,8 +9,15 @@ def hydrate_skill_set(request, manager):
     if any(key in request for key in ('bundle', 'skill', 'variant')):
         raise ValueError('The instance accepts skills[] and optional assets; legacy fields are not allowed')
     skills = request.get('skills')
-    if not isinstance(skills, list) or not skills:
-        raise ValueError('The instance requires at least one Skill')
+    if not isinstance(skills, list):
+        raise ValueError('The instance requires a Skill array')
+    if not skills:
+        if request.get('assets') or request.get('entryInstructionsFile') or request.get('contentDigest') != files_digest({}):
+            raise ValueError('Empty baseline cannot inject assets, entry instructions or a nonempty digest')
+        request['bundle'] = {'digest': request['contentDigest'], 'members': []}
+        request['skill'] = None
+        request['variant'] = {'mode': 'without_target_skill', 'skillId': 'bundle'}
+        return
     files, members, ids, names, paths = {}, [], set(), set(), set()
 
     def decode(value):

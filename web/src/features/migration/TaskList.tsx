@@ -8,7 +8,14 @@ export function TaskEntry({ state }: { state: MigrationWorkbench; }) {
       <section className="migration-stage migration-entry">
         <div className="migration-stage-heading"><div><h3>上传需要迁移的工程</h3>
         <p>将 Skill 说明、源码、依赖声明和资源一起打包为一个 ZIP，保留原有目录结构。</p></div></div>
-        <div className="diagnostic-finding"><h4>准备工程包</h4><p>压缩包名称不限，支持原有工程目录。工程中需包含至少一个 SKILL.md，系统会自动识别。</p><p>诊断会分析说明、源码与依赖，不会执行原始工具或修改原文件。</p></div>
+        <label>上传类型<select aria-label="上传类型" value={state.inputKind} disabled={busy} onChange={event => state.setInputKind(event.target.value as 'skill_package'|'agent_project')}>
+          <option value="skill_package">Skill 包</option><option value="agent_project">完整 Agent 工程</option>
+        </select></label>
+        <div className="diagnostic-finding"><h4>准备工程包</h4><p>{state.inputKind === 'agent_project'
+          ? '保留 Agent 代码、Skill、工具和原目录结构。无需提前整理 SKILL.md，Agent 会阅读加载代码识别实际使用的资产，并准备原工程运行。'
+          : '包含至少一个 SKILL.md 及配套脚本、工具；支持深层目录。'}</p><p>原始工程会保留，必要适配在单独版本中完成。</p></div>
+        {state.inputKind === 'agent_project' && <label>工程说明（选填）<textarea value={state.projectNotes} maxLength={8000} disabled={busy}
+          onChange={event => state.setProjectNotes(event.target.value)} placeholder="如果知道，可以填写启动方式、Skill 所在位置或需要的运行环境；不清楚也可以直接上传。"/></label>}
         <div className="bundle-upload" aria-busy={Boolean(uploadingFile)}>
           <button className="button secondary" disabled={busy} onClick={() => zipInput.current?.click()}>
             {uploadingFile ? '正在上传…' : '上传工程 ZIP'}

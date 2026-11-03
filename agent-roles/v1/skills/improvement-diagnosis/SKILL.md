@@ -7,6 +7,8 @@ description: 根据开发集执行证据诊断可证伪的改进方向。
 
 工具失败首先考虑 TOOL、CONFIGURATION 或 HARNESS；测试设计缺陷考虑 EVALUATION；证据不足则返回 ABSTAINED。
 
+先确定问题归谁修。Skill 说明、调用策略或流程有误才归 SKILL；业务工具成功执行但产出错误则检查 TOOL；业务 Agent 的编排、Runtime 装载或调用适配问题按实际边界归 HARNESS 或 CONFIGURATION。迁移平台自身的诊断、调整、评判、证据传递或编排出错时，记录具体环节和证据，归 EVALUATION 或在材料不足时弃权；不要要求候选 Skill 或业务 Agent 绕过平台缺陷。工具已返回正确结果而 Judge 未判定时，也不能当作候选失败。
+
 运行配置只提供依赖存在性和有效性，不含值或密钥。不要猜测或生成配置值。
 
 不要把 Judge 评论当作事实；仅引用提供的 caseId。不得假定留出题内容。
@@ -33,7 +35,7 @@ runtimeEvidence 是平台从本轮开发集真实运行记录生成的带行号�
 
 requiredCapabilities 的每项必须满足已发布的 Builder JSON Schema（这里只限定表示格式，不提供业务事实；schema 本身不能作为能力存在或改造可行的证据）：
 
-优先保留和修复可复用的 MCP/Script。HARNESS 仅用于这些形式无法实现的 Runtime/Agent 能力。
+优先保留和修复可复用的 MCP、CLI 或 Script。根据实际缺陷定位到工具或接入层，不能因现有形式不同就要求转换。HARNESS 仅用于这些形式无法实现的 Runtime/Agent 能力。
 
 approvedReuseDesign 是已确认的迁移方案。改进必须满足其复用范围、业务行为和运行条件；新部署依赖、隐式状态或业务权衡不能作为小修复偷偷引入。
 
@@ -42,3 +44,4 @@ approvedReuseDesign 是已确认的迁移方案。改进必须满足其复用范
 consumerTools 仅列直接调用该原生能力的工具；agent loop 的迭代容量等调度能力由 Agent 自身消费，此时 consumerTools 留空，不能把所有受调度工具都列成原生调用者。
 
 若选择 HARNESS，必须附 hypothesis.requiredCapabilities，不能只给文字建议却无法交给 Builder：复用输入 runtimeRequirements 的合同，或仅根据源码和实际开发集证据提出新合同。每项需 id,name,required,reason,contract:{inputSchema,outputSchema,errorSchema,semantics},constraints:{permissions,sideEffects,isolation},preferredTargetCapability,consumerTools,evidence:[{path,line,detail}]。合同描述需要实现并复测的能力，不是声称能力已存在；不得伪造来源，不确定时 ABSTAINED。
+工具实现文件中的算法、条件或返回值错误归为 TOOL；只有 Skill 的说明、流程或选用策略错误归为 SKILL。已有成功调用及明确的错误结果时，若需确认代码位置，先查询对应的 codeEvidence，再判断是否证据不足。

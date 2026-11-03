@@ -34,7 +34,7 @@ export function migrationProgress(task: BundleTask | null, checkingRuntime = fal
   if (!task.verifiedRunId && run && configured && task.candidatePlanCurrent!==false) stages[5] = { ...stages[5]!,
     status: run.status === 'RUNNING' ? 'running' : run.status === 'PASSED' ? 'pending' : 'attention',
     label: { RUNNING: '验收中', PASSED: '待完整验收', FAILED: '未通过', INCOMPLETE: '未完成', CANCELLED: '已取消' }[run.status] };
-  for (const [index, kinds] of [[1, ['ANALYZE']], [2, ['GENERATE', 'REPAIR']], [5, ['ACCEPT','OPTIMIZE']]] as const) {
+  for (const [index, kinds] of [[0, ['PREPARE','BASELINE']], [1, ['ANALYZE']], [2, ['GENERATE', 'REPAIR']], [5, ['ACCEPT','OPTIMIZE']]] as const) {
     const attempt = [...task.attempts].reverse().find(item => (kinds as readonly string[]).includes(item.kind));
     if (!attempt || attempt.status === 'COMPLETED' || attempt.baseCandidateId !== task.currentCandidateId) continue;
     if (index === 5 && attempt.status!=='WAITING' && (task.verifiedRunId || run && run.id !== attempt.runId)) continue;

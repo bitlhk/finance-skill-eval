@@ -62,6 +62,43 @@ class RolePermissionTests(unittest.TestCase):
 
 
 class ReviewCompositionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_preparation_reuses_engineering_executor_and_discards_model_authored_receipts(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integrations' / 'openjiuwen'))
+        self.addCleanup(sys.path.pop, 0)
+        encoded = {'main.py': base64.b64encode(b'print(1)').decode()}
+        expected = {'status': 'PRODUCED', 'preparation': {'summary': 'Read project', 'skills': [],
+            'entrypoints': ['python main.py'], 'missing': [], 'baselinePlan': 'Needs business cases'},
+            'executions': [{'status': 'COMPLETED', 'output': 'invented'}]}
+
+        def writer(**options):
+            names = [tool.card.name for tool in options['tools']]
+            self.assertIn('write_file', names)
+            self.assertIn('run_project_command', names)
+            self.assertNotIn('compile_source', names)
+            self.assertNotIn('run_scanner', names)
+            async def stream(_):
+                yield {'type': 'answer', 'payload': {'output': json.dumps(expected), 'result_type': 'answer'}}
+            return SimpleNamespace(stream=stream)
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            config.write_text('{}', encoding='utf-8')
+            protocol = io.StringIO()
+            body = {'runId': 'preparation-fixture', 'assetDigest': 'base', 'files': encoded,
+                    'model': {'modelId': 'model'}, 'bundle': {'mode': 'PREPARE', 'source': {'files': encoded}}}
+            with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'TEST_SECRET', 'baseUrl': 'http://unused'}), \
+                    patch('model_config.request_settings', return_value={'model_name': 'model'}), \
+                    patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
+                    patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
+                    patch('openjiuwen.harness.factory.create_deep_agent', side_effect=writer):
+                await run_bundle(body, protocol)
+            result = next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
+            self.assertEqual(result['status'], 'PRODUCED', result)
+            self.assertEqual(result['files'], encoded)
+            self.assertEqual(result['payload']['executions'], [])
+            self.assertEqual(result['composition']['role'], 'runtime-preparation')
+
     async def test_independent_review_loads_its_guidance_and_never_offers_write_tools(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integrations' / 'openjiuwen'))
         self.addCleanup(sys.path.pop, 0)

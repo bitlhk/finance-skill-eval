@@ -1,5 +1,5 @@
 import { z } from "zod";
-import {judgeCaseFiles,caseFileJudgeGuidance} from './judge-case-files.js';
+import {answerEvidence,answerEvidenceGuidance} from './evaluation/domain/answer-evidence.js';
 import type { ModelAdapter } from "./adapters.js";
 import {
   fingerprint,
@@ -12,12 +12,18 @@ import {
   type RuntimeExecutionEvidence,
 } from "./contracts.js";
 import { parseFirstJsonObject } from "./json-response.js";
-import {judgeRuntimeEvidence,runtimeSupportEvidenceGuidance} from './judge-runtime-evidence.js';
+import {createCriterionJudge} from './agents/criterion-judge.js';
+import type {CriterionJudge} from './evaluation/application/criterion-judge-port.js';
+
 
 export interface PairwiseJudge {
   readonly judgeId: string;
+  readonly supportsPresentationOrder?:boolean;
   readonly assessesSidesIndependently?: boolean;
+  readonly executionCriteriaJudge?:CriterionJudge;
+  readonly executionCriteriaTimeoutMs?:number;
   compare(input: {
+    presentationOrder?:'normal'|'swapped';
     signal?: AbortSignal;
     evalCase: EvalCase;
     left: RuntimeExecutionEvidence;
@@ -186,19 +192,20 @@ const candidateJudgeResponseSchema = z.strictObject({
 export class ModelCandidateJudge implements PairwiseJudge {
   readonly judgeId:string;
   constructor(private readonly adapter:ModelAdapter,private readonly model:ModelRef){
-    this.judgeId=`model-candidate:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
+    this.judgeId=`model-candidate:answer-v1:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
   }
   async compare(input:{signal?:AbortSignal;evalCase:EvalCase;left:RuntimeExecutionEvidence;right:RuntimeExecutionEvidence;profile:JudgeProfile}):Promise<JudgeResult>{
     if(input.right.status!=="completed")return judgeResultSchema.parse({winner:"tie",confidence:"high",summary:"迁移候选未完成 Runtime 执行，本题不进行 Skill 质量评分。",
       dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,label:dimension.label,leftScore:0,rightScore:0,reason:"Runtime 执行未完成。"})),reviewerLabel:"Runtime 完整性判断"});
-    const businessEvidence={...judgeRuntimeEvidence(input.right,{workspaceFiles:input.evalCase.workspaceFiles}),caseFiles:judgeCaseFiles(input.evalCase,input.right)};
-    const messages=[{role:"system" as const,content:[input.profile.domainInstructions,runtimeSupportEvidenceGuidance,caseFileJudgeGuidance,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","Runtime 工具证据是实际执行事实；没有证据时不得把题面中的就绪描述当成已完成调用。","只返回符合约定的 JSON。"].join("\n")},
-      {role:"user" as const,content:JSON.stringify({task:input.evalCase.prompt,evaluationGoal:input.evalCase.evaluationGoal,rubric:input.evalCase.rubric,candidateOutput:input.right.output,runtimeEvidence:businessEvidence,
+    const businessEvidence=answerEvidence(input.evalCase,input.right).materials.businessFacts;
+    const messages=[{role:"system" as const,content:[input.profile.domainInstructions,answerEvidenceGuidance,"这是迁移候选的绝对质量评估，不与无 Skill 或其他候选比较，也不选择胜方。","按专业判断、业务完整性、表达质量和可执行性逐项给 0–4 分。","只返回符合约定的 JSON。"].join("\n")},
+      {role:"user" as const,content:JSON.stringify({task:input.evalCase.prompt,evaluationGoal:input.evalCase.evaluationGoal,rubric:input.evalCase.rubric.filter(c=>c.scope!=='execution'),candidateOutput:input.right.output,businessFacts:businessEvidence,
         responseContract:{confidence:"low | medium | high",summary:"string",scoreRule:"score must be a JSON integer from 0 to 4",dimensions:input.profile.dimensions.map(dimension=>({id:dimension.id,score:0,reason:"string"}))}})}];
     const request=(attempt:number)=>this.adapter.complete({requestId:`candidate-judge-${input.evalCase.caseId}-${attempt}`,model:this.model,signal:input.signal,responseFormat:"json",
-      messages:attempt===1?messages:[...messages,{role:"system" as const,content:"上一轮返回未满足 JSON 契约。直接返回 confidence、summary、dimensions 三个顶层字段；每个 dimensions 项必须包含不重复的 id、score、reason。"}]});
+      messages:attempt===1?messages:[...messages,{role:"user" as const,content:"上一轮返回未满足 JSON 契约。直接返回 confidence、summary、dimensions 三个顶层字段；每个 dimensions 项必须包含不重复的 id、score、reason。"}]});
     let judged:z.infer<typeof candidateJudgeResponseSchema>;
-    try{judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject((await request(1)).content));}
+    const first=await request(1);
+    try{judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject(first.content));}
     catch(error){if(input.signal?.aborted)throw error;judged=candidateJudgeResponseSchema.parse(parseFirstJsonObject((await request(2)).content));}
     return judgeResultSchema.parse({winner:"tie",confidence:judged.confidence,summary:judged.summary,
       dimensions:dimensionsInProfileOrder(input.profile,judged.dimensions).map(({profileDimension,judgment})=>({id:profileDimension.id,label:profileDimension.label,leftScore:judgment.score,rightScore:judgment.score,reason:judgment.reason})),
@@ -215,16 +222,21 @@ export function remapAnonymousSideLabels(text: string, swapped: boolean): string
 }
 
 export class ModelPairwiseJudge implements PairwiseJudge {
+  readonly supportsPresentationOrder=true;
   readonly judgeId: string;
+  readonly executionCriteriaJudge:CriterionJudge;
 
   constructor(
     private readonly adapter: ModelAdapter,
     private readonly model: ModelRef,
+    readonly executionCriteriaTimeoutMs=240_000,
   ) {
-    this.judgeId = `model-pairwise:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
+    this.judgeId = `model-pairwise:answer-and-execution-v2:${adapter.adapterId}:${model.providerId}:${model.modelId}`;
+    this.executionCriteriaJudge=createCriterionJudge({adapter,model});
   }
 
   async compare(input: {
+    presentationOrder?:'normal'|'swapped';
     signal?: AbortSignal;
     evalCase: EvalCase;
     left: RuntimeExecutionEvidence;
@@ -251,21 +263,21 @@ export class ModelPairwiseJudge implements PairwiseJudge {
         reviewerLabel: "Runtime 完整性判断",
       };
     }
-    const swapped = Number.parseInt(fingerprint(input.evalCase.caseId).slice(0, 2), 16) % 2 === 1;
+    const swapped = input.presentationOrder?input.presentationOrder==='swapped':Number.parseInt(fingerprint(input.evalCase.caseId).slice(0, 2), 16) % 2 === 1;
     const a = swapped ? input.right : input.left;
     const b = swapped ? input.left : input.right;
-    const businessEvidence = (evidence:RuntimeExecutionEvidence)=>({...judgeRuntimeEvidence(evidence,{workspaceFiles:input.evalCase.workspaceFiles}),caseFiles:judgeCaseFiles(input.evalCase,evidence)});
+    const businessEvidence = (evidence:RuntimeExecutionEvidence)=>answerEvidence(input.evalCase,evidence).materials.businessFacts;
     const messages = [
         {
           role: "system",
           content: [
             input.profile.domainInstructions,
-            runtimeSupportEvidenceGuidance,
-            caseFileJudgeGuidance,
+            answerEvidenceGuidance,
+
             "匿名比较答案 A 与 B，不推测 Skill 或模型身份。",
             "优先评价专业判断、业务完整性、表达质量和可执行性。",
             "当两份答案都正确时，比较谁更能解释取舍、验证条件和下一步。",
-            "Runtime 工具证据是实际执行事实；题面中的系统就绪描述如果没有 Runtime 证据支持，不得覆盖真实工具结果，也不得奖励绕过必需工具的答案。",
+
             "只返回符合约定的 JSON。",
           ].join("\n"),
         },
@@ -274,11 +286,11 @@ export class ModelPairwiseJudge implements PairwiseJudge {
           content: JSON.stringify({
             task: input.evalCase.prompt,
             evaluationGoal: input.evalCase.evaluationGoal,
-            rubric: input.evalCase.rubric,
+            rubric: input.evalCase.rubric.filter(c=>c.scope!=='execution'),
             outputA: a.output,
             outputB: b.output,
-            runtimeEvidenceA: businessEvidence(a),
-            runtimeEvidenceB: businessEvidence(b),
+            businessFactsA: businessEvidence(a),
+            businessFactsB: businessEvidence(b),
             responseContract: {
               winner: "A | B | TIE",
               confidence: "low | medium | high",
@@ -302,15 +314,15 @@ export class ModelPairwiseJudge implements PairwiseJudge {
       messages: attempt === 1 ? [...messages] : [
         ...messages,
         {
-          role: "system" as const,
+          role: "user" as const,
           content: "上一轮返回未满足 JSON 契约。请直接返回 winner、confidence、summary、dimensions 四个顶层字段，不要复述 responseContract；每个 dimensions 项必须包含不重复的 id、aScore、bScore、reason。",
         },
       ],
     });
     let judged: z.infer<typeof anonymousJudgeResponseSchema>;
+    const firstResponse = await request(1);
     try {
-      const response = await request(1);
-      judged = anonymousJudgeResponseSchema.parse(parseFirstJsonObject(response.content));
+      judged = anonymousJudgeResponseSchema.parse(parseFirstJsonObject(firstResponse.content));
     } catch (error) {
       if (input.signal?.aborted) throw error;
       const response = await request(2);

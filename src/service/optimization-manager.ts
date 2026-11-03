@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import {comparisonExecutionIncomplete} from '../evaluation/application/comparison-executions.js';
 import path from "node:path";
 import { zipSync, strToU8 } from "fflate";
 import { parse, stringify } from "yaml";
@@ -243,6 +244,17 @@ export class OptimizationManager {
       runtime:await this.options.runtimeIdentity?.(source.configuration)});
   }
   private evaluationView(job:EvaluationJob,candidate:CandidateRef,ids:string[],protocolDigest:string):OptimizationEvaluation{
+    const repetitions=job.configuration.executionRepetitions??1;
+    if(repetitions>1){
+      const attempts=Array.from({length:repetitions},(_,index)=>{
+        const attempt=job.executionAttempts?.find(a=>a.index===index);
+        return attempt?.status==='COMPLETED'&&attempt.report&&!comparisonExecutionIncomplete(attempt.report)?this.evaluationView({...job,configuration:{...job.configuration,executionRepetitions:1},report:attempt.report},candidate,ids,protocolDigest):undefined;
+      });
+      return {id:job.jobId,candidate,protocolDigest,cases:ids.map(id=>{
+        const results=attempts.map(a=>a?.cases.find(c=>c.id===id));
+        return {id,passed:results.some(c=>c?.passed==null)?null:results.every(c=>c?.passed===true),observation:results.map(c=>c?.observation??null)};
+      })};
+    }
     const variant=job.report?.variants.right;
     const selected=job.report?.cases.filter(c=>ids.includes(c.caseId))??[];
     const unique=new Set(selected.map(c=>c.caseId)).size===selected.length;
@@ -250,8 +262,14 @@ export class OptimizationManager {
       const c=job.report?.cases.find(c=>c.caseId===id),verdict=c?.judge?.goalAssessment?.verdict??c?.judge?.serviceComparison?.verdict;
       const artifactVerified=variant?.mode==='skill_version'&&(variant.artifactSha256===candidate.digest||c?.right.metadata?.skillArtifactSha256===candidate.digest);
       const complete=unique&&artifactVerified&&c?.right.status==='completed'&&c.right.runtimeIdentityVerified&&c.right.streamCompleted&&c.judge&&!c.judgeError;
-      const passed=!complete?null:verdict?verdict==='INDETERMINATE'?null:verdict==='PASS':c.judge!.dimensions.length?
+      let passed=!complete?null:verdict?verdict==='INDETERMINATE'?null:verdict==='PASS':c.judge!.dimensions.length?
         c.judge!.dimensions.every(d=>Number.isFinite(d.rightScore)&&d.rightScore>=3):null;
+      const required=job.evaluationSpec?.cases.find(item=>item.caseId===id)?.evaluationPlan?.checks.filter(check=>check.required)??[];
+      for(const check of required){
+        const result=c?.methodResults?.right.find(method=>method.methodId==='plan:'+check.id);
+        if(!result||!['PASS','FAIL'].includes(result.status)||result.checks.some(item=>item.status==='UNVERIFIED')){passed=null;break;}
+        if(result.status==='FAIL')passed=false;
+      }
       return {id,passed,observation:c};
     })};
   }
@@ -272,12 +290,14 @@ export class OptimizationManager {
         const result=await agents.diagnose({modelId:item.modelId,sourceJobId:job.jobId,baseSolutionRevisionId:evaluation.candidate.digest,
           tools:[],runtimeConfiguration:[],technicalEvidence:[],
           cases:job.report!.cases.filter(c=>ids.includes(c.caseId)).map(c=>({caseId:c.caseId,task:c.prompt,runtimeStatus:c.right.status,
-            runtimeIdentityVerified:c.right.runtimeIdentityVerified,streamCompleted:c.right.streamCompleted,toolTraceStatus:'PARTIAL_OR_UNAVAILABLE',
+            runtimeIdentityVerified:c.right.runtimeIdentityVerified,streamCompleted:c.right.streamCompleted,toolTraceStatus:toolTraceStatus(c.right),
             toolCalls:c.right.toolCalls.map(t=>({name:t.name,status:t.status})),review:c.judge?.summary??null,verdict:evaluation.cases.find(r=>r.id===c.caseId)?.passed?'PASS':'FAIL'})),
-          codeEvidence:Object.entries(files).slice(0,12).map(([path,content])=>({origin:'candidate',path,content:content.slice(0,6000)})),
+          codeEvidence:Object.entries(files).map(([path,content])=>({origin:'candidate',path,content})),
+          evaluationEvidence:{current:job.report!.cases.filter(c=>ids.includes(c.caseId)),baseline:source.report?.cases.filter(c=>ids.includes(c.caseId))},
           approvedReuseDesign:{goal,constraints:item.constraints},
           previousExperiments:history.map(r=>({layer:r.diagnosis?.status==='PROPOSED'?r.diagnosis.hypothesis.layer:'UNKNOWN',outcome:JSON.stringify({reason:r.reason??r.stage,review:r.review})}))},options);
         if(result.judgement.status==='PROPOSED'&&result.judgement.hypothesis.evidenceCaseIds.some(id=>!ids.includes(id)))throw new Error('诊断引用了开发集之外的案例');
+        if(state.rounds.at(-1))state.rounds.at(-1)!.investigation=result.investigation;
         return result.judgement;
       },
       adjust:async(candidate,diagnosis,options)=>{
@@ -379,3 +399,4 @@ export class OptimizationManager {
     return item;
   }
 }
+import {toolTraceStatus} from '../evaluation/domain/runtime-process.js';

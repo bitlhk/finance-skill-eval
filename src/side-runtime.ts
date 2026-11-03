@@ -17,6 +17,7 @@ export class SideRuntimeAdapter implements RuntimeAdapter {
     request.signal?.throwIfAborted();
     return this.sides[request.side].execute(request);
   }
+  supportsCaseState(request:RuntimeExecutionRequest){return this.sides[request.side].supportsCaseState?.(request)===true;}
   async cleanup(): Promise<void> {
     const errors: unknown[] = [];
     for (const adapter of this.started.splice(0).reverse()) {

@@ -4,6 +4,7 @@ import { operationalEvent } from '../../../service/logging.js';
 import { operationalError } from '../../../shared/operational-error.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { projectPreparationSchema, projectExecutionReceiptSchema } from '../domain/project-preparation.js';
 import {fingerprint} from '../../../contracts.js';
 import {correctModelOutput} from '../../../agents/model-output-correction.js';
 import {taskDiagnosisSchema} from '../domain/task-diagnosis.js';
@@ -40,7 +41,7 @@ export const runBundleAgent: BundleAgent = async (input) => {
   const runRole = async (request:Parameters<typeof runMigrationAgent>[1], options:Parameters<typeof runMigrationAgent>[2]) => {
     input.signal.throwIfAborted();
     const mode = (request.bundle as { mode: string }).mode;
-    const roles: Record<string, AgentRoleId> = { ANALYZE: 'diagnosis', GENERATE: 'migration', REPAIR: 'migration', REVIEW: 'standardization-review' };
+    const roles: Record<string, AgentRoleId> = { PREPARE: 'runtime-preparation', ANALYZE: 'diagnosis', GENERATE: 'migration', REPAIR: 'migration', REVIEW: 'standardization-review' };
     const adjustmentCapabilities=(request.bundle as {adjustmentCapabilities?:Array<'document'|'tool'|'runtime'>}).adjustmentCapabilities;
     if(adjustmentCapabilities&&mode!=='REPAIR')throw new Error('Adjustment requires REPAIR mode');
     const role = adjustmentCapabilities?'adjustment':roles[mode];
@@ -52,7 +53,7 @@ export const runBundleAgent: BundleAgent = async (input) => {
       { modelId: options.modelId, providerId: options.providerId ?? 'service-execution' },
       { kind: 'agentIterations', maxIterations: options.maxIterations, timeoutMs: options.modelTimeoutMs ?? modelTimeoutMs('MIGRATION') }));
     input.signal.throwIfAborted();
-    const result = await runMigrationAgent(role as 'diagnosis'|'migration'|'adjustment'|'standardization-review', { ...request, agentRoleVersion: version }, options);
+    const result = await runMigrationAgent(role as 'runtime-preparation'|'diagnosis'|'migration'|'adjustment'|'standardization-review', { ...request, agentRoleVersion: version }, options);
     if (result.run?.composition) await input.onComposition?.(result.run.composition);
     return result;
   };
@@ -64,6 +65,7 @@ export const runBundleAgent: BundleAgent = async (input) => {
       files: input.base.files,
       bundle: {
         mode: input.mode,
+        project: input.project,
         ...(input.adjustmentCapabilities?{adjustmentCapabilities:input.adjustmentCapabilities}:{}),
         validateResult:true,
         source: input.source,
@@ -73,8 +75,8 @@ export const runBundleAgent: BundleAgent = async (input) => {
         analysis: input.analysis,
         clarification: input.clarification,
         feedback: input.feedback,
-        standardizationGuide:{policy:enterprisePolicy,planning:reusePlanningPolicy,verification:reuseVerificationPolicy,skill:skillInstructionBoundaryPolicy,
-          example:standardizationExample},
+        ...(input.mode === 'PREPARE' ? {} : {standardizationGuide:{policy:enterprisePolicy,planning:reusePlanningPolicy,verification:reuseVerificationPolicy,skill:skillInstructionBoundaryPolicy,
+          example:standardizationExample}}),
       },
     },
     {
@@ -88,6 +90,9 @@ export const runBundleAgent: BundleAgent = async (input) => {
   if (result.status === 'ABSTAINED')
     return { status: 'ABSTAINED', reason: String(payload.reason ?? '需要补充迁移信息') };
   if (result.status !== 'PRODUCED') bundleError(result.run?.error ?? '整组迁移 Agent 未完成');
+  if (input.mode === 'PREPARE') return {status: 'PRODUCED',
+    preparation: projectPreparationSchema.parse(payload.preparation),
+    executions: z.array(projectExecutionReceiptSchema).parse(payload.executions ?? []), files: result.payload.files};
   if(input.mode==='ANALYZE' && (!payload.analysis || typeof payload.analysis!=='object' || !('plan' in payload.analysis)))
     bundleError('Agent 未返回完整迁移方案，请重新诊断；不会根据摘要补造方案。');
   if(input.mode==='ANALYZE' && !('diagnosis' in (payload.analysis as object)))
@@ -97,10 +102,12 @@ export const runBundleAgent: BundleAgent = async (input) => {
     ['summary','changes','missing','plan','diagnosis','standardization'],input)};
   const delivery=await checkedAgentOutput(payload.delivery,deliverySchema,['summary','services',...(input.analysis?.standardization?['tools']:[])],input);
   if(input.analysis?.standardization){
-    if(!delivery.tools)bundleError('缺少 Script/MCP 工具交付清单');
+    if(!delivery.tools)bundleError('缺少 Script/MCP/CLI 工具交付清单');
+    const hasDevelopmentEvidence = input.feedback != null && typeof input.feedback === 'object' && 'cases' in input.feedback;
     const review=await runRole({assetDigest:input.base.digest,runId:randomUUID(),correlation:input.correlation,
       files:result.payload.files,bundle:{mode:'REVIEW',validateResult:true,source:input.source,base:{members:input.base.members},analysis:input.analysis,delivery,
-        standardizationGuide:{policy:enterprisePolicy,planning:reusePlanningPolicy,verification:reuseVerificationPolicy,skill:skillInstructionBoundaryPolicy}}},
+        standardizationGuide:{reviewStage:hasDevelopmentEvidence?'DEVELOPMENT_REPAIR':'MIGRATION_BASELINE',
+          policy:enterprisePolicy,planning:reusePlanningPolicy,verification:reuseVerificationPolicy,skill:skillInstructionBoundaryPolicy}}},
       {projectRoot:migrationProjectRoot(),modelId:process.env.FINANCE_EVAL_AGENT_MODEL_ID?.trim()||'enterprise-model',maxIterations:agentIterations('standardization-review'),signal:input.signal});
     if(review.status!=='PRODUCED')bundleError('候选独立审查未完成，不能声明标准化通过');
     delivery.conformance=conformanceSchema.parse((review.payload.judgement as Record<string,unknown>).review);
@@ -129,8 +136,9 @@ export const judgeBundleCase: BundleJudge = async (input) => {
 };
 
 // Bind acceptance to the evaluator implementation and non-secret model configuration.
+judgeBundleCase.timeoutMs = () => modelTimeoutMs('JUDGE');
 judgeBundleCase.identity = () => canonicalSha256({
-  protocol: 'finance.migration-judge.v1', policyRevision: 'enterprise-requirement-evidence-v4',
+  protocol: 'finance.migration-judge.v1', policyRevision: 'separated-assessment-v1',
   compositionDigest:loadAgentRole('criterion-judge').definitionDigest,
   model: configuredModelRole('JUDGE').model,
   provider: process.env.FINANCE_EVAL_JUDGE_PROVIDER ?? 'openai-compatible',

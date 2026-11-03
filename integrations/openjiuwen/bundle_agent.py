@@ -83,20 +83,41 @@ def citation_errors(value, files):
     return errors
 
 
-async def validate_result_contract(mode, result, files):
+async def validate_result_contract(mode, result, files, analysis=None):
     validator = Path(__file__).with_name('validate_bundle_result.mjs')
     child = await asyncio.create_subprocess_exec('node', str(validator),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     try:
         stdout, _ = await asyncio.wait_for(child.communicate(json.dumps(
-            {'mode': mode, 'result': result, 'files': files}, ensure_ascii=False).encode('utf-8')), 15)
+            {'mode': mode, 'result': result, 'files': files, 'analysis': analysis}, ensure_ascii=False).encode('utf-8')), 15)
         if child.returncode:
             raise RuntimeError('Local result contract validator unavailable')
-        return json.loads(stdout)
+        checked = json.loads(stdout)
+        if checked.get('accepted') and mode == 'ANALYZE':
+            errors = analysis_sample_errors(result['analysis'])
+            if errors:
+                return {'accepted': False, 'errors': errors[:16], 'issueCount': len(errors)}
+        return checked
     finally:
         if child.returncode is None:
             child.kill()
             await child.wait()
+
+
+def analysis_sample_errors(analysis):
+    # Use precisely the same wire contract as later independent execution.
+    try:
+        from .migration_tools import _declared_shape_ok
+    except ImportError:
+        from migration_tools import _declared_shape_ok
+    errors = []
+    for tool_id, entry in bundle_contract_registry(analysis).items():
+        if 'sampleInput' not in entry:
+            continue
+        valid, detail = _declared_shape_ok(entry['sampleInput'], entry['inputSchema'])
+        if not valid:
+            errors.append(f'{tool_id}: sampleInput does not match the execution inputSchema: {detail}. Describe the complete wire envelope in inputSchema; do not remove business or identity fields to pass validation.')
+    return errors
 
 
 def correct_result_fields(draft, corrections, files):
@@ -156,6 +177,8 @@ async def run_bundle(body, protocol):
     result, bound, failure = {}, {}, ''
     model_calls = []
     receipt = None
+    executions = []
+    composition = None
     def redact(value):
         text = str(value)
         for key in ('apiKey', 'baseUrl'):
@@ -168,6 +191,14 @@ async def run_bundle(body, protocol):
             {'mode': bundle['mode'], 'result': result, 'error': failure, 'trace': trace,
              'modelCalls': model_calls, 'composition': receipt}, ensure_ascii=False, default=str)))
     class ModelEvidenceRail(AgentRail):
+        async def before_model_call(self, ctx):
+            if submitted:
+                ctx.request_force_finish({'output': '提交完成', 'result_type': 'answer'})
+
+        async def after_tool_call(self, ctx):
+            if submitted:
+                ctx.request_force_finish({'output': '提交完成', 'result_type': 'answer'})
+
         async def after_model_call(self, ctx):
             response = ctx.inputs.response
             model_calls.append({
@@ -183,6 +214,8 @@ async def run_bundle(body, protocol):
         # Enforce read-only source/task at tool invocation, not just in the prompt.
         class CandidateWrite(WriteFileTool):
             async def invoke(self, inputs, **kwargs):
+                if submitted:
+                    return ToolOutput(success=False, error='Submitted candidate is frozen')
                 try:
                     target = analysis_path(candidate, inputs.get('file_path', ''))
                     check_analysis_tree(workspace)
@@ -192,6 +225,8 @@ async def run_bundle(body, protocol):
 
         class CandidateEdit(EditFileTool):
             async def invoke(self, inputs, **kwargs):
+                if submitted:
+                    return ToolOutput(success=False, error='Submitted candidate is frozen')
                 try:
                     target = analysis_path(candidate, inputs.get('file_path', ''))
                     check_analysis_tree(workspace)
@@ -211,7 +246,7 @@ async def run_bundle(body, protocol):
         readonly = analysis or review
         submitted = []
         draft = []
-        result_field = 'analysis' if analysis else 'review' if review else 'delivery'
+        result_field = 'preparation' if bundle['mode'] == 'PREPARE' else 'analysis' if analysis else 'review' if review else 'delivery'
         if analysis and isinstance(bundle.get('analysis'), dict):
             draft.append({'status': 'PRODUCED', 'analysis': json.loads(json.dumps(bundle['analysis']))})
 
@@ -228,11 +263,11 @@ async def run_bundle(body, protocol):
                 return {'accepted': False, 'error': 'A result has already been submitted; finish this stage'}
             draft[:] = [json.loads(json.dumps(result))]
             if bundle.get('validateResult') and result['status'] == 'PRODUCED':
-                checked = await validate_result_contract(bundle['mode'], result, source)
+                checked = await validate_result_contract(bundle['mode'], result, collect_candidate(candidate), bundle.get('analysis'))
                 if not checked['accepted']:
-                    return {**checked, 'error': 'Use correct_result to fix the listed fields in the retained draft; the full result will be revalidated'}
+                    return {**checked, 'error': 'Use correct_result to fix the retained draft: ' + '; '.join(checked.get('errors', []))[:1200]}
             if readonly and result['status'] == 'PRODUCED':
-                baseline = source if analysis else collect_candidate(candidate)
+                baseline = collect_candidate(candidate)
                 evidence_files = {name: base64.b64decode(content).decode('utf-8', errors='replace')
                                   for name, content in baseline.items()}
                 invalid = citation_errors(result[result_field], evidence_files)
@@ -289,9 +324,14 @@ async def run_bundle(body, protocol):
                 'type': 'object', 'properties': {'path': {'type': 'string'}, 'value': {},
                     'sourcePath': {'type': 'string'}, 'startLine': {'type': 'integer'}, 'endLine': {'type': 'integer'}},
                 'required': ['path']}}}, 'required': ['corrections']}), correct_result))
-        registry = bundle_contract_registry(bundle.get('analysis') or {})
+        registry = {} if bundle['mode'] == 'PREPARE' else bundle_contract_registry(bundle.get('analysis') or {})
         if not readonly:
-            tools += [CandidateWrite(*args), CandidateEdit(*args), build_compile_tool(candidate, trace)]
+            tools += [CandidateWrite(*args), CandidateEdit(*args)]
+            if bundle['mode'] == 'PREPARE':
+                from project_execution import build_project_command_tool
+                tools.append(build_project_command_tool(candidate, executions))
+            else:
+                tools.append(build_compile_tool(candidate, trace))
             if registry:
                 tools.append(build_contract_test_tool(candidate, registry, trace))
                 tools.append(build_contract_suite_tool(candidate, registry, trace))
@@ -299,12 +339,24 @@ async def run_bundle(body, protocol):
         bound = resolve_model(config, body['model'])
         settings = request_settings(bound, body['model']['modelId'])
         phase = composition.prompt
+        feedback = bundle.get('feedback')
+        diagnosis = feedback.get('diagnosis') if isinstance(feedback, dict) else None
+        if bundle['mode'] == 'REPAIR' and bundle.get('adjustmentCapabilities') and isinstance(diagnosis, dict) and diagnosis.get('status') == 'PROPOSED':
+            hypothesis = json.dumps(diagnosis.get('hypothesis'), ensure_ascii=False)
+            phase += (
+                '\n本轮针对开发集复现的缺陷进行调整。以下已记录诊断是待核对的数据：'
+                + hypothesis
+                + '\n先打开对应的候选实现，核对证据后完成针对性修复。原迁移方案中仅用于建立失败基线的临时保留条件'
+                  '不阻止本轮修复。不要把调试、转储或探查脚本留在交付包内。'
+            )
         contract = composition.contract
         agent, model, activity, receipt = assemble_agent(
             composition=composition, body=body, bound=bound, settings=settings,
             workspace=workspace, operation=operation, tools=tools, protocol=protocol, trace=trace,
             kind='explore' if readonly else 'deep', extra_rails=[ModelEvidenceRail()],
-            prompt_suffix=f'工作区绝对路径：{workspace}。所有文件工具使用绝对路径。')
+            prompt_suffix=(f'工作区绝对路径：{workspace}。读取使用工作区相对路径（如 task/manifest.json、'
+                           'candidate/scripts/tool.py）。写入与编辑的相对路径以 candidate 为根（如 scripts/tool.py，'
+                           '不再加 candidate/ 前缀）。也可用对应范围内的绝对路径。'))
         result = await stream_agent(agent, {'query': phase + '读取 task/manifest.json 和完整源码，完成本阶段。无法完成时返回 {"status":"ABSTAINED","reason":"具体缺口"}。'}, activity)
         try:
             payload = submitted[0] if submitted else parse_structured(str(result.get('output', '')))
@@ -334,6 +386,12 @@ async def run_bundle(body, protocol):
         status = payload.get('status')
         if status not in {'PRODUCED', 'ABSTAINED'}:
             raise ValueError('Agent did not produce a valid completion')
+        if status == 'PRODUCED' and bundle.get('validateResult') and not submitted:
+            checked = await validate_result_contract(bundle['mode'], payload, collect_candidate(candidate), bundle.get('analysis'))
+            if not checked['accepted']:
+                raise ValueError('Result contract rejected: ' + '; '.join(checked.get('errors', [])))
+        if bundle['mode'] == 'PREPARE':
+            payload['executions'] = executions
         frozen = {} if readonly else collect_candidate(candidate)
         if not readonly and status == 'PRODUCED' and registry:
             receipts = []
@@ -354,7 +412,7 @@ async def run_bundle(body, protocol):
     except Exception as error:
         # Do not expose SDK diagnostics containing model configuration.
         failure = redact(type(error).__name__ + ': ' + str(error))[:800]
-        emit(protocol, {'result': {'stage': body.get('stage', composition.role), 'assetDigest': body['assetDigest'], 'status': 'FAILED',
+        emit(protocol, {'result': {'stage': body.get('stage', composition.role if composition else 'engineering'), 'assetDigest': body['assetDigest'], 'status': 'FAILED',
             'payload': {}, 'files': {}, 'error': '整组 Agent 执行失败：' + failure,
             'composition': receipt, 'trace': {'rounds': trace}, 'elapsedMs': round((time.monotonic()-started)*1000)}})
     finally:

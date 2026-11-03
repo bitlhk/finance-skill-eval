@@ -5,11 +5,12 @@ import { BuilderPanel } from './BuilderPanel';
 import { MarkdownContent } from '../../MarkdownContent';
 import {RuntimeRequirements} from './RuntimeRequirements';
 import {runtimeInputIssues} from '../../../../src/migration/tasks/domain/task-runtime-inputs';
-import {sameConfiguration} from './presentation';
+import {sameConfiguration,fitRuntimeTimeout} from './presentation';
 export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
   const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled, current } = state;
   const [showBuilder, setShowBuilder] = useState(["PENDING", "STALE"].includes(task?.builderStatus ?? ""));
   if (!task) return null;
+  const effectiveConfig=fitRuntimeTimeout(config,runtime?.inspection?.capabilities?.limits.maxTimeoutMs);
   const configurationSaved=sameConfiguration(config,task.configuration);
   const inputIssues=runtimeInputIssues(task,config,true);
   return (
@@ -32,11 +33,11 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             value={config.environmentId}
             onChange={(e) => {
               const runtime = catalog.executionRuntimes.find((r) => r.runtimeId === e.target.value);
-              setConfig((c) => ({
+              setConfig((c) => fitRuntimeTimeout({
                 ...c,
                 environmentId: e.target.value,
                 modelId: runtime?.defaultModelId ?? '',
-              }));
+              },runtime?.inspection?.capabilities?.limits.maxTimeoutMs));
             }}
           >
             <option value="">选择任务执行环境</option>
@@ -80,8 +81,8 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
           <input
             type="number"
             min={10}
-            max={900}
-            value={config.timeoutMs / 1000}
+            max={(runtime?.inspection?.capabilities?.limits.maxTimeoutMs??900000)/1000}
+            value={effectiveConfig.timeoutMs / 1000}
             onChange={(e) => setConfig((c) => ({ ...c, timeoutMs: Number(e.target.value) * 1000 }))}
           />
         </label>
@@ -113,10 +114,11 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
         disabled={disabled || !config.environmentId || !config.modelId || task.candidatePlanCurrent === false}
         onClick={() =>
           void act(async () => {
+            setConfig(effectiveConfig);
             setTask(
               await api<BundleTask>('/api/migration-tasks/' + task.id + '/configuration', {
                 method: 'PUT',
-                body: JSON.stringify(config),
+                body: JSON.stringify(effectiveConfig),
               }),
             );
             setTask(await api<BundleTask>('/api/migration-tasks/'+task.id+'/runtime-review',{method:'POST',body:'{}'}));

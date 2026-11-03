@@ -1,3 +1,4 @@
+import {pythonInterpreter as interpreter} from '../../shared/python-environment.js';
 import { spawn } from 'node:child_process';
 import { operationalEvent, operationalError, stderrExceptionType } from '../../service/logging.js';
 import { existsSync } from 'node:fs';
@@ -6,7 +7,7 @@ import {migrationActivityContext} from './migration-activity.js';
 import { modelTimeoutMs,type ModelRole } from '../../service/config.js';
 import { stageEnvelope,type StageEnvelope } from '../domain/migration-stage-envelope.js';
 
-export type AgentStage='diagnosis'|'migration'|'adjustment'|'standardization-review';
+export type AgentStage='runtime-preparation'|'diagnosis'|'migration'|'adjustment'|'standardization-review';
 export type AgentStatus='PRODUCED'|'ABSTAINED'|'FAILED';
 
 type WireResult<T>={
@@ -52,7 +53,7 @@ export type MigrationAgentOptions={
 };
 
 const ENTRY=path.join('integrations','openjiuwen','platform_agent.py');
-const STAGE_ROLE:Record<AgentStage,ModelRole>={diagnosis:'MIGRATION',migration:'MIGRATION',adjustment:'MIGRATION','standardization-review':'MIGRATION'};
+const STAGE_ROLE:Record<AgentStage,ModelRole>={'runtime-preparation':'MIGRATION',diagnosis:'MIGRATION',migration:'MIGRATION',adjustment:'MIGRATION','standardization-review':'MIGRATION'};
 
 function failureReason(wire:WireResult<unknown>,produced:boolean):string{
   const said=String(wire.error??'').trim();
@@ -86,20 +87,7 @@ export function migrationAgentEnabled():boolean{
   return !process.env.VITEST;
 }
 
-function interpreter(projectRoot:string):string{
-  const configured=process.env.FINANCE_EVAL_MIGRATION_PYTHON?.trim();
-  if(configured)return configured;
-  return process.platform==='win32'
-    ?path.join(projectRoot,'.venv-openjiuwen','Scripts','python.exe')
-    :path.join(projectRoot,'.venv-openjiuwen','bin','python');
-}
-
-/** Deployment code location is operator-owned, never taken from an uploaded asset. */
-export function migrationProjectRoot():string{
-  const configured=process.env.FINANCE_EVAL_MIGRATION_PROJECT_ROOT?.trim();
-  if(configured&&!path.isAbsolute(configured))throw new Error('MIGRATION_PROJECT_ROOT_MUST_BE_ABSOLUTE');
-  return configured||process.env.FINANCE_EVAL_ROOT?.trim()||process.cwd();
-}
+export {runtimeProjectRoot as migrationProjectRoot} from '../../shared/python-environment.js';
 
 export function encodeArchive(archive:Record<string,Uint8Array>):Record<string,string>{
   return Object.fromEntries(Object.entries(archive).map(([name,bytes])=>[name,Buffer.from(bytes).toString('base64')]));

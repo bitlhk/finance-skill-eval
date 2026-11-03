@@ -1,23 +1,26 @@
+import {runDiagnosisInput} from './task-run-analysis.js';
 import {randomUUID} from 'node:crypto';
 import {canonicalSha256} from '../../../shared/json-canonicalization.js';
 import {runOptimizationLoop,type OptimizationResume} from '../../../improvement/application/optimization-loop.js';
 import {effectReviewInput} from '../../../improvement/application/review-input.js';
 import type {ImprovementAgents} from '../../../improvement/application/improvement-agents.js';
 import type {CandidateRef,OptimizationEvaluation,OptimizationLoop} from '../../../improvement/domain/optimization-loop.js';
-import {bundleError,currentCandidate,type BundleTask,type BundleAttempt,type BundleCandidate,type BundleRun,type BundleSnapshot} from '../domain/task-model.js';
+import {bundleError,currentCandidate,completedRepetitions,type BundleTask,type BundleAttempt,type BundleCandidate,type BundleRun,type BundleSnapshot} from '../domain/task-model.js';
 import {conformancePassed} from '../domain/task-standardization.js';
 import {simpleMigrationCases} from '../../domain/simple-migration-suite.js';
 
 export function bundleOptimizationEvaluation(task:BundleTask,run:BundleRun):OptimizationEvaluation{
   const authored=simpleMigrationCases(run.suite);
   if(run.phase!=='development')bundleError('留出验收不能进入优化');
+  const group=completedRepetitions(task,run);
   return {id:run.id,candidate:{id:run.candidateId,digest:run.candidateDigest},
     criteriaDigest:canonicalSha256({suite:run.suiteDigest,judge:run.judgeDigest??null,plan:task.analysis??null}),
     protocolDigest:canonicalSha256({suite:run.suiteDigest,configuration:run.configurationDigest,judge:run.judgeDigest??null,
       runtime:run.runtimeSnapshot??null,selection:run.runtimeSelectionRevision??null,builder:run.builderBindingId??null,plan:task.planRevisionId??null}),
     cases:authored.map(c=>{const result=run.cases.find(r=>r.id===c.caseId);return {id:c.caseId,
-      passed:result&&!result.failureStage&&['PASSED','FAILED'].includes(run.status)?result.passed:null,
-      observation:{task:c.prompt,criteria:c.rubric,result}};})};
+      passed:group?.every(item=>item.cases.some(r=>r.id===c.caseId&&!r.failureStage&&!r.unverified))
+        ?group.every(item=>item.cases.find(r=>r.id===c.caseId)!.passed):null,
+      observation:{task:c.prompt,criteria:c.rubric,result,...(run.repetition?{repetitions:group?.map(item=>item.cases.find(r=>r.id===c.caseId))}:{})}};})};
 }
 type Context={
   get():Promise<BundleTask>;
@@ -44,18 +47,13 @@ export async function optimizeMigrationTask(task:BundleTask,attempt:BundleAttemp
     save:context.save,
     activate:evaluation=>context.activate(evaluation.id),
     diagnose:async(evaluation,history,options)=>{
-      const current=await candidateTask(evaluation.candidate),files=(await context.snapshot(evaluation.candidate.id)).files;
+      const current=await candidateTask(evaluation.candidate),snapshot=await context.snapshot(evaluation.candidate.id);
       const run=current.runs.find(r=>r.id===evaluation.id)!;
-      const result=await agents.diagnose({modelId:'optimizer',sourceJobId:run.id,baseSolutionRevisionId:evaluation.candidate.digest,
-        tools:(currentCandidate(current)?.tools??[]).map(t=>({toolId:t.toolId,name:t.toolId,form:t.form})),runtimeConfiguration:[],technicalEvidence:[],
-        cases:simpleMigrationCases(run.suite).map(c=>{const result=run.cases.find(r=>r.id===c.caseId)!;return {caseId:c.caseId,task:c.prompt,
-          runtimeStatus:result.evidence?.status??'failed',runtimeIdentityVerified:result.evidence?.runtimeIdentityVerified??false,
-          streamCompleted:result.evidence?.streamCompleted??false,toolTraceStatus:'PARTIAL_OR_UNAVAILABLE',
-          toolCalls:(result.evidence?.toolCalls??[]).map(c=>({name:c.name,status:c.status})),review:result.reason,verdict:result.passed?'PASS':'FAIL'};}),
-        codeEvidence:Object.entries(files).filter(([p])=>/\.(md|py|ts|js|json)$/iu.test(p)).slice(0,12).map(([path,content])=>({origin:'candidate',path,content:Buffer.from(content,'base64').toString('utf8').slice(0,6000)})),
-        approvedReuseDesign:{goal:state.goal,requirements:current.analysis?.standardization?.requirements},
-        previousExperiments:history.map(r=>({layer:r.diagnosis?.status==='PROPOSED'?r.diagnosis.hypothesis.layer:'UNKNOWN',outcome:JSON.stringify({reason:r.reason??r.stage,review:r.review})}))},options);
+      const result=await agents.diagnose(runDiagnosisInput(current,run,snapshot,{
+        baseline:current.runs.find(r=>r.id===state.baselineEvaluationId),goal:state.goal,
+        history:history.map(r=>({layer:r.diagnosis?.status==='PROPOSED'?r.diagnosis.hypothesis.layer:'UNKNOWN',outcome:JSON.stringify({reason:r.reason??r.stage,review:r.review})}))}),options);
       if(result.judgement.status==='PROPOSED'&&result.judgement.hypothesis.evidenceCaseIds.some(id=>!evaluation.cases.some(c=>c.id===id)))bundleError('诊断引用了开发集之外的案例');
+      if(state.rounds.at(-1))state.rounds.at(-1)!.investigation=result.investigation;
       return result.judgement;
     },
     adjust:async(ref,diagnosis,options)=>{

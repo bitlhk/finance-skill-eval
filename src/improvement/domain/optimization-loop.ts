@@ -18,6 +18,7 @@ export type OptimizationContextChange={beforeProtocolDigest:string;afterProtocol
 export type OptimizationWait={kind:'BUILDER'|'CONFIGURATION'|'INPUT';candidate:CandidateRef;reason:string;since:string;remainingMs:number;requestId?:string};
 export type AdjustmentResult=CandidateRef|null|{status:'WAITING';kind:OptimizationWait['kind'];candidate:CandidateRef;reason:string};
 export type OptimizationRound={number:number;baseline:CandidateRef;stage:'DIAGNOSIS'|'ADJUSTMENT'|'EVALUATION'|'REVIEW'|'SELECTION';
+  investigation?:unknown[];
   diagnosis?:ImprovementJudgement;candidate?:CandidateRef;evaluationId?:string;review?:EffectReviewResult;
   selected?:boolean;continued?:boolean;regressedCaseIds?:string[];reason?:string;compositions?:AgentCompositionReceipt[]};
 export type OptimizationLoop={id:string;goal:OptimizationGoal;baseline:CandidateRef;best:CandidateRef;bestEvaluationId:string;

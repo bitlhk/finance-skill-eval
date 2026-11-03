@@ -1,6 +1,8 @@
 import type { MigrationActivityPort } from '../../application/migration-activity-port.js';
 import { exportMigrationTask } from './task-export.js';
 import { acceptMigrationTask } from './task-acceptance.js';
+import {rescoreRequestSchema,rescoreTask} from './task-rescoring.js';
+import {analyzeSavedRun} from './task-run-analysis.js';
 import {optimizeMigrationTask} from './task-optimization.js';
 import {activateOptimizationRun,prepareOptimizationResume,waitingOptimization} from './task-optimization-state.js';
 import {assertMigrationExportSafe} from '../../domain/migration-export-safety.js';
@@ -13,6 +15,8 @@ import { simpleMigrationCases } from '../../domain/simple-migration-suite.js';
 import type { BundleAgent, BundleRuntimeFactory, BundleJudge, MigrationTaskRepository, MigrationSourceAssets, MigrationLogger, TaskBuilderPort } from './task-ports.js';
 import { TaskBuilderService } from './task-builder.js';
 import { z } from 'zod';
+import { projectPreparationSchema, projectExecutionReceiptSchema } from '../domain/project-preparation.js';
+import { projectSnapshot, currentBaselineRun, baselineRunForPreparation } from '../domain/task-model.js';
 import { evidenceIssues } from '../../domain/migration-reuse-design.js';
 import {sourceEvidencePath} from '../../domain/migration-source-evidence.js';
 import { reviewPlanEnvironment } from '../domain/task-runtime-review.js';
@@ -31,7 +35,7 @@ import {
   bundleZip,
   decodeBundleZip,
   bundleDiff,
-  currentCandidate,
+  currentCandidate,completedRepetitions,
   hasCandidateFailures,
   approvedTaskPlan, candidateUsesCurrentPlan,
   readText,
@@ -44,7 +48,7 @@ import {
 
 /** One task owns one full workspace. Persisted candidates and run inputs are immutable. */
 export class MigrationTaskService {
-  private operations = new Set<{ taskId: string; controller: AbortController; done: Promise<void>; }>();
+  private operations = new Set<{ taskId: string; controller: AbortController; done: Promise<void>; rescoring?:boolean }>();
   private closing = false;
   private static executing = 0;
   constructor(
@@ -103,13 +107,17 @@ export class MigrationTaskService {
       && task.runtimeReview.candidateId === task.currentCandidateId && task.runtimeReview.configurationDigest === canonicalSha256(task.configuration)
       && task.runtimeReview.planDigest === currentPlanDigest && task.runtimeReview.runtimeSelectionRevision === task.runtimeSelectionRevision);
     return { ...current, currentPlanDigest, planApproved: approvedTaskPlan(task), candidatePlanCurrent: candidateUsesCurrentPlan(task),
-      runtimeReviewCurrent, startupCheckCurrent, verifiedRunId: verifiedRun(current)?.id };
+      runtimeReviewCurrent, startupCheckCurrent, verifiedRunId: verifiedRun(current)?.id,
+      ...(task.preparations ? {preparations:task.preparations.map(preparation=>({...preparation,
+        baselineStatus:baselineRunForPreparation(task,preparation,this.judge.identity?.())?.status ?? 'NOT_EVALUATED' as const}))} : {}),
+      currentBaselineRunId: currentBaselineRun(task, this.judge.identity?.())?.id };
   }
   async list() { return (await this.repository.list()).map(task => this.view(task)); }
   async get(id: string) { return this.view(await this.repository.get(id)); }
   readSnapshot(id: string, candidateId: string | null) { return this.repository.readSnapshot(id, candidateId); }
   private async update(id: string, change: (task: BundleTask) => void | Promise<void>) { return this.view(await this.repository.update(id, change)); }
-  private idle(task: BundleTask) {
+  private idle(task: BundleTask,allowRescore=false) {
+    if(!allowRescore&&[...this.operations].some(operation=>operation.taskId===task.id&&operation.rescoring))bundleError('正在评判或分析已保存证据，请等待或取消');
     if (task.attempts.some((a) => a.status === 'RUNNING')) bundleError('任务正在执行，请等待或取消当前操作');
   }
   create(input: unknown, requestId?: string) { return this.createFromAssets(input, requestId); }
@@ -140,9 +148,9 @@ export class MigrationTaskService {
     const parsed = createBundleSchema.omit({ sourceAssetIds: true }).parse(input);
     return this.createFiles(parsed, decodeBundleZip(zip), requestId);
   }
-  private async createFiles(input: { name: string; goal: string; target: string; configuration?: BundleConfiguration }, files: BundleFiles, requestId?: string) {
+  private async createFiles(input: { name: string; goal: string; target: string; inputKind?: 'skill_package'|'agent_project'; projectNotes?: string; configuration?: BundleConfiguration }, files: BundleFiles, requestId?: string) {
     const id = 'bundle-' + randomUUID(),
-      source = snapshot(files, 'source');
+      source = input.inputKind === 'agent_project' ? projectSnapshot(files) : snapshot(files, 'source');
     const { files: _, ...sourceInfo } = source;
     const defaults = defaultTaskDescription(source);
     const task: BundleTask = {
@@ -153,6 +161,7 @@ export class MigrationTaskService {
       requestId,
       createdAt: new Date().toISOString(),
       source: sourceInfo,
+      inputKind: input.inputKind ?? 'skill_package', projectNotes: input.projectNotes ?? '',
       currentCandidateId: null,
       candidates: [],
       attempts: [],
@@ -163,10 +172,16 @@ export class MigrationTaskService {
     this.logger?.info({ event: 'migration_task_created', taskId: task.id, requestId, memberCount: source.members.length });
     return task;
   }
-  async configure(id: string, input: unknown) {
+  async configure(id: string, input: unknown, purpose: 'baseline'|'candidate' = 'candidate') {
     const configuration = configurationSchema.parse(input);
     return this.update(id, (task) => {
       this.idle(task);
+      if (purpose === 'baseline') {
+        if (task.inputKind !== 'agent_project') bundleError('仅完整工程可配置原工程基线');
+        if (configuration.entryInstructionsFile || configuration.harnessTools.length) bundleError('原工程基线不注入 Skill 入口或 Harness 工具');
+        task.baselineConfiguration = configuration;
+        return;
+      }
       const issues=runtimeInputIssues(task,configuration);if(issues.length)bundleError(issues.join('；'));
       task.configuration = configuration;
       task.configurationConfirmed = true;
@@ -211,6 +226,39 @@ export class MigrationTaskService {
       if(waitingOptimization(task))bundleError('优化正在等待外部调整；测试集保持冻结，请先停止优化再修改');
       task.suite = suite;
     });
+  }
+  async rescore(id:string,input:unknown){
+    const request=rescoreRequestSchema.parse(input);
+    return this.withSavedEvidence(id,(task,signal)=>rescoreTask(task,request,this.judge,signal),
+      (task,result)=>{(task.rescorings??=[]).push(result);});
+  }
+  async analyzeRun(id:string,input:unknown){
+    const request=z.strictObject({runId:z.string().min(1)}).parse(input);
+    return this.withSavedEvidence(id,async(task,signal)=>{
+      if(!this.improvementAgents)bundleError('问题分析 Agent 尚未配置');
+      const run=task.runs.find(item=>item.id===request.runId);
+      if(!run)bundleError('运行记录不存在');
+      return analyzeSavedRun(task,run,await this.readSnapshot(id,run.candidateId),this.improvementAgents().diagnose,signal);
+    },(task,result)=>{(task.runAnalyses??=[]).push(result);});
+  }
+  private async withSavedEvidence<T extends {sourceRunId:string;sourceDigest:string}>(id:string,
+    execute:(task:BundleTask,signal:AbortSignal)=>Promise<T>,save:(task:BundleTask,result:T)=>void){
+    const task=await this.get(id);
+    this.idle(task);
+    if(this.closing||[...this.operations].some(operation=>operation.taskId===id))bundleError('任务正在执行');
+    const controller=new AbortController();
+    const operation={taskId:id,controller,done:Promise.resolve(),rescoring:true};
+    this.operations.add(operation);
+    const execution=Promise.resolve().then(async()=>{
+      const result=await execute(task,controller.signal);
+      return await this.update(id,current=>{this.idle(current,true);controller.signal.throwIfAborted();
+        const source=current.runs.find(run=>run.id===result.sourceRunId);
+        if(!source||canonicalSha256(source)!==result.sourceDigest)bundleError('原始运行记录已变化');
+        save(current,result);
+      });
+    });
+    operation.done=execution.then(()=>{},()=>{});
+    try{return await execution;}finally{this.operations.delete(operation);}
   }
   async checkRuntime(id: string) {
     const task = await this.get(id),
@@ -307,6 +355,11 @@ export class MigrationTaskService {
         MigrationTaskService.executing++;reserved=true;return;
       }
       if(waitingOptimization(task))bundleError('优化正在等待外部调整，请继续或停止该优化任务');
+      if (kind === 'BASELINE' && (task.inputKind !== 'agent_project' || !task.preparations?.length || !task.baselineConfiguration || !task.suite))
+        bundleError('请先准备完整工程、保存基线运行环境与测试集');
+      if (kind === 'BASELINE' && parsed.phase !== 'development') bundleError('基线使用开发测试集，独立留出集保留用于验收');
+      if (kind === 'PREPARE' && (task.inputKind !== 'agent_project' || task.currentCandidateId))
+        bundleError('工程运行准备仅用于尚未生成迁移候选的完整工程');
       if (kind === 'GENERATE' && (!task.analysis || task.analysis.missing.length))
         bundleError('请先完成整体分析并解决缺失信息');
       if (kind === 'GENERATE' && !approvedTaskPlan(task)) bundleError('请先确认当前迁移方案');
@@ -314,7 +367,7 @@ export class MigrationTaskService {
       if(kind==='OPTIMIZE'){
         const run=task.runs.find(r=>r.id===parsed.runId);
         if(!run||run.phase!=='development'||run.candidateId!==task.currentCandidateId||!['PASSED','FAILED'].includes(run.status)
-          ||run.cases.some(c=>c.failureStage)||!run.cases.length)bundleError('请先对当前候选完成完整的开发集评测');
+          ||run.cases.some(c=>c.failureStage)||!run.cases.length||!completedRepetitions(task,run))bundleError('请先对当前候选完成完整的开发集评测');
         if(run.configurationDigest!==canonicalSha256(task.configuration)||run.suiteDigest!==canonicalSha256(task.suite)
           ||run.judgeDigest!==this.judge.identity?.()||run.runtimeSelectionRevision!==task.runtimeSelectionRevision)
           bundleError('环境、评测标准或运行条件已变化，请重新评测');
@@ -357,12 +410,12 @@ export class MigrationTaskService {
         ...(optimizationGoal?{optimizationGoal}:{}),
         ...(kind==='OPTIMIZE'?{optimizationInputs:{suiteDigest:canonicalSha256(task.suite),planDigest:canonicalSha256(task.analysis??null),judgeDigest:this.judge.identity?.()}}:{}),
         requestId,
-        ...(kind !== 'ACCEPT' ? { agentRunId: 'agent-' + randomUUID() } : {}),
+        ...(!['ACCEPT','BASELINE'].includes(kind) ? { agentRunId: 'agent-' + randomUUID() } : {}),
         key: parsed.key,
         requestDigest,
         baseCandidateId: parsed.baseCandidateId,
         ...(parsed.runId ? { runId: parsed.runId } : {}),
-        ...(kind === 'ANALYZE' && parsed.clarification ? { clarification: parsed.clarification } : {}),
+        ...(['ANALYZE', 'PREPARE'].includes(kind) && parsed.clarification ? { clarification: parsed.clarification } : {}),
         status: 'RUNNING',
         startedAt: new Date().toISOString(),
         message: kind === 'ACCEPT' ? '准备整组联合验收' : '准备完整工作区',
@@ -435,10 +488,10 @@ export class MigrationTaskService {
           return;
         }
       }
-      else if (attempt.kind === 'ACCEPT') await acceptMigrationTask({ update: this.update.bind(this), readSnapshot: this.readSnapshot.bind(this), progress: this.progress.bind(this), runtime: this.runtime, judge: this.judge, logger: this.logger }, task, attempt, phase, signal);
+      else if (attempt.kind === 'ACCEPT' || attempt.kind === 'BASELINE') await acceptMigrationTask({ update: this.update.bind(this), readSnapshot: this.readSnapshot.bind(this), progress: this.progress.bind(this), runtime: this.runtime, judge: this.judge, logger: this.logger }, task, attempt, phase, signal, attempt.kind === 'BASELINE' ? 'baseline' : 'candidate');
       else {
         const source = await this.readSnapshot(task.id, null),
-          base = await this.readSnapshot(task.id, attempt.baseCandidateId);
+          base = await this.readSnapshot(task.id, attempt.baseCandidateId ?? task.preparations?.at(-1)?.id ?? null);
         const prior = task.runs.find((run) => run.id === attempt.runId);
         // Only development observations reach the code agent, never any holdout suite.
         const feedback = prior
@@ -473,6 +526,7 @@ export class MigrationTaskService {
           }).then(() => {}),
           correlation: { taskId: task.id, attemptId: attempt.id, requestId: attempt.requestId, agentRunId: attempt.agentRunId! },
           mode: attempt.kind,
+          ...(task.inputKind === 'agent_project' ? { project: { notes: task.projectNotes ?? '', preparation: task.preparations?.at(-1)?.report } } : {}),
           ...(diagnosis?{adjustmentCapabilities:['document','tool','runtime'] as Array<'document'|'tool'|'runtime'>}:{}),
           source,
           base,
@@ -485,9 +539,26 @@ export class MigrationTaskService {
         });
         signal.throwIfAborted();
         if (result.status !== 'PRODUCED') bundleError(result.reason ?? 'Agent 需要补充信息');
-        if (attempt.kind === 'ANALYZE') {
+        if (attempt.kind === 'PREPARE') {
+          const report = projectPreparationSchema.parse(result.preparation);
+          if (!result.files) bundleError('Agent 没有返回工程文件');
+          const prepared = projectSnapshot(result.files);
+          for (const skill of report.skills) if (!(skill.path in prepared.files)) bundleError('识别的 Skill 文件不存在：' + skill.path);
+          const executions = z.array(projectExecutionReceiptSchema).parse(result.executions ?? []);
+          const id = 'candidate-' + randomUUID();
+          await this.repository.saveSnapshot(task.id, id, prepared);
+          await this.update(task.id, t => {
+            signal.throwIfAborted();
+            (t.preparations ??= []).push({id, attemptId: attempt.id, digest: prepared.digest,
+              createdAt: new Date().toISOString(), report, executions, baselineStatus: 'NOT_EVALUATED'});
+            // A preparation changes the working input; earlier plans remain in history.
+            delete t.analysis;
+            delete t.planRevisionId;
+            delete t.planApproved;
+          });
+        } else if (attempt.kind === 'ANALYZE') {
           const analysis = analysisSchema.parse(result.analysis);
-          const standardIssues=standardizationIssues(analysis,source.files);
+          const standardIssues=standardizationIssues(analysis,base.files);
           if(standardIssues.length)bundleError('标准化方案检查失败：'+standardIssues.join('；'));
           if(analysis.diagnosis){
             const d=analysis.diagnosis,ids=new Set(d.tools.map(tool=>tool.id)),members=new Set(base.members.map(member=>member.id));
@@ -529,7 +600,7 @@ export class MigrationTaskService {
           if (!result.files) bundleError('Agent 没有交付完整候选文件');
           const deliveryIssues=task.analysis?standardDeliveryIssues(task.analysis,delivery,result.files):[];
           if(deliveryIssues.length)bundleError('交付契约检查失败：'+deliveryIssues.join('；'));
-          const revision = snapshot(result.files, 'r' + (task.candidates.length + 1), base);
+          const revision = snapshot(result.files, 'r' + (task.candidates.length + 1), base.members.length ? base : undefined);
           for (const service of delivery.services)
             for (const file of service.filePaths)
               if (!(file in revision.files)) bundleError('服务交付文件缺失：' + file);

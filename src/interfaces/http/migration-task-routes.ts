@@ -38,6 +38,9 @@ export function registerMigrationTaskRoutes(
       await builder().useExisting(request.params.id); return bundles.get(request.params.id);
     });
     app.get(prefix, () => bundles.list());
+    app.post<{Params:{id:string}}>(prefix+'/:id/rescore',request=>bundles.rescore(request.params.id,request.body));
+    app.post<{Params:{id:string}}>(prefix+'/:id/analyze-run',request=>bundles.analyzeRun(request.params.id,request.body));
+    app.put<{Params:{id:string}}>(prefix+'/:id/baseline-configuration',request=>bundles.configure(request.params.id,request.body,'baseline'));
     app.post(prefix, (request) => bundles.create(request.body, request.id));
     app.post(prefix + '/upload', (request) => {
       if (!Buffer.isBuffer(request.body))
@@ -60,6 +63,8 @@ export function registerMigrationTaskRoutes(
     );
     for (const [route, kind] of [
       ['analysis', 'ANALYZE'],
+      ['preparation', 'PREPARE'],
+      ['baseline', 'BASELINE'],
       ['generate', 'GENERATE'],
       ['repair', 'REPAIR'],
       ['acceptance', 'ACCEPT'],

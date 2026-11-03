@@ -21,6 +21,7 @@ export interface EvaluationContextAdapter {
 }
 
 export type RuntimeExecutionRequest = {
+  traceparent?:string;
   onEvent?: (event: RuntimeEvent) => void;
   runId: string;
   side: EvaluationSide;
@@ -57,6 +58,8 @@ export class RuntimeCaseNotExecutedError extends Error {
 
 export interface RuntimeAdapter {
   readonly adapterId: string;
+  /** Capability must be checked before sending a stateful case to business execution. */
+  supportsCaseState?(request:RuntimeExecutionRequest):boolean;
   prepare?(context:RuntimePrepareContext): Promise<void>;
   execute(request: RuntimeExecutionRequest): Promise<RuntimeExecutionEvidence>;
   cleanup?(): Promise<void>;

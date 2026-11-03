@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {evaluationPlanSchema} from './evaluation/domain/evaluation-plan.js';
+import {caseStateFixtureSchema} from './shared/contracts/case-state.js';
 
 const strictRecordValueSchema = z.union([
   z.string(),
@@ -39,6 +41,8 @@ export const skillVariantSchema = z.discriminatedUnion("mode", [
 ]);
 
 export const rubricCriterionSchema = z.strictObject({
+  /** Absent on historical cases: these retain execution assessment semantics. */
+  scope: z.enum(['answer','execution']).optional(),
   criterionId: z.string().min(1),
   label: z.string().min(1),
   description: z.string().min(1),
@@ -81,6 +85,8 @@ export const conversationTurnsSchema=z.array(z.strictObject({
 })).min(2).max(8);
 
 export const evalCaseSchema = z.strictObject({
+  stateFixture:caseStateFixtureSchema.optional(),
+  evaluationPlan:evaluationPlanSchema.optional(),
   caseId: z.string().min(1),
   name: z.string().min(1),
   taskMode: z.enum(["single_turn", "multi_turn"]).default("single_turn"),

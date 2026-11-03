@@ -10,12 +10,22 @@ export const runtimeSkillSchema = runtimeSkillMemberSchema.extend({
 });
 /** Inline instructions plus optional resources; neither an archive nor a project is required. */
 export const runtimeSkillSetSchema = z.strictObject({
-  skills: z.array(runtimeSkillSchema).min(1),
+  skills: z.array(runtimeSkillSchema),
+  executionMode: z.literal('agent_project').optional(),
   assets: z.record(base64).optional(),
   contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
   entryInstructionsFile: z.string().min(1).optional(),
+}).superRefine((value, context) => {
+  if (!value.skills.length && value.executionMode !== 'agent_project' && (Object.keys(value.assets??{}).length || value.entryInstructionsFile))
+    context.addIssue({code:'custom',message:'An empty baseline cannot inject Skill assets or entry instructions'});
+  if (value.executionMode === 'agent_project' && (value.skills.length || !Object.keys(value.assets ?? {}).length || value.entryInstructionsFile))
+    context.addIssue({code:'custom',message:'Project execution requires complete assets without injected Skill instructions'});
 });
 export type RuntimeSkillSet = z.infer<typeof runtimeSkillSetSchema>;
+/** A real no-Skill baseline carries no instructions, assets or synthetic placeholder Skill. */
+export function emptyRuntimeSkillSet():RuntimeSkillSet{
+  return {skills:[],contentDigest:createHash('sha256').digest('hex')};
+}
 export function skillMembers(set: RuntimeSkillSet) {
   return set.skills.map(({ instructions: _, files: __, ...member }) => member);
 }

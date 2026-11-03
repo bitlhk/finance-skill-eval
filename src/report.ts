@@ -3,6 +3,8 @@ import {codeRevision} from './code-revision.js';
 import {evidenceLabels} from './evidence-labels.js';
 
 export type EvaluationCaseReport = {
+  answerEvidence?:Record<'left'|'right',ReturnType<typeof import('./evaluation/domain/answer-evidence.js').answerEvidence>>;
+  methodResults?:Record<'left'|'right',import('./evaluation/application/evaluation-method.js').EvaluationMethodResult[]>;
   caseId: string;
   name: string;
   prompt: string;

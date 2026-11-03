@@ -166,15 +166,20 @@ export type Evidence = {
 };
 
 export type EvaluationJob = {
+  executionAttempts?:import('../../src/shared/contracts/evaluation-job').EvaluationJob['executionAttempts'];
+  executionRepetitionsStopped?:string;
   cancellation?:{requestedAt:string;workerSettledAt?:string;scope:string};
   finalization?:Record<string,unknown>;
   executionSnapshot?:{variants:unknown;models:unknown;cases:Array<{caseId:string;name:string;prompt:string}>;packFingerprint:string};
+  rescorings?:import('../../src/shared/contracts/evaluation-job').EvaluationJob['rescorings'];
   questionSet?: { source: "ai_generated"; cases: EvalCaseSummary[]; summary: string; fingerprint: string; model: ModelRef; sourceFiles: string[]; generatedAt: string };
   live?: Record<string, { caseId: string; side: "left" | "right"; output: string; status: string; toolCalls: Array<{ name: string; status: string }> }>;
   jobId: string;
   status: "queued" | "preparing" | "running" | "judging" | "completed" | "failed" | "cancelled" | "interrupted";
   stageLabel: string;
   configuration: {
+    executionRepetitions?:number;
+    repeatSafety?:'read_only';
     packId?: string;
     preparationId?: string;
     runtime: { type: string; environmentId?: string };
@@ -217,6 +222,7 @@ export type EvaluationJob = {
         }>;
       };
       judgeError: string | null;
+      methodResults?:Record<'left'|'right',import('../../src/evaluation/application/evaluation-method').EvaluationMethodResult[]>;
     }>;
     suggestions: Array<{ title: string; recommendation: string; type: string }>;
     reportFingerprint: string;

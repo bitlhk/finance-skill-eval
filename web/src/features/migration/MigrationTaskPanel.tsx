@@ -60,7 +60,7 @@ export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbenc
         {run && <p>验收运行：<code>{run.id}</code></p>}
         {task.attempts.length > 0 && <details><summary>操作历史与关联 ID（{task.attempts.length}）</summary>
           {[...task.attempts].reverse().map(attempt => <article key={attempt.id} className="stage-section">
-            <strong>{({ ANALYZE: '诊断', GENERATE: '生成', REPAIR: '修复', ACCEPT: '验收',OPTIMIZE:'优化' })[attempt.kind]} · {statusLabels[attempt.status]}</strong>
+            <strong>{({ BASELINE:'原工程基线评测',PREPARE: '工程运行准备', ANALYZE: '诊断', GENERATE: '生成', REPAIR: '修复', ACCEPT: '验收',OPTIMIZE:'优化' })[attempt.kind]} · {statusLabels[attempt.status]}</strong>
             <p>{attempt.startedAt} · <code>{attempt.id}</code></p>
             <p>请求：<code>{attempt.requestId ?? '未采集'}</code></p>
             {attempt.agentRunId && <p>Agent：<code>{attempt.agentRunId}</code></p>}

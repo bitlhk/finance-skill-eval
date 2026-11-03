@@ -13,7 +13,8 @@
       ],
       "references": [
         "references/diagnosis-output.md",
-        "references/submission.md"
+        "references/submission.md",
+        "references/tool-form-selection.md"
       ],
       "tools": [
         "read_file",
@@ -45,7 +46,8 @@
       ],
       "references": [
         "references/migration-output.md",
-        "references/submission.md"
+        "references/submission.md",
+        "references/tool-form-selection.md"
       ],
       "tools": [
         "read_file",
@@ -80,7 +82,8 @@
       ],
       "references": [
         "references/standardization-review-output.md",
-        "references/submission.md"
+        "references/submission.md",
+        "references/tool-form-selection.md"
       ],
       "tools": [
         "read_file",
@@ -117,7 +120,7 @@
       "budgetKind": "singleCompletion"
     },
     "improvement-diagnosis": {
-      "executor": "tool-free-model",
+      "executor": "evidence-model",
       "modes": [],
       "prompt": "prompts/improvement-diagnosis.md",
       "skills": [
@@ -126,16 +129,18 @@
       "references": [
         "references/improvement-diagnosis-output.md"
       ],
-      "tools": [],
+      "tools": [
+        "query_evidence"
+      ],
       "conditionalTools": [],
       "writeScope": "none",
       "inputContract": "ImprovementDiagnosisInput",
       "outputContract": "ImprovementDiagnosisResult",
       "modelRole": "OPTIMIZER",
-      "budgetKind": "singleCompletion"
+      "budgetKind": "agentIterations"
     },
     "criterion-judge": {
-      "executor": "tool-free-model",
+      "executor": "evidence-model",
       "modes": [],
       "prompt": "prompts/criterion-judge.md",
       "skills": [
@@ -144,13 +149,15 @@
       "references": [
         "references/criterion-judge-output.md"
       ],
-      "tools": [],
+      "tools": [
+        "query_evidence"
+      ],
       "conditionalTools": [],
       "writeScope": "none",
       "inputContract": "CriterionJudgeInput",
       "outputContract": "CriterionVerdict",
       "modelRole": "JUDGE",
-      "budgetKind": "singleCompletion"
+      "budgetKind": "agentIterations"
     },
     "adjustment": {
       "executor": "tool-free-model",
@@ -217,7 +224,8 @@
           "writeScope": "candidate",
           "references": [
             "references/migration-output.md",
-            "references/submission.md"
+            "references/submission.md",
+            "references/tool-form-selection.md"
           ],
           "inputContract": "BundleAgentInput",
           "outputContract": "BundleDelivery",
@@ -229,6 +237,39 @@
           ]
         }
       }
+    },
+    "runtime-preparation": {
+      "executor": "openjiuwen-bundle",
+      "modes": [
+        "PREPARE"
+      ],
+      "prompt": "prompts/runtime-preparation.md",
+      "skills": [
+        "skills/runtime-preparation/SKILL.md"
+      ],
+      "references": [
+        "references/runtime-preparation-output.md",
+        "references/submission.md",
+        "references/runtime-integration.md"
+      ],
+      "tools": [
+        "read_file",
+        "glob",
+        "list_files",
+        "grep",
+        "submit_result",
+        "record_result",
+        "correct_result",
+        "write_file",
+        "edit_file",
+        "run_project_command"
+      ],
+      "conditionalTools": [],
+      "writeScope": "candidate",
+      "inputContract": "BundleAgentInput",
+      "outputContract": "ProjectPreparation",
+      "modelRole": "MIGRATION",
+      "budgetKind": "agentIterations"
     }
   }
 }

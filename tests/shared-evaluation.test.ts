@@ -55,3 +55,38 @@ it('rejects ambiguous method identities before executing evaluators',async()=>{
   await expect(evaluateMethods({evalCase,evidence},[method,method])).rejects.toThrow('Duplicate');
   expect(evaluate).not.toHaveBeenCalled();
 });
+
+it('isolates method errors and skips only their dependent judges',async()=>{
+  const skipped=vi.fn(()=>[]);
+  const results=await evaluateMethods({evalCase,evidence},[
+    {id:'broken',version:'1',kind:'SCRIPT',evaluate:()=>{throw new Error('verifier unavailable');}},
+    {id:'dependent',version:'1',kind:'MODEL',dependsOn:['broken'],evaluate:skipped},
+    {id:'independent',version:'1',kind:'RULE',evaluate:()=>[{id:'ok',status:'PASS',reason:'checked'}]},
+  ]);
+  expect(results.map(r=>r.status)).toEqual(['ERROR','SKIP','PASS']);
+  expect(skipped).not.toHaveBeenCalled();
+});
+
+it('bounds a non-responsive evaluator and preserves subsequent checks',async()=>{
+  let received:AbortSignal|undefined;
+  const results=await evaluateMethods({evalCase,evidence},[
+    {id:'hung',version:'1',kind:'MODEL',timeoutMs:5,evaluate:({signal})=>{received=signal;return new Promise(()=>{});}},
+    {id:'next',version:'1',kind:'RULE',evaluate:()=>[{id:'ok',status:'PASS',reason:'checked'}]},
+  ]);
+  expect(results.map(r=>r.status)).toEqual(['ERROR','PASS']);
+  expect(received?.aborted).toBe(true);
+});
+
+it('keeps evaluator mutations out of later judges and propagates user cancellation',async()=>{
+  const original=evidence.output;
+  const results=await evaluateMethods({evalCase,evidence},[
+    {id:'mutate',version:'1',kind:'SCRIPT',evaluate:({evidence})=>{evidence.output='modified';return [];}},
+    {id:'read',version:'1',kind:'RULE',evaluate:({evidence})=>[{id:'unchanged',status:evidence.output===original?'PASS':'FAIL',reason:'Original snapshot'}]},
+  ]);
+  expect(results[1]?.status).toBe('PASS');
+  expect(evidence.output).toBe(original);
+  const controller=new AbortController();
+  await expect(evaluateMethods({evalCase,evidence,signal:controller.signal},[
+    {id:'cancel',version:'1',kind:'MODEL',evaluate:()=>{controller.abort(new Error('user cancelled'));return new Promise(()=>{});}},
+  ])).rejects.toThrow('user cancelled');
+});

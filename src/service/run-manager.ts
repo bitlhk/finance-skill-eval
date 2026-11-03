@@ -1,3 +1,6 @@
+import {comparisonExecutionIncomplete} from '../evaluation/application/comparison-executions.js';
+import {ObservedRuntime} from '../evaluation/infrastructure/observed-runtime.js';
+import type {ExternalTraceCollector} from '../evaluation/application/external-traces.js';
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { evalCaseSchema, fingerprint } from "../contracts.js";
@@ -9,7 +12,7 @@ import { DeterministicRubricJudge, ModelCandidateJudge, ModelPairwiseJudge, type
 import { ReplayRuntimeAdapter } from "../replay.js";
 import { SideRuntimeAdapter } from '../side-runtime.js';
 import { EvaluationCancelledError, runEvaluation } from "../runner.js";
-import { configuredModelRole } from "./config.js";
+import { configuredModelRole, modelTimeoutMs } from "./config.js";
 import { runConfigurationSchema, type EnvironmentRecord, type RunConfiguration } from "./contracts.js";
 import type { EvalPackCatalog } from "./catalog.js";
 import type { EnvironmentStore } from "./environment-store.js";
@@ -29,8 +32,12 @@ import {CaseToolOutsideDeclaration,skillRuntimeRequirements} from '../shared/ski
 import {requireManagedRun} from './managed-workspace-policy.js';
 import type {EvaluationRunBudget} from './evaluation-run-budget.js';
 import type {OperationalLogger} from './logging.js';
+import {evaluateComparison} from '../evaluation/application/evaluate-comparison.js';
+import {z} from 'zod';
+import {assessmentRepetitionsSchema,assessmentStability,repeatAssessment} from '../evaluation/application/repeated-assessment.js';
 
 type RunManagerOptions = {
+  traceCollector?:ExternalTraceCollector;
   logger?: OperationalLogger;
   catalog: EvalPackCatalog;
   preparations: PreparationStore;
@@ -76,6 +83,7 @@ export class EvaluationRunManager {
   private readonly events = new EventEmitter();
   private readonly pending=new Set<Promise<void>>();
   private closing=false;
+  private readonly rescoringControllers=new Map<string,AbortController>();
 
   constructor(private readonly options: RunManagerOptions) {
     this.events.setMaxListeners(200);
@@ -85,6 +93,40 @@ export class EvaluationRunManager {
     const event = `job:${jobId}`;
     this.events.on(event, listener);
     return () => this.events.off(event, listener);
+  }
+  async rescore(jobId:string,input:unknown={}){
+    const request=z.strictObject({repetitions:assessmentRepetitionsSchema,alternateOrder:z.boolean().default(false)}).parse(input);
+    const job=this.options.jobs.get(jobId);
+    if(this.closing||!job?.report||!job.evaluationSpec||job.status!=='completed')throw new Error('该记录未保存完整评判方案，请重新运行');
+    if(this.rescoringControllers.has(jobId))throw new Error('正在重新评判');
+    const controller=new AbortController();this.rescoringControllers.set(jobId,controller);
+    const source=structuredClone(job),spec=source.evaluationSpec!;
+    const work=(async()=>{
+      const judge=await this.judgeFor(source.configuration,spec);
+      if(request.alternateOrder&&!judge.supportsPresentationOrder)throw new Error('当前 Judge 不支持 A/B 顺序交换');
+      const attempts=await repeatAssessment(request.repetitions,async index=>{
+      const cases=[];
+      for(const original of source.report!.cases){
+        const evalCase=spec.cases.find(c=>c.caseId===original.caseId);
+        if(!evalCase)throw new Error('冻结评判方案缺少案例');
+        cases.push(await evaluateComparison({evalCase,left:original.left,right:original.right,judge,profile:spec.judgeProfile,signal:controller.signal,
+          ...(request.alternateOrder?{presentationOrder:index%2?'swapped' as const:'normal' as const}:{})}));
+      }
+      return {index,presentationOrder:request.alternateOrder?(index%2?'swapped':'normal'):'default',cases};
+      },controller.signal);
+      const cases=attempts[0]!.cases;
+      controller.signal.throwIfAborted();
+      const current=this.options.jobs.get(jobId)!;
+      if(current.report?.reportFingerprint!==source.report!.reportFingerprint)throw new Error('原报告已变化');
+      const record={id:'rescore-'+randomUUID(),createdAt:new Date().toISOString(),sourceReportFingerprint:source.report!.reportFingerprint,judgeId:judge.judgeId,
+        repetitions:attempts.length,attempts,stability:assessmentStability(attempts.map(attempt=>attempt.cases.map(c=>({caseId:c.caseId,outcome:c.judge?.winner??null})))),
+        judgeConfigurationDigest:fingerprint({model:source.configuration.judgeModel??configuredModelRole('JUDGE').model,profile:spec.judgeProfile,
+          endpointDigest:fingerprint(process.env.FINANCE_EVAL_JUDGE_BASE_URL??process.env.FINANCE_EVAL_MODEL_BASE_URL??'')}),cases};
+      await this.options.jobs.save({...current,rescorings:[...(current.rescorings??[]),record]});
+      return record;
+    })();
+    const settled=work.then(()=>{},()=>{});this.pending.add(settled);
+    try{return await work;}finally{this.pending.delete(settled);this.rescoringControllers.delete(jobId);}
   }
 
   async create(input: unknown, frozenQuestions?: FrozenQuestionSet): Promise<EvaluationJob> {
@@ -137,6 +179,7 @@ export class EvaluationRunManager {
     const queuedIndex = this.queue.indexOf(jobId);
     if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
     this.active.get(jobId)?.abort();
+    this.rescoringControllers.get(jobId)?.abort();
     if (["completed", "failed", "cancelled", "interrupted"].includes(job.status)) return job;
     job.status = "cancelled";
     job.stageLabel = "取消已请求；执行停止与回收分别核对";
@@ -178,6 +221,7 @@ export class EvaluationRunManager {
   }
 
   async close():Promise<void>{
+    for(const controller of this.rescoringControllers.values())controller.abort(new Error('Service closing'));
     this.closing=true;
     await Promise.all([...this.queue,...this.active.keys()].map(id=>this.cancel(id)));
     await Promise.allSettled([...this.pending]);
@@ -444,7 +488,7 @@ export class EvaluationRunManager {
     if(configuration.evaluationMode==='candidate_assessment'&&pack.metadata.assessmentMode==='natural_language')return new ModelGoalJudge(judge.adapter,configuration.judgeModel??pack.models.judge,{tools:configuration.runtimeCommandBindings?.right,skillPackage:(await skillFor('right'))?.skillPackage});
     return configuration.evaluationMode==='candidate_assessment'
       ?new ModelCandidateJudge(judge.adapter,configuration.judgeModel??pack.models.judge)
-      :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge);
+      :new ModelPairwiseJudge(judge.adapter, configuration.judgeModel ?? pack.models.judge,modelTimeoutMs('JUDGE'));
   }
 
   private async execute(job: EvaluationJob, controller: AbortController): Promise<void> {
@@ -499,81 +543,107 @@ export class EvaluationRunManager {
         targetSkillVersion: pack.targetSkillVersion,
         caseCount: pack.cases.length,
       };
-      job.progress.totalRuns = pack.cases.length * 2;
+      const repetitions=job.configuration.executionRepetitions??1;
+      if(repetitions>1&&job.configuration.repeatSafety!=='read_only'&&pack.cases.some(c=>!c.stateFixture))throw new Error('重复业务运行需要全部案例配置状态恢复，或明确确认只读');
+      job.progress.totalRuns = pack.cases.length * 2 * repetitions;
       job.executionSnapshot = {variants:structuredClone(pack.variants),models:structuredClone(pack.models),
         cases:pack.cases.map(({caseId,name,prompt})=>({caseId,name,prompt})),packFingerprint:pack.packFingerprint};
+      job.evaluationSpec=structuredClone(pack);
       await this.options.jobs.save(job);
-      let runtime = await this.runtimeFor(job.configuration, pack);
-      if(job.configuration.evaluationMode==='candidate_assessment')runtime=new CandidateAssessmentRuntimeAdapter(runtime,pack.variants.right,pack.models.execution.right);
-      controller.signal.throwIfAborted();
-      const judge = await this.judgeFor(job.configuration, pack);
-      let lastLivePublishedAt = 0;
-      const report = await runEvaluation({
-        pack,
-        runtime,
-        judge,
-        timeoutMs: job.configuration.timeoutMs,
-        signal: controller.signal,
-        onFinalization: async receipt => {
-          const latest=this.options.jobs.get(job.jobId)??job;
-          latest.finalization = {jobId:job.jobId,...receipt};
-          if(latest.cancellation)latest.cancellation.workerSettledAt=new Date().toISOString();
-          job.finalization=latest.finalization;
-          if(latest.status==='cancelled')Object.assign(job,latest);
-          await this.options.jobs.save(latest);
-          this.emit(latest);
-        },
-        onProgress: progress => {
-          if (job.status === "cancelled" || controller.signal.aborted) return;
-          if (progress.event) {
-            const event = progress.event;
-            const key = `${event.caseId}:${event.side}`;
-            job.live ??= {};
-            const live = job.live[key] ??= { caseId: event.caseId, side: event.side, output: "", status: "执行中", toolCalls: [] };
-            if (event.type === "text_delta") live.output += event.text ?? "";
-            if (event.type === "status") live.status = event.text ?? "执行中";
-            if (event.type === "tool_start") live.toolCalls.push({ name: event.toolName ?? "tool", status: "running" });
-            if (event.type === "tool_end") {
-              const tool = [...live.toolCalls].reverse().find(item => item.name === event.toolName && item.status === "running");
-              if (tool) tool.status = event.status ?? "completed";
-            }
-            job.status = "running";
-            job.stageLabel = stageLabel("executing");
-            if (event.type === "text_delta" && Date.now() - lastLivePublishedAt < 150) return;
-            lastLivePublishedAt = Date.now();
-            this.options.jobs.updateLive(job);
-            this.emit(job);
-            return;
+      let judge:PairwiseJudge|undefined;
+      if(repetitions>1)job.executionAttempts=[];
+      for(let iteration=0;iteration<repetitions;iteration++){
+        controller.signal.throwIfAborted();
+        job.live={};job.evidence=[];job.finalization=undefined;
+        if(job.executionAttempts){job.executionAttempts.push({index:iteration,status:'RUNNING'});await this.options.jobs.save(job);}
+        try {
+          let runtime = await this.runtimeFor(job.configuration, pack);
+          if(this.options.traceCollector)runtime=new ObservedRuntime(runtime,this.options.traceCollector);
+          if(job.configuration.evaluationMode==='candidate_assessment')runtime=new CandidateAssessmentRuntimeAdapter(runtime,pack.variants.right,pack.models.execution.right);
+          controller.signal.throwIfAborted();
+          judge??=await this.judgeFor(job.configuration, pack);
+          let lastLivePublishedAt = 0;
+          const report = await runEvaluation({
+            pack,
+            runtime,
+            judge,
+            timeoutMs: job.configuration.timeoutMs,
+            signal: controller.signal,
+            onFinalization: async receipt => {
+              const latest=this.options.jobs.get(job.jobId)??job;
+              latest.finalization = {jobId:job.jobId,...receipt};
+              if(latest.cancellation)latest.cancellation.workerSettledAt=new Date().toISOString();
+              job.finalization=latest.finalization;
+              if(latest.status==='cancelled')Object.assign(job,latest);
+              await this.options.jobs.save(latest);
+              this.emit(latest);
+            },
+            onProgress: progress => {
+              if (job.status === "cancelled" || controller.signal.aborted) return;
+              if (progress.event) {
+                const event = progress.event;
+                const key = `${event.caseId}:${event.side}`;
+                job.live ??= {};
+                const live = job.live[key] ??= { caseId: event.caseId, side: event.side, output: "", status: "执行中", toolCalls: [] };
+                if (event.type === "text_delta") live.output += event.text ?? "";
+                if (event.type === "status") live.status = event.text ?? "执行中";
+                if (event.type === "tool_start") live.toolCalls.push({ name: event.toolName ?? "tool", status: "running" });
+                if (event.type === "tool_end") {
+                  const tool = [...live.toolCalls].reverse().find(item => item.name === event.toolName && item.status === "running");
+                  if (tool) tool.status = event.status ?? "completed";
+                }
+                job.status = "running";
+                job.stageLabel = stageLabel("executing");
+                if (event.type === "text_delta" && Date.now() - lastLivePublishedAt < 150) return;
+                lastLivePublishedAt = Date.now();
+                this.options.jobs.updateLive(job);
+                this.emit(job);
+                return;
+              }
+              job.status = progress.stage === "judging"
+                ? "judging"
+                : progress.stage === "completed" ? "running" : progress.stage === "preparing" ? "preparing" : "running";
+              job.stageLabel = stageLabel(progress.stage);
+              job.progress = {
+                completedRuns: iteration*pack.cases.length*2+progress.completedRuns,
+                totalRuns: repetitions*pack.cases.length*2,
+                ...(progress.caseId ? { caseId: progress.caseId } : {}),
+                ...(progress.side ? { side: progress.side } : {}),
+              };
+              if (progress.evidence) {
+                const key = `${progress.evidence.caseId}:${progress.evidence.side}`;
+                job.evidence = job.evidence.filter(item => item && `${item.caseId}:${item.side}` !== key);
+                job.evidence.push(progress.evidence);
+              }
+              void this.options.jobs.save(job).then(saved => this.emit(saved));
+            },
+          });
+          job.report = report;
+          report.executionBindings={basis:'MODEL_PROVIDER_IS_CONFIGURATION_REFERENCE_NOT_RUNTIME_IDENTITY',
+            runtime:structuredClone(job.configuration.runtime),sides:structuredClone(job.configuration.runtimeBindings??null)};
+          if (job.questionSet) {
+            report.questionSet = job.questionSet;
           }
-          job.status = progress.stage === "judging"
-            ? "judging"
-            : progress.stage === "completed" ? "running" : progress.stage === "preparing" ? "preparing" : "running";
-          job.stageLabel = stageLabel(progress.stage);
-          job.progress = {
-            completedRuns: progress.completedRuns,
-            totalRuns: progress.totalRuns,
-            ...(progress.caseId ? { caseId: progress.caseId } : {}),
-            ...(progress.side ? { side: progress.side } : {}),
-          };
-          if (progress.evidence) {
-            const key = `${progress.evidence.caseId}:${progress.evidence.side}`;
-            job.evidence = job.evidence.filter(item => item && `${item.caseId}:${item.side}` !== key);
-            job.evidence.push(progress.evidence);
+          const { reportFingerprint: _previous, ...content } = report;
+          report.reportFingerprint = fingerprint(content);
+          if(job.executionAttempts)job.executionAttempts[iteration]={index:iteration,status:'COMPLETED',report:structuredClone(report),finalization:structuredClone(job.finalization)};
+          await this.options.jobs.save(job);
+          if(comparisonExecutionIncomplete(report)){
+            if(iteration+1<repetitions)job.executionRepetitionsStopped='执行、证据或评判不完整，后续业务运行未执行';
+            break;
           }
-          void this.options.jobs.save(job).then(saved => this.emit(saved));
-        },
-      });
-      if (this.options.jobs.get(job.jobId)?.status === "cancelled") return;
-      job.status = "completed";
-      job.stageLabel = "评测完成";
-      job.report = report;
-      report.executionBindings={basis:'MODEL_PROVIDER_IS_CONFIGURATION_REFERENCE_NOT_RUNTIME_IDENTITY',
-        runtime:structuredClone(job.configuration.runtime),sides:structuredClone(job.configuration.runtimeBindings??null)};
-      if (job.questionSet) {
-        report.questionSet = job.questionSet;
+        }catch(error){
+          const latest=this.options.jobs.get(job.jobId);
+          if(latest?.status==='cancelled')Object.assign(job,latest);
+          if(job.executionAttempts)job.executionAttempts[iteration]={index:iteration,status:'FAILED',error:error instanceof Error?error.message:String(error),finalization:structuredClone(job.finalization)};
+          await this.options.jobs.save(job);
+          throw error;
+        }
       }
-      const { reportFingerprint: _previous, ...content } = report;
-      report.reportFingerprint = fingerprint(content);
+      if (this.options.jobs.get(job.jobId)?.status === "cancelled") return;
+      controller.signal.throwIfAborted();
+      job.status = "completed";
+      job.stageLabel = job.executionRepetitionsStopped??"评测完成";
       job.completedAt = new Date().toISOString();
       await this.options.jobs.save(job);
       this.emit(job);

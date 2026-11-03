@@ -69,6 +69,8 @@ async def run(body):
     if variant["mode"] == "skill_version" and (not skill or skill["skillId"] != variant["skillId"] or skill["version"] != variant["version"]):
         raise ValueError("Requested Skill identity does not match artifact")
     session_id = str(uuid.uuid4())
+    from evaluation_telemetry import EvaluationTelemetry
+    telemetry = EvaluationTelemetry(body)
     tools, tool_calls, source_digests = [], [], []
     candidate_bindings = []
     harness_found = set()
@@ -86,6 +88,8 @@ async def run(body):
         if isinstance(value, dict):
             return {k: redact_runtime(v) for k, v in value.items()}
         return value
+    from evaluation_process import EvaluationProcess
+    process = EvaluationProcess(redact_runtime)
     bundle_members = (skill or {}).get('bundleMembers', [])
     loaded = ([{'skillId': item['skillId'], 'version': item['version']} for item in bundle_members]
               if bundle_members else [{"skillId": skill["skillId"], "version": skill["version"]}] if skill else [])
@@ -119,6 +123,8 @@ async def run(body):
             found = set()
             files = skill.get("files", {}) if skill else {}
             workspace_path, root_path, workspace_digest = execution_paths(stack, config, skill, body["case"].get("workspaceFiles", []))
+            from evaluation_artifacts import workspace_digests
+            initial_workspace = workspace_digests(workspace_path)
             scripts = (body.get("environment") or {}).get("commandScripts", [])
             if scripts and os.environ.get("FINANCE_EVAL_TRUSTED_LOCAL_SCRIPTS") != "1":
                 raise RuntimeError("Local script execution is disabled")
@@ -214,6 +220,8 @@ async def run(body):
                 prompt_mode='minimal', language='cn')
             agent = DeepAgent(AgentCard(id=session_id, name="finance-eval-session", description="Isolated Skill evaluation"))
             agent.configure(settings)
+            await agent.register_rail(telemetry.rail())
+            await agent.register_rail(process.rail())
             from openjiuwen.core.runner import Runner
             for tool in tools:
                 Runner.resource_mgr.add_tool(tool, refresh=True)
@@ -280,15 +288,20 @@ async def run(body):
             for secret in [model.get("apiKey", ""), *[v for s in config.get("mcp", {}).values() for v in s.get("headers", {}).values()]]:
                 if secret:
                     error = error.replace(secret, "[redacted]")
+        from evaluation_artifacts import collect_artifacts
+        artifacts, artifacts_omitted = collect_artifacts(workspace_path, body['case'].get('workspaceFiles', []), locals().get('initial_workspace')) if 'workspace_path' in locals() and workspace_path.exists() else ([], 0)
+        artifacts = redact_runtime(artifacts)
+        for artifact in artifacts:
+            artifact['sha256'] = hashlib.sha256(artifact['content'].encode('utf-8')).hexdigest()
     emit({"evidence": {"runId": body["runId"], "caseId": body["case"]["caseId"], "side": body["side"],
                        "status": "failed" if error else "completed", "modelId": model_id, "skillVersion": skill["version"] if skill else None,
                        "output": redact_runtime(output), "elapsedMs": round((time.monotonic() - started) * 1000),
                        "toolCalls": tool_calls, "loadedSkills": loaded, "usage": usage,
                        "runtimeIdentityVerified": True, "streamCompleted": not bool(error), "error": redact_runtime(error),
-                       "metadata": {"executionMode": "live-openjiuwen", "runtimeVersion": _runtime_version,
+                       "metadata": {"process": process.finish(), "artifacts": redact_runtime(artifacts), "artifactsOmitted": artifacts_omitted, "telemetry": telemetry.finish(bool(error)), "executionMode": "live-openjiuwen", "runtimeVersion": _runtime_version,
                                     "skillArtifactSha256": skill["artifactSha256"] if skill else None,
                                     **({'contentDigest': body['bundle']['digest'], 'loadedSkillMembers': bundle_members,
-                                        'bundleDigest': body['bundle']['digest'], 'loadedBundleMembers': bundle_members} if bundle_members else {}),
+                                        'bundleDigest': body['bundle']['digest'], 'loadedBundleMembers': bundle_members} if body.get('bundle') else {}),
                                     "integrationVersion": "local-openjiuwen-v1.2", "agentType": "DeepAgent",
                                     "modelBinding": {"providerId": body["model"]["providerId"], "upstreamModelId": model_settings["model_name"],
                                                      "providerLabel": model.get("providerLabel"), "requestParameters": model_settings},

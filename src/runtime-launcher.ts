@@ -1,3 +1,6 @@
+import {setTimeout as delay} from 'node:timers/promises';
+import {runtimeFeatureIssues} from './shared/contracts/runtime-intake.js';
+import {withRuntimeProcess} from './evaluation/domain/runtime-process.js';
 import { conversationTurnsSchema,fingerprint, runtimeExecutionEvidenceSchema, workspaceFilesDigest, workspaceFilesSchema, type ModelRef, type RuntimeExecutionEvidence, type SkillVariant } from './contracts.js';
 import { randomUUID } from 'node:crypto';
 import {canonicalSha256} from './shared/json-canonicalization.js';
@@ -8,8 +11,10 @@ import type { RuntimeEnvironmentDescriptor } from './http-runtime.js';
 import { runtimeCleanupObservationSchema, runtimeLauncherBaseUrlSchema, runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 import { runtimeObservationEventSchema, type RuntimeObservationEvent } from './shared/contracts/runtime-observation.js';
 import { z } from 'zod';
-import { runtimeSkillSetSchema, runtimeSkillSetFromAsset, skillSetFileStats, skillMembers, type RuntimeSkillSet } from './shared/contracts/runtime-skills.js';
+import { emptyRuntimeSkillSet, runtimeSkillSetSchema, runtimeSkillSetFromAsset, skillSetFileStats, skillMembers, type RuntimeSkillSet } from './shared/contracts/runtime-skills.js';
 import { RUNTIME_INSTANCE_SCHEMA_VERSION } from './shared/contracts/runtime-protocol-versions.js';
+import {executeWithCaseState,type CaseStateEvidence} from './evaluation/application/case-state-lifecycle.js';
+import type {CaseStateRequest} from './shared/contracts/case-state.js';
 
 export { runtimeLauncherCapabilitiesSchema } from './shared/contracts/runtime-launcher.js';
 export type { RuntimeLauncherCapabilities } from './shared/contracts/runtime-launcher.js';
@@ -184,9 +189,14 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
   private instance:InstanceState|null=null;
   private cleanupObservation:Record<string,unknown>={status:'NOT_REQUESTED'};
   private readonly cleanupReceipts=new Map<string,Record<string,unknown>>();
+  private stateLifecycleSupported=false;
+  private stateRecoveryBlocked=false;
+  private readonly stateReceipts:CaseStateEvidence[]=[];
+  supportsCaseState(){return this.stateLifecycleSupported;}
   finalizationEvidence(){
     const instances=[...this.cleanupReceipts.values()].map(receipt=>({...receipt}));
-    return instances.length<=1?{...this.cleanupObservation}:{status:instances.every(receipt=>receipt.status==='RELEASED')?'RELEASED':'UNKNOWN',scope:'ALL_CREATED_INSTANCES',instances};
+    const result=instances.length<=1?{...this.cleanupObservation}:{status:instances.every(receipt=>receipt.status==='RELEASED')?'RELEASED':'UNKNOWN',scope:'ALL_CREATED_INSTANCES',instances};
+    return {...result,...(this.stateReceipts.length?{caseState:this.stateReceipts}:{})};
   }
   private executeUrl:URL|null=null;
   private incarnation=0;
@@ -206,11 +216,16 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       ? {...launcherGenerationSchema.omit({schemaVersion:true}).parse(parameters),schemaVersion:'finance.eval-generation.v1' as const} : undefined;
     this.generation=generation;
     if (!this.options.skillSet && this.options.skill) this.options.skillSet = await runtimeSkillSetFromAsset(this.options.skill);
+    if (!this.options.skillSet && this.options.variant.mode==='without_target_skill') this.options.skillSet=emptyRuntimeSkillSet();
     if (!this.options.skillSet) throw new Error('Runtime 启动需要 Skill 集合');
     runtimeSkillSetSchema.parse(this.options.skillSet);
     const capabilityResponse=await fetch(endpoint(this.options.baseUrl,'v1/runtime-capabilities'),{headers:this.options.headers,redirect:'error',signal});
     if (!capabilityResponse.ok) throw await responseError(capabilityResponse);
     const capabilities=runtimeLauncherCapabilitiesSchema.parse(await readBoundedJson(capabilityResponse,262144,'Runtime capabilities'));
+    this.stateLifecycleSupported=capabilities.features.caseStateLifecycle===true;
+    if(capabilities.features.processEvidence!==true)throw new Error('Runtime Launcher 必须声明 processEvidence，并在 execute 返回 metadata.process；请按公共接入手册升级适配器');
+    if (runtimeFeatureIssues(capabilities,this.options.skillSet.executionMode==='agent_project'?['projectExecution']:[]).length)
+      throw new Error('所选 Runtime 未声明完整 Agent 工程执行能力');
     const stats=skillSetFileStats(this.options.skillSet);
     if (stats.count>capabilities.limits.maxFiles || stats.bytes>capabilities.limits.maxArchiveBytes || this.options.timeoutMs>capabilities.limits.maxTimeoutMs)
       throw new Error('实例输入超过 Runtime 容量限制');
@@ -219,10 +234,17 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
       limits:{timeoutMs:this.options.timeoutMs},...(generation?{generation}:{})};
     const request:RuntimeInstanceRequest={...common,schemaVersion:RUNTIME_INSTANCE_SCHEMA_VERSION,...this.options.skillSet};
     const idempotencyKey=fingerprint({leaseId:this.leaseId,runId:context.runId,side:this.options.side,configuration:fingerprint(request),...(this.incarnation?{incarnation:this.incarnation}:{})});
-    const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
-      headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
-    if(!response.ok)throw await responseError(response);
-    this.instance=runtimeInstanceStateSchema.parse(await response.json());
+    for (;;) {
+      const response=await fetch(endpoint(this.options.baseUrl,'v1/runtime-instances'),{method:'POST',redirect:'error',signal,
+        headers:{'content-type':'application/json','idempotency-key':idempotencyKey,...this.options.headers},body:JSON.stringify(request)});
+      if(response.ok){
+        this.instance=runtimeInstanceStateSchema.parse(await response.json());
+        break;
+      }
+      const payload=await readBoundedJson(response,65536,'Runtime Launcher error').catch(()=>null) as {error?:unknown}|null;
+      if(response.status!==409||payload?.error!=='RUNTIME_INSTANCE_CAPACITY')throw launcherPayloadError(response.status,payload);
+      await delay(1000,undefined,{signal});
+    }
     const readStatus=async()=>{
       const status=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance!.instanceId)}`),{headers:this.options.headers,redirect:'error',signal});
       if(!status.ok)throw await responseError(status);
@@ -246,6 +268,8 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     // execution; never replay the failed case (it may already have caused side effects).
     const execution=this.executionTail.then(async()=>{
       request.signal?.throwIfAborted();
+      if(this.stateRecoveryBlocked)throw new Error('业务状态恢复未被证明成功，已停止后续业务执行');
+      if(request.evalCase.stateFixture&&!this.stateLifecycleSupported)throw new Error('Runtime 未提供业务初态、采集和恢复能力，未执行业务');
       if(this.options.stopAfterFailure&&this.failedCaseId)throw new RuntimeCaseNotExecutedError(this.failedCaseId);
       try{
         if(this.recoveryRequired){
@@ -254,13 +278,24 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
           await this.prepare({runId:request.runId,signal:request.signal});
           this.recoveryRequired=false;
         }
-        const evidence=await this.executePrepared(request);
+        const evidence=request.evalCase.stateFixture?await executeWithCaseState(request,(action,signal)=>this.stateAction(action,signal),
+          ()=>this.executePrepared(request),record=>{
+            this.stateReceipts.push(record);
+            if(record.errors.some(error=>error.phase==='restore'))this.stateRecoveryBlocked=true;
+          }):await this.executePrepared(request);
         if(evidence.status==='failed'){this.recoveryRequired=true;this.failedCaseId=request.evalCase.caseId;}
         return evidence;
       }catch(error){this.recoveryRequired=true;this.failedCaseId=request.evalCase.caseId;throw error;}
     });
     this.executionTail=execution.then(()=>undefined,()=>undefined);
     return execution;
+  }
+  private async stateAction(action:CaseStateRequest,signal:AbortSignal){
+    if(!this.instance)throw new Error('State operation requires a live Runtime instance');
+    const response=await fetch(endpoint(this.options.baseUrl,`v1/runtime-instances/${encodeURIComponent(this.instance.instanceId)}/case-state`),{
+      method:'POST',redirect:'error',signal,headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(action)});
+    if(!response.ok)throw await responseError(response);
+    return readBoundedJson(response,262144,'Case state receipt');
   }
   private async executePrepared(request:RuntimeExecutionRequest):Promise<RuntimeExecutionEvidence>{
     if(!this.instance||!this.executeUrl)throw new Error('Runtime instance is not ready');
@@ -270,10 +305,10 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
         throw new Error('所选 Runtime 尚未声明真实多轮续接能力，复用验收未执行');
     }
     const response=await fetch(this.executeUrl,{method:'POST',redirect:'error',signal:request.signal?AbortSignal.any([request.signal,AbortSignal.timeout(this.options.timeoutMs)]):AbortSignal.timeout(this.options.timeoutMs),
-      headers:{'content-type':'application/json',...this.options.headers},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[],...(request.evalCase.turns?{turns:request.evalCase.turns}:{})}))});
+      headers:{'content-type':'application/json',...this.options.headers,...(request.traceparent?{traceparent:request.traceparent}:{})},body:JSON.stringify(runtimeCaseRequestSchema.parse({schemaVersion:'finance.skill-eval.runtime-case.v1',caseId:request.evalCase.caseId,query:request.evalCase.prompt,requiredTools:request.evalCase.requiredTools,workspaceFiles:request.evalCase.workspaceFiles??[],...(request.evalCase.turns?{turns:request.evalCase.turns}:{})}))});
     if(!response.ok)throw await responseError(response);
     const execution=await readExecution(response,request,this.instance.instanceId),payload=execution.payload;
-    const evidence=runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload);
+    const evidence=withRuntimeProcess(runtimeExecutionEvidenceSchema.parse(payload&&typeof payload==='object'&&'evidence' in payload?(payload as {evidence:unknown}).evidence:payload),true);
     if(evidence.runId!==request.runId||evidence.side!==request.side||evidence.caseId!==request.evalCase.caseId)throw new Error('Runtime instance evidence does not match the requested case');
     if(evidence.modelId!==this.options.model.modelId)throw new Error('Runtime instance used a different model');
     if(this.generation){
@@ -285,11 +320,17 @@ export class RuntimeLauncherAdapter implements RuntimeAdapter{
     if(evidence.status==='failed'&&!evidence.runtimeIdentityVerified)throw new Error(evidence.error??'Runtime instance stopped before producing verified execution evidence');
     if(this.options.skillSet){
       const set=this.options.skillSet, bundle={digest:set.contentDigest,members:skillMembers(set)};
+      if (set.executionMode === 'agent_project' && evidence.metadata.projectExecution !== true)
+        throw new Error('Runtime 未证明执行了原 Agent 工程，不能作为业务基线');
+      if (set.executionMode === 'agent_project') {
+        if (evidence.metadata.contentDigest !== bundle.digest) throw new Error('原工程内容摘要与本次基线不一致');
+      } else {
       const observed=z.array(z.object({id:z.string(),skillId:z.string(),version:z.string(),artifactSha256:z.string(),skillFile:z.string()})).parse(evidence.metadata.loadedSkillMembers);
       if(evidence.metadata.contentDigest!==bundle.digest||observed.length!==bundle.members.length
         ||fingerprint([...observed].sort((a,b)=>a.id.localeCompare(b.id)))!==fingerprint([...bundle.members].sort((a,b)=>a.id.localeCompare(b.id)))
         ||bundle.members.some(member=>!evidence.loadedSkills.some(item=>item.skillId===member.skillId&&item.version===member.version)))
         throw new Error('整组 Skill 装载清单或内容摘要与本次候选不一致');
+      }
     }
     if(this.options.skill&&!evidence.loadedSkills.some(item=>item.skillId===this.options.skill!.skillId&&item.version===this.options.skill!.version))throw new Error('Runtime instance did not load the requested Skill artifact');
     if(this.options.variant.mode==='without_target_skill'&&evidence.loadedSkills.some(item=>item.skillId===this.options.variant.skillId))throw new Error('Baseline Runtime instance unexpectedly loaded the target Skill');

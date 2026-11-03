@@ -10,6 +10,10 @@ import uuid
 import zipfile
 
 
+class InstanceCapacityError(RuntimeError):
+    pass
+
+
 class InstanceManager:
     def __init__(self, ttl_seconds=900, max_archive_bytes=8 * 1024 * 1024, max_files=200,
                  max_uncompressed_bytes=16 * 1024 * 1024):
@@ -67,7 +71,7 @@ class InstanceManager:
                 raise RuntimeError('Idempotency key was reused with different configuration')
             return item
         if len(self.instances) >= 2:
-            raise RuntimeError('Runtime instance capacity exceeded')
+            raise InstanceCapacityError('Runtime instance capacity exceeded')
         instance_id = 'runtime-instance-' + uuid.uuid4().hex[:16]
         now = time.time()
         item = {'schemaVersion': 'finance.skill-eval.runtime-instance-state.v1', 'instanceId': instance_id,

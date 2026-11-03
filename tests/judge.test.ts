@@ -87,14 +87,23 @@ describe("model pairwise judge", () => {
     });
 
     expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[1]![0].messages.map(m=>m.role)).toEqual(['system','user','user']);
     expect(result.confidence).toBe("high");
-    expect(complete.mock.calls[0]?.[0].messages[1]?.content).toContain("runtimeEvidenceA");
+    expect(complete.mock.calls[0]?.[0].messages[1]?.content).toContain("businessFactsA");
     expect(complete.mock.calls[0]?.[0].messages[1]?.content).not.toContain("private-document-digest");
-    expect(complete.mock.calls[0]?.[0].messages[1]?.content).toContain("verified-business-fact");
+    expect(complete.mock.calls[0]?.[0].messages[1]?.content).not.toContain("verified-business-fact");
     expect(complete.mock.calls[1]?.[0].messages.at(-1)?.content).toContain("不要复述 responseContract");
     const contract = JSON.parse(complete.mock.calls[0]![0].messages[1]!.content).responseContract;
     expect(contract.dimensions.every((dimension: Record<string, unknown>) => !("label" in dimension))).toBe(true);
     expect(result.dimensions.map(dimension => dimension.label)).toEqual(pack.judgeProfile.dimensions.map(dimension => dimension.label));
+  });
+  it.each([ModelPairwiseJudge,ModelCandidateJudge])('does not treat a provider error as a format correction',async Judge=>{
+    const pack=await loadEvalPack(path.resolve('packs/finance/investment-research/eval.yaml'));
+    const complete=vi.fn<ModelAdapter['complete']>().mockRejectedValue(new Error('provider HTTP 400'));
+    const evalCase=pack.cases[0]!;
+    await expect(new Judge({adapterId:'provider-failure',complete},pack.models.judge).compare({evalCase,
+      left:evidence('left',evalCase.caseId),right:evidence('right',evalCase.caseId),profile:pack.judgeProfile})).rejects.toThrow('HTTP 400');
+    expect(complete).toHaveBeenCalledTimes(1);
   });
   it('scores a migrated candidate without inventing a winning side',async()=>{
     const pack=await loadEvalPack(path.resolve('packs/finance/investment-research/eval.yaml'));

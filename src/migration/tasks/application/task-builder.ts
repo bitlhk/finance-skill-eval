@@ -54,7 +54,10 @@ export class TaskBuilderService {
           evidence:diagnosis.hypothesis.evidenceCaseIds.map(evidenceRef=>({evidenceRef,summary:diagnosis.hypothesis.validation.slice(0,1000)})),
         }}:{}),
         executionRequirements: { platform,
-          features: ['streaming', ...(candidate.services.length ? ['packagedMcp' as const] : [])],
+          features: ['processEvidence', 'streaming', ...(candidate.services.length ? ['packagedMcp' as const] : []),
+            ...((task.suite?.cases??[]).some(c=>c.evaluationPlan?.checks.some(check=>[...check.evidenceRefs,check.rule?.reference??''].some(ref=>ref.startsWith('/telemetry'))))?['otlpEvidence' as const]:[]),
+            ...((task.suite?.cases??[]).some(c=>c.evaluationPlan?.checks.some(check=>[...check.evidenceRefs,check.rule?.reference??''].some(ref=>ref.startsWith('/artifacts'))))?['artifactEvidence' as const]:[]),
+            ...([...(task.suite?.cases??[]),...(task.suite?.holdoutCases??[])].some(c=>c.stateFixture)?['caseStateLifecycle' as const]:[])],
           limits: {maxSkills: candidate.members.length, maxFiles: stats.count, maxArchiveBytes: stats.bytes, maxTimeoutMs: settings.timeoutMs},
         },
       });

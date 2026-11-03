@@ -60,6 +60,23 @@ try {
   await expect(page.locator('.bundle-upload').getByRole('alert')).toBeVisible();
   assert.equal((await tasks()).length,1);
   pass('oversize_project_does_not_create_task');
+  // Keep import regression deterministic: observe automatic preparation without a model call.
+  let preparations=0;
+  await page.route('**/api/migration-tasks/*/preparation',async route=>{
+    preparations++;
+    await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'fixture execution environment unavailable'})});
+  });
+  await page.getByLabel('上传类型',{exact:true}).selectOption('agent_project');
+  await page.getByLabel('工程说明（选填）',{exact:true}).fill('Start app/main.py; keep original behavior');
+  await input().setInputFiles(zip({'app/main.py':'print(1)','resources/deep/SKILL.md':'Legacy Skill without frontmatter'},'agent-project.zip'));
+  await expect(page.getByRole('heading',{name:'已导入的 Agent 工程',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'理解工程并准备运行',exact:true})).toBeVisible();
+  await expect(page.getByText('工程已导入，但运行准备未启动',{exact:false})).toBeVisible();
+  const agentProject=(await tasks()).find(task=>task.inputKind==='agent_project');
+  assert(agentProject);assert.equal(preparations,1);
+  assert.equal(agentProject.projectNotes,'Start app/main.py; keep original behavior');
+  assert.equal(agentProject.source.members.length,0);
+  pass('complete_project_preserves_legacy_skills_and_notes_and_starts_agent_preparation');
   await page.screenshot({path:path.join(output,'desktop.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));

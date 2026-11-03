@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ModelAdapter, ModelCompletionRequest } from '../src/adapters.js';
 import { agentRoleIds, loadAgentRole } from '../src/agents/composition.js';
 import { createEffectReviewer, createSkillEditor } from '../src/agents/tool-free-roles.js';
+import { createImprovementDiagnoser } from '../src/agents/improvement-diagnoser.js';
 import type { AgentCompositionReceipt } from '../src/shared/contracts/agent-composition.js';
 
 afterEach(() => vi.useRealTimers());
@@ -15,12 +16,25 @@ function dependency(output: unknown) {
   return { complete, adapter: { adapterId: 'fixture', complete } satisfies ModelAdapter, model };
 }
 
+it.each([null,[],{}])('keeps a tool diagnosis when the model supplies an empty Builder field: %j',async requiredCapabilities=>{
+  const hypothesis={layer:'TOOL',issue:'Equal limit incorrectly rejected',expectedBehavior:'Allow equal limit',
+    evidenceCaseIds:['boundary'],validation:'Run the boundary case',risk:'Retest above-limit behavior',
+    confidence:'HIGH',requiredCapabilities};
+  const d=dependency({status:'PROPOSED',hypothesis});
+  const diagnose=createImprovementDiagnoser({...d,capabilityFormat:{}});
+  const result=await diagnose({modelId:'model',sourceJobId:'run',baseSolutionRevisionId:'candidate',
+    tools:[],runtimeConfiguration:[],technicalEvidence:[],cases:[]},{requestId:'diagnosis'});
+  expect(result.judgement).toMatchObject({status:'PROPOSED',hypothesis:{layer:'TOOL',evidenceCaseIds:['boundary']}});
+  expect(result.judgement).not.toHaveProperty('hypothesis.requiredCapabilities');
+  expect(d.complete).toHaveBeenCalledTimes(1);
+});
+
 it('loads every installed role without granting read-only roles write or execution tools', () => {
   for (const id of agentRoleIds) {
     const role = loadAgentRole(id);
     expect(role.resources.length).toBeGreaterThan(1);
     expect(role.systemPrompt).not.toMatch(/(?:^|\n\n)undefined(?:\n\n|$)/u);
-    if (id !== 'migration') expect(role.definition.tools).not.toEqual(expect.arrayContaining(['write_file']));
+    if (!['migration','runtime-preparation'].includes(id)) expect(role.definition.tools).not.toEqual(expect.arrayContaining(['write_file']));
     expect(role.definition.tools).not.toContain('bash');
   }
   expect(() => loadAgentRole('diagnosis', '../v1')).toThrow();

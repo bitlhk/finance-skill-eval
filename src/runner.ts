@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EvaluationSide, RuntimeAdapter, RuntimeEvent } from "./adapters.js";
 import {executeEvaluationCase} from './evaluation/application/execute-case.js';
+import {evaluateComparison} from './evaluation/application/evaluate-comparison.js';
+
 import {EvaluationCancelledError} from './evaluation/domain/errors.js';
 export {EvaluationCancelledError} from './evaluation/domain/errors.js';
 import type { EvalPack, RuntimeExecutionEvidence } from "./contracts.js";
@@ -217,6 +219,9 @@ export async function runEvaluation(input: {
       signal: input.signal,
     });
     throwIfAborted(input.signal);
+    cleanupRequested=true;
+    await input.runtime.cleanup?.();
+    throwIfAborted(input.signal);
     input.onProgress?.({
       stage: "judging",
       completedRuns,
@@ -229,37 +234,8 @@ export async function runEvaluation(input: {
       if (!result?.left || !result.right) {
         throw new Error(`Promptfoo did not produce both sides for ${evalCase.caseId}`);
       }
-      let judge = null;
-      let judgeError = null;
-      try {
-        if (!input.judge.assessesSidesIndependently && (result.left.status !== "completed" || result.right.status !== "completed")) {
-          throw new Error("执行未完成，不计入专业质量评分；请修复运行环境后重测。");
-        }
-        judge = await input.judge.compare({
-          signal: input.signal,
-          evalCase,
-          left: result.left,
-          right: result.right,
-          profile: input.pack.judgeProfile,
-        });
-        throwIfAborted(input.signal);
-      } catch (error) {
-        if (input.signal?.aborted || error instanceof EvaluationCancelledError) throw error;
-        judgeError = error instanceof Error ? error.message : String(error);
-      }
-      cases.push({
-        caseId: evalCase.caseId,
-        name: evalCase.name,
-        prompt: evalCase.prompt,
-        evaluationGoal: evalCase.evaluationGoal,
-        left: result.left,
-        right: result.right,
-        judge,
-        judgeError,
-      });
+      cases.push(await evaluateComparison({evalCase,left:result.left,right:result.right,judge:input.judge,profile:input.pack.judgeProfile,signal:input.signal}));
     }
-    cleanupRequested=true;
-    await input.runtime.cleanup?.();
     const report = buildReport({
       pack: input.pack,
       runtimeAdapterId: input.runtime.adapterId,

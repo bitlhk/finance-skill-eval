@@ -100,6 +100,9 @@ export function AcceptanceStage({ state }: { state: MigrationWorkbench; }) {
       )}
       {run && (
         <MigrationRunView
+          disabled={disabled} rescorings={task.rescorings}
+          taskId={task.id} allRuns={task.runs} analyses={task.runAnalyses} onAnalyze={()=>void act(async()=>{setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/analyze-run`,{method:'POST',body:JSON.stringify({runId:run.id})}));})}
+          onRescore={repetitions=>void act(async()=>{setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/rescore`,{method:'POST',body:JSON.stringify({runId:run.id,repetitions})}));})}
           run={run}
           currentCandidateId={task.currentCandidateId}
           experimental={task.attempts.some(a=>a.optimization?.rounds.some(round=>round.candidate?.id===run.candidateId))}

@@ -7,7 +7,7 @@ function run(program,args,env=process.env){
   if(result.error)throw result.error;
   if(result.status!==0)throw new Error(`${path.basename(program)} exited with ${result.status??result.signal}`);
 }
-const defaultTests=['tests.test_openjiuwen_environment','tests.test_agent_roles','integrations.openjiuwen.test_bundle_runtime',
+const defaultTests=['tests.test_openjiuwen_environment','tests.test_agent_roles','tests.test_project_execution','integrations.openjiuwen.test_bundle_runtime',
   'tests.test_enterprise_tool_contract','tests.test_analysis_file_boundary','tests.test_analysis_workspace_text','tests.test_analysis_model_wire'];
 try{
   const args=process.argv.slice(2).filter((value,index)=>!(index===0&&value==='--'));

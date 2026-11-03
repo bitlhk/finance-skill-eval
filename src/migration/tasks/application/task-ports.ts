@@ -24,7 +24,8 @@ export type BundleAgentInput = {
   roleVersion?: string;
   onComposition?: (receipt: import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt) => Promise<void> | void;
   correlation?: MigrationCorrelation;
-  mode: 'ANALYZE' | 'GENERATE' | 'REPAIR';
+  mode: 'PREPARE' | 'ANALYZE' | 'GENERATE' | 'REPAIR';
+  project?: { notes: string; preparation?: import('../domain/project-preparation.js').ProjectPreparation };
   source: BundleSnapshot;
   base: BundleSnapshot;
   goal: string;
@@ -40,10 +41,13 @@ export type BundleAgentResult = {
   analysis?: BundleAnalysis;
   delivery?: BundleDelivery;
   files?: Record<string, string>;
+  preparation?: import('../domain/project-preparation.js').ProjectPreparation;
+  executions?: import('../domain/project-preparation.js').ProjectExecutionReceipt[];
 };
 export type BundleAgent = (input: BundleAgentInput) => Promise<BundleAgentResult>;
 export type BundleExecution = { runtime: RuntimeAdapter; model: ModelRef; environmentSnapshot: unknown; };
 export type BundleRuntimeFactory = (input: {
+  executionMode?: 'agent_project';
   snapshot: BundleSnapshot;
   services: BundleDelivery['services'];
   configuration: BundleConfiguration;
@@ -57,7 +61,7 @@ export type BundleJudge = ((input: {
   requirements?:import('../domain/task-standardization.js').Standardization['requirements'];
   tools?:BundleDelivery['tools'];
   signal: AbortSignal;
-}) => Promise<BundleVerdict>) & { identity?: () => string };
+}) => Promise<BundleVerdict>) & { identity?: () => string; timeoutMs?: () => number };
 
 export interface MigrationTaskRepository {
   list(): Promise<BundleTask[]>;

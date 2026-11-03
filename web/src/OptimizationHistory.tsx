@@ -29,6 +29,7 @@ export function OptimizationHistory({loop,onRun}:{loop:OptimizationLoop;onRun?:(
       {round.review?.status==='PRODUCED'&&round.review.review.tradeoff&&<p>取舍依据：{round.review.review.tradeoff}</p>}
       {round.review?.status==='PRODUCED'&&!!round.review.review.nextFocus?.length&&<p>后续修复：{round.review.review.nextFocus.join('；')}</p>}
       {round.reason&&<p>选择原因：{round.reason}</p>}
+      {!!round.investigation?.length&&<details><summary>诊断查阅的证据与调用记录</summary><pre>{JSON.stringify(round.investigation,null,2)}</pre></details>}
       {round.evaluationId&&onRun&&<button className="button secondary" onClick={()=>onRun(round.evaluationId!)}>查看本轮复测</button>}
     </details>)}
   </section>;

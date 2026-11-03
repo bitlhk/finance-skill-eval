@@ -1,3 +1,5 @@
+import {ExternalTraceCollector} from '../evaluation/application/external-traces.js';
+import {registerOtlpRoutes} from '../interfaces/http/otlp-routes.js';
 import {createHistoricalServiceEnvironmentResolver} from '../execution-configuration/historical-service-environment.js';
 import { readFile } from "node:fs/promises";
 import { requestLoggingOptions, installRequestId, operationalError } from './logging.js';
@@ -30,6 +32,11 @@ import {managedWorkspaceOperation} from './managed-workspace-policy.js';
 import {EvaluationRunBudget} from './evaluation-run-budget.js';
 import {createMigrationTaskService} from '../migration/tasks/composition.js';
 import {registerMigrationTaskRoutes} from '../interfaces/http/migration-task-routes.js';
+import {registerEvaluationReviewRoutes} from '../interfaces/http/evaluation-review-routes.js';
+import {HumanReviewStore} from './human-review-store.js';
+import {comparisonCalibrations,migrationCalibrations} from './evaluation-calibration.js';
+import {migrationReviewTargets,comparisonReviewTargets} from '../evaluation/application/review-targets.js';
+import {canonicalSha256} from '../shared/json-canonicalization.js';
 import type {BundleAgent,BundleRuntimeFactory,BundleJudge} from '../migration/tasks/application/task-ports.js';
 
 function markdownReport(report: EvaluationReport): string {
@@ -92,6 +99,8 @@ export async function createEvaluationService(
     if(request.url.startsWith('/api/')) reply.header('cache-control','no-store');
     return payload;
   });
+  const traceCollector=process.env.FINANCE_EVAL_EXTERNAL_OTLP==='1'?new ExternalTraceCollector():undefined;
+  if(traceCollector)registerOtlpRoutes(app,traceCollector,!config.publicDemo&&Boolean(config.accessToken));
   const catalog = new EvalPackCatalog(config.rootDirectory);
   const skills = new SkillStore(config.dataDirectory);
   const environments = new EnvironmentStore(config.dataDirectory,config.launcherTrust??[]);
@@ -105,6 +114,7 @@ export async function createEvaluationService(
     jobs.initialize(),
   ]);
   const manager:EvaluationRunManager = new EvaluationRunManager({
+    traceCollector,
     catalog,
     preparations,
     skills,
@@ -125,10 +135,25 @@ export async function createEvaluationService(
   });
   const demo = new DemoAccess(config.dataDirectory);
   app.addHook('preClose',async()=>{await optimizations.close();await manager.close();});
-  const bundles=createMigrationTaskService({root:config.dataDirectory,skills,environments,managed:config.managedWorkspace,ports:bundlePorts,logger:app.log});
+  const bundles=createMigrationTaskService({traceCollector,root:config.dataDirectory,skills,environments,managed:config.managedWorkspace,ports:bundlePorts,logger:app.log});
   await bundles.initialize();
+  const humanReviews=new HumanReviewStore(config.dataDirectory,async source=>{
+    if(source.kind==='migration'){
+      const task=await bundles.get(source.id),run=task.runs.find(r=>r.id===source.runId);
+      if(!run||run.status==='RUNNING')throw Object.assign(new Error('请选择已结束的评测记录'),{statusCode:409});
+      return {digest:canonicalSha256(JSON.parse(JSON.stringify(run))),targets:migrationReviewTargets(run),resources:{cases:run.cases},evaluations:migrationCalibrations(run,task.rescorings)};
+    }
+    const job=jobs.get(source.id);
+    if(!job?.report||job.status!=='completed')throw Object.assign(new Error('请选择已完成的对比报告'),{statusCode:409});
+    return {digest:canonicalSha256(JSON.parse(JSON.stringify(job.report))),targets:comparisonReviewTargets(job.report),resources:{cases:job.report.cases},evaluations:comparisonCalibrations(job)};
+  });
+  registerEvaluationReviewRoutes(app,humanReviews,!config.publicDemo&&Boolean(config.accessToken));
   app.addHook('preClose',()=>bundles.close());
   registerMigrationTaskRoutes(app,bundles,!config.publicDemo&&Boolean(config.accessToken),skills);
+  app.post<{Params:{jobId:string}}>('/api/runs/:jobId/rescore',async(request,reply)=>{
+    if(config.publicDemo||!config.accessToken)return reply.code(403).send({message:'重新评判仅限私有工作区'});
+    return manager.rescore(request.params.jobId,request.body??{});
+  });
   registerHistoryRoutes(app,new HistoryStore(config.dataDirectory),!config.publicDemo&&Boolean(config.accessToken));
 
   app.post<{ Params: { jobId: string } }>("/api/runs/:jobId/optimize", async (request, reply) => reply.code(202).send(await optimizations.create(request.params.jobId,false,undefined,request.body??{})));

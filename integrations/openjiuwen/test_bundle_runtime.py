@@ -10,7 +10,7 @@ import os
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, Mock
 from types import SimpleNamespace
 from .bundle_runtime import files_digest, verify_bundle_integrity
 from .skill_set import hydrate_skill_set
@@ -20,6 +20,7 @@ from .bundle_agent import run_bundle
 from .bundle_agent import citation_errors
 from .bundle_agent import validate_result_contract
 from .bundle_agent import correct_result_fields
+from .bundle_agent import analysis_sample_errors
 from .execution_paths import execution_paths
 
 
@@ -169,6 +170,27 @@ class BundleRuntimeTest(unittest.TestCase):
 
 
 class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cli_is_not_executed_as_a_json_stdin_script(self):
+        from integrations.openjiuwen.migration_tools import _contract_test
+        with tempfile.TemporaryDirectory() as folder:
+            result = await _contract_test(Path(folder), {'git': {'form': 'CLI'}}, 'git', 'git')
+        self.assertFalse(result['callExecuted'])
+        self.assertIn('WAIT_RUNTIME_CLI', result['note'])
+
+    def test_analysis_rejects_mismatched_script_envelope_before_generation(self):
+        contract = {'inputSchema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+                    'outputSchema': {}, 'sampleInput': {'tool': 'lookup', 'user_id': 'example', 'args': {}}, 'sampleReason': ''}
+        analysis = {'diagnosis': {'tools': [{'id': 'lookup', 'name': 'lookup', 'language': 'python'}]},
+                    'standardization': {'tools': [{'toolId': 'lookup', 'form': 'SCRIPT', 'contract': contract}]}}
+        self.assertIn('lookup: sampleInput', analysis_sample_errors(analysis)[0])
+        contract['inputSchema'] = {'type': 'object', 'required': ['tool', 'user_id', 'args'],
+            'properties': {'tool': {'const': 'lookup'}, 'user_id': {'type': 'string'},
+                           'args': {'type': 'object', 'additionalProperties': False}}, 'additionalProperties': False}
+        self.assertEqual(analysis_sample_errors(analysis), [])
+        contract['sampleInput'] = None
+        contract['sampleReason'] = 'No safe invocation available'
+        self.assertEqual(analysis_sample_errors(analysis), [])
+
     async def test_submission_checks_the_real_service_contract_before_closing_agent(self):
         bad = await validate_result_contract('ANALYZE', {'analysis': {'summary': 'Incomplete'}}, {})
         self.assertFalse(bad['accepted'])
@@ -177,6 +199,10 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(good['accepted'])
         extra = await validate_result_contract('GENERATE', {'delivery': {'summary': 'Changed wrapper', 'services': [], 'filePaths': ['invented']}}, {})
         self.assertFalse(extra['accepted'])
+        missing = await validate_result_contract('GENERATE', {'delivery': {'summary': 'Missing tool', 'services': []}}, {},
+            {'standardization': {'tools': [{'toolId': 'reader', 'form': 'SCRIPT'}]}})
+        self.assertFalse(missing['accepted'])
+        self.assertIn('reader', missing['errors'][0])
 
     async def test_structured_submission_survives_plain_final_ack_without_format_model_call(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -199,6 +225,10 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
                 owner.assertFalse((await record.invoke({'path': '/analysis/evidence/999/snippet', 'value': 'invalid index'}))['accepted'])
                 owner.assertFalse((await submit.invoke({}))['accepted'])
                 owner.assertTrue((await correct.invoke({'corrections': [{'path': '/analysis', 'value': expected['analysis']}]}))['accepted'])
+                boundary = next(rail for rail in options['rails'] if type(rail).__name__ == 'ModelEvidenceRail')
+                ctx = SimpleNamespace(request_force_finish=Mock())
+                await boundary.after_tool_call(ctx)
+                ctx.request_force_finish.assert_called_once_with({'output': '提交完成', 'result_type': 'answer'})
                 owner.assertFalse((await submit.invoke({'result': {**expected, 'analysis': {'summary': 'overwrite'}}}))['accepted'])
                 owner.assertFalse((await record.invoke({'path': '/analysis/summary', 'value': 'overwrite'}))['accepted'])
                 yield {'type': 'answer', 'payload': {'output': '提交完成', 'result_type': 'answer'}}

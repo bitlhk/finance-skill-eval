@@ -54,6 +54,7 @@ export class OriginalServiceRuntimeAdapter implements RuntimeAdapter{
         if(/[\r\n]/u.test(value))throw Error('原服务请求头环境变量包含无效字符');
         headers[header.name]=header.prefix+value;
       }
+      if(request.traceparent)headers.traceparent=request.traceparent;
       request.onEvent?.({type:'status',caseId:request.evalCase.caseId,side:request.side,text:'正在调用原服务获取同题基线'});
       const response=await fetch(this.config.endpoint,{method:'POST',headers,body:JSON.stringify(mapOriginalServiceRequest(this.config.requestTemplate,request)),signal,redirect:'error'});
       if(!response.ok)throw Error(`原服务调用失败：HTTP ${response.status}`);

@@ -7,7 +7,7 @@ const members={memberIds:z.array(text)};
 export const taskDiagnosisSchema=z.object({
   skillChanges:z.array(z.object({...members,paths:z.array(text).min(1),action:z.enum(['KEEP','UPDATE']),reason:text})),
   tools:z.array(z.object({...members,id:text,name:text,sourcePaths:z.array(text).min(1),
-    currentBehavior:text,problem:text,targetForm:z.enum(['MCP','SCRIPT','KEEP','UNCONFIRMED']),language:text,reason:text,
+    currentBehavior:text,problem:text,targetForm:z.enum(['MCP','SCRIPT','CLI','KEEP','UNCONFIRMED']),language:text,reason:text,
     changes:z.array(z.object({title:text,before:text,after:text,steps:z.array(text).min(1)})),
     preservedBehavior:z.array(text),
     callChain:z.array(z.object({title:text,detail:text,evidence:z.array(evidence).min(1)})),

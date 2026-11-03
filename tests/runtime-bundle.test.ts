@@ -1,3 +1,4 @@
+import {unavailableProcess} from './runtime-standard-fixture.js';
 import { runtimeSkillSetFromFiles } from '../src/shared/contracts/runtime-skills.js';
 import Fastify from 'fastify';
 import { expect, it } from 'vitest';
@@ -32,7 +33,7 @@ it.each([2, 11, 257])('sends %i Skills despite legacy maxSkills metadata and rej
     runtime: { type: 'test', version: '1' },
     models: [{ modelId: 'execution', upstreamModelId: 'test' }],
     defaultModelId: 'execution',
-    features: {
+    features: {processEvidence: true,
       streaming: false,
       asyncLaunch: false,
       packagedMcp: true,
@@ -71,7 +72,7 @@ it.each([2, 11, 257])('sends %i Skills despite legacy maxSkills metadata and rej
     runtimeIdentityVerified: true,
     streamCompleted: true,
     error: null,
-    metadata: {
+    metadata: {process: unavailableProcess,
       contentDigest: bundle.digest,
       loadedSkillMembers: broken ? bundle.members.slice(0, 1) : bundle.members,
       instanceConfigurationDigest: 'config',

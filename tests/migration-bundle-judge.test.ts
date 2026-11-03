@@ -12,7 +12,7 @@ function adapter(){
   return complete;
 }
 const response=(criteria:unknown)=>({content:JSON.stringify({criteria}),modelId:'test'});
-const check=(id:string,passed=true)=>({id,passed,reason:'Observed evidence'});
+const check=(id:string,passed=true)=>({id,passed,reason:'Observed evidence',evidenceRefs:['/output']});
 it('retries incomplete IDs once and preserves existing negative verdicts',async()=>{
   const complete=adapter().mockResolvedValueOnce(response([check('one',false)])).mockResolvedValueOnce(response([check('one',false),check('two')]));
   expect((await judgeBundleCase(input)).passed).toBe(false);

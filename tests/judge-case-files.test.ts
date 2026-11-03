@@ -94,7 +94,7 @@ it('does not invent file reading for an empty receipt list',async()=>{
 it('omits this projection for cases without workspace inputs',async()=>{
   expect((await capture(fixture(),{...definition,workspaceFiles:[]})).payload.runtimeEvidence.caseFiles).toBeUndefined();
 });
-it('uses the same bounded projection for candidate and anonymous comparison judges',async()=>{
+it('keeps file execution receipts out of candidate and anonymous quality judges',async()=>{
   const pack=await loadEvalPack('packs/finance/investment-research/eval.yaml');
   for(const kind of ['candidate','pairwise']){
     const requests:any[]=[];
@@ -108,14 +108,10 @@ it('uses the same bounded projection for candidate and anonymous comparison judg
     const right=fixture();const left={...fixture(),side:'left' as const,output:'Different answer without quotation'};
     await new Judge(adapter,pack.models.judge).compare({evalCase:definition,left,right,profile:pack.judgeProfile});
     const payload=JSON.parse(requests[0].messages[1].content);
-    if(kind==='candidate')expect(payload.runtimeEvidence.caseFiles.files[0].exactTextInAnswer.start).toBe(6);
-    else {
-      for(const label of ['A','B']){
-        const quoted=payload[`output${label}`].includes(content);
-        const span=payload[`runtimeEvidence${label}`].caseFiles.files[0].exactTextInAnswer;
-        expect(span!==null).toBe(quoted);
-      }
-    }
+    expect(payload.runtimeEvidence).toBeUndefined();
+    expect(payload.runtimeEvidenceA).toBeUndefined();
+    expect(payload.runtimeEvidenceB).toBeUndefined();
+    expect(JSON.stringify(requests)).not.toContain('caseFiles');
     expect(JSON.stringify(requests)).not.toContain('PRIVATE_UNREAD_CONTENT');
   }
 });

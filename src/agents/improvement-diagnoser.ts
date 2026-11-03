@@ -13,7 +13,11 @@ function normalizeRepresentation(value:unknown):unknown{
   if(!value||typeof value!=='object'||Array.isArray(value))return value;
   const original=value as Record<string,unknown>;
   if(original.status!=='PROPOSED'||!original.hypothesis||typeof original.hypothesis!=='object')return value;
-  const hypothesis=original.hypothesis as Record<string,unknown>;
+  const hypothesis={...original.hypothesis as Record<string,unknown>};
+  const capabilities=hypothesis.requiredCapabilities;
+  const emptyCapabilities=capabilities===null||(Array.isArray(capabilities)&&capabilities.length===0)
+    ||(capabilities!=null&&typeof capabilities==='object'&&Object.keys(capabilities).length===0);
+  if(hypothesis.layer!=='HARNESS'&&emptyCapabilities)delete hypothesis.requiredCapabilities;
   return {...original,hypothesis:{...hypothesis,
     ...(typeof hypothesis.confidence==='string'&&['low','medium','high'].includes(hypothesis.confidence.trim().toLowerCase())
       ?{confidence:hypothesis.confidence.trim().toUpperCase()}:{}),
@@ -55,7 +59,7 @@ export function createImprovementDiagnoser(dependencies: {adapter:ModelAdapter; 
     const roleCall=await prepareModelRole(composition,{input,policies,capabilityFormat:dependencies.capabilityFormat},
       options,dependencies,signal,[...policies,'已发布的 Builder JSON Schema：'+JSON.stringify(dependencies.capabilityFormat)]);
     const receipt=roleCall.receipt;
-    const completion=await roleCall.complete(input);
+    const completion=await roleCall.complete({...input,codeEvidence:undefined,runtimeEvidence:undefined,evaluationEvidence:undefined},input);
   let validationFields:string[]=[];
   const corrected=await correctModelOutput({raw:completion.content,check:value=>{
     const checked=checkJudgement(value);if(!checked.ok)validationFields=checked.errors.slice(0,16);return checked;
@@ -63,7 +67,7 @@ export function createImprovementDiagnoser(dependencies: {adapter:ModelAdapter; 
     model:dependencies.model,requestId:options.requestId,signal,preserve:preservesProposal});
   if(!corrected.ok)throw new ImprovementPlanningError(validationFields,corrected.error==='纠错结果改变了原始判断或证据'?'MODEL_CORRECTION_CHANGED_FACTS':'MODEL_OUTPUT_INVALID');
   const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
-  return {judgement:corrected.value,agentComposition:receipt,outputCorrection:{attempts:corrected.repairs,
+  return {judgement:corrected.value,agentComposition:receipt,investigation:roleCall.investigation,outputCorrection:{attempts:corrected.repairs,
     originalDigest:digest(completion.content),acceptedDigest:digest(JSON.stringify(corrected.value))}};
   });
 }

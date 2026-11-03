@@ -27,8 +27,12 @@ class SessionBoundaryTests(unittest.IsolatedAsyncioTestCase):
         class Agent:
             def __init__(self, card):
                 self.ability_manager = types.SimpleNamespace(add=lambda card: None)
+                self.rails = []
+            async def register_rail(self, rail): self.rails.append(rail)
             def configure(self, settings): self.prompt = settings.system_prompt; self.react_agent = self
             async def stream(self, request):
+                for rail in self.rails:
+                    await rail.before_model_call(types.SimpleNamespace())
                 if script:
                     index = json.loads(re.search(r'可执行脚本索引：([^\n]+)', self.prompt).group(1))
                     self_result = None
@@ -41,6 +45,8 @@ class SessionBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     result = await registered['balance'].function(account_id='account-1')
                     self_result = result['balance']
+                for rail in self.rails:
+                    await rail.after_model_call(types.SimpleNamespace())
                 yield {'type':'llm_output','payload':{'content':str(self_result)}}
             async def clear_session(self, session_id): pass
         class Transport:
@@ -55,6 +61,7 @@ class SessionBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 calls.append({'headers':self.transport.headers, 'arguments':arguments})
                 return types.SimpleNamespace(is_error=False, structured_content={'balance':100})
         modules = {
+            'openjiuwen.harness.rails.base':module('rails_base', AgentRail=object),
             'fastmcp':module('fastmcp', Client=Client),
             'fastmcp.client.transports':module('fastmcp.client.transports', StreamableHttpTransport=Transport),
             'openjiuwen.harness.deep_agent':module('deep_agent', DeepAgent=Agent),

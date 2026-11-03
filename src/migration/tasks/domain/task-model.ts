@@ -127,7 +127,7 @@ export type BundleAttempt = {
   resultCandidateId?:string;
   agentCompositions?:import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt[];
   id: string;
-  kind: 'ANALYZE' | 'GENERATE' | 'REPAIR' | 'ACCEPT' | 'OPTIMIZE';
+  kind: 'BASELINE' | 'PREPARE' | 'ANALYZE' | 'GENERATE' | 'REPAIR' | 'ACCEPT' | 'OPTIMIZE';
   key: string;
   requestDigest: string;
   baseCandidateId: string | null;
@@ -141,8 +141,12 @@ export type BundleAttempt = {
   agentRunId?: string;
   clarification?: string;
 };
-export type BundleVerdict = { passed: boolean; reason: string; requirementResults?:Array<{id:string;passed:boolean;reason:string}>; };
+export type BundleVerdict = import('../../../evaluation/application/criterion-judge-port.js').CriterionVerdict;
 export type BundleRun = {
+  repetition?:{groupId:string;index:number;total:number};
+  assessmentRequirements?:import('./task-standardization.js').Standardization['requirements'];
+  assessmentTools?:BundleDelivery['tools'];
+  purpose?: 'baseline' | 'candidate';
   judgeDigest?: string;
   runtimeSelectionRevision?: string;
   builderBindingId?: string;
@@ -157,8 +161,9 @@ export type BundleRun = {
   status: 'RUNNING' | 'PASSED' | 'FAILED' | 'INCOMPLETE' | 'CANCELLED';
   createdAt: string;
   finishedAt?: string;
-  cases: Array<{ id: string; passed: boolean; reason: string; requirementResults?:BundleVerdict['requirementResults']; evidence?: RuntimeExecutionEvidence;
+  cases: Array<BundleVerdict & { id: string; evidence?: RuntimeExecutionEvidence;
     executionChecks?:import('../../../evaluation/domain/execution-checks.js').EvidenceCheck[];
+    methodResults?:import('../../../evaluation/application/evaluation-method.js').EvaluationMethodResult[];
     judgeComposition?:import('../../../shared/contracts/agent-composition.js').AgentCompositionReceipt;
     failureStage?: 'RUNTIME' | 'EXECUTION' | 'JUDGE'; }>;
   requirementCoverage?:Array<{id:string;status:'PASSED'|'FAILED'|'UNVERIFIED';caseIds:string[]}>;
@@ -173,6 +178,8 @@ export type TaskRuntimeReview = { candidateId: string; configurationDigest: stri
   items: Array<{ name: string; status: 'SATISFIED' | 'UNSATISFIED' | 'UNVERIFIED'; reason: string }>;
   environmentDigest?: string; };
 export type BundleTask = {
+  runAnalyses?:import('../application/task-run-analysis.js').SavedRunAnalysis[];
+  rescorings?:import('../application/task-rescoring.js').TaskRescoring[];
   planRevisions?: TaskPlanRevision[];
   planRevisionId?: string;
   currentPlanDigest?: string;
@@ -200,6 +207,14 @@ export type BundleTask = {
   target: string;
   createdAt: string;
   source: Omit<BundleSnapshot, 'files'>;
+  inputKind?: 'skill_package' | 'agent_project';
+  projectNotes?: string;
+  baselineConfiguration?: BundleConfiguration;
+  currentBaselineRunId?: string;
+  preparations?: Array<{ id: string; attemptId: string; digest: string; createdAt: string;
+    report: import('./project-preparation.js').ProjectPreparation;
+    executions: import('./project-preparation.js').ProjectExecutionReceipt[];
+    baselineStatus: 'NOT_EVALUATED' | BundleRun['status'] }>;
   requestId?: string;
   analysis?: BundleAnalysis;
   currentCandidateId: string | null;
@@ -229,6 +244,8 @@ export type TaskRuntimeDelivery = {
   result: RuntimeBuildResult;
 };
 export const createBundleSchema = z.strictObject({
+  inputKind: z.enum(['skill_package', 'agent_project']).default('skill_package'),
+  projectNotes: z.string().trim().max(8000).default(''),
   name: z.string().trim().max(120).default(''),
   goal: z.string().trim().max(8000).default(''),
   target: z.string().trim().max(2000).default(''),
@@ -243,7 +260,7 @@ export function defaultTaskDescription(source: BundleSnapshot) {
     return `${member.skillId}：${String(metadata.description).trim().slice(0, 600)}`;
   });
   return {
-    name: (source.members.map(member => member.skillId).join('、').slice(0, 110) + ' 迁移'),
+    name: source.members.length ? (source.members.map(member => member.skillId).join('、').slice(0, 110) + ' 迁移') : 'Agent 工程迁移',
     goal: '完成企业标准化，解除特定 Agent 框架耦合，保留原 Skill 的完整业务能力、工具行为及实际调用链。仅做必要改造，使同一份产物能被不同框架快速复用。以下源描述须结合源码核实，未知事实明确记录：\n' + descriptions.join('\n'),
     target: '交付框架无关的 Skill 和可独立调用的工具。建议 Script 或 MCP，比较改造、部署与维护成本，已有合格形式优先保留。声明运行条件，具体 Runtime 仅用于接入和验证，不以其私有实现定义迁移目标。',
   };
@@ -287,6 +304,10 @@ export function readText(files: BundleFiles, name: string) {
   const bytes = files[name];
   if (bytes === undefined) bundleError('缺少文件：' + name, 400);
   return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(bytes, 'base64'));
+}
+export function projectSnapshot(files: BundleFiles): BundleSnapshot {
+  validateFiles(files);
+  return { digest: filesDigest(files), members: [], files };
 }
 export function snapshot(files: BundleFiles, version: string, previous?: BundleSnapshot): BundleSnapshot {
   validateFiles(files);
@@ -401,6 +422,7 @@ export function verifiedRun(task: BundleTask) {
     .reverse()
     .find(
       (run) =>
+        run.purpose !== 'baseline' &&
         run.judgeDigest === task.currentJudgeDigest &&
         run.candidateId === task.currentCandidateId &&
         run.runtimeSelectionRevision === task.runtimeSelectionRevision &&
@@ -408,9 +430,35 @@ export function verifiedRun(task: BundleTask) {
         run.configurationDigest === canonicalSha256(task.configuration) &&
         run.suiteDigest === canonicalSha256(task.suite),
     );
-  return latest?.status === 'PASSED' && (!task.analysis?.standardization || task.analysis.standardization.requirements.every(r=>latest.requirementCoverage?.some(c=>c.id===r.id&&c.status==='PASSED'))) && (!task.suite.holdoutCases?.length || latest.phase === 'holdout')
+  return latest?.status === 'PASSED' && completedRepetitions(task,latest)?.every(run=>run.status==='PASSED') && (!task.analysis?.standardization || task.analysis.standardization.requirements.every(r=>latest.requirementCoverage?.some(c=>c.id===r.id&&c.status==='PASSED'))) && (!task.suite.holdoutCases?.length || latest.phase === 'holdout')
     ? latest
     : undefined;
+}
+/** A failed business result is still an established baseline; incomplete execution is not. */
+export function currentBaselineRun(task: BundleTask, judgeDigest?: string) {
+  const preparation = task.preparations?.at(-1);
+  if (!preparation || !task.baselineConfiguration || !task.suite) return undefined;
+  const latest = baselineRunForPreparation(task, preparation, judgeDigest);
+  return latest && completedRepetitions(task,latest) ? latest : undefined;
+}
+/** An incomplete group or a lucky final attempt cannot satisfy acceptance. */
+export function completedRepetitions(task:Pick<BundleTask,'runs'>,run:BundleRun):BundleRun[]|undefined{
+  const group=run.repetition;
+  if((group?.total??1)!==(run.suite?.executionRepetitions??1))return undefined;
+  const runs=group?task.runs.filter(item=>item.repetition?.groupId===group.groupId):[run];
+  if(runs.length!==(group?.total??1)||runs.some(item=>!['PASSED','FAILED'].includes(item.status)
+    ||item.candidateDigest!==run.candidateDigest||item.configurationDigest!==run.configurationDigest||item.suiteDigest!==run.suiteDigest||item.judgeDigest!==run.judgeDigest
+    ||item.phase!==run.phase||item.purpose!==run.purpose||canonicalSha256(item.runtimeSnapshot??null)!==canonicalSha256(run.runtimeSnapshot??null)))return undefined;
+  if(group&&(new Set(runs.map(item=>item.repetition?.index)).size!==group.total
+    ||runs.some(item=>item.repetition!.total!==group.total||item.repetition!.index<1||item.repetition!.index>group.total)))return undefined;
+  return runs;
+}
+export function baselineRunForPreparation(task: BundleTask, preparation: NonNullable<BundleTask['preparations']>[number], judgeDigest?: string) {
+  if (!task.baselineConfiguration || !task.suite) return undefined;
+  return [...task.runs].reverse().find(run => run.purpose === 'baseline'
+    && run.candidateId === preparation.id && run.candidateDigest === preparation.digest
+    && run.configurationDigest === canonicalSha256(task.baselineConfiguration)
+    && run.suiteDigest === canonicalSha256(task.suite) && run.judgeDigest === judgeDigest);
 }
 export function taskBuilderStatus(task: BundleTask): NonNullable<BundleTask['builderStatus']> {
   if (!task.selectedRuntimeBuildRequestId) return 'NONE';

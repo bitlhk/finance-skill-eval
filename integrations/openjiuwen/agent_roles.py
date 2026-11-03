@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 ROLE_ROOT = Path(__file__).resolve().parents[2] / 'agent-roles'
-MODES = {'ANALYZE': 'diagnosis', 'GENERATE': 'migration', 'REPAIR': 'migration', 'REVIEW': 'standardization-review'}
+MODES = {'PREPARE': 'runtime-preparation', 'ANALYZE': 'diagnosis', 'GENERATE': 'migration', 'REPAIR': 'migration', 'REVIEW': 'standardization-review'}
 READ_TOOLS = {'read_file', 'glob', 'list_files', 'grep', 'submit_result', 'record_result', 'correct_result'}
 WRITE_TOOLS = {'write_file', 'edit_file', 'compile_source', 'run_contract_test', 'run_mcp_contract_suite'}
 
@@ -86,8 +86,10 @@ def load_role(role, version='v1', *, profile=None, capabilities=None, mode=None)
         if profile != 'engineering' or not capabilities or any(c not in base['capabilitySkills'] for c in capabilities):
             raise ValueError('Invalid adjustment assembly')
         definition['skills'] += [path for capability in capabilities for path in base['capabilitySkills'][capability]]
-    writable = role in ('migration', 'adjustment')
+    writable = role in ('runtime-preparation', 'migration', 'adjustment')
     ceiling = READ_TOOLS | (WRITE_TOOLS if writable else set())
+    if role == 'runtime-preparation':
+        ceiling = READ_TOOLS | {'write_file', 'edit_file', 'run_project_command'}
     if role == 'diagnosis':
         ceiling |= {'run_scanner'}
     if (definition['executor'] != 'openjiuwen-bundle' or (mode and mode not in definition['modes'])

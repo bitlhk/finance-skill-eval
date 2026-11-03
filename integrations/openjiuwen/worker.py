@@ -13,9 +13,9 @@ from .environment_check import check_environment
 check_environment()
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from importlib.metadata import PackageNotFoundError, version
-from .instance_manager import InstanceManager
+from .instance_manager import InstanceCapacityError, InstanceManager
 from .model_config import resolve_model
 from .runtime_context import RuntimeContext
 from .package_runtime import service_environment
@@ -94,7 +94,8 @@ async def runtime_capabilities():
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
             'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
-                         'externalMcp': True, 'inlineSecrets': True, 'toolEnvironment': True},
+                         'externalMcp': True, 'inlineSecrets': True, 'toolEnvironment': True,
+                         'processEvidence': True, 'otlpEvidence': True, 'artifactEvidence': True},
             'limits': {'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 
@@ -111,6 +112,8 @@ async def create_runtime_instance(request: Request):
         raise HTTPException(400, 'Requested model is not configured in this Runtime')
     try:
         item = instances.create(body, idempotency_key)
+    except InstanceCapacityError:
+        return JSONResponse(status_code=409, content={'error': 'RUNTIME_INSTANCE_CAPACITY'})
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     except (ValueError, TypeError, KeyError) as exc:
@@ -162,6 +165,8 @@ async def execute_runtime_instance(instance_id: str, request: Request):
         raise HTTPException(400, str(exc)) from exc
     model = config().get('models', {}).get(body['model']['modelId'], {})
     body['model']['providerId'] = model.get('providerId', 'service-execution')
+    if request.headers.get('traceparent'):
+        body['traceparent'] = request.headers['traceparent']
     return await execute(InstanceExecutionRequest(body, request, instance_id))
 
 

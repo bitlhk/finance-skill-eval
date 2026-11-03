@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {standardizationSchema,standardizationExample,standardizationIssues,standardDeliveryIssues,conformancePassed} from '../src/migration/tasks/domain/task-standardization.js';
+import {standardizationSchema,standardizationExample,standardizationIssues,standardDeliveryIssues,deliveryToolIssues,conformancePassed} from '../src/migration/tasks/domain/task-standardization.js';
 import {analysisSchema,verifiedRun,hasCandidateFailures,type BundleTask} from '../src/migration/tasks/domain/task-model.js';
 import {canonicalSha256} from '../src/shared/json-canonicalization.js';
 // @ts-expect-error Existing deterministic fixture, never used as real business evidence.
@@ -14,19 +14,39 @@ function fixture(){
  standard.tools[0]!.toolId='reader';analysis.standardization=standard;
  return {analysis,files};
 }
+it('reports the missing planned ID when the same-sized delivery uses a tool name instead',()=>{
+ const {analysis,files}=fixture();
+ const issues=deliveryToolIssues(analysis,{services:[],tools:[{toolId:'read_rules',form:'SCRIPT',entrypoint:'SKILL.md',
+   files:['SKILL.md'],invocation:'stdin JSON',configuration:'none'}]},files);
+ expect(issues).toEqual(expect.arrayContaining([
+   expect.stringContaining('toolId：reader'),
+   expect.stringContaining('未知交付 toolId：read_rules'),
+ ]));
+});
 it('does not turn uncovered requirements into a request to rewrite passing code',()=>{
  const run={cases:[{id:'case',passed:true,reason:'actual call passed'}],requirementCoverage:[{id:'untested',status:'UNVERIFIED' as const,caseIds:[]}]};
  expect(hasCandidateFailures(run)).toBe(false);
  expect(hasCandidateFailures({...run,cases:[{...run.cases[0]!,passed:false}]})).toBe(true);
  expect(hasCandidateFailures({...run,requirementCoverage:[{id:'failed',status:'FAILED',caseIds:['case']}]})).toBe(true);
+ expect(hasCandidateFailures({cases:[{passed:false,unverified:true,criteria:[{passed:true},{passed:null}]}]})).toBe(false);
+ expect(hasCandidateFailures({cases:[{passed:false,unverified:true,criteria:[{passed:false},{passed:null}]}]})).toBe(true);
 });
-it('requires complete source coverage and comparison of both forms without forcing conversion',()=>{
+it('requires complete source coverage and three-way comparison without forcing conversion',()=>{
  const {analysis,files}=fixture();analysis.standardization!.tools[0]!.action='KEEP';
  expect(standardizationIssues(analysis,files)).toEqual([]);
  analysis.standardization!.coverage.readPaths=[];
  expect(standardizationIssues(analysis,files).join()).toContain('覆盖');
  analysis.standardization!.tools[0]!.alternatives[1]!.form='SCRIPT';
- expect(standardizationIssues(analysis,files).join()).toContain('成本比较');
+ expect(standardizationIssues(analysis,files).join()).toContain('选型比较');
+});
+it('preserves historical two-way plans while requiring a full CLI comparison for new plans',()=>{
+ const {analysis,files}=fixture(),standard=analysis.standardization!;
+ standard.tools[0]!.form='CLI';analysis.diagnosis!.tools[0]!.targetForm='CLI';
+ expect(standardizationIssues(analysis,files)).toEqual([]);
+ standard.tools[0]!.alternatives.pop();
+ expect(standardizationIssues(analysis,files).join()).toContain('CLI');
+ standard.version='enterprise-standardization.v1';standard.tools[0]!.form='SCRIPT';analysis.diagnosis!.tools[0]!.targetForm='SCRIPT';
+ expect(standardizationIssues(analysis,files)).toEqual([]);
 });
 it('rejects fabricated baseline evidence, contradictory form, and missing requirement mapping',()=>{
  const {analysis,files}=fixture();analysis.standardization!.requirements[0]!.evidence[0]!.snippet='invented';

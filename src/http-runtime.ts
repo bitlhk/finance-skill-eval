@@ -84,6 +84,7 @@ export class HttpRuntimeAdapter implements RuntimeAdapter {
       body: JSON.stringify({
         schemaVersion: "finance.skill-eval.runtime-request.v1",
         runId: request.runId,
+        ...(request.traceparent?{traceparent:request.traceparent}:{}),
         side: request.side,
         case: { caseId: request.evalCase.caseId, prompt: request.evalCase.prompt,
           taskMode: request.evalCase.taskMode, requiredTools: request.evalCase.requiredTools,

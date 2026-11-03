@@ -1,1 +1,1 @@
-只返回 JSON：{"criteria":[{"id":"原 criterionId 或 requirement:id","passed":true或false,"reason":"具体调用证据及原因；未验证明确说明"}]}，必须逐条覆盖全部标准。
+最终返回 JSON：{"criteria":[{"id":"原 criterionId 或 requirement:id","passed":true或false或null,"reason":"具体证据和原因；材料不足说明缺口","evidenceRefs":["/output"]}]}。逐条覆盖全部标准。true/false 必须引用实际存在的 JSON pointer；null 表示无法验证，可使用空引用数组。调查期间可按工具约定返回 evidenceQuery，不能同时返回结论和工具请求。

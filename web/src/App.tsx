@@ -1,3 +1,6 @@
+import {ComparisonExecutions} from './ComparisonExecutions';
+import {EvaluationEvidence} from './EvaluationEvidence';
+import {ComparisonRescoring} from './ComparisonRescoring';
 import { api } from "./api-client";
 import {commonRuntimeModels} from './runtime-models';
 import {evidenceLabels} from '../../src/evidence-labels';
@@ -140,6 +143,8 @@ export function App() {
   const [environmentInspection, setEnvironmentInspection] = useState<EnvironmentInspection | null>(null);
   const [environmentChecking, setEnvironmentChecking] = useState(false);
   const inspectionSequence = useRef(0);
+  const [executionRepetitions,setExecutionRepetitions]=useState(1);
+  const [repeatReadOnly,setRepeatReadOnly]=useState(false);
   const [judgeMode, setJudgeMode] = useState<"deterministic" | "model">("deterministic");
   const [activeJob, setActiveJob] = useState<EvaluationJob | null>(null);
   const [retrySnapshot, setRetrySnapshot] = useState(false);
@@ -500,6 +505,8 @@ export function App() {
               ? { type: runtime, environmentId: runtimeEnvironmentId }
             : { type: runtime },
           judgeMode,
+          executionRepetitions:runtime==="replay"?1:executionRepetitions,
+          repeatSafety:repeatReadOnly?"read_only":undefined,
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
           ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation,executionReference(pairedRightModel!)),
@@ -653,6 +660,8 @@ export function App() {
             environmentInspection={environmentInspection}
             environmentChecking={environmentChecking}
             onInspectEnvironment={() => void inspectEnvironment(runtimeEnvironmentId)}
+            executionRepetitions={executionRepetitions} setExecutionRepetitions={setExecutionRepetitions}
+            repeatReadOnly={repeatReadOnly} setRepeatReadOnly={setRepeatReadOnly}
             judgeMode={judgeMode}
             setJudgeMode={setJudgeMode}
             leftVariantSelection={leftVariantSelection}
@@ -782,6 +791,8 @@ function EvaluationView(props: {
   environmentInspection: EnvironmentInspection | null;
   environmentChecking: boolean;
   onInspectEnvironment(): void;
+  executionRepetitions:number;setExecutionRepetitions(value:number):void;
+  repeatReadOnly:boolean;setRepeatReadOnly(value:boolean):void;
   judgeMode: "deterministic" | "model";
   setJudgeMode(value: "deterministic" | "model"): void;
   leftVariantSelection: string;
@@ -879,6 +890,8 @@ function EvaluationView(props: {
             <option value="model" disabled={!props.catalog.modelRoles.judge.configured}>匿名模型 Judge{props.catalog.modelRoles.judge.configured ? ` · ${props.catalog.modelRoles.judge.model.modelId}` : " · 未配置"}</option>
           </select></label>
         </div>
+        <label className="field"><span>业务运行次数</span><select aria-label="对比业务运行次数" disabled={Boolean(active)||props.runtime==='replay'} value={props.runtime==='replay'?1:props.executionRepetitions} onChange={event=>props.setExecutionRepetitions(Number(event.target.value))}>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n} 次</option>)}</select></label>
+        {props.runtime!=='replay'&&props.executionRepetitions>1&&<><p>每次实际调用左右业务 Agent，复用同一题集；不是重复评分。案例须配置可核验的状态恢复，或确认全部案例只读。</p><label><input type="checkbox" disabled={Boolean(active)} checked={props.repeatReadOnly} onChange={event=>props.setRepeatReadOnly(event.target.checked)}/>我确认本轮全部案例只读，不修改外部业务状态</label></>}
         {props.runtime==="dual_runtime"?<><div className="environment-controls">
           {(["left","right"] as const).map((side,index)=><label className="field" key={side}><span>{index===0?"对照组 Runtime":"目标组 Runtime"}</span><select aria-label={index===0?'对照组 Runtime':'目标组 Runtime'} disabled={Boolean(active)} value={props.launcherPair[side]} onChange={event=>props.setLauncherPair({...props.launcherPair,[side]:event.target.value})}><option value="">请选择兼容环境</option>{props.environmentMatches.map(({runtime:item,issues})=><option disabled={issues.length>0} key={item.runtimeId} value={item.runtimeId}>{item.name}{issues.length?` · ${issues.join('；')}`:''}</option>)}</select></label>)}
           {(["temperature","top_p","max_tokens"] as const).map(name=><label className="field" key={name}><span>{name}</span><input type="number" disabled={Boolean(active)} min={name==="top_p"?0.01:name==="max_tokens"?1:0} max={name==="temperature"?2:name==="top_p"?1:32768} step={name==="max_tokens"?1:0.01} value={Number.isFinite(props.generation[name])?props.generation[name]:""} onChange={event=>props.setGeneration({...props.generation,[name]:event.target.value===""?NaN:Number(event.target.value)})}/></label>)}
@@ -983,6 +996,7 @@ function RunEvidence({ job }: { job: EvaluationJob }) {
     {job.error ? <div className="run-error"><CircleAlert size={17} /><div><strong>{job.error.code}</strong><p>{job.error.message}</p></div></div> : null}
     <details className="question-receipt"><summary>冻结配置与执行环境</summary><p>providerId 是模型配置引用；实际执行环境由左右 Runtime 绑定选择，执行版本以各案例证据为准。</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(job.configuration,null,2)}</pre></details>
     {job.questionSet ? <details className="question-receipt"><summary>本轮 AI 题集 · {job.questionSet.cases.length} 题 · {job.questionSet.fingerprint.slice(0, 12)}</summary><p>出题模型：{job.questionSet.model.modelId} · 已读取：{job.questionSet.sourceFiles.join("、")}</p>{job.questionSet.cases.map(item => <div key={item.caseId}><strong>{item.name}</strong><MarkdownContent content={item.prompt} /></div>)}</details> : null}
+    <ComparisonExecutions job={job}/>
     {job.report ? <ReportResult job={job} /> : <LiveEvidence job={job} />}
     {!job.report && (job.status==='cancelled'||job.finalization) ? <details className="question-receipt" open><summary>取消与回收证据</summary>
       <p>{job.cancellation?.workerSettledAt?'评测执行控制已返回；不单独证明远端模型请求或操作系统进程已停止。':job.cancellation?'取消已请求，执行停止尚未取得确认。':'旧记录标记已取消；执行停止状态未记录。'}</p>
@@ -1040,6 +1054,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
     {report.cases.map(item => <section className="result-case" key={item.caseId}>
       <header><div><span>{item.caseId}</span><h3>{item.name}</h3></div><strong className={`winner winner-${item.judge?.winner ?? "none"}`}>{runtimeComparison ? '逐侧验收' : item.judge?.winner === "right" ? "B 更优" : item.judge?.winner === "left" ? "A 更优" : item.judge ? "持平" : "未评阅"}</strong></header>
       <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
+      <div className="answer-grid"><EvaluationEvidence methods={item.methodResults?.left} evidence={item.left}/><EvaluationEvidence methods={item.methodResults?.right} evidence={item.right}/></div>
       {runtimeComparison ? <RuntimeGoalResults item={item}/> : <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>}
     </section>)}
     <details className="question-receipt"><summary>运行结束与回收证据</summary>
@@ -1047,6 +1062,7 @@ function ReportResult({ job }: { job: EvaluationJob }) {
       {report.finalization?<pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(report.finalization,null,2)}</pre>:<p>旧记录没有最终回收观察，状态未知；不能从完成或取消推断。</p>}
     </details>
     {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
+    {!publicDemo&&job.status==='completed'&&<ComparisonRescoring jobId={job.jobId} records={job.rescorings}/>}
     <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span><span>执行服务提交：{report.codeRevision?`${report.codeRevision.commit} (${report.codeRevision.workingTree})`:'旧记录未记录'}</span></footer>
   </div>;
 }
