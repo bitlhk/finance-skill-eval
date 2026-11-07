@@ -11,6 +11,7 @@
     "loadedSkills": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["skillId", "version"], "properties": { "skillId": { "type": "string", "minLength": 1, "maxLength": 200 }, "version": { "type": "string", "minLength": 1, "maxLength": 200 } } } },
     "usage": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "properties": { "inputTokens": { "type": "number", "minimum": 0 }, "outputTokens": { "type": "number", "minimum": 0 }, "totalTokens": { "type": "number", "minimum": 0 } } }] },
     "runtimeIdentityVerified": { "type": "boolean" }, "streamCompleted": { "type": "boolean" }, "error": { "type": ["string", "null"], "maxLength": 8192 },
-    "traceFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "metadata": { "type": "object" }
+    "traceFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "metadata": { "type": "object", "properties": { "process": { "$ref": "finance.runtime-process.v1" } } }
   }
 }

@@ -1,5 +1,6 @@
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 import { ProjectBaseline } from './ProjectBaseline';
+import {startImportedTask} from './start-imported-task';
 export function InputStage({ state }: { state: MigrationWorkbench; }) {
   const { task, setStage } = state;
   if (!task) return null;
@@ -9,7 +10,10 @@ export function InputStage({ state }: { state: MigrationWorkbench; }) {
       {task.inputKind === 'agent_project' && <>
         {task.projectNotes && <p>工程说明：{task.projectNotes}</p>}
         <p>Agent 会阅读启动与加载代码，识别实际使用的 Skill，并做必要的运行适配。正式业务结果见下方基线评测。</p>
-        <button className="button primary" disabled={state.disabled || Boolean(task.currentCandidateId)} onClick={() => void state.act(() => state.start('preparation', state.projectNotes.trim() ? {clarification:state.projectNotes.trim()} : {}))}>理解工程并准备运行</button>
+        <button className="button primary" disabled={state.disabled || Boolean(task.currentCandidateId)} onClick={() => void state.act(async()=>{
+          const next=await startImportedTask(state.api,task,crypto.randomUUID(),state.projectNotes);
+          if(next)state.setTask(next);
+        })}>理解工程并准备运行</button>
         <label>补充运行信息（选填）<textarea value={state.projectNotes} maxLength={4000} onChange={event => state.setProjectNotes(event.target.value)} placeholder="补充缺少的启动方式或依赖说明后，可以继续准备。请勿填写密钥。"/></label>
         {task.preparations?.map(preparation => <article className="diagnostic-finding" key={preparation.id}>
           <h4>工程准备记录</h4><p>{preparation.report.summary}</p>

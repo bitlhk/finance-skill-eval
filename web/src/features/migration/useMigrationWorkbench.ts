@@ -3,7 +3,9 @@ import { migrationProgress } from './progress';
 import { useMigrationTask } from './useMigrationTask';
 import { useEffect, useRef, useState } from 'react';
 import type { Catalog } from '../../types';
-import type { BundleTask, BundleConfiguration } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask, BundleConfiguration } from "../../../../contracts/platform/responses";
+import {startImportedTask} from './start-imported-task';
+import {pendingBudgetContinuation} from './active-operation';
 
 type Api = <T>(url: string, init?: RequestInit) => Promise<T>;
 export function useMigrationWorkbench({
@@ -48,6 +50,17 @@ export function useMigrationWorkbench({
   const latestAttempt = task?.attempts[task.attempts.length - 1],
     run = task?.runs.find((r) => r.id === runId) ?? task?.runs[task.runs.length - 1];
   const runtime = catalog.executionRuntimes.find((r) => r.runtimeId === config.environmentId);
+  const syncedAutomaticDelivery=useRef('');
+  const automaticDelivery=task?.runtimeBuildRequests?.find(item=>item.requirements.requestId===task.selectedRuntimeBuildRequestId)?.automatic?.status==='SUCCEEDED'
+    ?task.runtimeDelivery?.id:undefined;
+  useEffect(()=>{
+    if(!task?.configuration||!automaticDelivery)return;
+    const key=task.id+':'+automaticDelivery;
+    if(syncedAutomaticDelivery.current===key)return;
+    syncedAutomaticDelivery.current=key;
+    setConfig(task.configuration);
+    void onChanged().catch(()=>setError('运行环境已绑定，但环境列表刷新失败，请稍后重试。'));
+  },[task?.id,automaticDelivery,onChanged]);
   useEffect(() => { void list().catch(e => setError(String(e))); }, [list]);
   useEffect(() => { if (initialTask) select(initialTask); }, [initialTask?.id]);
   useEffect(() => { if (source) { setSelected([source.assetId]); setName(source.displayName + ' 迁移'); setListView(false); } }, [source?.assetId]);
@@ -118,20 +131,22 @@ export function useMigrationWorkbench({
           body: file,
           headers: { 'content-type': 'application/zip' },
         });
-      select(uploaded);
-      if (uploaded.inputKind === 'agent_project') {
-        try {
-          setTask(await api<BundleTask>('/api/migration-tasks/' + uploaded.id + '/preparation', {
-            method: 'POST', body: JSON.stringify({key:crypto.randomUUID(), baseCandidateId:null}),
-          }));
-        } catch (error) {
-          setError('工程已导入，但运行准备未启动，可在当前任务重试：' + String(error));
-        }
-      }
-      setMessage(uploaded.inputKind === 'agent_project' ? `已导入 ${file.name}，由 Agent 阅读工程并准备运行。` : `已导入 ${file.name}，识别到 ${uploaded.source.members.length} 个 Skill。点击“开始诊断”继续。`);
-      await list().catch(() => setMessage(`已导入 ${file.name}。任务列表暂时未刷新，可直接开始诊断，请勿重复上传。`));
+      await beginImportedTask(uploaded);
+      await list().catch(() => setMessage(`已导入 ${file.name}。任务列表暂时未刷新，无需重复上传。`));
     } finally {
       setUploadingFile(null);
+    }
+  }
+  async function beginImportedTask(imported:BundleTask) {
+    select(imported);
+    setMessage('已导入任务，正在启动 Agent。');
+    try {
+      const started=await startImportedTask(api,imported,crypto.randomUUID());
+      if(started)setTask(started);
+      setMessage('已导入任务，Agent 正在阅读材料并建立计划。');
+    }catch(error){
+      setMessage('任务已导入。');
+      setError('Agent 启动状态未确认，请先查看任务进展或在对话中继续，无需重新上传：'+String(error));
     }
   }
   function creationOptions() {
@@ -149,7 +164,7 @@ export function useMigrationWorkbench({
     ).catch(() => ({ content: '（文件已移除，或内容为二进制）' }));
     setPreview({ path, before: before.content, after: after.content });
   }
-  const disabled = busy || Boolean(active);
-  return { inputKind, setInputKind, projectNotes, setProjectNotes, uploadingFile, uploadFileName, newTask, listView, setListView, checkingRuntime, setCheckingRuntime, creationOptions, refreshCatalog: onChanged, pollError, catalog, api, tasks, task, setTask, stage, setStage, name, setName, goal, setGoal, selected, setSelected, busy, error, message, setMessage, config, setConfig, suite, setSuite, preview, runId, setRunId, zipInput, current, active, latestAttempt, run, runtime, list, select, act, post, start, uploadZip, showFile, disabled };
+  const disabled = busy || Boolean(active) || Boolean(pendingBudgetContinuation(task)) || task?.rescoringOperation?.status === 'RUNNING'||Boolean(task?.runtimeBuildRequests?.some(item=>item.automatic&&['QUEUED','RUNNING'].includes(item.automatic.status)));
+  return { inputKind, setInputKind, projectNotes, setProjectNotes, uploadingFile, uploadFileName, newTask, listView, setListView, checkingRuntime, setCheckingRuntime, creationOptions, beginImportedTask, refreshCatalog: onChanged, pollError, catalog, api, tasks, task, setTask, stage, setStage, name, setName, goal, setGoal, selected, setSelected, busy, error, message, setMessage, config, setConfig, suite, setSuite, preview, runId, setRunId, zipInput, current, active, latestAttempt, run, runtime, list, select, act, post, start, uploadZip, showFile, disabled };
 }
 export type MigrationWorkbench = ReturnType<typeof useMigrationWorkbench>;

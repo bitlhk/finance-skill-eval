@@ -20,6 +20,9 @@ class WorkspaceReadFileTool(AbsoluteLineReadFileTool):
     def __init__(self, workspace, *args, **kwargs):
         self.workspace = Path(workspace).resolve()
         super().__init__(*args, **kwargs)
+        self.card.description = ('读取当前任务工作区中的文件，优先使用 source/...、candidate/...、task/... 相对路径；'
+            '也接受工作区内绝对路径，不需要拼接 Windows 长路径。返回内容保留原始行号，大文件可用 offset/limit 分段读取。只能读取文件，目录请用 list_files 或 glob。')
+        self.card.input_params['properties']['file_path']['description'] = '工作区相对文件路径（推荐），或工作区内的绝对文件路径'
 
     async def invoke(self, inputs, **kwargs):
         try:

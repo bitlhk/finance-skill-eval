@@ -1,4 +1,4 @@
-import type { BundleAnalysis } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleAnalysis } from "../../../../contracts/platform/responses";
 
 /** Formatting only: keep original wording, and never infer missing business requirements. */
 export function proseParagraphs(text: string, separators='。；'): string[] {

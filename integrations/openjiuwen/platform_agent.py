@@ -3,6 +3,11 @@ import asyncio
 import json
 import logging
 import sys
+from pathlib import Path
+
+# Direct CLI and Runtime deployments share the same backend package imports.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from environment_check import check_environment
 
 

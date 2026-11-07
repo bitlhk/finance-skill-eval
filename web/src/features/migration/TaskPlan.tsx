@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import {MigrationReusePlan} from '../../MigrationReusePlan';
 import {MarkdownContent} from '../../MarkdownContent';
-import type {BundleTask} from '../../../../src/migration/tasks/domain/task-model';
+import type {BundleTask} from "../../../../contracts/platform/responses";
 import {legacyPlanSections,proseParagraphs} from './legacy-plan';
 
 export function TaskPlan({task,busy,clarify}:{task:BundleTask;busy:boolean;clarify?:(text:string)=>void}) {

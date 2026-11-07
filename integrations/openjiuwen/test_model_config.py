@@ -4,6 +4,40 @@ from .model_config import resolve_model, request_settings, bind_agent_request_ex
 
 
 class ModelConfigTests(unittest.TestCase):
+    def test_role_tool_compatibility_does_not_change_other_roles_or_explicit_binding(self):
+        from types import SimpleNamespace
+        from .model_config import create_model
+        binding={'apiKey':'fixture','baseUrl':'https://fixture.invalid/v1'}
+        model=SimpleNamespace(invoke=AsyncMock(),stream=AsyncMock())
+        with patch.dict('os.environ',{'FINANCE_EVAL_MIGRATION_NATIVE_TOOLS':'false',
+                                      'FINANCE_EVAL_EXECUTION_NATIVE_TOOLS':'true'}), \
+             patch('openjiuwen.core.foundation.llm.init_model',return_value=model), \
+             patch('integrations.openjiuwen.model_tool_protocol.bind_text_tools',side_effect=lambda value:value) as compatibility:
+            create_model(binding,{'model_name':'fixture'},role='MIGRATION',timeout_ms=1000)
+            self.assertEqual(compatibility.call_count,1)
+            create_model(binding,{'model_name':'fixture'},role='EXECUTION',timeout_ms=1000)
+            create_model({**binding,'supportsTools':True},{'model_name':'fixture'},role='MIGRATION',timeout_ms=1000)
+            self.assertEqual(compatibility.call_count,1)
+
+    def test_buffered_stream_preserves_native_tool_call_and_usage(self):
+        import asyncio
+        from openjiuwen.core.foundation.llm.schema.message import AssistantMessage, UsageMetadata
+        from .model_config import bind_model_stream
+        response = AssistantMessage(content='', tool_calls=[{'id': 'lookup-1', 'type': 'function',
+            'name': 'lookup', 'arguments': '{"id":1}'}], finish_reason='tool_calls',
+            usage_metadata=UsageMetadata(input_tokens=10, output_tokens=2, total_tokens=12))
+        class Model:
+            invoke = AsyncMock(return_value=response)
+            stream = AsyncMock(side_effect=AssertionError('upstream SSE must not be used'))
+        model = bind_model_stream(Model(), {'supportsStreaming': False})
+        async def collect():
+            return [chunk async for chunk in model.stream([{'role': 'user', 'content': 'lookup'}], tools=['native-schema'])]
+        chunks = asyncio.run(collect())
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].tool_calls[0].name, 'lookup')
+        self.assertEqual(chunks[0].tool_calls[0].arguments, '{"id":1}')
+        self.assertEqual(chunks[0].usage_metadata.total_tokens, 12)
+        self.assertEqual(model.invoke.call_args.kwargs['tools'], ['native-schema'])
     def test_agent_extensions_reach_public_sdk_methods_without_replacing_model(self):
         import asyncio
         class Model:

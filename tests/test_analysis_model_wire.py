@@ -13,10 +13,10 @@ import unittest
 
 class AnalysisModelWireTests(unittest.TestCase):
     def test_text_analysis_does_not_send_background_image_probes(self):
-        self.exercise_entry('ANALYZE', 'diagnosis', 'run_scanner', {})
+        self.exercise_entry('CHAT', 'migration', 'read_file', {'file_path': 'candidate/tool.py'})
 
     def test_portable_migration_uses_shared_assembly_and_real_compile_tool(self):
-        self.exercise_entry('GENERATE', 'migration', 'compile_source', {'language': 'python', 'paths': ['tool.py']})
+        self.exercise_entry('CHAT', 'migration', 'compile_source', {'language': 'python', 'paths': ['tool.py']})
 
     def exercise_entry(self, entry, role, tool, arguments):
         requests = []
@@ -72,7 +72,7 @@ class AnalysisModelWireTests(unittest.TestCase):
                 root = Path(__file__).resolve().parents[1]
                 config = Path(directory) / "runtime.json"
                 config.write_text(json.dumps({"models": {"synthetic-analysis": {
-                    "enabled": True, "providerId": "service-execution", "apiKey": "synthetic-only",
+                    "enabled": True, "providerId": "service-execution", "apiKey": "synthetic-only", "supportsTools":True,
                     "baseUrl": f"http://127.0.0.1:{server.server_port}/v1", "upstreamModelId": "synthetic-analysis"}}}))
                 body = {"model": {"modelId": "synthetic-analysis", "providerId": "service-execution"},
                     "runId": "synthetic-wire", "assetDigest": "a" * 64, "maxIterations": 4,
@@ -85,7 +85,7 @@ class AnalysisModelWireTests(unittest.TestCase):
                     env={**os.environ, "FINANCE_RUNTIME_CONFIG": str(config), "TMPDIR": directory})
                 self.assertEqual(result.returncode, 0, result.stderr[-500:])
                 wire = json.loads(result.stdout.strip().splitlines()[-1])["result"]
-                self.assertEqual(wire["status"], "ABSTAINED", wire.get("error"))
+                self.assertEqual(wire["status"], "PRODUCED", wire.get("error"))
                 self.assertEqual(wire['composition']['role'], role)
                 self.assertIn(tool, wire['composition']['tools'])
                 names = {item['function']['name'] for item in requests[0].get('tools', [])}

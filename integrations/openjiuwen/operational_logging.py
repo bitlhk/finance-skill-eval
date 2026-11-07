@@ -5,6 +5,7 @@ import re
 import sys
 import os
 import logging
+from pathlib import Path
 
 
 class SafeFormatter(logging.Formatter):
@@ -20,6 +21,8 @@ def configure_sdk_logging():
     """Production SDK payloads go only to the bounded parent stderr drain."""
     if os.environ.get('NODE_ENV') != 'production':
         return
+    os.environ.setdefault('OPENJIUWEN_RUNTIME_LOG_CONFIG',
+        str(Path(__file__).with_name('runtime-console-logging.yaml')))
     from openjiuwen.core.common.logging.log_config import configure_log_config
     configure_log_config({'backend': 'default', 'level': 'WARNING',
                          'output': ['console'], 'interface_output': ['console'],
@@ -44,7 +47,7 @@ async def drain_stderr(stream):
             break
         count += len(chunk)
         tail = (tail + chunk)[-8192:]
-        matches = re.findall(rb'(?:^|\n)((?:[A-Za-z][A-Za-z0-9_]{0,70})?(?:Error|Exception)):', tail)
+        matches = re.findall(rb'(?:^|\n)[ \t|+]*([A-Za-z][A-Za-z0-9_]{0,70}(?:Error|Exception|ExceptionGroup)|ExceptionGroup|BaseExceptionGroup):', tail)
         if matches:
             last_type = matches[-1].decode('ascii')
     return {'stderrBytes': count, 'lastErrorType': last_type}

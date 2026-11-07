@@ -1,98 +1,66 @@
-# 当前实现与代码定位
+# 当前代码架构
 
-本文描述单 Skill / 多 Skill 统一迁移后的实际实现。历史方案见 `2.0/`；使用方式见 [迁移说明](multi-skill-migration.md)，部署从 [生产部署](production-deployment.md) 开始。
+后端是 Python，前端是 TypeScript/React。旧 npm 编程接口已撤销，平台通过 HTTP/SSE 提供服务，保留原命令行入口。没有 TypeScript 后端或平台能力进程桥。
 
-底层公共能力与迁移／优化的关系见 [Agent 组成说明](agent-role-composition.md#迁移和优化到底是什么关系)。当前优化入口共享 `round-workflow.ts`，平台工程 Agent 共享 `agent_execution.py`，模型判断角色共享 `model-role.ts`。保留的后台接口是业务适配，不再各维护一套循环或 Agent 初始化。
-
-## 一条新任务流程
-
-新任务有 一个或多个 Skill，成员数量不选择另一套编排。Runtime 通过 `finance.runtime-instance.v1` 接收 skills[] 和可选 assets，Agent 工作区只装载这些已选择的说明、依赖与入口指令，不要求完整工程 ZIP；每轮生成不可变候选，按任务验收，失败后修复工程再验收。单成员使用同一实例合同；Eval、Builder 与 Runtime 需按[标准协议](runtime-contract-boundary.md)同步升级，不能仅凭旧版本号判定兼容。
-
-验收区分业务未通过与基础设施未完成：Runtime 或 Judge 异常记录为 `INCOMPLETE`，保存已取得的执行证据及 `failureStage`。
-Judge 格式不完整时最多重试一次，保持已经明确返回的判定；完整的业务不通过不重试。
-评审服务异常不能作为改写候选的依据，UI 和服务端都会阻止将该记录交给修复 Agent。
-Agent 的分析或交付说明格式不符时，复用无工具的 `model-output-correction.ts` 最多纠错一次；
-已有合同字段必须保持相同，实际文件不进入纠错通道，也不重新运行代码 Agent。
-
-```text
-web/src/features/migration/
-  MigrationWorkspace            统一任务入口
-  useMigrationWorkbench         表单、操作和版本选择
-  useMigrationTask              列表、异步任务轮询
-  *Stage / MigrationRunView     七阶段展示、实际证据
-        ↓ /api/migration-tasks
-src/interfaces/http/migration-task-routes.ts
-        ↓
-src/migration/tasks/
-  composition.ts               唯一生产装配入口
-  domain/task-model.ts         数据合同、候选摘要、成员校验、验收有效性
-  application/task-service.ts   幂等、并发、取消、恢复、迁移/修复编排
-  application/task-acceptance.ts 逐题运行、Judge、回收、冻结记录
-  application/task-export.ts   验收绑定核对、环境复核、交付
-  application/task-builder.ts  需求冻结、交付接收、版本绑定与历史
-  infrastructure/task-builder.ts 标准 Runtime 准入、生命周期及环境复核
-  application/task-ports.ts    存储、源资产、Agent、Runtime、Judge、日志接口
-  infrastructure/             文件存储、模型和 Runtime 适配器
-        ↓
-integrations/openjiuwen/
-  platform_agent.py            平台工程 Agent 唯一进程入口
-  agent_execution.py           公共模型、工具权限及 SDK 装配
-  bundle_agent.py              所选 Skill 及依赖的分析/生成/修复
-  skill_set.py                 skills[]、可选资源、摘要与路径核验
-  bundle_runtime.py            冻结文件完整性及旧归档辅助函数
-  worker.py / session.py       会话执行、模型、工具与结果
+```mermaid
+flowchart TD
+    UI[web：现有页面、对话、计划和工作产物] --> API[src/api：HTTP、身份与工作区]
+    CLI[回放 CLI] --> EVAL
+    API --> MIG[src/migration：迁移任务控制]
+    API --> EVAL[src/evaluation：固定评测流程]
+    API --> OPT[src/improvement：优化任务控制]
+    MIG --> AGENTS[src/agents：主 Agent、诊断和 Review 装配]
+    OPT --> AGENTS
+    OPT --> EVAL
+    MIG --> EVAL
+    EVAL --> JUDGE[规则、模型、脚本、状态和 Criterion Judge]
+    AGENTS --> SDK[OpenJiuwen SDK：证据调查、优化协调]
+    AGENTS --> AR[Jiuwen Runtime：主 Agent 会话和独立 Review]
+    MIG --> STORE[src/storage、src/assets：Git、资产和持久记录]
+    OPT --> STORE
+    EVAL --> STORE
+    EVAL --> LAUNCHER[src/runtime：标准 Launcher]
+    LAUNCHER --> BUSINESS[自定义 Agent、Builder 交付或完整 Agent 工程]
 ```
 
-`application/domain` 不依赖 `service` 或具体 `infrastructure`。装配入口注入实现，架构测试约束方向并检查迁移模块的静态循环依赖。旧 MigrationStore、旧业务编排、A2/A4 Agent 和 `src/migration/bundle/` 兼容构造入口均已删除。仍使用的扫描、契约测试接入统一工程 Agent；历史服务环境解析独立为只读适配。Bundle 数据类型名、历史 ID、磁盘目录和存储版本保持原样。
+## 三个业务入口
 
-## 升级与历史数据
+**迁移**：`api/migration_routes.py → migration/service.py → migration/execution.py`。控制器处理任务、幂等、恢复和用户交互；`agents/migration.py` 通过 HTTP 调用 Jiuwen Runtime 中的主 Agent。Agent 根据目标主动加载 Skill 和工具，读取工程、分析、调整、验证、请求独立 Review，并更新对话和工作产物。
 
-- 新执行只接受 `/api/migration-tasks` 和当前标准合同。`/api/migrations`、`/api/migration-bundles` 和旧转换接口返回 404；历史页面使用独立只读接口展示和下载原始记录。
-- 历史文件及快照保持不变，可查看或下载留档，但不能恢复旧执行或继承验收结论。执行仓库只加载当前任务存储协议；存储版本及 ID 未变化也不代表旧 Runtime 或 Builder 合同可继续使用。
-- 升级前停止流量和任务、备份私有数据与配置，并同步发布 Eval、Builder 和 Runtime。需要继续处理的业务重新导入 Skill、生成标准需求、绑定 Result 并重新验收；不转换旧任务或继承旧结论。操作步骤见[协议升级](production-deployment.md#协议升级)。
-- 统一流程支持整体改造、需求导出 / 交付回填 / 版本绑定与任务验收。Builder 交付须完成标准生命周期准入，不能用旧逐 Tool 或旧单成员验收替代。
+基础验证使用工程执行、`improvement/basic_review.py` 和 `evaluation/checks.py`，确保选择迁移的能力完整、可运行；效果验证由 `migration/acceptance_service.py` 接入统一评测。源码、Skill、随包工具和运行配置都是可能的调整对象。Builder 属于主 Agent 可使用的外部构建能力；新建与重建的请求和等待记录保留，外部服务缺失不会被当成构建成功。
 
-## 运维或修改时从哪里查
+主 Agent 用 `request_development_evaluation({})` 请求一次效果评测；用户明确给出目标和预算时才用 `request_optimization` 启动持续优化。两个工具共用评测提交与续接逻辑，不要求一次普通验证先提供优化基线。长任务由模型调用超时、工程命令超时、Agent 迭代预算及用户暂停/取消控制，HTTP 订阅不另设与业务无关的十五分钟截止时间。
 
-| 现象/需求 | 先查 | 主要代码 |
+`request_effect_review` 也支持两种目标：只提供当前 runId 时，按用户目标审查单次测试结果；提供真实 baseline runId 时，比较候选的改善与回退。两种模式共用同一个独立 Review Agent、证据查询和交付检查。单次目标审查不保存虚构基线，不宣称提升；持续优化仍必须保留真实比较基线。基础验证与效果验证均通过对应审查后，原下载入口提供完整验收交付包。
+
+**对比评测**：`api/run_routes.py → evaluation/service.py → job_execution.py / comparison.py`。这是固定程序，按用户选择冻结数据与配置，再运行、判定和报告。生成优化候选时才进入优化能力。重复业务运行会再次调用被测 Agent；重新评分只读取保存的证据。
+
+**独立优化**：`api/improvement_routes.py → improvement/service.py → agents/optimization.py`。OpenJiuwen 优化协调 Agent 选择诊断、调整、复测、Review 等工具。`improvement/engineering.py` 调用同一个工程主 Agent；`agents/review.py` 为迁移与独立优化提供同一独立 Review 适配。选版规则在 `improvement/policy.py`，支持 Review 权衡回退、继续修复当前版本，以及在预算结束时呈现已审查的推荐结果。
+
+## 公共能力与边界
+
+| 能力 | 代码 | 边界 |
 | --- | --- | --- |
-| 服务启动/停止失败 | supervisor、SCM/systemd、预检 | deploy/run.mjs、deploy/lib/settings.mjs、平台 manage 脚本 |
-| API 鉴权、500、请求超时 | x-request-id、request_failed | src/service/server.ts、src/service/logging.ts |
-| 任务忙、重复提交、取消和重启 | taskId、attemptId、operation 事件 | tasks/application/task-service.ts |
-| 找不到源码、生成/修复失败 | agentRunId、agent_process_*、私有任务证据 | tasks/infrastructure/task-agent.ts、migration-agent-runner.ts、bundle_agent.py |
-| 能力/模型/容量不兼容 | runtime-check、Runtime capabilities | tasks/infrastructure/task-runtime.ts、shared/contracts/runtime-skills.ts |
-| 验收执行失败 | runId + caseId、runtime_session_* | task-acceptance.ts、runtime-launcher.ts、worker.py、session.py |
-| Judge 超时/格式/判定问题 | migration_judge_*、judgeRequestId、保护目录中的理由 | tasks/infrastructure/task-agent.ts、openai-compatible-model.ts |
-| 下载拒绝/通过状态失效 | 当前候选、配置、测试集、环境摘要 | task-export.ts、domain/task-model.ts |
-| 单阶段 UI 修改 | 对应 *Stage.tsx | web/src/features/migration/ |
-| 升级后旧入口 404 | 协议升级说明、当前任务 schemaVersion | migration-task-routes.ts、tasks/infrastructure/task-repository.ts |
+| HTTP、认证和工作区 | `api/server.py`、`api/identity.py` | 沿用现有身份；不把会话 ID 当成权限 |
+| 主 Agent / 独立 Review | `agents/migration.py`、`agents/review.py`、`runtime/agent_client.py` | 调用框架 Runtime 的持久会话 |
+| 诊断与证据调查 | `agents/diagnosis.py`、`agents/model_roles.py` | 冻结材料、独立上下文、只读查询与调用预算 |
+| 模型访问 | `runtime/models.py`、`integrations/openjiuwen/model_config.py` | 共用 OpenJiuwen SDK；不自建模型 HTTP 传输 |
+| Launcher 与环境准入 | `runtime/launcher.py`、`runtime/environments.py` | 运行协议、证据、清理和能力准入，不替用户选择降级工具形式 |
+| 执行和评测 | `evaluation/execution.py`、`orchestration.py`、`scoring.py` | 业务执行与验证器隔离；验证材料不注入被测任务 |
+| 重评与人工校准 | `evaluation/rescoring.py`、`human_review.py` | 原证据不重跑，原报告不覆盖，分歧和旧标注可追溯 |
+| 工程文件与资产 | `storage/git.py`、`assets/snapshot.py`、`assets/store.py` | 文件版本与资产保持原始字节；受保护文件不交给模型改写 |
+| 并发与恢复 | `storage/coordination.py`、`storage/repository.py` | 共享目录下的执行归属、写入协调与恢复；不另造 Agent 实例调度 |
 
-## 配置责任
+主 Agent 的 Prompt、指导 Skill 和参考材料只在 `src/resources/agents/`。框架运行适配在 `integrations/openjiuwen/`，包括会话隔离、检查点、上下文压缩、执行日志和 Runtime 实例调度。平台能力通过原子工具和 Skill 提供，需要独立上下文的工作交给子 Agent；不把每个自然语言阶段都变成强格式工作流。
 
-| 配置 | 读取位置 | 生效方式 |
-| --- | --- | --- |
-| API 地址、数据目录、访问令牌 | src/service/config.ts；部署预检在 deploy/lib/settings.mjs | 重启 API |
-| 迁移 Python、模型别名、迭代/模型预算 | migration-agent-runner.ts、task-agent.ts、Python model_config.py | 更新服务环境后重启 API；新任务尝试生效 |
-| Judge 地址、密钥、超时、出口代理 | config.ts、openai-compatible-model.ts | 更新服务环境后重启 API |
-| Runtime 模型配置文件、进程配置 | integrations/openjiuwen | 重启 Runtime |
-| 每任务模型、环境、执行超时、入口、工具权限 | 统一任务 Runtime 阶段 | 保存配置后重新验收 |
+交付审查子 Agent 复用已配置的 `JUDGE` 模型，未配置时才沿用主模型；调查子 Agent 继续使用主模型。主 Agent 可用 `query_delivery_tools` 查询登记状态，审查者在冻结材料中读取同一登记事实，无需用户确认平台内部是否已经登记。
 
-部署 dotenv 是数据，不能 shell source。模型凭据不放任务表单或日志。并发和存储是进程内协调：单个数据目录只允许一个 API 写入，当前不支持共享目录多副本。整组操作的进程并发上限为 2，API/Runtime 执行超时和停机清理时限各自独立。
+答案质量 Judge 使用答案标准及允许的业务事实，采用明确的 0–4 分量表；过程标准由独立的执行证据核验处理。答案没有展示命令或日志，本身不能作为“没有实际调用工具”的证据。两类结果在汇总时共同决定是否满足测试要求。
 
-任务从首次异步存储操作之前登记生命周期，覆盖排队、RUNNING 落盘、执行与终态持久化；取消按 taskId 中止并等待这些操作，服务关闭拒绝新操作并等待所有已登记操作结束。重复请求分别跟踪登记过程，不覆盖原执行的归属；登记失败释放已预留容量，取消后不会再启动 Agent 或联合验收。
+## 部署与数据
 
-## 修改后的验证入口
+默认 API 为 `56361`，主 Agent Runtime 为 `56363`，内置业务 Launcher 为 `56362`。业务 Launcher 也可以是企业远程服务。开发使用 `pnpm serve`、`pnpm serve:agent-runtime` 和按需的 `pnpm serve:openjiuwen`；API 本身不偷偷拉起另一套 Agent 服务。
 
-- `pnpm check`：Node、示例、Web 类型。
-- `pnpm test`：领域、接口、旧协议拒绝、架构、日志与 Runtime 合同回归；登记阶段取消/关闭见 `tests/migration-task-lifecycle-race.test.ts`。
-- `pnpm test:ui:migration`：实际浏览器/API，确定性 Agent/Runtime/Judge 端口，验证失败→修复→重验；不作为真实模型效果证据。
-- `MIGRATION_LIVE_MEMBERS=1` 或 `3` 配合 `pnpm test:ui:migration:live`：同一个 UI 测试入口验证单/多成员，使用真实 Agent、Runtime、Judge，报告明确记录 memberCount。私有环境变量和启动方式见生产部署文档。
-- Python `test_bundle_runtime`：无 ZIP 的说明与资源装载、成员清单、二进制资源、冻结候选校验，包括单成员集合。
+多实例当前按共享持久目录部署，沿用 `data/`、账户工作区、任务记录、会话记录和 Git 工程。历史旧协议只读展示，不提供误导性的恢复操作。升级启动器会为旧资产导出经原摘要校验的排序元数据，不改写资产内容。
 
-生产部署验收和这次工作树测试需分开记录；测试成功不会自动替换正在运行的 Windows/WSL 服务。
-
-完整业务验收完成后，使用 `node scripts/verify-migration-log-correlation.mjs REPORT_DIRECTORY API_LOG` 检查实际请求、进程、Runtime 会话和 Judge 事件能否按持久化 ID 串联；审计输出只含 ID 和计数。`pnpm test:ui:migration:imports` 单独覆盖单文件、混合批量失败、整工程路径和窄屏导入。原 bundle 命名测试命令继续可用，但不代表旧 HTTP 协议仍受支持；旧路由拒绝及历史文件不被修改由 `tests/migration-task-compatibility.test.ts` 验证。
-
-统一交付复用 `domain/migration-export-safety.ts` 的凭据检查，拒绝 `.env`、私钥及明显硬编码凭据；不会为了通过导出而静默删除候选文件或改变冻结摘要。复用内部实现不意味着开放旧任务导出入口。
-
-Builder 产出的 Runtime 如何登记及标准协议支持范围，见 [Builder 接入](runtime-builder-integration.md)。
+详细改造与验证口径见 [五步迁移记录](backend-five-step-migration.md)，开发命令见 [本地开发](local-development.md)。

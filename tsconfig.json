@@ -7,13 +7,18 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["dist", "node_modules"]
+  "include": [
+    "contracts/platform/**/*.d.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules"
+  ]
 }

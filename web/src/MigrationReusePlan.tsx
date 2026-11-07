@@ -1,9 +1,9 @@
 import {CheckCircle2,AlertTriangle} from 'lucide-react';
 import {MarkdownContent} from './MarkdownContent';
 import {useEffect,useState} from 'react';
-import type {MigrationReuseProposal,ReuseConformance} from '../../src/migration/domain/migration-reuse-design';
-import type {ReusePlannerTelemetry} from '../../src/migration/domain/migration-reuse-telemetry';
-import type {ReuseDesign} from '../../src/migration/domain/migration-reuse-design';
+import type {MigrationReuseProposal,ReuseConformance} from "../../contracts/platform/responses";
+import type {ReusePlannerTelemetry} from "../../contracts/platform/responses";
+import type {ReuseDesign} from "../../contracts/platform/responses";
 
 const designSections:Record<keyof ReuseDesign,string>={scope:'复用范围',preservedBehavior:'保留的业务行为',sourceCouplings:'源码耦合',changes:'具体改造',dependencies:'依赖配置',conditions:'运行条件',unresolvedQuestions:'待确认事项',acceptanceChecks:'验收方式'};
 function describeSection(design:ReuseDesign,key:keyof ReuseDesign):string[]{

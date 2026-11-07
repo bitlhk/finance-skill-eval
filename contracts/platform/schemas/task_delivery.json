@@ -1,0 +1,225 @@
+{
+  "$ref": "#/definitions/task_delivery",
+  "definitions": {
+    "task_delivery": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "toolId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "form": {
+                "type": "string",
+                "enum": [
+                  "SCRIPT",
+                  "MCP",
+                  "CLI"
+                ]
+              },
+              "entrypoint": {
+                "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+                },
+                "minItems": 1
+              },
+              "invocation": {
+                "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+              },
+              "configuration": {
+                "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+              }
+            },
+            "required": [
+              "toolId",
+              "form",
+              "entrypoint",
+              "files",
+              "invocation",
+              "configuration"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "conformance": {
+          "type": "object",
+          "properties": {
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "requirementId": {
+                    "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "CONFORMING",
+                      "NEEDS_CHANGES",
+                      "UNKNOWN"
+                    ]
+                  },
+                  "reason": {
+                    "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+                        },
+                        "snippet": {
+                          "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "snippet"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "requirementId",
+                  "status",
+                  "reason",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "issues": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+              }
+            },
+            "evaluationDecision": {
+              "type": "object",
+              "properties": {
+                "decision": {
+                  "type": "string",
+                  "enum": [
+                    "PROCEED",
+                    "REVISE"
+                  ]
+                },
+                "reason": {
+                  "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+                }
+              },
+              "required": [
+                "decision",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "checks",
+            "issues"
+          ],
+          "additionalProperties": false
+        },
+        "contractEvidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "toolId": {
+                "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+              },
+              "passed": {
+                "type": "boolean"
+              },
+              "callExecuted": {
+                "type": "boolean"
+              },
+              "detail": {
+                "$ref": "#/definitions/task_delivery/properties/tools/items/properties/toolId"
+              }
+            },
+            "required": [
+              "toolId",
+              "passed",
+              "callExecuted",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "toolNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "filePaths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "minItems": 1
+              },
+              "start": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "maxItems": 100
+              },
+              "prepare": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100
+              }
+            },
+            "required": [
+              "toolNames",
+              "filePaths",
+              "start"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 20,
+          "default": []
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -27,7 +27,7 @@ function Require-Admin {
 function Write-Utf8([string]$File, [string]$Content) { [IO.File]::WriteAllText($File, $Content, (New-Object Text.UTF8Encoding $false)) }
 function Service-Path([string]$Name) { return (Join-Path $Services "finance-eval-$Name.exe") }
 function Configure([string]$Target) {
-    foreach ($Name in @('api', 'runtime')) {
+    foreach ($Name in @('api', 'agent-runtime', 'runtime')) {
         $Escape = [Security.SecurityElement]
         $Start = '&quot;' + $Escape::Escape((Join-Path $Target 'deploy/run.mjs')) + '&quot; ' + $Name + ' --env &quot;' + $Escape::Escape($EnvFile) + '&quot;'
         $Stop = '&quot;' + $Escape::Escape((Join-Path $Target 'deploy/run.mjs')) + '&quot; stop ' + $Name + ' --env &quot;' + $Escape::Escape($EnvFile) + '&quot;'
@@ -57,7 +57,7 @@ function Configure([string]$Target) {
     }
 }
 function Stop-All {
-    foreach ($Name in @('api','runtime')) {
+    foreach ($Name in @('api','agent-runtime','runtime')) {
         $Service = Get-Service -Name "finance-eval-$Name" -ErrorAction SilentlyContinue
         if ($Service -and $Service.Status -ne 'Stopped') {
             Invoke-Checked (Service-Path $Name) @('stop')
@@ -69,13 +69,13 @@ function Stop-All {
 }
 function Health([string]$Target) { Invoke-Checked $Node @((Join-Path $Target 'deploy/health.mjs'), '--env', $EnvFile) }
 function Start-All([string]$Target) {
-    foreach ($Name in @('runtime','api')) {
+    foreach ($Name in @('runtime','agent-runtime','api')) {
         $InstalledConfig = [xml](Get-Content -LiteralPath (Join-Path $Services "finance-eval-$Name.xml") -Raw -Encoding UTF8)
         if ($InstalledConfig.service.workingdirectory -ne $Target -or -not $InstalledConfig.service.startarguments.Contains(('"' + $EnvFile + '"'))) {
             throw 'Installed service targets another project/config. Stop it and run install from this project first.'
         }
     }
-    foreach ($Name in @('runtime','api')) {
+    foreach ($Name in @('runtime','agent-runtime','api')) {
         if ((Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'").StartName -ne 'NT AUTHORITY\LocalService') { throw 'SCM service identity must be LocalService; repair the stopped installation before starting.' }
         if ((Get-Service "finance-eval-$Name").Status -ne 'Running') { Invoke-Checked (Service-Path $Name) @('start') }
     }
@@ -93,7 +93,7 @@ function Start-All([string]$Target) {
 }
 function Backup([string]$Target, [string]$Output) {
     if (-not $Output -or -not [IO.Path]::IsPathRooted($Output)) { throw 'An absolute new archive path is required.' }
-    foreach ($Name in @('api','runtime')) {
+    foreach ($Name in @('api','agent-runtime','runtime')) {
         $Service = Get-Service "finance-eval-$Name" -ErrorAction SilentlyContinue
         if ($Service -and $Service.Status -ne 'Stopped') { throw 'Stop services before offline backup.' }
     }
@@ -111,13 +111,13 @@ switch ($Action) {
         if ($Action -eq 'install') { Require-Admin }
         if ($Action -eq 'install' -and (-not $WinSW -or -not (Test-Path -LiteralPath $WinSW))) { throw 'Provide the verified WinSW 2.12.0 x64 executable.' }
         if ($Action -eq 'configure') {
-            foreach ($Name in @('runtime','api')) {
+            foreach ($Name in @('runtime','agent-runtime','api')) {
                 $Existing = Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'"
                 if ($Existing -and $Existing.PathName.Trim('"') -eq (Service-Path $Name) -and $Existing.State -ne 'Stopped') { throw 'Stop services before rewriting their configuration.' }
             }
         }
         if ($Action -eq 'install') {
-            foreach ($Name in @('runtime','api')) {
+            foreach ($Name in @('runtime','agent-runtime','api')) {
                 $Existing = Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'"
                 if ($Existing -and ($Existing.PathName.Trim('"') -ne (Service-Path $Name))) { throw 'Service name belongs to another installation.' }
                 if ($Existing -and $Existing.State -ne 'Stopped') { throw 'Stop services before repeating installation.' }
@@ -126,7 +126,7 @@ switch ($Action) {
         foreach ($Directory in @($Services,(Join-Path $Base 'logs'),(Join-Path $Base 'cache'),(Join-Path $Base 'backups'))) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
         Configure $Target
         if ($Action -eq 'install') {
-            foreach ($Name in @('api','runtime')) {
+            foreach ($Name in @('api','agent-runtime','runtime')) {
                 if ([IO.Path]::GetFullPath($WinSW) -ne [IO.Path]::GetFullPath((Service-Path $Name))) { Copy-Item -LiteralPath $WinSW -Destination (Service-Path $Name) -Force }
             }
             $InfoText = & $Node (Join-Path $Target 'deploy/project.mjs') paths
@@ -147,7 +147,7 @@ switch ($Action) {
                 $FileOwner = (Get-Acl -LiteralPath $File).Owner
                 Invoke-Checked 'icacls.exe' @($File, '/inheritance:r', '/grant:r', '*S-1-5-18:F', '*S-1-5-32-544:F', '*S-1-5-19:R', "${FileOwner}:F")
             }
-            foreach ($Name in @('runtime','api')) {
+            foreach ($Name in @('runtime','agent-runtime','api')) {
                 if (-not (Get-Service "finance-eval-$Name" -ErrorAction SilentlyContinue)) { Invoke-Checked (Service-Path $Name) @('install') }
                 $Installed = Get-CimInstance Win32_Service -Filter "Name='finance-eval-$Name'"
                 if ($Installed.StartName -ne 'NT AUTHORITY\LocalService') {
@@ -163,7 +163,7 @@ switch ($Action) {
         switch ($Action) {
             'preflight' { Invoke-Checked $Node @((Join-Path $Target 'deploy/preflight.mjs'),'--env',$EnvFile) }
             'health' { Health $Target }
-            'status' { Get-Service finance-eval-api,finance-eval-runtime }
+            'status' { Get-Service finance-eval-api,finance-eval-agent-runtime,finance-eval-runtime }
             'logs' { Get-ChildItem (Join-Path $Base 'logs') -Filter '*.log' | ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 100 } }
             'start' { Require-Admin; Start-All $Target }
             'stop' { Require-Admin; Stop-All }

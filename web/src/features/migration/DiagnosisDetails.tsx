@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import {FileText,Network,Settings2,Wrench} from 'lucide-react';
-import type {BundleTask} from '../../../../src/migration/tasks/domain/task-model';
-import type {TaskDiagnosis} from '../../../../src/migration/tasks/domain/task-diagnosis';
+import type {BundleTask} from "../../../../contracts/platform/responses";
+import type {TaskDiagnosis} from "../../../../contracts/platform/responses";
 import {MarkdownContent} from '../../MarkdownContent';
 import {legacyChangeCards,legacyPlanSections,proseParagraphs} from './legacy-plan';
 
@@ -33,7 +33,7 @@ function ToolDetail({tool,task,busy,clarify}:{tool:TaskDiagnosis['tools'][number
     {!!tool.callChain.length&&<><h4 className="diagnosis-section-title"><Network size={16}/>调用链路</h4><div className="diagnosis-flow">{tool.callChain.map((node,i)=><div className="diagnosis-flow-node" key={i}><span className="diagnosis-flow-index">{i+1}</span><strong>{node.title}</strong><p>{node.detail}</p><SourceEvidence items={node.evidence}/></div>)}</div></>}
     {!!dependencies.length&&<p>相关依赖：{dependencies.map(item=>item.name+'（'+owners[item.owner]+'）').join('、')}。配置要求见下方。</p>}
     <SourceEvidence items={tool.evidence}/>
-    {clarify&&<details className="stage-detail"><summary>调整此工具的迁移形式</summary><div className="migration-fields"><label>转换形式<select disabled={busy} value={form} onChange={e=>setForm(e.target.value as typeof form)}>{Object.entries(forms).filter(([value])=>!selection||['SCRIPT','MCP','CLI'].includes(value)).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label>实现语言<input disabled={busy} value={language} onChange={e=>setLanguage(e.target.value)}/></label></div><button className="button secondary" disabled={busy||!language.trim()||form===tool.targetForm&&language===tool.language} onClick={()=>clarify(`请调整工具 ${tool.name}（${tool.id}）的方案：转换形式为${forms[form]}，实现语言为${language.trim()}。保留原业务行为，重新核对成本与依赖，同时更新标准化选型、诊断与完整方案；无法满足时明确说明原因。`)}>更新此工具方案</button><p>更新后需要重新确认方案，才会实施改造。</p></details>}
+    {clarify&&<details className="stage-detail"><summary>调整此工具的迁移形式</summary><div className="migration-fields"><label>转换形式<select disabled={busy} value={form} onChange={e=>setForm(e.target.value as typeof form)}>{Object.entries(forms).filter(([value])=>!selection||['SCRIPT','MCP','CLI'].includes(value)).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label>实现语言<input disabled={busy} value={language} onChange={e=>setLanguage(e.target.value)}/></label></div><button className="button secondary" disabled={busy||!language.trim()||form===tool.targetForm&&language===tool.language} onClick={()=>clarify(`请调整工具 ${tool.name}（${tool.id}）的方案：转换形式为${forms[form]}，实现语言为${language.trim()}。保留原业务行为，重新核对成本与依赖，同时更新标准化选型、诊断与完整方案；无法满足时明确说明原因。`)}>更新此工具方案</button><p>主 Agent 将在对话和工作产物中说明更新，原方案记录保留。</p></details>}
   </article>;
 }
 export function DiagnosisDetails({task,busy,clarify}:{task:BundleTask;busy:boolean;clarify?:(value:string)=>void}){

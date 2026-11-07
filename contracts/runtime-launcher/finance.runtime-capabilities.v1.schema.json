@@ -90,6 +90,10 @@
         "minLength": 1
       }
     },
+    "auxiliaryToolNames": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "nativeCapabilities": {
       "type": "array",
       "items": {
@@ -230,6 +234,15 @@
         "inlineSecrets": {
           "type": "boolean"
         },
+        "processEvidence": {
+          "type": "boolean",
+          "description": "Returns the unified process in terminal evidence metadata.process; required for newly connected Launchers."
+        },
+        "projectExecution": { "type": "boolean" },
+        "otlpEvidence": { "type": "boolean" },
+        "otlpExport": { "type": "boolean" },
+        "artifactEvidence": { "type": "boolean" },
+        "caseStateLifecycle": { "type": "boolean" },
         "multiTurn": {
           "type": "boolean",
           "description": "Distinct native Agent invocations in one isolated case, retaining session, workspace and MCP lifecycle; omitted means unsupported."
@@ -285,6 +298,10 @@
         "maxSkills": {
           "type": "integer",
           "minimum": 1
+        },
+        "minPrimaryTools": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

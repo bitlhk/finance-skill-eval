@@ -1,16 +1,52 @@
 """Generation may check contracts without running credential-dependent business code."""
 import base64
+import asyncio
 from pathlib import Path
 import json
 import tempfile
+import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from integrations.openjiuwen.migration_tools import _compile_source, _contract_suite, _contract_test, _script_contract, _mcp_contract, _mcp_contract_suite
+from integrations.openjiuwen.migration_tools import _compile_source, _contract_suite, _contract_test, _script_contract, _mcp_contract, _mcp_contract_suite, _terminate
 from integrations.openjiuwen.agent_protocol import build_workspace, is_output_format_failure, MAX_ITERATION_SENTINEL, declared_delivery_paths, collect_delivery_files
 
 
 class RuntimeDependencyContractTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows process-tree cleanup')
+    async def test_windows_cleanup_waits_for_process_tree_termination(self):
+        from types import SimpleNamespace
+        process = SimpleNamespace(pid=12345, returncode=None, wait=AsyncMock(), kill=unittest.mock.Mock())
+        killer = SimpleNamespace(wait=AsyncMock())
+        with patch('integrations.openjiuwen.migration_tools.asyncio.create_subprocess_exec', new=AsyncMock(return_value=killer)):
+            await _terminate(process)
+        killer.wait.assert_awaited_once()
+        process.wait.assert_awaited_once()
+
+    async def test_contract_selector_accepts_unique_name_and_rejects_ambiguous_name(self):
+        registry = {'tool-1': {'toolName': 'lookup', 'form': 'CLI'},
+                    'tool-2': {'toolName': 'write', 'form': 'CLI'}}
+        with tempfile.TemporaryDirectory() as directory:
+            result = await _contract_test(Path(directory), registry, 'lookup', '')
+            self.assertEqual(result['toolId'], 'tool-1')
+            self.assertFalse(result['callExecuted'])
+            registry['tool-3'] = {'toolName': 'lookup', 'form': 'CLI'}
+            ambiguous = await _contract_test(Path(directory), registry, 'lookup', '')
+            self.assertFalse(ambiguous['passed'])
+            self.assertIn('tool-1 (lookup)', ambiguous['error'])
+
+    async def test_mcp_service_early_exit_reports_stderr_without_waiting_for_port_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = [sys.executable, '-c', 'import sys; print("missing dependency", file=sys.stderr); sys.exit(2)']
+            entry = {'toolName': 'lookup', 'start': command, 'inputSchema': {'type': 'object'}}
+            for suite in (False, True):
+                with self.subTest(suite=suite):
+                    operation = (_mcp_contract_suite(Path(directory), [], command) if suite
+                                 else _mcp_contract(Path(directory), entry, {}))
+                    result = await asyncio.wait_for(operation, 10)
+                    self.assertEqual(result['error'], 'SERVICE_DID_NOT_START')
+                    self.assertIn('missing dependency', result['stderr'])
+
     def test_explicitly_reused_modules_remain_in_delivery_without_shipping_all_original_files(self):
         paths=declared_delivery_paths({'tools':[{'entrypoint':'mcp_server.py','files':['mcp_server.py','scripts/check_expense.py','assets/rules.json']}],
             'skillDelivery':{'files':[{'source':'migration-skill/SKILL.md','path':'SKILL.md'}]}})
@@ -136,8 +172,31 @@ class RuntimeDependencyContractTests(unittest.IsolatedAsyncioTestCase):
             source = root / "lookup.mjs"
             source.write_text("throw Error('business call must not run');", encoding="utf-8")
             result = await _contract_test(root, self.contract("SCRIPT"), "tool", "lookup.mjs")
-            self.assertFalse(result["passed"])
-            self.assertIn("SCRIPT_RUNTIME_INJECTION_UNSUPPORTED",result["error"])
+            self.assertTrue(result["passed"])
+            self.assertFalse(result["callExecuted"])
+            self.assertEqual(result["runtimeDependenciesPending"], ["business credential"])
+            self.assertIn("WAIT_RUNTIME_INPUTS", result["note"])
+
+    async def test_mcp_rpc_error_is_not_a_successful_tool_call(self):
+        for suite in (False, True):
+            for response in ({'error': {'code': -32603, 'message': 'failed'}}, {}, None):
+                with self.subTest(suite=suite, response=response), tempfile.TemporaryDirectory() as directory:
+                    def post(_url, payload, session_id=None, timeout=30, request_headers=None):
+                        if payload['method'] == 'tools/list':
+                            return 'session', {'result': {'tools': [{'name': 'lookup', 'inputSchema': {'type': 'object'}}]}}
+                        if payload['method'] == 'tools/call':
+                            return 'session', response
+                        return 'session', {}
+                    entry = {'toolName': 'lookup', 'start': ['fixture-command'], 'inputSchema': {'type': 'object'}}
+                    with patch('integrations.openjiuwen.migration_tools.asyncio.create_subprocess_exec', new=AsyncMock()), \
+                         patch('integrations.openjiuwen.migration_tools._wait_for_port', new=AsyncMock(return_value=True)), \
+                         patch('integrations.openjiuwen.migration_tools._terminate', new=AsyncMock()), \
+                         patch('integrations.openjiuwen.migration_tools._mcp_post', side_effect=post):
+                        result = await _mcp_contract_suite(Path(directory), [{'toolId': 't1', 'entry': entry, 'sample': {}, 'executeCall': True, 'runtimePending': []}], ['fixture-command']) if suite else await _mcp_contract(Path(directory), entry, {})
+                    self.assertFalse(result['passed'], result)
+                    detail = result['results'][0] if suite else result
+                    self.assertTrue(detail['callExecuted'])
+                    self.assertIn('TOOL_CALL_RPC_ERROR', detail['error'])
 
     async def test_missing_script_entry_still_fails(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -180,11 +239,71 @@ class RuntimeDependencyContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([case["executeCall"] for case in cases],[False,False])
         self.assertEqual(result,observed)
 
+    async def test_shared_mcp_suite_keeps_strict_schema_and_moved_runtime_dependencies(self):
+        entry = {'form': 'MCP', 'toolName': 'lookup', 'strictContract': True,
+                 'inputSchema': {'type': 'object', 'properties': {'value': {'type': 'integer'}}, 'additionalProperties': False},
+                 'sampleInput': {'extra': 1}, 'dependencies': []}
+        with tempfile.TemporaryDirectory() as directory:
+            with patch('integrations.openjiuwen.migration_tools._mcp_contract_suite', new=AsyncMock()) as probe:
+                bad = await _contract_suite(Path(directory), {'x': entry}, ['x'], ['server'])
+                self.assertFalse(bad['passed'])
+                self.assertIn('SAMPLE_INPUT_SHAPE', bad['error'])
+                probe.assert_not_awaited()
+            entry['sampleInput'] = {'value': 1}
+            entry['dependencies'] = [{'owner': 'RUNTIME', 'action': 'MOVE_TO_RUNTIME', 'name': 'identity'}]
+            with patch('integrations.openjiuwen.migration_tools._mcp_contract_suite', new=AsyncMock(return_value={'passed': True, 'results': []})) as probe:
+                await _contract_suite(Path(directory), {'x': entry}, ['x'], ['server'])
+                case = probe.await_args.args[1][0]
+                self.assertFalse(case['executeCall'])
+                self.assertEqual(case['runtimePending'], ['identity'])
+
+    async def test_one_bad_sample_does_not_suppress_other_shared_tool_checks(self):
+        schema = {'type': 'object', 'required': ['value'], 'properties': {'value': {'type': 'integer'}}}
+        contract = {'bad': {'form': 'MCP', 'toolName': 'bad', 'strictContract': True, 'inputSchema': schema, 'sampleInput': {}},
+                    'good': {'form': 'MCP', 'toolName': 'good', 'strictContract': True, 'inputSchema': schema, 'sampleInput': {'value': 1}}}
+        observed = {'passed': True, 'results': [{'toolId': 'good', 'passed': True, 'callExecuted': True}]}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch('integrations.openjiuwen.migration_tools._mcp_contract_suite', new=AsyncMock(return_value=observed)) as probe:
+            result = await _contract_suite(Path(directory), contract, ['bad', 'good'], ['server'])
+        self.assertFalse(result['passed'])
+        self.assertEqual([row['passed'] for row in result['results']], [False, True])
+        self.assertEqual([case['toolId'] for case in probe.await_args.args[1]], ['good'])
+
     async def test_java_compile_rejects_build_descriptors_before_running_javac(self):
         with tempfile.TemporaryDirectory() as directory:
             result=await _compile_source(Path(directory),"java",["mcp-java/pom.xml"])
         self.assertFalse(result["passed"])
         self.assertIn("INVALID_SOURCE_PATHS",result["error"])
+
+    async def test_source_discovery_skips_installed_dependencies_and_rejects_external_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'tool.py').write_text('x = 1', encoding='utf-8')
+            (root / '.venv').mkdir()
+            (root / '.venv' / 'installed.py').write_text('dependency', encoding='utf-8')
+            (root / 'agents').mkdir()
+            (root / 'agents' / 'business.py').write_text('x = 2', encoding='utf-8')
+            with patch('integrations.openjiuwen.migration_tools._run_process', new=AsyncMock(return_value={
+                'exitCode': 0, 'stderr': '', 'timedOut': False})) as runner:
+                result = await _compile_source(root, 'python', None)
+            self.assertTrue(result['passed'])
+            self.assertEqual(result['files'], ['tool.py', 'agents/business.py'])
+            self.assertNotIn('.venv/installed.py', runner.await_args.args[1])
+            outside = await _compile_source(root, 'python', ['../outside.py'])
+            self.assertIn('INVALID_SOURCE_PATHS', outside['error'])
+
+    async def test_python_syntax_check_does_not_execute_or_write_project_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'valid.py').write_text('raise RuntimeError("must not execute")\n',encoding='utf-8')
+            result=await _compile_source(root,'python',None)
+            self.assertTrue(result['passed'],result)
+            self.assertEqual(sorted(item.name for item in root.iterdir()),['valid.py'])
+            (root/'invalid.py').write_text('def broken(:\n',encoding='utf-8')
+            result=await _compile_source(root,'python',None)
+            self.assertFalse(result['passed'])
+            self.assertIn('SyntaxError',result['stderr'])
+            self.assertEqual(sorted(item.name for item in root.iterdir()),['invalid.py','valid.py'])
 
 
 if __name__ == "__main__":

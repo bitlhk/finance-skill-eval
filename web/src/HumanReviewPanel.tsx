@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import {api} from './api-client';
-import {reviewConsensus,type ReviewSource} from '../../src/evaluation/domain/human-review';
-import type {HumanReviewView} from '../../src/service/human-review-store';
+import type {ReviewSource} from "../../contracts/platform/responses";
+import type {HumanReviewView} from "../../contracts/platform/responses";
 
 const labels:Record<string,string>={PASS:'通过',FAIL:'失败',UNVERIFIED:'无法验证',left:'左侧更好',right:'右侧更好',tie:'相当',
   case:'案例结论',criterion:'评分标准',pairwise:'两侧偏好',method:'检查方法'};
@@ -13,7 +13,7 @@ function ReviewForm({source}:{source:ReviewSource}){
   const [selected,setSelected]=useState(''),[reviewer,setReviewer]=useState(''),[outcome,setOutcome]=useState('UNVERIFIED');
   const [reason,setReason]=useState(''),[refs,setRefs]=useState(''),[importText,setImportText]=useState('');
   const target=view?.targets.find(t=>t.id===selected)??view?.targets[0];
-  const consensus=target&&view?reviewConsensus(target,view.records):null;
+  const consensus=target&&view?view.consensus[target.id]:null;
   const work=async(action:()=>Promise<HumanReviewView>)=>{
     setBusy(true);setError('');try{setView(await action());}catch(error){setError(error instanceof Error?error.message:String(error));}finally{setBusy(false);}
   };

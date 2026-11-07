@@ -8,7 +8,7 @@ import { args, settings, preflight, fail } from './lib/settings.mjs';
 const options = args(), command = options._?.[0], component = options._?.[1] || command;
 const log = (event, fields = {}) => console.log(JSON.stringify({ time: new Date().toISOString(), component: 'supervisor', event, ...fields }));
 try {
-  if (!['api', 'runtime'].includes(component)) fail('USAGE_RUN_API_RUNTIME_OR_STOP_COMPONENT');
+  if (!['api', 'runtime', 'agent-runtime'].includes(component)) fail('USAGE_RUN_API_RUNTIME_OR_STOP_COMPONENT');
   const config = await settings(options.env), { env, root } = config;
   if (!env.FINANCE_EVAL_DATA_DIR || !path.isAbsolute(env.FINANCE_EVAL_DATA_DIR)) fail('ABSOLUTE_DATA_DIRECTORY_REQUIRED');
   const directory = path.join(env.FINANCE_EVAL_DATA_DIR, 'processes'), stateFile = path.join(directory, component + '.json');
@@ -44,8 +44,7 @@ try {
     if (stopping) return;
     stopping = true;
     log('supervisor_stopping', { service: component });
-    if (component === 'api' && child?.connected) child.send({ type: 'finance.shutdown' });
-    else if (child?.stdin?.writable) child.stdin.end('stop\n');
+    if (child?.stdin?.writable) child.stdin.end('stop\n');
     timer = setTimeout(() => {
       log('supervisor_force_stop', { service: component });
       if (!child?.pid) return;
@@ -64,10 +63,17 @@ try {
   });
   await new Promise(resolve => control.listen(0, '127.0.0.1', resolve));
   await writeFile(stateFile, JSON.stringify({ pid: process.pid, port: control.address().port, token }), { mode: 0o600 });
-  const executable = component === 'api' ? process.execPath : config.python;
-  const parameters = component === 'api' ? ['dist/service/server.js'] : ['-m', 'integrations.openjiuwen.serve'];
+  if(component==='api'){
+    const {exportLegacyAssetOrders}=await import('../scripts/export-legacy-asset-orders.mjs');
+    await exportLegacyAssetOrders(env.FINANCE_EVAL_DATA_DIR,env.FINANCE_EVAL_WORKSPACE_SEED_DIRECTORY);
+    const {codeRevision}=await import('../scripts/lib/code-revision.mjs');
+    env.FINANCE_EVAL_CODE_REVISION_JSON=JSON.stringify(codeRevision(root));
+  }
+  const executable = config.python;
+  if(component==='agent-runtime')env.FINANCE_RUNTIME_COMPONENT='agent-runtime';
+  const parameters = component === 'api' ? ['-B','-m','api'] : ['-m', 'integrations.openjiuwen.serve'];
   child = spawn(executable, parameters, { cwd: root, env, windowsHide: true, detached: process.platform !== 'win32',
-    stdio: component === 'api' ? ['ignore', 'inherit', 'inherit', 'ipc'] : ['pipe', 'inherit', 'inherit'] });
+    stdio: ['pipe', 'inherit', 'inherit'] });
   let cleaned = false;
   const finish = async code => {
     if (cleaned) return;

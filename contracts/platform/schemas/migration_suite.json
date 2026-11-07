@@ -1,0 +1,396 @@
+{
+  "$ref": "#/definitions/migration_suite",
+  "definitions": {
+    "migration_suite": {
+      "type": "object",
+      "properties": {
+        "executionRepetitions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "workspaceFiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 262144
+              }
+            },
+            "required": [
+              "path",
+              "content"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 32
+        },
+        "cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repeatSafety": {
+                "type": "string",
+                "const": "read_only"
+              },
+              "stateFixture": {
+                "type": "object",
+                "properties": {
+                  "fixtureId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "initialStateDigest": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "fixtureId",
+                  "version",
+                  "initialStateDigest"
+                ],
+                "additionalProperties": false
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 12000
+              },
+              "rationale": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "evaluationPlan": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "answerEvidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+                        },
+                        "reference": {
+                          "type": "string",
+                          "maxLength": 300,
+                          "pattern": "^\\/(state\\/.+|toolEvidence\\/\\d+\\/result\\/.+)$"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "reference"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 32
+                  },
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "version": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "RULE",
+                            "SCRIPT",
+                            "STATE"
+                          ]
+                        },
+                        "required": {
+                          "type": "boolean",
+                          "default": true
+                        },
+                        "evidenceRefs": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 300
+                          },
+                          "maxItems": 32,
+                          "default": []
+                        },
+                        "timeoutMs": {
+                          "type": "integer",
+                          "minimum": 100,
+                          "maximum": 120000,
+                          "default": 60000
+                        },
+                        "rule": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "operation": {
+                                  "type": "string",
+                                  "const": "equals"
+                                },
+                                "reference": {
+                                  "$ref": "#/definitions/migration_suite/properties/cases/items/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                                },
+                                "expected": {}
+                              },
+                              "required": [
+                                "operation",
+                                "reference"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "operation": {
+                                  "type": "string",
+                                  "const": "contains"
+                                },
+                                "reference": {
+                                  "$ref": "#/definitions/migration_suite/properties/cases/items/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                                },
+                                "expected": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "operation",
+                                "reference",
+                                "expected"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "operation": {
+                                  "type": "string",
+                                  "const": "exists"
+                                },
+                                "reference": {
+                                  "$ref": "#/definitions/migration_suite/properties/cases/items/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                                }
+                              },
+                              "required": [
+                                "operation",
+                                "reference"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "operation": {
+                                  "type": "string",
+                                  "const": "numeric_tolerance"
+                                },
+                                "reference": {
+                                  "$ref": "#/definitions/migration_suite/properties/cases/items/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                                },
+                                "expected": {
+                                  "type": "number"
+                                },
+                                "absoluteTolerance": {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                "relativeTolerance": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "default": 0
+                                }
+                              },
+                              "required": [
+                                "operation",
+                                "reference",
+                                "expected",
+                                "absoluteTolerance"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "operation": {
+                                  "type": "string",
+                                  "const": "set_equals"
+                                },
+                                "reference": {
+                                  "$ref": "#/definitions/migration_suite/properties/cases/items/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                                },
+                                "expected": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  },
+                                  "maxItems": 1000
+                                }
+                              },
+                              "required": [
+                                "operation",
+                                "reference",
+                                "expected"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "script": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32000
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "version",
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "version",
+                  "checks"
+                ],
+                "additionalProperties": false
+              },
+              "workspaceFiles": {
+                "$ref": "#/definitions/migration_suite/properties/workspaceFiles"
+              },
+              "turns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "requiredTools": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "maxItems": 32,
+                      "default": []
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 8
+              },
+              "criteria": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "minItems": 1,
+                "maxItems": 20
+              },
+              "criterionScopes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "answer",
+                    "execution"
+                  ]
+                },
+                "maxItems": 20
+              },
+              "requirementIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "id",
+              "input",
+              "criteria"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "holdoutCases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/migration_suite/properties/cases/items"
+          },
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "name",
+        "cases"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

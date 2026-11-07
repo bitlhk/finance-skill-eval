@@ -11,18 +11,18 @@ done
 require_root() { [[ $EUID -eq 0 ]] || { echo 'Run this operation with sudo.' >&2; exit 1; }; }
 health() { "$node_bin" "$project/deploy/health.mjs"; }
 start() {
-  for service in api runtime; do
+  for service in api agent-runtime runtime; do
     [[ "$(systemctl show "finance-eval-$service.service" --property=WorkingDirectory --value)" == "$project" ]] || {
       echo 'Installed service targets another project. Stop it and run install from this project first.' >&2; return 1
     }
   done
-  systemctl start finance-eval-runtime.service finance-eval-api.service
+  systemctl start finance-eval-runtime.service finance-eval-agent-runtime.service finance-eval-api.service
   for ((i=0;i<30;i++)); do if health >/dev/null 2>&1; then health; return; fi; sleep 1; done
   echo 'Health check failed; inspect journalctl.' >&2; return 1
 }
-stop() { systemctl stop finance-eval-api.service; systemctl stop finance-eval-runtime.service; }
+stop() { systemctl stop finance-eval-api.service; systemctl stop finance-eval-agent-runtime.service; systemctl stop finance-eval-runtime.service; }
 require_stopped() {
-  for service in api runtime; do
+  for service in api agent-runtime runtime; do
     state=$(systemctl show "finance-eval-$service.service" --property=ActiveState --value 2>/dev/null || true)
     [[ -z "$state" || "$state" == inactive || "$state" == failed ]] || { echo 'Stop services before reconfiguration or backup.' >&2; exit 1; }
   done
@@ -43,19 +43,19 @@ case "$command" in
     chmod 0640 "$project/.env.local" "$runtime"
     # Never recursively chown the checkout or shared dependency store.
     runuser -u finance-eval -- "$node_bin" "$project/deploy/preflight.mjs"
-    for service in api runtime; do
+    for service in api agent-runtime runtime; do
       sed -e "s|@NODE@|$node_bin|g" -e "s|@PROJECT@|$project|g" "$project/deploy/linux/finance-eval-$service.service.in" > "/etc/systemd/system/finance-eval-$service.service"
     done
     systemctl daemon-reload
-    systemctl enable finance-eval-api.service finance-eval-runtime.service
+    systemctl enable finance-eval-api.service finance-eval-agent-runtime.service finance-eval-runtime.service
     echo 'Installed against this Git checkout and .env.local; no code or configuration copies created. Run start.'
     ;;
   preflight) require_root; runuser -u finance-eval -- "$node_bin" "$project/deploy/preflight.mjs" ;;
   start) require_root; start ;;
   stop) require_root; stop ;;
   restart) require_root; stop; start ;;
-  status) systemctl --no-pager status finance-eval-api.service finance-eval-runtime.service ;;
-  logs) journalctl -u finance-eval-api -u finance-eval-runtime --since '1 hour ago' --no-pager ;;
+  status) systemctl --no-pager status finance-eval-api.service finance-eval-agent-runtime.service finance-eval-runtime.service ;;
+  logs) journalctl -u finance-eval-api -u finance-eval-agent-runtime -u finance-eval-runtime --since '1 hour ago' --no-pager ;;
   health) require_root; health ;;
   backup) require_root; require_stopped; "$node_bin" "$project/deploy/project.mjs" backup --archive "${2:?Absolute archive path required}" ;;
   restore)

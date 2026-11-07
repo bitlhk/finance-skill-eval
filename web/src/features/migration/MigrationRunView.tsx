@@ -1,24 +1,25 @@
-import type { BundleRun } from '../../../../src/migration/tasks/domain/task-model';
-import { statusLabels } from './presentation';
+import type { BundleRun } from "../../../../contracts/platform/responses";
+import { caseResultLabel,statusLabels } from './presentation';
 import {EvaluationEvidence} from '../../EvaluationEvidence';
-import type {TaskRescoring} from '../../../../src/migration/tasks/application/task-rescoring';
+import type {TaskRescoring} from "../../../../contracts/platform/responses";
 import {useState} from 'react';
 import {AssessmentStability} from '../../AssessmentStability';
-import {executionStatistics} from '../../../../src/evaluation/domain/execution-statistics';
 import {HumanReviewPanel} from '../../HumanReviewPanel';
 export function MigrationRunView({
   run,
   currentCandidateId,
   configurationMatches,
   experimental=false,
-  onRescore,rescorings,disabled,onAnalyze,analyses,allRuns,taskId,
+  onRescore,onCancelRescore,rescorings,rescoringOperation,disabled,onAnalyze,analyses,allRuns,taskId,
 }: {
   run: BundleRun;
   currentCandidateId: string | null;
   configurationMatches: boolean;
   experimental?:boolean;
   onRescore?:(repetitions:number)=>void;rescorings?:TaskRescoring[];disabled?:boolean;
-  onAnalyze?:()=>void;analyses?:import('../../../../src/migration/tasks/application/task-run-analysis').SavedRunAnalysis[];
+  onCancelRescore?:()=>void;
+  rescoringOperation?:import("../../../../contracts/platform/responses").BundleTask['rescoringOperation'];
+  onAnalyze?:()=>void;analyses?:import("../../../../contracts/platform/responses").SavedRunAnalysis[];
   allRuns?:BundleRun[];
   taskId?:string;
 }) {
@@ -29,15 +30,17 @@ export function MigrationRunView({
         {statusLabels[run.status]} · {run.cases.filter((c) => c.passed).length}/
         {run.phase === 'holdout' ? run.suite.holdoutCases?.length : run.suite.cases.length} 个案例通过
       </h4>
+      {run.effectStatus&&<p>效果评测：{statusLabels[run.effectStatus]}。基础要求的验证情况单独列示，整体验收仍需满足基础要求。</p>}
       {taskId&&run.status!=='RUNNING'&&<HumanReviewPanel source={{kind:'migration',id:taskId,runId:run.id}}/>}
       {run.repetition&&<section><h5>业务重复运行 · 第 {run.repetition.index}/{run.repetition.total} 次</h5>
         <p>以下统计包含本组全部计划次数；未执行或证据不完整的次数不算通过。</p>
-        {executionStatistics(run.repetition.total,(run.phase==='holdout'?run.suite.holdoutCases??[]:run.suite.cases).map(c=>c.id),
-          Array.from({length:run.repetition.total},(_,index)=>allRuns?.find(r=>r.repetition?.groupId===run.repetition!.groupId&&r.repetition.index===index+1)?.cases??[]))
+        {(run.executionStatistics??[])
           .map(item=><p key={item.caseId}>{item.caseId}：通过 {item.passed}/{item.total}，失败 {item.failed}，未完成或无法验证 {item.unverified}；{item.allPassed?'每次均通过':item.variableOutcomes?'存在结果波动':'未达到每次均通过'}。</p>)}
       </section>}
       {onRescore&&<><label>重复评判次数<select aria-label="重复评判次数" disabled={disabled} value={repetitions} onChange={event=>setRepetitions(Number(event.target.value))}>{[1,2,3,4,5].map(n=><option value={n} key={n}>{n}</option>)}</select></label>
         <button className="button secondary" disabled={disabled||run.status==='RUNNING'} onClick={()=>onRescore(repetitions)}>使用已保存证据重新评判</button></>}
+      {rescoringOperation?.sourceRunId===run.id&&rescoringOperation.status==='RUNNING'&&<div><p role="status">正在使用已保存证据重新评判，完成后自动显示结果。</p>{onCancelRescore&&<button className="button secondary" onClick={onCancelRescore}>停止重新评判</button>}</div>}
+      {rescoringOperation?.sourceRunId===run.id&&['FAILED','CANCELLED','INTERRUPTED'].includes(rescoringOperation.status)&&<p role="alert">{rescoringOperation.error}</p>}
       {onAnalyze&&run.phase==='development'&&<button className="button secondary" disabled={disabled||run.status==='RUNNING'} onClick={onAnalyze}>分析本次评测问题</button>}
       {analyses?.filter(record=>record.sourceRunId===run.id).map(record=><details key={record.id}><summary>问题分析 · {record.createdAt}</summary>
         <p>基于本次冻结证据和工程版本分析，不修改代码或启动业务运行。原因判断是待验证假设。</p>
@@ -62,7 +65,7 @@ export function MigrationRunView({
       {run.cases.map((c) => (
         <details key={c.id}>
           <summary>
-            {c.id} · {c.passed ? '通过' : '未通过'}
+            {c.id} · {caseResultLabel(c)}
           </summary>
           <p>{c.reason}</p>
           {(['answer','execution'] as const).map(scope=>{

@@ -1,116 +1,49 @@
-# Finance Skill Eval 独立服务 V1
+# 平台 HTTP 与命令行接入
 
-## 定位
+平台后端使用 Python。原 npm 编程接口已撤销；外部应用通过现有 HTTP API 接入，不再直接实例化 TypeScript Runner、Judge 或任务控制器。
 
-独立服务是 Finance Harness Engineering Plane 中的 Eval Lab。它不进入生产 Agent 请求热路径，也不接管 Agent Loop、权限或金融业务系统。
+## HTTP
 
-```text
-EA 技能市场 ───────────┐
-独立评测控制台 ─────────┼─> Finance Skill Eval Service
-Builder / CI ──────────┘      │
-                              ├─ Eval Pack / Promptfoo / Judge
-                              ├─ Skill 候选 / Run / Report
-                              └─ Runtime Adapter
-                                      │
-                              被测 Agent Runtime
-                                      │
-                         Finance Harness / MCP / 银行业务系统
+默认地址为 `http://127.0.0.1:56361`。私有工作区使用 `Authorization: Bearer …`；账户工作区仍由现有可信入口提供身份与 Origin。不要在 URL 中携带口令。
+
+| 用途 | 入口 |
+| --- | --- |
+| 能力、资产、测试题和 Runtime | `GET /api/catalog` |
+| 上传 Skill | `POST /api/skills/upload`，ZIP 请求体 |
+| 导入用户测试集 | `POST /api/skills/{assetId}/prepare/import` |
+| AI 准备测试集 | `POST /api/skills/{assetId}/prepare` |
+| 创建对比评测 | `POST /api/runs` |
+| 查询与流式进度 | `GET /api/runs/{id}`、`GET /api/runs/{id}/events` |
+| 重复评判冻结证据 | `POST /api/runs/{id}/rescore` 或 `/rescore/start` |
+| 优化与人工选择 | `POST /api/runs/{id}/optimize`、`/api/optimizations/{id}/…` |
+| 人工复核和校准 | `GET/POST /api/evaluation-reviews` |
+| 迁移任务 | `/api/migration-tasks` |
+| 完整工程上传 | `POST /api/migration-tasks/upload?inputKind=agent_project` |
+| 主 Agent 对话与补充 | `/api/migration-tasks/{id}/conversation/…` |
+| 环境登记和准入 | `/api/environments` |
+
+公开请求 JSON Schema 位于 `contracts/platform/schemas/`，页面响应类型位于 `contracts/platform/responses.d.ts`。现有页面是完整接入示例。后台独立核验权限、配置、运行身份、证据和交付条件，不能把客户端校验当作准入。
+
+对比评测保持固定流程，优化是单独的受预算任务。迁移主 Agent 可以自主选择能力、更新计划、提出需要用户决定的问题并继续原会话；客户端不需要再按模型输出格式拼接多个独立阶段。
+
+## 命令行
+
+```sh
+pnpm check:openjiuwen
+pnpm eval:investment:replay
+pnpm eval:wealth:replay
+pnpm runtime:check -- --capabilities contracts/runtime-launcher/examples/builder-capabilities.json
 ```
 
-原 EA 可以继续内嵌 `finance-skill-eval` Library。需要集中运行时，再把 EA 技能市场入口切换为 Service Client；这不是独立服务 V1 的前置条件。
+构建后继续支持原命令路径：
 
-## API
-
-| API | 用途 |
-|---|---|
-| `GET /api/catalog` | Eval Pack、上传 Skill、环境与模型角色状态 |
-| `POST /api/skills/upload` | 以 `application/zip` 上传候选 Skill |
-| `POST /api/skills/{assetId}/prepare` | Analyzer 根据 Skill 生成测试题 |
-| `POST /api/skills/{assetId}/prepare/manual` | 保存人工给定测试题 |
-| `POST /api/environments` | 登记 Runtime HTTP 或 MCP 环境 |
-| `POST /api/environments/{id}/preflight` | 健康检查或 MCP 初始化与 `tools/list` |
-| `POST /api/runs` | 创建一轮 A/B 评测 |
-| `GET /api/runs/{id}/events` | SSE 实时运行快照 |
-| `POST /api/runs/{id}/cancel` | 取消排队或运行中的任务 |
-| `POST /api/runs/{id}/retry` | 对失败、中断或取消任务单次重试 |
-| `GET /api/runs/{id}/export` | 导出 JSON、HTML 或 Markdown 报告 |
-
-服务重启时，未完成任务会标记为 `interrupted`，不会伪装成成功；任务可由用户显式重试。
-
-## Runtime HTTP 合同
-
-Runtime 环境的执行地址建议以 `/execute` 结尾，并提供同级 `/health`。
-
-请求：
-
-```json
-{
-  "schemaVersion": "finance.skill-eval.runtime-request.v1",
-  "runId": "run-id",
-  "side": "left",
-  "case": {
-    "caseId": "CASE-001",
-    "prompt": "业务任务",
-    "requiredTools": ["customer_query"]
-  },
-  "model": {
-    "providerId": "bank-model-gateway",
-    "modelId": "model-a"
-  },
-  "variant": {
-    "mode": "without_target_skill",
-    "skillId": "target-skill"
-  },
-  "skill": null,
-  "environment": {
-    "environmentId": "env-id",
-    "mcpServers": []
-  }
-}
+```sh
+node dist/service/server.js
+node dist/cli.js replay --pack packs/finance/investment-research/eval.yaml --out reports/investment-research
 ```
 
-右侧装配上传 Skill 时，`skill` 包含目标 Skill 的 ID、版本、摘要和主 `SKILL.md` 内容。Runtime 必须确认实际装配身份，并返回统一执行证据：
+这些文件只负责选择项目环境和启动 Python，不包含另一套评测或任务实现。Python 入口分别为 `api`、`api.cli`、`api.runtime_check`。
 
-```json
-{
-  "runId": "runtime-run-id",
-  "side": "right",
-  "caseId": "CASE-001",
-  "status": "completed",
-  "modelId": "model-a",
-  "skillVersion": "1.0.0",
-  "output": "Agent 输出",
-  "elapsedMs": 1200,
-  "toolCalls": [{ "name": "customer_query", "status": "completed" }],
-  "loadedSkills": [{ "skillId": "target-skill", "version": "1.0.0" }],
-  "usage": null,
-  "runtimeIdentityVerified": true,
-  "streamCompleted": true,
-  "error": null,
-  "metadata": {}
-}
-```
+## 自定义运行环境
 
-Eval Service 不根据回答文本猜测工具调用或 Skill 身份。
-
-## MCP 边界
-
-服务支持 MCP Streamable HTTP 的 `initialize` 和 `tools/list` 预检。它将环境 ID、服务地址和已发现工具名作为测试环境描述传给 Runtime。
-
-真正的 MCP 工具执行由被测 Agent Runtime 完成。这样可以保留 Runtime 原生 Session、权限、Trace 和工具调用语义，也避免 Eval Service 变成另一套 Agent Runtime。
-
-## 数据边界
-
-- 上传文件最大 8 MB，解压后最大 16 MB、200 个文件；拒绝目录穿越。
-- Skill 资产、环境声明和运行记录保存在 `FINANCE_EVAL_DATA_DIR`。
-- 环境记录只保存凭据环境变量名称，不保存浏览器提交的密钥。
-- 可选 `FINANCE_EVAL_ACCESS_TOKEN` 用于保护 API；生产部署还应放在机构网关和身份认证之后。
-- 当前文件存储适合单实例 Demo。多实例部署应替换为共享数据库和对象存储，不改变公共 API 合同。
-
-## V1 非目标
-
-- 不提供通用 Agent 对话界面；
-- 不把任意工具调用模拟为成功；
-- 不建设资产市场或复杂审批平台；
-- 不要求传统银行系统改造成 MCP；
-- 不要求 EA 立即修改现有入口。
+业务 Agent 仍通过标准 Launcher 合同接入，返回规定的结果与中间过程，不要求公开 OTLP 收集器。Builder 新建、已接入 Launcher 和完整工程迁移共用该运行与评测边界。协议见 [Launcher 合同](../contracts/runtime-launcher/README.md)，架构见 [当前实现](current-architecture.md)。

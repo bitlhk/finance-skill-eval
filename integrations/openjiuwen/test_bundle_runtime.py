@@ -18,10 +18,45 @@ from .instance_manager import InstanceManager
 from .bundle_agent import collect_candidate
 from .bundle_agent import run_bundle
 from .bundle_agent import citation_errors
-from .bundle_agent import validate_result_contract
 from .bundle_agent import correct_result_fields
 from .bundle_agent import analysis_sample_errors
+from .bundle_agent import verify_delivery_contracts
+from .bundle_agent import preparation_from_prose
+from .bundle_agent import preparation_answer
+from .bundle_agent import discussion_manifest_feedback
+from .agent_protocol import MAX_ITERATION_SENTINEL
 from .execution_paths import execution_paths
+from .migration_checkpoint import MigrationCheckpoint
+
+
+class PreparationProseTests(unittest.TestCase):
+    def test_only_completed_explanation_is_retained_without_inventing_inventory(self):
+        result = preparation_from_prose({'result_type': 'answer', 'output': '入口待核对。'}, lambda value: value)
+        self.assertEqual(result['preparation']['summary'], '入口待核对。')
+        self.assertEqual(result['preparation']['skills'], [])
+        self.assertIn('未单独提取结构化清单', result['preparation']['missing'][0])
+        for invalid in ({'result_type':'error','output':'失败'}, {'result_type':'interrupt','output':'等待'},
+                        {'result_type':'answer','output':''}, {'result_type':'answer','output':MAX_ITERATION_SENTINEL}):
+            self.assertIsNone(preparation_from_prose(invalid, lambda value: value))
+
+    def test_json_example_in_prose_is_not_mistaken_for_submission(self):
+        answer = '已检查入口；示例响应为 {"status":"PRODUCED"}，仍需核对服务。'
+        result = preparation_answer({'result_type':'answer','output':answer}, lambda value: value)
+        self.assertEqual(result['preparation']['summary'], answer)
+        self.assertEqual(result['preparation']['skills'], [])
+        explicit = {'status':'ABSTAINED','reason':'缺少运行信息'}
+        self.assertEqual(preparation_answer({'result_type':'answer','output':'```json\n'+json.dumps(explicit)+'\n```'}, lambda value: value), explicit)
+        self.assertIsNone(preparation_answer({'result_type':'error','output':'失败'}, lambda value: value))
+
+    def test_manifest_includes_bound_review_but_not_case_evidence(self):
+        feedback={'developmentEvaluations':[{'runId':'run-1','cases':['PRIVATE_CASE']}],
+                  'diagnosis':{'status':'PROPOSED','hypothesis':{'issue':'检查工具返回值'}},
+                  'standardizationReview':{'candidateId':'candidate-1','candidateDigest':'abc',
+                                           'review':{'issues':['需要修复']}}}
+        manifest=discussion_manifest_feedback(feedback)
+        self.assertEqual(manifest['standardizationReview'],feedback['standardizationReview'])
+        self.assertEqual(manifest['diagnosis'],feedback['diagnosis'])
+        self.assertNotIn('PRIVATE_CASE',json.dumps(manifest))
 
 
 def fixture():
@@ -44,6 +79,34 @@ def fixture():
 
 
 class BundleRuntimeTest(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows extended-path identity')
+    def test_windows_absolute_and_extended_paths_share_the_same_workspace_boundary(self):
+        from .workspace_paths import analysis_path, candidate_path
+        with tempfile.TemporaryDirectory() as directory:
+            plain = Path(directory).resolve()
+            extended = Path('\\\\?\\' + str(plain))
+            expected = extended / 'candidate' / 'SKILL.md'
+            self.assertEqual(analysis_path(extended, str(plain / 'candidate/SKILL.md')), expected)
+            self.assertEqual(candidate_path(extended / 'candidate', str(plain / 'candidate/SKILL.md')), expected)
+            self.assertEqual(candidate_path(extended / 'candidate', 'candidate/SKILL.md'), expected)
+            for value in (str(plain.parent / 'outside.py'), str(plain / 'source/SKILL.md'), '../source/SKILL.md'):
+                with self.assertRaises(ValueError):
+                    candidate_path(extended / 'candidate', value)
+
+    def test_source_corrections_match_runtime_capability_evidence_and_fields(self):
+        files = {'tool.py': base64.b64encode(b'first\nsecond').decode()}
+        draft = {'analysis': {'plan': {'requiredCapabilities': [{'evidence': [{'path': 'old', 'line': 9, 'detail': 'old'}]}]},
+                              'evidence': [{'path': 'old', 'snippet': 'old'}]}}
+        source = {'sourcePath': 'tool.py', 'startLine': 2, 'endLine': 2}
+        result = correct_result_fields(draft, [
+            {'path': '/analysis/plan/requiredCapabilities/0/evidence/0', **source},
+            {'path': '/analysis/evidence/0/path', **source},
+            {'path': '/analysis/evidence/0/snippet', **source}], files)
+        self.assertEqual(result['analysis']['plan']['requiredCapabilities'][0]['evidence'][0],
+                         {'path': 'tool.py', 'line': 2, 'detail': 'second'})
+        self.assertEqual(result['analysis']['evidence'][0], {'path': 'tool.py', 'snippet': 'second'})
+        self.assertEqual(draft['analysis']['evidence'][0]['path'], 'old')
+
     def test_targeted_corrections_preserve_other_findings_and_quote_actual_source(self):
         original = {'analysis': {'summary': 'Keep this finding', 'evidence': [{'path': 'SKILL.md', 'snippet': 'wrong'}], 'coverage': {}}}
         files = {'SKILL.md': base64.b64encode(b'name: meetingroom\\_modify\r\noriginal second line').decode()}
@@ -170,6 +233,41 @@ class BundleRuntimeTest(unittest.TestCase):
 
 
 class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
+    def test_candidate_collection_skips_generated_caches_and_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'SKILL.md').write_text('business', encoding='utf-8')
+            for name in ('.pytest_cache', '.venv', '__pycache__'):
+                (root / name).mkdir()
+                (root / name / 'cache.txt').write_text('generated', encoding='utf-8')
+            (root / 'generated.pyc').write_bytes(b'cache')
+            self.assertEqual(set(collect_candidate(root)), {'SKILL.md'})
+
+    async def test_delivery_reuses_shared_mcp_service_and_preserves_individual_results(self):
+        delivery = {'tools': [
+            {'toolId': 'a', 'form': 'MCP', 'entrypoint': 'first'},
+            {'toolId': 'b', 'form': 'MCP', 'entrypoint': 'second'},
+            {'toolId': 'c', 'form': 'SCRIPT', 'entrypoint': 'script.py'}],
+            'services': [{'toolNames': ['first', 'second'], 'start': ['server'], 'prepare': ['install']}]}
+        suite = AsyncMock(return_value={'passed': False, 'results': [
+            {'toolId': 'a', 'passed': True, 'callExecuted': False, 'runtimeDependenciesPending': ['identity']},
+            {'toolId': 'b', 'passed': False, 'error': 'not advertised'}]})
+        single = AsyncMock(return_value={'passed': True, 'callExecuted': True})
+        result = await verify_delivery_contracts(Path('.'), {}, delivery, single, suite, str)
+        suite.assert_awaited_once()
+        self.assertEqual(suite.await_args.args[2], ['a', 'b'])
+        single.assert_awaited_once()
+        self.assertEqual([(row['toolId'], row['passed'], row['callExecuted']) for row in result],
+                         [('a', True, False), ('b', False, False), ('c', True, True)])
+        self.assertIn('identity', result[0]['detail'])
+        self.assertIn('not advertised', result[1]['detail'])
+
+    async def test_failed_mcp_service_never_marks_unchecked_tools_passed(self):
+        delivery = {'tools': [{'toolId': 'a', 'form': 'MCP', 'entrypoint': 'first'}],
+                    'services': [{'toolNames': ['first'], 'start': ['server']}]}
+        result = await verify_delivery_contracts(Path('.'), {}, delivery, AsyncMock(),
+            AsyncMock(return_value={'passed': False, 'error': 'service failed', 'results': []}), str)
+        self.assertEqual(result, [{'toolId': 'a', 'passed': False, 'callExecuted': False, 'detail': 'service failed'}])
     async def test_cli_is_not_executed_as_a_json_stdin_script(self):
         from integrations.openjiuwen.migration_tools import _contract_test
         with tempfile.TemporaryDirectory() as folder:
@@ -191,122 +289,261 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
         contract['sampleReason'] = 'No safe invocation available'
         self.assertEqual(analysis_sample_errors(analysis), [])
 
-    async def test_submission_checks_the_real_service_contract_before_closing_agent(self):
-        bad = await validate_result_contract('ANALYZE', {'analysis': {'summary': 'Incomplete'}}, {})
-        self.assertFalse(bad['accepted'])
-        self.assertTrue(any('diagnosis' in error for error in bad['errors']))
-        good = await validate_result_contract('GENERATE', {'delivery': {'summary': 'Changed wrapper', 'services': []}}, {})
-        self.assertTrue(good['accepted'])
-        extra = await validate_result_contract('GENERATE', {'delivery': {'summary': 'Changed wrapper', 'services': [], 'filePaths': ['invented']}}, {})
-        self.assertFalse(extra['accepted'])
-        missing = await validate_result_contract('GENERATE', {'delivery': {'summary': 'Missing tool', 'services': []}}, {},
-            {'standardization': {'tools': [{'toolId': 'reader', 'form': 'SCRIPT'}]}})
-        self.assertFalse(missing['accepted'])
-        self.assertIn('reader', missing['errors'][0])
+    async def test_main_uses_natural_output_without_phase_submission_or_format_repair(self):
+        files, _ = fixture()
+        answer = '已检查工程；示例响应 {"status":"PRODUCED"}，仍需核对服务。'
+        owner = self
+        def factory(**options):
+            names = {tool.card.name for tool in options['tools']}
+            owner.assertFalse(names & {'submit_result', 'record_result', 'correct_result'})
+            owner.assertIn('run_project_command', names)
+            async def stream(_):
+                yield {'type': 'answer', 'payload': {'output': answer, 'result_type': 'answer'}}
+            return SimpleNamespace(stream=stream)
+        result = await self.run_main_factory(factory, files)
+        self.assertEqual(result['status'], 'PRODUCED', result)
+        self.assertEqual(result['payload']['message'], answer)
+        self.assertNotIn('preparation', result['payload'])
+        self.assertNotIn('delivery', result['payload'])
 
-    async def test_structured_submission_survives_plain_final_ack_without_format_model_call(self):
+    async def test_main_retains_unavailable_engineering_receipt_without_claiming_execution(self):
+        files, _ = fixture()
+        owner = self
+        def factory(**options):
+            command = next(tool for tool in options['tools'] if tool.card.name == 'run_project_command')
+            async def stream(_):
+                result = await command.invoke({'command': ['python', 'main.py'], 'cwd': None, 'timeout_seconds': None})
+                owner.assertEqual(result['cwd'], '.')
+                owner.assertEqual(result['status'], 'UNAVAILABLE')
+                yield {'type': 'answer', 'payload': {'output': '已保留缺少执行环境的检查记录，不代表业务通过。'}}
+            return SimpleNamespace(stream=stream)
+        with patch.dict(os.environ, {'FINANCE_EVAL_PROJECT_EXECUTION_IMAGE': ''}):
+            result = await self.run_main_factory(factory, files)
+        self.assertEqual(result['status'], 'PRODUCED', result)
+        self.assertEqual(result['payload']['executions'][0]['status'], 'UNAVAILABLE')
+
+    async def test_native_main_requests_single_evaluation_without_an_optimization_baseline(self):
+        await self.check_native_single_evaluation(False)
+
+    async def test_native_evaluation_followup_can_retest_without_starting_optimization(self):
+        await self.check_native_single_evaluation(True)
+
+    async def test_text_compatibility_main_can_request_evaluation_through_actual_sdk(self):
+        await self.check_native_single_evaluation(True, compatibility=True)
+
+    async def test_sdk_tool_argument_error_returns_to_main_without_ending_the_task(self):
+        await self.check_native_single_evaluation(True, compatibility=True, invalid_first=True)
+
+    async def check_native_single_evaluation(self, followup, compatibility=False, invalid_first=False):
+        import httpx
+        from openai import AsyncOpenAI
+        from openjiuwen.core.foundation.llm import init_model
+        from openjiuwen.core.session.checkpointer import CheckpointerFactory
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         self.addCleanup(sys.path.pop, 0)
-        files, request = fixture()
+        calls = []
+        async def respond(request):
+            call = json.loads(request.content)
+            calls.append(call)
+            if compatibility:
+                text=('{"tool":"run_project_command","arguments":{}}' if invalid_first and len(calls)==1 else
+                      '{"tool":"request_development_evaluation","arguments":{}}')
+                return httpx.Response(200,json={'id':'evaluation','object':'chat.completion','created':0,'model':'fixture',
+                    'choices':[{'index':0,'message':{'role':'assistant','content':text},'finish_reason':'stop'}]})
+            chunk = {'id': 'evaluation', 'object': 'chat.completion.chunk', 'created': 0, 'model': 'fixture',
+                'choices': [{'index': 0, 'delta': {'role': 'assistant', 'tool_calls': [{'index': 0,
+                    'id': 'single-evaluation', 'type': 'function', 'function': {'name': 'request_development_evaluation',
+                    'arguments': '{}'}}]}, 'finish_reason': 'tool_calls'}]}
+            return httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                text='data: ' + json.dumps(chunk) + '\n\ndata: [DONE]\n\n')
+        previous = CheckpointerFactory._default_checkpointer
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / 'config.json'
+                config.write_text('{}', encoding='utf-8')
+                files, _ = fixture()
+                encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
+                body = {'runId': 'fixture', 'assetDigest': files_digest(files), 'files': encoded,
+                    'model': {'modelId': 'fixture'}, 'checkpointRoot': directory, 'taskSession': {},
+                    'correlation': {'taskId': 'bundle-1234', 'attemptId': 'attempt-1234'},
+                    'bundle': {'mode': 'CHAT', 'agentFollowup': followup, 'source': {'files': encoded}, 'evaluationAvailability': {'ready': True}}}
+                async with AsyncOpenAI(api_key='fixture-key', base_url='https://fixture.invalid/v1',
+                        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))) as client:
+                    model = init_model('OpenAI', 'fixture', 'fixture-key', 'https://fixture.invalid/v1')
+                    model._client._create_async_openai_client = lambda timeout=None: client
+                    with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config),
+                            'FINANCE_EVAL_JUDGE_BASE_URL': '', 'FINANCE_EVAL_JUDGE_API_KEY': ''}), \
+                            patch('model_config.resolve_model', return_value={'apiKey': 'fixture-key', 'baseUrl': 'https://fixture.invalid/v1',
+                                'supportsTools':not compatibility,'supportsStreaming':not compatibility}), \
+                            patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
+                            patch('openjiuwen.core.foundation.llm.init_model', return_value=model):
+                        protocol = io.StringIO()
+                        await run_bundle(body, protocol)
+                result = next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
+                self.assertEqual(result['status'], 'PRODUCED', result)
+                self.assertTrue(result['payload']['evaluationRequested'])
+                self.assertNotIn('optimizationRequest', result['payload'])
+                if compatibility:
+                    self.assertNotIn('tools',calls[0])
+                    self.assertIn('request_development_evaluation',calls[0]['messages'][0]['content'])
+                else:
+                    definitions = {tool['function']['name']: tool['function']['parameters'] for tool in calls[0]['tools']}
+                    self.assertEqual(definitions['request_development_evaluation']['properties'], {})
+                    if followup:
+                        self.assertNotIn('request_optimization', definitions)
+                    else:
+                        self.assertEqual(set(definitions['request_optimization']['required']), {'baselineRunId', 'goal', 'maxRounds', 'targetPassRate'})
+                self.assertEqual(len(calls), 2 if invalid_first else 1)
+                if invalid_first:
+                    self.assertTrue(any(json.loads(line).get('activity',{}).get('kind')=='tool_error' for line in protocol.getvalue().splitlines()))
+        finally:
+            CheckpointerFactory.set_default_checkpointer(previous)
+
+    async def run_main_factory(self, factory, files):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        self.addCleanup(sys.path.pop, 0)
         encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
-        expected = {'status': 'PRODUCED', 'analysis': {'summary': 'Exact original finding', 'changes': [], 'missing': []}}
-        model = SimpleNamespace(invoke=AsyncMock())
-        owner = self
-        def explorer(**options):
-            submit = next(tool for tool in options['tools'] if tool.card.name == 'submit_result')
-            correct = next(tool for tool in options['tools'] if tool.card.name == 'correct_result')
-            record = next(tool for tool in options['tools'] if tool.card.name == 'record_result')
-            async def stream(_):
-                owner.assertFalse((await correct.invoke({'corrections': [{'path': '/analysis/summary', 'value': 'Revised draft'}]}))['accepted'])
-                owner.assertFalse((await submit.invoke({'result': {'status': 'PRODUCED'}}))['accepted'])
-                owner.assertTrue((await record.invoke({'path': '/analysis/summary', 'value': expected['analysis']['summary']}))['recorded'])
-                owner.assertTrue((await record.invoke({'path': '/analysis/evidence', 'append': True, 'value': {'path': 'skills/budget/SKILL.md', 'snippet': 'invented quote'}}))['recorded'])
-                owner.assertTrue((await record.invoke({'path': '/analysis/evidence/0/snippet', 'value': 'still not a real quote'}))['recorded'])
-                owner.assertFalse((await record.invoke({'path': '/analysis/evidence/999/snippet', 'value': 'invalid index'}))['accepted'])
-                owner.assertFalse((await submit.invoke({}))['accepted'])
-                owner.assertTrue((await correct.invoke({'corrections': [{'path': '/analysis', 'value': expected['analysis']}]}))['accepted'])
-                boundary = next(rail for rail in options['rails'] if type(rail).__name__ == 'ModelEvidenceRail')
-                ctx = SimpleNamespace(request_force_finish=Mock())
-                await boundary.after_tool_call(ctx)
-                ctx.request_force_finish.assert_called_once_with({'output': '提交完成', 'result_type': 'answer'})
-                owner.assertFalse((await submit.invoke({'result': {**expected, 'analysis': {'summary': 'overwrite'}}}))['accepted'])
-                owner.assertFalse((await record.invoke({'path': '/analysis/summary', 'value': 'overwrite'}))['accepted'])
-                yield {'type': 'answer', 'payload': {'output': '提交完成', 'result_type': 'answer'}}
-            return SimpleNamespace(stream=stream)
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.json'
             config.write_text('{}', encoding='utf-8')
             protocol = io.StringIO()
-            body = {'runId': 'submission-fixture', 'assetDigest': request['contentDigest'], 'files': encoded,
-                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'ANALYZE', 'source': {'files': encoded},
-                    'analysis': {'summary': 'Previous finding', 'evidence': [{'path': 'skills/budget/SKILL.md', 'snippet': 'invented quote'}]}}}
+            body = {'runId': 'fixture', 'assetDigest': files_digest(files), 'files': encoded,
+                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'CHAT', 'source': {'files': encoded}}}
             with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
-                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused'}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused', 'supportsTools':True}), \
                     patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
                     patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
-                    patch('openjiuwen.core.foundation.llm.init_model', return_value=model), \
-                    patch('openjiuwen.harness.subagents.explore_agent.create_explore_agent', side_effect=explorer):
+                    patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
+                    patch('openjiuwen.harness.factory.create_deep_agent', side_effect=factory):
                 await run_bundle(body, protocol)
-            result = next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
-            self.assertEqual(result['status'], 'PRODUCED', result)
-            self.assertEqual(result['payload'], expected)
-            self.assertEqual(body['bundle']['analysis']['summary'], 'Previous finding')
-            model.invoke.assert_not_awaited()
-
-    async def test_analysis_uses_read_only_explorer_and_bounded_tool_free_format_repair(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        self.addCleanup(sys.path.pop, 0)
-        from openjiuwen.harness.tools import WriteFileTool, EditFileTool
-        files, request = fixture()
-        encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
-        expected = {'status': 'PRODUCED', 'analysis': {'summary': 'Original finding', 'changes': [], 'missing': []}}
-        broken = json.dumps(expected)[:-1]
-        model = SimpleNamespace(invoke=AsyncMock(return_value=SimpleNamespace(
-            content=json.dumps(expected), tool_calls=[], finish_reason='stop', usage_metadata=None)))
-        owner = self
-
-        def explorer(**options):
-            owner.assertFalse(any(isinstance(tool, (WriteFileTool, EditFileTool)) for tool in options['tools']))
-            owner.assertIn('ANALYZE', options['system_prompt'])
-            async def stream(_):
-                yield {'type': 'answer', 'payload': {'output': broken, 'result_type': 'answer'}}
-            return SimpleNamespace(stream=stream)
-
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / 'config.json'
-            config.write_text('{}', encoding='utf-8')
-            protocol = io.StringIO()
-            body = {'runId': 'analysis-fixture', 'assetDigest': request['contentDigest'], 'files': encoded,
-                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'ANALYZE', 'source': {'files': encoded}}}
-            with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
-                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused'}), \
-                    patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
-                    patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
-                    patch('openjiuwen.core.foundation.llm.init_model', return_value=model), \
-                    patch('openjiuwen.harness.factory.create_deep_agent') as coder, \
-                    patch('openjiuwen.harness.subagents.explore_agent.create_explore_agent', side_effect=explorer):
-                await run_bundle(body, protocol)
-                coder.assert_not_called()
-            result = next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
-            self.assertEqual(result['status'], 'PRODUCED', result)
-            self.assertEqual(result['payload'], expected)
-            self.assertEqual(result['files'], {})
-            self.assertEqual(model.invoke.await_count, 1)
-            self.assertNotIn('tools', model.invoke.call_args.kwargs)
-            self.assertEqual(model.invoke.call_args.kwargs['messages'][1]['content'], broken)
+            return next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
 
     async def test_real_file_tools_edit_multiple_members_but_reject_source_writes(self):
         await self.check_combined_file_tools(False)
 
+    async def test_migration_can_run_project_tests_in_isolated_execution(self):
+        await self.check_combined_file_tools(False, mode='CHAT')
+
     async def test_one_adjustment_agent_edits_documents_and_tool_with_source_readonly(self):
         await self.check_combined_file_tools(True)
 
-    async def check_combined_file_tools(self, adjustment):
+    async def test_agent_can_replace_fully_read_empty_file_without_losing_content(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        self.addCleanup(sys.path.pop, 0)
+        from openjiuwen.harness.tools import WriteFileTool, ReadFileTool
+        files, _ = fixture()
+        files['shared/empty.py'] = b''
+        encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
+        owner = self
+        def factory(**options):
+            root = Path(options['workspace'])
+            writer = next(tool for tool in options['tools'] if isinstance(tool, WriteFileTool))
+            reader = next(tool for tool in options['tools'] if isinstance(tool, ReadFileTool))
+            async def stream(_):
+                target = root / 'candidate/shared/empty.py'
+                owner.assertTrue((await reader.invoke({'file_path': 'candidate/shared/empty.py'})).success)
+                written = await writer.invoke({'file_path': 'candidate/shared/empty.py', 'content': 'value = 1\n'})
+                owner.assertTrue(written.success, str(written))
+                owner.assertEqual(target.read_text(encoding='utf-8'), 'value = 1\n')
+                owner.assertFalse((root / 'candidate/candidate').exists())
+                owner.assertFalse((await writer.invoke({'file_path': 'source/shared/empty.py', 'content': 'forbidden'})).success)
+                owner.assertFalse((await writer.invoke({'file_path': 'task/manifest.json', 'content': 'forbidden'})).success)
+                yield {'type': 'answer', 'payload': {'output': json.dumps({'status': 'PRODUCED', 'delivery': {'summary': 'updated', 'services': []}})}}
+            return SimpleNamespace(stream=stream)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            config.write_text('{}', encoding='utf-8')
+            body = {'runId': 'empty', 'assetDigest': files_digest(files), 'files': encoded,
+                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'CHAT', 'source': {'files': encoded}}}
+            protocol = io.StringIO()
+            with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused', 'supportsTools':True}), \
+                    patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
+                    patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
+                    patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
+                    patch('openjiuwen.harness.factory.create_deep_agent', side_effect=factory):
+                await run_bundle(body, protocol)
+            result = next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
+            self.assertEqual(result['status'], 'PRODUCED', result)
+            self.assertEqual(base64.b64decode(result['files']['shared/empty.py']), b'value = 1\n')
+
+    async def test_interrupted_engineering_draft_resumes_only_for_matching_input(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        self.addCleanup(sys.path.pop, 0)
+        from openjiuwen.harness.tools import WriteFileTool, ReadFileTool
+        files, _ = fixture()
+        encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
+        owner = self
+        calls = 0
+        def factory(**options):
+            nonlocal calls
+            calls += 1
+            run = calls
+            root = Path(options['workspace'])
+            writer = next(tool for tool in options['tools'] if isinstance(tool, WriteFileTool))
+            reader = next(tool for tool in options['tools'] if isinstance(tool, ReadFileTool))
+            async def stream(_):
+                relative = 'skills/budget/SKILL.md'
+                current = await reader.invoke({'file_path': str(root / 'candidate' / relative)})
+                owner.assertTrue(current.success)
+                if run == 1:
+                    result = await writer.invoke({'file_path': relative, 'content': files[relative].decode() + '\nDraft change'})
+                    owner.assertTrue(result.success, str(result))
+                    raise RuntimeError('simulated interruption')
+                text = (root / 'candidate' / relative).read_text(encoding='utf-8')
+                owner.assertEqual('Draft change' in text, run == 2)
+                yield {'type': 'answer', 'payload': {'output': json.dumps({'status': 'PRODUCED', 'delivery': {'summary': 'Reviewed draft', 'services': []}})}}
+            return SimpleNamespace(stream=stream)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            config.write_text('{}', encoding='utf-8')
+            def body(attempt, goal='same', prior=None):
+                return {'runId': attempt, 'assetDigest': files_digest(files), 'files': encoded,
+                        'correlation': {'taskId': 'bundle-1234', 'attemptId': attempt},
+                        'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'CHAT', 'source': {'files': encoded},
+                        'goal': goal, 'resumeDraftAttemptIds': prior or []}}
+            with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config), 'FINANCE_EVAL_DATA_DIR': directory}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused', 'supportsTools':True}), \
+                    patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
+                    patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
+                    patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
+                    patch('openjiuwen.harness.factory.create_deep_agent', side_effect=factory):
+                for attempt, goal, prior, status in [('attempt-1234', 'same', [], 'FAILED'),
+                    ('attempt-2345', 'same', ['attempt-1234'], 'PRODUCED'),
+                    ('attempt-3456', 'changed', ['attempt-1234'], 'PRODUCED')]:
+                    protocol = io.StringIO()
+                    await run_bundle(body(attempt, goal, prior), protocol)
+                    records = [json.loads(line) for line in protocol.getvalue().splitlines()]
+                    result = next(record['result'] for record in records if 'result' in record)
+                    self.assertEqual(result['status'], status, result)
+                    self.assertEqual(any('已恢复' in record.get('activity', {}).get('label', '') for record in records), attempt == 'attempt-2345')
+
+    def test_draft_integrity_rejects_changed_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = MigrationCheckpoint(directory, 'bundle-1234', 'attempt-1234', 'input-hash')
+            checkpoint.save({'SKILL.md': 'Zm9v'})
+            path = Path(directory) / 'migration-agent-drafts' / 'bundle-1234' / 'attempt-1234.json'
+            data = json.loads(path.read_text(encoding='utf-8'))
+            data['git']['snapshot']['digest'] = '0' * 64
+            path.write_text(json.dumps(data), encoding='utf-8')
+            self.assertIsNone(checkpoint.load('attempt-1234'))
+
+    def test_oversized_checkpoint_does_not_overwrite_previous_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = MigrationCheckpoint(directory, 'bundle-1234', 'attempt-1234', 'input-hash')
+            checkpoint.save({'SKILL.md': 'Zm9v'})
+            with patch('integrations.openjiuwen.migration_checkpoint._MAX_DRAFT_BYTES', 1):
+                with self.assertRaises(ValueError):
+                    checkpoint.save({'SKILL.md': 'YmFy'})
+            self.assertEqual(checkpoint.load('attempt-1234'), {'SKILL.md': 'Zm9v'})
+
+    async def check_combined_file_tools(self, adjustment, mode='CHAT'):
         # Only model execution is substituted; workspace and SDK tools are real.
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         self.addCleanup(sys.path.pop, 0)
         from openjiuwen.harness.tools import WriteFileTool, ReadFileTool
         files, request = fixture()
+        files['shared/probe.txt'] = b'temporary'
         if adjustment:
             files['shared/tool.py'] = b'def lookup(): return 0\n'
         encoded = {name: base64.b64encode(content).decode() for name, content in files.items()}
@@ -315,16 +552,19 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
 
         def agent_factory(**options):
             root = Path(options['workspace'])
-            if adjustment:
-                owner.assertIn('候选调整 Agent', options['system_prompt'])
-                owner.assertIn('name: skill-optimization', options['system_prompt'])
-                owner.assertIn('name: tool-optimization', options['system_prompt'])
+            owner.assertFalse(any(tool.card.name in {'submit_result', 'record_result', 'correct_result'} for tool in options['tools']))
             owner.assertFalse(any(tool.card.name == 'run_contract_test' for tool in options['tools']))
             writer = next(tool for tool in options['tools'] if isinstance(tool, WriteFileTool))
             reader = next(tool for tool in options['tools'] if isinstance(tool, ReadFileTool))
+            delete = next(tool for tool in options['tools'] if tool.card.name == 'delete_file')
+            run_project = next(tool for tool in options['tools'] if tool.card.name == 'run_project_command')
 
             class Agent:
                 async def stream(self, _):
+                    owner.assertFalse((await delete.invoke({'file_path': str(root / 'source/shared/probe.txt')}))['accepted'])
+                    owner.assertFalse((await delete.invoke({'file_path': 'shared'}))['accepted'])
+                    owner.assertTrue((await delete.invoke({'file_path': 'shared/probe.txt'}))['deleted'])
+                    owner.assertTrue((root / 'source/shared/probe.txt').exists())
                     paths = ['skills/budget/SKILL.md', 'skills/rules/SKILL.md']
                     if adjustment:
                         paths.append('shared/tool.py')
@@ -339,6 +579,12 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
                         observations.append(str(result))
                         owner.assertTrue(result.success, str(result))
                         owner.assertEqual((root / 'source' / relative).read_bytes(), files[relative])
+                    from project_execution import snapshot_digest
+                    receipt = {'command': ['python', '-m', 'unittest'], 'cwd': '.', 'status': 'COMPLETED',
+                               'exitCode': 0, 'output': 'tests passed', 'snapshotDigest': snapshot_digest(root / 'candidate')}
+                    with patch('project_execution.execute_project_command', new=AsyncMock(return_value=receipt)):
+                        actual = await run_project.invoke({'command': receipt['command']})
+                    owner.assertEqual(actual, receipt)
                     yield {'type': 'answer', 'payload': {'output': json.dumps({'status': 'PRODUCED', 'delivery': {'summary': 'Two members repaired', 'services': []}})}}
             return Agent()
 
@@ -347,11 +593,11 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
             config.write_text('{}', encoding='utf-8')
             protocol = io.StringIO()
             body = {'runId': 'fixture', 'assetDigest': files_digest(files), 'files': encoded,
-                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': 'REPAIR', 'source': {'files': encoded}}}
+                    'model': {'modelId': 'fixture'}, 'bundle': {'mode': mode, 'source': {'files': encoded}}}
             if adjustment:
                 body['bundle']['adjustmentCapabilities'] = ['document', 'tool', 'runtime']
             with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
-                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused'}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'fixture', 'baseUrl': 'http://localhost/unused', 'supportsTools':True}), \
                     patch('model_config.request_settings', return_value={'model_name': 'fixture'}), \
                     patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
                     patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
@@ -360,11 +606,12 @@ class BundleAgentWorkspaceTest(unittest.IsolatedAsyncioTestCase):
                 factory.assert_called_once()
             result = json.loads(protocol.getvalue())['result']
             self.assertEqual(result['status'], 'PRODUCED', [result, observations])
-            self.assertEqual(set(result['files']), set(files))
+            self.assertEqual(result['payload']['executions'][0]['output'], 'tests passed')
+            self.assertEqual(set(result['files']), set(files) - {'shared/probe.txt'})
             for name in ['budget', 'rules']:
                 self.assertTrue(base64.b64decode(result['files']['skills/' + name + '/SKILL.md']).endswith(b'Repaired'))
             self.assertEqual(base64.b64decode(result['files']['shared/data.bin']), files['shared/data.bin'])
-            self.assertEqual(result['composition']['role'], 'adjustment' if adjustment else 'migration')
+            self.assertEqual(result['composition']['role'], 'migration')
             if adjustment:
                 self.assertTrue(base64.b64decode(result['files']['shared/tool.py']).endswith(b'Repaired'))
 

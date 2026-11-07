@@ -3,7 +3,7 @@ export const stages = [
   '诊断与迁移方案',
   '生成迁移结果',
   '准备运行环境',
-  '验证能否运行',
+  '基础验证',
   '验证实际效果',
   '下载结果',
 ];
@@ -18,6 +18,7 @@ export function sameConfiguration(left: unknown, right: unknown): boolean {
     ?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a.localeCompare(b))):item);
   return wire(left)===wire(right);
 }
+export const sameEvaluationSuite=(left:unknown,right:unknown)=>sameConfiguration(suiteExecutionValue(left),suiteExecutionValue(right));
 export const statusLabels: Record<string, string> = {
   PASSED: '通过',
   FAILED: '未通过',
@@ -28,6 +29,12 @@ export const statusLabels: Record<string, string> = {
   COMPLETED: '操作完成',
   INTERRUPTED: '已中断',
 };
+export function caseResultLabel(result:{passed:boolean;unverified?:boolean;failureStage?:'RUNTIME'|'EXECUTION'|'JUDGE'}) {
+  if(result.failureStage==='RUNTIME')return '运行未完成';
+  if(result.failureStage==='EXECUTION')return '执行检查未通过';
+  if(result.failureStage==='JUDGE')return '评判未完成';
+  return result.unverified?'无法验证':result.passed?'通过':'未通过';
+}
 export const sampleSuite = {
   name: '整组业务验收',
   cases: [
@@ -38,3 +45,4 @@ export const sampleSuite = {
     },
   ],
 };
+import {suiteExecutionValue} from './suite-form';

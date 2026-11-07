@@ -12,6 +12,8 @@ import { ReadinessStage } from './ReadinessStage';
 import { AcceptanceStage } from './AcceptanceStage';
 import { ExportStage } from './ExportStage';
 import { TaskList, TaskEntry } from './TaskList';
+import { TaskConversationQuestion } from './TaskConversationQuestion';
+import {addProposalToDraft} from './case-proposals';
 export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbench>[0]) {
   const state = useMigrationWorkbench(props);
   const { listView, setListView, pollError, task, setTask, stage, setStage, busy, error, message, current, active, latestAttempt, run, list, act, post } = state;
@@ -27,7 +29,6 @@ export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbenc
     <section className="migration-panel bundle-panel">
       <button className="button secondary" disabled={busy} onClick={() => void act(async () => { await list(); setListView(true); })}>返回迁移列表</button>
       <header><div><h2>{task?.name ?? '新建迁移'}</h2><p>{task ? task.source.members.map(member => member.skillId).join(' · ') : '上传要迁移的完整工程'}</p></div></header>
-      <MigrationProgress task={task} stage={stage} onSelect={setStage} checkingRuntime={state.checkingRuntime}/>
       {pollError && <p role="alert">{pollError}</p>}
       {task && error && (
         <p role="alert" className="bundle-error">
@@ -39,20 +40,26 @@ export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbenc
       {task && ['PENDING', 'STALE'].includes(task.builderStatus ?? '') && <p className="bundle-notice">
         {task.builderStatus === 'STALE' ? '运行环境需要重新确认。' : '运行环境尚未准备好。'}请在“准备运行环境”中完成配置后再验证。
       </p>}
-      {task && active && <MigrationActivity key={`${task.id}:${active.id}`} projectId={task.id} attempt={active}/>}
+      {task && <TaskConversationQuestion key={task.id} task={task} api={state.api} setTask={setTask} onApplyProposal={proposal=>{
+        state.setSuite(addProposalToDraft(state.suite,proposal));setStage(stage===0?0:5);state.setMessage('已加入测试集草稿，请核对数据与标准后保存。');
+      }}
+        activity={active && <MigrationActivity key={`${task.id}:${active.id}`} projectId={task.id} attempt={active}/>}/>}
       {!active && latestAttempt?.error && (
         <p className="bundle-notice">
           {statusLabels[latestAttempt.status]}：{latestAttempt.error}
         </p>
       )}
       {!task && <TaskEntry state={state} />}
-      {task && stage === 0 && <InputStage state={state} />}
+      {task && <details className="stage-section task-manual-controls"><summary>配置、验证与交付</summary>
+      <MigrationProgress task={task} stage={stage} onSelect={setStage} checkingRuntime={state.checkingRuntime}/>
+      {stage === 0 && <InputStage state={state} />}
       {task && stage === 1 && <DiagnosisStage state={state} />}
       {task && stage === 2 && <CandidateStage state={state} />}
       {task && stage === 3 && <RuntimeStage state={state} />}
       {task && stage === 4 && <ReadinessStage state={state} />}
       {task && stage === 5 && <AcceptanceStage state={state} />}
-      {task && stage === 6 && <ExportStage state={state} />}
+      {stage === 6 && <ExportStage state={state} />}
+      </details>}
       {task && !active && <details className="stage-detail"><summary>执行过程</summary><MigrationActivity key={task.id} projectId={task.id}/></details>}
       {task && <details className="stage-section"><summary>排查详情</summary>
         <p>任务：<code>{task.id}</code></p><p>创建请求：<code>{task.requestId ?? '未采集'}</code></p>
@@ -60,7 +67,7 @@ export function MigrationTaskPanel(props: Parameters<typeof useMigrationWorkbenc
         {run && <p>验收运行：<code>{run.id}</code></p>}
         {task.attempts.length > 0 && <details><summary>操作历史与关联 ID（{task.attempts.length}）</summary>
           {[...task.attempts].reverse().map(attempt => <article key={attempt.id} className="stage-section">
-            <strong>{({ BASELINE:'原工程基线评测',PREPARE: '工程运行准备', ANALYZE: '诊断', GENERATE: '生成', REPAIR: '修复', ACCEPT: '验收',OPTIMIZE:'优化' })[attempt.kind]} · {statusLabels[attempt.status]}</strong>
+            <strong>{({ BASELINE:'原工程基线评测',PREPARE: '工程运行准备', ANALYZE: '诊断', GENERATE: '生成', REPAIR: '修复', ACCEPT: '验收',OPTIMIZE:'优化',CHAT:'任务对话' })[attempt.kind]} · {statusLabels[attempt.status]}</strong>
             <p>{attempt.startedAt} · <code>{attempt.id}</code></p>
             <p>请求：<code>{attempt.requestId ?? '未采集'}</code></p>
             {attempt.agentRunId && <p>Agent：<code>{attempt.agentRunId}</code></p>}

@@ -87,7 +87,7 @@ export type Preparation = {
   createdAt: string;
 };
 
-type EnvironmentRecord=import('../../src/shared/contracts/environment').EnvironmentRecord;
+type EnvironmentRecord=import("../../contracts/platform/responses").EnvironmentRecord;
 export type Environment=EnvironmentRecord extends infer Item?Item extends EnvironmentRecord?Omit<Item,'createdAt'|'updatedAt'>:never:never;
 
 export type EnvironmentInspection = {
@@ -103,7 +103,7 @@ export type EnvironmentInspection = {
     toolNames: string[];
     error: string | null;
   }>;
-  capabilities?:import('../../src/shared/contracts/runtime-launcher').RuntimeLauncherCapabilities;
+  capabilities?:import("../../contracts/platform/responses").RuntimeLauncherCapabilities;
 };
 
 export type MigrationRuntime = {
@@ -166,12 +166,14 @@ export type Evidence = {
 };
 
 export type EvaluationJob = {
-  executionAttempts?:import('../../src/shared/contracts/evaluation-job').EvaluationJob['executionAttempts'];
+  executionAttempts?:import("../../contracts/platform/responses").EvaluationJob['executionAttempts'];
   executionRepetitionsStopped?:string;
+  assessmentIncomplete?:boolean;
+  rescoringOperation?:{id:string;status:'RUNNING'|'COMPLETED'|'FAILED'|'INTERRUPTED';startedAt:string;finishedAt?:string;recordId?:string;error?:string};
   cancellation?:{requestedAt:string;workerSettledAt?:string;scope:string};
   finalization?:Record<string,unknown>;
   executionSnapshot?:{variants:unknown;models:unknown;cases:Array<{caseId:string;name:string;prompt:string}>;packFingerprint:string};
-  rescorings?:import('../../src/shared/contracts/evaluation-job').EvaluationJob['rescorings'];
+  rescorings?:import("../../contracts/platform/responses").EvaluationJob['rescorings'];
   questionSet?: { source: "ai_generated"; cases: EvalCaseSummary[]; summary: string; fingerprint: string; model: ModelRef; sourceFiles: string[]; generatedAt: string };
   live?: Record<string, { caseId: string; side: "left" | "right"; output: string; status: string; toolCalls: Array<{ name: string; status: string }> }>;
   jobId: string;
@@ -186,6 +188,7 @@ export type EvaluationJob = {
     judgeMode: string;
     evaluationMode?: 'pairwise' | 'candidate_assessment' | 'service_comparison' | 'candidate_runtime_comparison';
     caseSource?: "fixed" | "ai_generated";
+    generatedCaseCount?:number;
   };
   pack: { targetSkillId: string; targetSkillVersion: string; caseCount: number } | null;
   progress: { completedRuns: number; totalRuns: number; caseId?: string; side?: string };
@@ -222,7 +225,7 @@ export type EvaluationJob = {
         }>;
       };
       judgeError: string | null;
-      methodResults?:Record<'left'|'right',import('../../src/evaluation/application/evaluation-method').EvaluationMethodResult[]>;
+      methodResults?:Record<'left'|'right',import("../../contracts/platform/responses").EvaluationMethodResult[]>;
     }>;
     suggestions: Array<{ title: string; recommendation: string; type: string }>;
     reportFingerprint: string;

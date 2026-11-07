@@ -12,7 +12,9 @@ Skill 包沿用原有 SKILL.md 校验；完整工程只经过公共文件安全�
 
 `integrations/openjiuwen/project_execution.py` 的 execute_project_command 接收工程目录、参数数组、工作目录和超时，返回真实退出状态、有限输出及输入文件摘要。Agent 的 run_project_command 仅包装此能力，不包含业务决策或语言分支。
 
-管理员需预置 Docker Linux 镜像并设置 `FINANCE_EVAL_PROJECT_EXECUTION_IMAGE`。镜像需提供 sh、cp 及项目所需运行环境；执行时不自动拉取镜像。每次命令在新容器的临时工程副本执行，原目录只读挂载；不提供网络、宿主环境凭证或 Docker socket，并限制时间、内存、CPU、进程数和输出。多步构建可由 Agent 使用一次 shell 命令组织；构建文件不带回，源码修改使用已有候选文件工具。缺少镜像或依赖会明确返回不可运行，而不降级到宿主直接执行上传代码。
+管理员需预置 Docker Linux 镜像并设置 `FINANCE_EVAL_PROJECT_EXECUTION_IMAGE`。镜像需提供 sh、cp、chown、setpriv 及项目所需运行环境；执行时不自动拉取镜像。容器启动时只使用必要的能力读取受限的只读工程目录并准备临时副本，随后清除全部 Linux capabilities，以 UID/GID 65534 执行用户命令。每次命令使用新容器，不提供网络、宿主环境凭证或 Docker socket，并限制时间、内存、CPU、进程数和输出。多步构建可由 Agent 使用一次 shell 命令组织；构建文件不带回，源码修改使用已有候选文件工具。缺少镜像或依赖会明确返回不可运行，而不降级到宿主直接执行上传代码。
+
+Windows 开发环境可由管理员设置 `FINANCE_EVAL_DOCKER_WSL_DISTRIBUTION` 指定已有 WSL 发行版，并可选设置 `FINANCE_EVAL_DOCKER_WSL_USER` 指定有权访问其 Docker 的用户。发行版需要提供 `python3` 和 `wslpath`；平台通过标准输入传递命令参数、转换工程路径并调用 Docker，仍使用相同的只读挂载、无网络和资源限制；镜像需要预先存在于该 Docker 中。未配置时继续使用当前系统的 Docker 命令。
 
 执行回执由工具生成，绑定执行时文件摘要，不由模型填写。后续编辑可能让回执与最终准备版本不同，不能把旧回执当成最终版本验证。生产执行环境还需按企业部署要求管理镜像、依赖和外部访问；本次未接入凭证或网络授权管理。
 
@@ -36,7 +38,7 @@ Skill 包沿用原有 SKILL.md 校验；完整工程只经过公共文件安全�
 
 ## 过程与产物证据
 
-三种接入均遵守 [Runtime 公共接入合同](../agent-roles/v1/references/runtime-integration.md)。现有 execute 返回 metadata.process，声明 processEvidence，不要求 OTLP、公网接收端或新接口。准备 Agent 复用原工程回调、消息或流式事件；非流式只有最终答案时，在执行侧采集后汇总返回。原工程的 OTel 可继续使用，但不是平台前置条件。
+三种接入均遵守 [Runtime 公共接入合同](../src/resources/agents/v1/references/runtime-integration.md)。现有 execute 返回 metadata.process，声明 processEvidence，不要求 OTLP、公网接收端或新接口。准备 Agent 复用原工程回调、消息或流式事件；非流式只有最终答案时，在执行侧采集后汇总返回。原工程的 OTel 可继续使用，但不是平台前置条件。
 
 COMPLETE/PARTIAL/UNAVAILABLE 仅描述声明范围内的采集状态。缺失和截断必须说明，远程工具内部埋点不是要求。平台沿用证据索引 /process、产物 metadata.artifacts 和业务状态 metadata.state，复用既有 Judge、诊断和 Review。历史 telemetry 不删除或改写。
 
@@ -86,7 +88,7 @@ criterion-judge 与 improvement-diagnosis 使用只读 evidence-model 执行配�
 
 案例可配置 `stateFixture: {fixtureId, version, initialStateDigest}`。它引用测试环境中已登记的版本化初态，摘要按项目 canonicalSha256（规范化 JSON）计算，不允许填写任意重置命令。Launcher 须在 `features.caseStateLifecycle` 声明支持；程序在执行业务前检查能力，旧 Runtime 不会忽略要求后继续执行。自定义 RuntimeAdapter 可实现 supportsCaseState，并在 execute 返回同一回执合同，平台仍校验关联和摘要。
 
-Launcher 适配器复用原实例，在其串行执行区调用 `POST /v1/runtime-instances/{instanceId}/case-state`。请求遵循 src/shared/contracts/case-state.ts，包含 schemaVersion=finance.case-state.v1、operationId、runId、caseId、side、fixture 和 phase（prepare / capture / restore）。响应回显关联字段，并提供 status、stateDigest、可选 state 与 message。prepare/restore 的摘要必须与指定初态一致；capture 必须返回真实状态内容及匹配摘要。版本或关联不一致都不算完成。
+Launcher 适配器复用原实例，在其串行执行区调用 `POST /v1/runtime-instances/{instanceId}/case-state`。请求包含 schemaVersion=finance.case-state.v1、operationId、runId、caseId、side、fixture 和 phase（prepare / capture / restore）；调用与回执核验实现在 `src/runtime/launcher.py`、`src/evaluation/case_state.py`。响应回显关联字段，并提供 status、stateDigest、可选 state 与 message。prepare/restore 的摘要必须与指定初态一致；capture 必须返回真实状态内容及匹配摘要。版本或关联不一致都不算完成。
 
 测试环境负责将 operationId 绑定到专用隔离空间或排他租约，不能让并发左右侧相互重置。prepare 应同时准备干净的业务初态和该次会话；capture 读取允许采集的业务状态；restore 恢复初态并关闭该操作。三者必须幂等，关闭后迟到的 prepare 不得重新修改状态，且服务应能处理请求丢失与租约过期。相关服务及凭据由环境配置管理，不注册为业务 Agent 工具，不要求 Agent 自己恢复。该接口需要真实 Launcher／测试环境实现，本仓不会假装已能重置任意企业数据库。
 
@@ -118,7 +120,7 @@ POST 接收 `{source,sourceDigest,entries}`，支持一次导入 1–200 条。�
 
 工程准备 Agent 应保留原 AgentScope 执行入口和用户确认流程，适配现有 Runtime Launcher 的工程执行合同。原工程的 OTel 可以保留，但接入平台应在 execute 响应汇总 metadata.process，不依赖平台接收异步导出。会议室写操作需要隔离的业务初态与恢复，会话删除不能代替撤销会议室预订。正式基线仍需兼容运行环境和 Launcher 证据适配；此前命令回执与埋点试验不能替代业务基线。
 
-公共接入要求已收敛到 [Runtime 公共接入合同](../agent-roles/v1/references/runtime-integration.md)，并作为工程准备 Agent 的实际加载资源。Builder 和工程 Launcher 共用能力检查，命令行入口为 `pnpm runtime:check`。
+公共接入要求已收敛到 [Runtime 公共接入合同](../src/resources/agents/v1/references/runtime-integration.md)，并作为工程准备 Agent 的实际加载资源。Builder 和工程 Launcher 共用能力检查，命令行入口为 `pnpm runtime:check`。
 
 ### 真实过程联调
 
@@ -138,3 +140,13 @@ Criterion Judge 和证据文件保存。用例仅查询 U001 的地点权限，�
 这些阶段不能因本检查通过而宣称验收完成。
 
 `node scripts/verify-external-agent-otel.mjs <本地 AgentScope 工程目录>` 是保留的历史 OTLP 试验脚本，不是新接入验收步骤。统一验收使用 `pnpm runtime:check` 检查 Launcher 能力与实际 execute 响应，再通过现有业务基线入口运行任务。
+
+### 中断后的工作草稿
+
+迁移生成和修复 Agent 成功修改工作文件后，平台将未验收的草稿保存到当前任务的数据目录。任务因超时、服务重启或其他错误中断后，重新发起同一操作时，可自动恢复匹配的最近草稿；源文件、基础版本、目标、方案或反馈发生变化时不会复用。活动记录会提示恢复情况。
+
+草稿只用于继续工作，不是正式候选，不代表契约测试或独立 Review 已通过。用户主动取消或完成该操作后开始的新工作不会自动续用此前草稿；正式候选仍需完整提交、检查和冻结。草稿属于任务数据，应随工作区数据一起保护和备份。
+
+迁移配置可通过已有 Launcher 合同的 `runtimeToolConfig` 声明工具请求头与运行上下文绑定，与对比评测使用同一能力。敏感值只能填写 Runtime 侧环境变量引用，不保存在任务配置里；非敏感的测试身份可作为固定值。该配置按运行实例确定，不能单凭它证明同一实例中多用户逐次调用的身份隔离；需要分别执行案例并保存实际证据。Builder 需求只包含所需能力，不包含这些业务上下文值。
+
+原工程从登录态或 Header 取得身份时，迁移产物应保留请求级身份边界。Runtime 通过现有 `contextBindings` 或已登记的企业 `authProvider` 为每次 MCP 调用构造独立 Header；MCP 从当前请求读取，不把用户固定在服务进程环境中、不缓存最近用户、不要求聊天补报，也不把身份放进业务参数。部署方负责让身份来自经过认证的登录/会话上下文，不能直接信任外部自报 Header。缺失身份应明确失败且不产生业务写入。基础验证应使用同一个 MCP 服务进行双用户交叉与并发调用，核对权限、订单归属和缺失身份的拒绝行为；这些工具边界测试与模型驱动的业务效果评测分别记录，不能相互替代。

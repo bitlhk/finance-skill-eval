@@ -1,0 +1,1567 @@
+{
+  "reason": "User authorized removal of the old npm programming API; HTTP and replay CLI remain.",
+  "retiredModules": [
+    "src/adapters.ts",
+    "src/agents/bounded-call.ts",
+    "src/agents/composition.ts",
+    "src/agents/criterion-judge.ts",
+    "src/agents/evidence-query.ts",
+    "src/agents/improvement-diagnoser.ts",
+    "src/agents/model-output-correction.ts",
+    "src/agents/model-role-agent.ts",
+    "src/agents/model-role.ts",
+    "src/agents/ports.ts",
+    "src/agents/tool-free-roles.ts",
+    "src/analyzer.ts",
+    "src/assets/runtime-skills-client.ts",
+    "src/candidate-assessment-runtime.ts",
+    "src/cli.ts",
+    "src/code-revision.ts",
+    "src/codex-cli-model.ts",
+    "src/command-runtime.ts",
+    "src/context.ts",
+    "src/contracts.ts",
+    "src/direct-model-runtime.ts",
+    "src/eval-pack.ts",
+    "src/evaluation/application/comparison-executions.ts",
+    "src/evaluation/application/criterion-judge-port.ts",
+    "src/evaluation/application/evaluate-comparison.ts",
+    "src/evaluation/application/evaluation-method.ts",
+    "src/evaluation/application/execute-case.ts",
+    "src/evaluation/application/external-traces.ts",
+    "src/evaluation/application/judge-calibration.ts",
+    "src/evaluation/application/planned-methods.ts",
+    "src/evaluation/application/repeated-assessment.ts",
+    "src/evaluation/application/review-targets.ts",
+    "src/evaluation/application/runtime-intake.ts",
+    "src/evaluation/domain/answer-evidence.ts",
+    "src/evaluation/domain/case-state-evidence.ts",
+    "src/evaluation/domain/errors.ts",
+    "src/evaluation/domain/evaluation-plan.ts",
+    "src/evaluation/domain/evidence-resources.ts",
+    "src/evaluation/domain/execution-checks.ts",
+    "src/evaluation/domain/execution-statistics.ts",
+    "src/evaluation/domain/human-review.ts",
+    "src/evaluation/domain/runtime-process.ts",
+    "src/evaluation/domain/telemetry.ts",
+    "src/evaluation/infrastructure/observed-runtime.ts",
+    "src/evaluation/infrastructure/otlp-codec.ts",
+    "src/evaluation/infrastructure/python-comparison.ts",
+    "src/evaluation/infrastructure/python-evaluation.ts",
+    "src/evaluation/infrastructure/script-verifier.ts",
+    "src/evidence-labels.ts",
+    "src/execution-configuration/execution-configuration.ts",
+    "src/execution-configuration/file-execution-configuration-repository.ts",
+    "src/execution-configuration/historical-migration-record.ts",
+    "src/execution-configuration/historical-service-environment.ts",
+    "src/goal-judge.ts",
+    "src/http-runtime.ts",
+    "src/improvement/application/asset-evidence.ts",
+    "src/improvement/application/diagnosis-port.ts",
+    "src/improvement/application/improvement-agents.ts",
+    "src/improvement/application/optimization-loop.ts",
+    "src/improvement/application/review-input.ts",
+    "src/improvement/domain/diagnosis.ts",
+    "src/improvement/domain/effect-review.ts",
+    "src/improvement/domain/optimization-loop.ts",
+    "src/improvement/infrastructure/optimization-agent.ts",
+    "src/index.ts",
+    "src/interfaces/http/environment-routes.ts",
+    "src/interfaces/http/evaluation-review-routes.ts",
+    "src/interfaces/http/history-routes.ts",
+    "src/interfaces/http/migration-activity-routes.ts",
+    "src/interfaces/http/migration-task-routes.ts",
+    "src/interfaces/http/otlp-routes.ts",
+    "src/json-response.ts",
+    "src/judge-case-files.ts",
+    "src/judge-runtime-evidence.ts",
+    "src/judge.ts",
+    "src/mcp-preflight.ts",
+    "src/migration/application/migration-activity-port.ts",
+    "src/migration/domain/case-limits.ts",
+    "src/migration/domain/generated-tool-implementation.ts",
+    "src/migration/domain/migration-activity.ts",
+    "src/migration/domain/migration-candidate-artifact.ts",
+    "src/migration/domain/migration-dependency-schema.ts",
+    "src/migration/domain/migration-dependency.ts",
+    "src/migration/domain/migration-generation-progress.ts",
+    "src/migration/domain/migration-improvement-plan.ts",
+    "src/migration/domain/migration-improvement-task.ts",
+    "src/migration/domain/migration-model.ts",
+    "src/migration/domain/migration-project.ts",
+    "src/migration/domain/migration-reuse-acceptance.ts",
+    "src/migration/domain/migration-reuse-design.ts",
+    "src/migration/domain/migration-reuse-execution-contract.ts",
+    "src/migration/domain/migration-reuse-failure.ts",
+    "src/migration/domain/migration-reuse-input-binding.ts",
+    "src/migration/domain/migration-reuse-policy.ts",
+    "src/migration/domain/migration-reuse-telemetry.ts",
+    "src/migration/domain/migration-run-declaration.ts",
+    "src/migration/domain/migration-runtime-rules.ts",
+    "src/migration/domain/migration-solution-revision.ts",
+    "src/migration/domain/migration-source-evidence.ts",
+    "src/migration/domain/migration-source-retirement.ts",
+    "src/migration/domain/migration-stage-envelope.ts",
+    "src/migration/domain/simple-migration-suite.ts",
+    "src/migration/domain/suite-execution.ts",
+    "src/migration/infrastructure/migration-activity.ts",
+    "src/migration/infrastructure/migration-agent-runner.ts",
+    "src/migration/tasks/application/evaluate-task-case.ts",
+    "src/migration/tasks/application/task-acceptance.ts",
+    "src/migration/tasks/application/task-basic-validation.ts",
+    "src/migration/tasks/application/task-builder.ts",
+    "src/migration/tasks/application/task-delivery-verification.ts",
+    "src/migration/tasks/application/task-effect-review.ts",
+    "src/migration/tasks/application/task-evaluation-view.ts",
+    "src/migration/tasks/application/task-execution-ports.ts",
+    "src/migration/tasks/application/task-export.ts",
+    "src/migration/tasks/application/task-optimization-state.ts",
+    "src/migration/tasks/application/task-ports.ts",
+    "src/migration/tasks/application/task-rescoring.ts",
+    "src/migration/tasks/application/task-run-analysis.ts",
+    "src/migration/tasks/application/task-service.ts",
+    "src/migration/tasks/composition.ts",
+    "src/migration/tasks/domain/delivery-review.ts",
+    "src/migration/tasks/domain/project-comparison.ts",
+    "src/migration/tasks/domain/project-preparation.ts",
+    "src/migration/tasks/domain/python-snapshot.ts",
+    "src/migration/tasks/domain/suite-identity.ts",
+    "src/migration/tasks/domain/task-control-inputs.ts",
+    "src/migration/tasks/domain/task-diagnosis.ts",
+    "src/migration/tasks/domain/task-model.ts",
+    "src/migration/tasks/domain/task-runtime-inputs.ts",
+    "src/migration/tasks/domain/task-runtime-review.ts",
+    "src/migration/tasks/domain/task-standardization.ts",
+    "src/migration/tasks/domain/task-verdict.ts",
+    "src/migration/tasks/infrastructure/builder-command.ts",
+    "src/migration/tasks/infrastructure/task-agent.ts",
+    "src/migration/tasks/infrastructure/task-builder.ts",
+    "src/migration/tasks/infrastructure/task-repository.ts",
+    "src/migration/tasks/infrastructure/task-runtime.ts",
+    "src/openai-compatible-model.ts",
+    "src/original-service-runtime.ts",
+    "src/promptfoo-worker.ts",
+    "src/replay.ts",
+    "src/report.ts",
+    "src/runner.ts",
+    "src/runtime-comparison-judge.ts",
+    "src/runtime-launcher.ts",
+    "src/runtime-skill-package.ts",
+    "src/runtime-tool-config.ts",
+    "src/runtime-tool-process-evidence.ts",
+    "src/service/account-workspaces.ts",
+    "src/service/candidate-pack-staging.ts",
+    "src/service/catalog.ts",
+    "src/service/config.ts",
+    "src/service/contracts.ts",
+    "src/service/demo-access.ts",
+    "src/service/environment-store.ts",
+    "src/service/evaluation-calibration.ts",
+    "src/service/evaluation-execution-ports.ts",
+    "src/service/evaluation-run-budget.ts",
+    "src/service/file-store.ts",
+    "src/service/history-store.ts",
+    "src/service/human-review-store.ts",
+    "src/service/improvement-agents.ts",
+    "src/service/job-store.ts",
+    "src/service/logging.ts",
+    "src/service/managed-workspace-policy.ts",
+    "src/service/neutral-archive.ts",
+    "src/service/optimization-manager.ts",
+    "src/service/preparation-store.ts",
+    "src/service/run-manager.ts",
+    "src/service/run-questions.ts",
+    "src/service/server.ts",
+    "src/service/shutdown.ts",
+    "src/service/skill-engineering.ts",
+    "src/service/skill-store.ts",
+    "src/service/workspace-request-budget.ts",
+    "src/service-comparison-judge.ts",
+    "src/shared/agent-activity-context.ts",
+    "src/shared/agent-runtime-client.ts",
+    "src/shared/asset-safety.ts",
+    "src/shared/case-limits.ts",
+    "src/shared/contracts/agent-composition.ts",
+    "src/shared/contracts/case-state.ts",
+    "src/shared/contracts/environment.ts",
+    "src/shared/contracts/evaluation-job.ts",
+    "src/shared/contracts/history.ts",
+    "src/shared/contracts/manual-preparation.ts",
+    "src/shared/contracts/native-tool-catalog.ts",
+    "src/shared/contracts/optimization.ts",
+    "src/shared/contracts/prepared-evaluation.ts",
+    "src/shared/contracts/run-configuration.ts",
+    "src/shared/contracts/runtime-builder.ts",
+    "src/shared/contracts/runtime-capability.ts",
+    "src/shared/contracts/runtime-intake.ts",
+    "src/shared/contracts/runtime-launcher.ts",
+    "src/shared/contracts/runtime-observation.ts",
+    "src/shared/contracts/runtime-process.ts",
+    "src/shared/contracts/runtime-protocol-versions.ts",
+    "src/shared/contracts/runtime-skill-member.ts",
+    "src/shared/contracts/runtime-skills.ts",
+    "src/shared/contracts/service-environment.ts",
+    "src/shared/contracts/skill-asset.ts",
+    "src/shared/json-canonicalization.ts",
+    "src/shared/keyed-queue.ts",
+    "src/shared/model-service-client.ts",
+    "src/shared/operational-error.ts",
+    "src/shared/prepared-evaluation-pack.ts",
+    "src/shared/python-application.ts",
+    "src/shared/python-environment.ts",
+    "src/shared/python-store-worker.ts",
+    "src/shared/skill-runtime-requirements.ts",
+    "src/shared/store-coordination.ts",
+    "src/side-runtime.ts"
+  ],
+  "retiredSdkTests": [
+    {
+      "file": "tests/migration-architecture.test.ts",
+      "cases": [
+        "keeps application workflows independent of infrastructure and service implementations",
+        "keeps the domain independent of application, infrastructure and service layers",
+        "keeps unified task application and domain behind ports",
+        "keeps the migration module free of static import cycles",
+        "reports the complete path when an import graph contains a cycle"
+      ]
+    },
+    {
+      "file": "tests/shared-capability-boundaries.test.ts",
+      "cases": [
+        "cannot reintroduce the retired migration orchestrators or process entries",
+        "routes all optimization adapters and engineering agents through their shared executors",
+        "keeps migration execution and continuation in the Python application",
+        "keeps fixed comparison task transitions and repetition loops out of the TS host",
+        "keeps migration acceptance and review policy out of the TS adapters",
+        "keeps shared Agent, evaluation and improvement capabilities independent of migration and service composition"
+      ]
+    },
+    {
+      "file": "tests/migration-validator-version.test.ts",
+      "cases": [
+        "uses the active compiled service version instead of the workspace dist",
+        "validates against the currently running source tree in development"
+      ]
+    },
+    {
+      "file": "tests/account-workspaces.test.ts",
+      "cases": [
+        "authenticates every account without an administrator whitelist and isolates uploads",
+        "keeps the original owner history in place without publishing it to another account",
+        "shares reviewed seed files as separate copies and initializes a simultaneous first account once",
+        "blocks arbitrary environment credentials and enforces workspace capacity",
+        "refuses seed history, wrong digests and symlinks",
+        "does not accept arbitrary execution payloads even when they use a managed Launcher",
+        "rejects excess work before the child handler and always permits reads and cancellation",
+        "preserves HTTP uploads, SSE and persisted history without exposing another account records"
+      ]
+    },
+    {
+      "file": "tests/agent-roles.test.ts",
+      "cases": [
+        "gives the diagnosis agent bounded source context and keeps the full material queryable",
+        "loads every installed role without granting read-only roles write or execution tools",
+        "reviews a candidate independently and rejects invented evidence references",
+        "does not turn a failed review into a positive decision",
+        "preserves the shared review contract; SDK subagent isolation is tested in Python",
+        "cancels a review caller and permits a later independent review",
+        "abstains before model execution when candidate evidence is incomplete or incomparable",
+        "supports independent goal-based continuation with incumbent evidence and repair directions"
+      ]
+    },
+    {
+      "file": "tests/agent-tool-wiring.test.ts",
+      "cases": [
+        "gives diagnosis a read-only scanner and migration scoped compile and contract tools",
+        "keeps the unified agent grep and file tools bound to its workspace"
+      ]
+    },
+    {
+      "file": "tests/analyzer.test.ts",
+      "cases": [
+        "uses a host model adapter and returns validated cases",
+        "uses an optional host context adapter without coupling to its data source",
+        "performs one structural repair when the analyzer returns the wrong fields"
+      ]
+    },
+    {
+      "file": "tests/answer-evidence-isolation.test.ts",
+      "cases": [
+        "projects only explicit scalar fields and preserves unavailable provenance",
+        "rejects whole-result and trace projections at the plan boundary",
+        "separates actual model requests and blocks query escape; quality cannot override failed booking"
+      ]
+    },
+    {
+      "file": "tests/candidate-assessment-runtime.test.ts",
+      "cases": [
+        "executes the assessed candidate once and reuses its evidence without changing the report sides",
+        "does not manufacture a release receipt for an adapter without observations"
+      ]
+    },
+    {
+      "file": "tests/candidate-pack-staging.test.ts",
+      "cases": [
+        "pins actual Eval archive identity, preserves cases and holdout, and leaves the source unchanged",
+        "never overwrites an existing directory, even an empty one",
+        "rejects a changed ZIP before creating output",
+        "requires explicit mappings rather than guessing prefixes",
+        "rejects silent changes to an existing skill-versus-skill comparison",
+        "does not collapse two distinct tool expectations into one",
+        "supports explicitly no-tool methods without pretending a missing declaration is empty",
+        "rejects mismatched method version and removes only its own incomplete stage",
+        "does not infer empty dependencies from missing declaration",
+        "rejects cases outside the actual installed method dependencies",
+        "rejects source traversal and escaping symlinks",
+        "preserves negative invocation constraints while translating explicit tool names"
+      ]
+    },
+    {
+      "file": "tests/case-state-lifecycle.test.ts",
+      "cases": [
+        "does not accept a custom runtime complete claim without correlated receipts",
+        "rejects an unsupported stateful case before invoking any business tool",
+        "requires explicit repeat safety and counts missing attempts in statistics"
+      ]
+    },
+    {
+      "file": "tests/closeout-cancel.test.ts",
+      "cases": [
+        "persists cancellation receipts without reviving the parent, refreshes and retries unchanged configuration"
+      ]
+    },
+    {
+      "file": "tests/codex-cli-model.test.ts",
+      "cases": [
+        "uses the Python host provider rather than spawning a second CLI implementation"
+      ]
+    },
+    {
+      "file": "tests/command-runtime.test.ts",
+      "cases": [
+        "maps a command execution result into canonical runtime evidence"
+      ]
+    },
+    {
+      "file": "tests/comparison-business-execution.test.ts",
+      "cases": [
+        "pins the selected asset digest in the evaluation report inputs",
+        "runs the frozen suite three times with distinct runtime acquisition and saved reports",
+        "rejects unsafe repeats before any business call",
+        "stops on uncertain execution but continues for an explicit business failure",
+        "marks a single run with a timed-out judge as incomplete while retaining its report",
+        "does not start optimization from an incomplete historical assessment",
+        "preserves completed attempts when the next runtime fails",
+        "stops scheduling business calls after cancellation",
+        "never lets the last successful repetition hide a failure or a missing attempt from optimization",
+        "uses the real runner lifecycle for repeated business execution with separate run IDs and cleanup"
+      ]
+    },
+    {
+      "file": "tests/comparison-rescore-async.test.ts",
+      "cases": [
+        "returns immediately, retains the report and persists the completed rescoring result",
+        "persists failure without replacing the original evidence"
+      ]
+    },
+    {
+      "file": "tests/contracts.test.ts",
+      "cases": [
+        "loads the investment research pack with independent model roles",
+        "rejects unknown frozen contract fields",
+        "loads the frozen risk review comparison cases",
+        "produces stable fingerprints independent of object key order",
+        "rejects NUL content that could alias another case file manifest digest"
+      ]
+    },
+    {
+      "file": "tests/criterion-agent-live.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/criterion-agent-native.test.ts",
+      "cases": [
+        "uses the real OpenJiuwen agent and native model tool calls for evidence lookup"
+      ]
+    },
+    {
+      "file": "tests/delivery-review-context.test.ts",
+      "cases": [
+        "keeps development evidence tied to its selected test and runtime configuration",
+        "accepts real multiline citations across newline conventions without accepting invented text"
+      ]
+    },
+    {
+      "file": "tests/demo-access.test.ts",
+      "cases": [
+        "persists the public demo budget and binds cancellation to the initiating user",
+        "serializes concurrent admission and does not add jobs to a full queue"
+      ]
+    },
+    {
+      "file": "tests/diagnosis-agent-live.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/diagnosis-basic-evidence-native.test.ts",
+      "cases": [
+        "lets the OpenJiuwen diagnosis agent inspect frozen basic-validation coverage"
+      ]
+    },
+    {
+      "file": "tests/direct-model-runtime.test.ts",
+      "cases": [
+        "keeps the model and task fixed while changing Skill instructions",
+        "rejects tool-dependent cases instead of simulating tool execution"
+      ]
+    },
+    {
+      "file": "tests/dual-runtime-configuration.test.ts",
+      "cases": [
+        "matches actual upstream models while keeping distinct Launcher-local aliases",
+        "locks the selected mode on both sides without sharing mutable configuration",
+        "submits explicit independent assessments and equal parameters for ordinary Skill comparison"
+      ]
+    },
+    {
+      "file": "tests/effect-review-agent-live.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/effect-review-configuration.test.ts",
+      "cases": [
+        "configures independent effect review without an optimizer model",
+        "configures evidence diagnosis without a review model",
+        "reports missing review configuration independently"
+      ]
+    },
+    {
+      "file": "tests/effect-review-runtime-e2e.test.ts",
+      "cases": [
+        "runs independent effect reviews concurrently in Runtime with isolated model evidence"
+      ]
+    },
+    {
+      "file": "tests/enterprise-improvement-suites.test.ts",
+      "cases": [
+        "mounts expense acceptance inputs at the original business-relative workspace paths"
+      ]
+    },
+    {
+      "file": "tests/environment-archive-run.test.ts",
+      "cases": [
+        "checks only the used candidate side without upgrading an unused source binding to an execution",
+        "rechecks archive state on retry, preserves the original history, and permits an explicit restore",
+        "catalog offers exactly two active runtimes while retaining four archived registrations for management"
+      ]
+    },
+    {
+      "file": "tests/environment-archive.test.ts",
+      "cases": [
+        "retains retired bundle-protocol registrations without admitting them or breaking current listings",
+        "defaults legacy metadata to active without rewriting original bytes",
+        "archives and restores metadata without interpreting names or erasing references",
+        "keeps archived dependents in deletion protection and normal edits do not restore",
+        "serializes archive and normal edits without losing either change",
+        "does not coerce arbitrary listing query values or accept extra filters",
+        "does not recreate or revive an archived Builder deployment and sends no conformance request",
+        "uses existing authentication for archive/list/detail and preserves read access after archive"
+      ]
+    },
+    {
+      "file": "tests/environment-management.test.ts",
+      "cases": [
+        "explains missing native qualification during environment preflight without leaking private fields",
+        "preserves obsolete fixed-endpoint Runtime records without offering them for new execution",
+        "updates resources in place and protects execution-environment dependencies",
+        "rejects bad bindings, duplicate bindings and credential-bearing URLs",
+        "discovers Runtime Launcher capabilities without pre-registering models or MCPs",
+        "registers AgentScope explicitly and rejects a mismatching native runtime",
+        "combines a launcher, MCP bindings and a default model into an execution environment",
+        "serves edit and delete through existing authentication hooks",
+        "serializes one project while allowing another through",
+        "releases a failed operation and does not leak locks"
+      ]
+    },
+    {
+      "file": "tests/environment-matching.test.ts",
+      "cases": [
+        "matches both frameworks by actual dependency rather than catalog order",
+        "changes the matching pair when Skill dependencies change",
+        "routes explicitly tool-free methods only to compatible no-tool environments",
+        "does not infer external tools merely from externalMcp support",
+        "does not pick the first among multiple compatible sources",
+        "rejects unknown and uninspected environments",
+        "distinguishes explicit tool-free, missing and invalid declarations"
+      ]
+    },
+    {
+      "file": "tests/evaluation-foundation.test.ts",
+      "cases": [
+        "propagates comparison cancellation across Python without turning it into a Judge score",
+        "refuses a completed comparison report if cancellation arrives with the Judge result",
+        "does not turn a Judge failure into evidence that candidate business logic is wrong",
+        "retries a transient Judge network failure once against the same saved evidence",
+        "scores explicit execution criteria separately from answer preference and preserves unknowns",
+        "keeps execution failure and Judge failure distinct in the Python comparison",
+        "checks numeric tolerances and unordered sets without coercing strings to numbers",
+        "checks rule references and JSON types through the Python evaluator",
+        "supports reference-based rules, script verdicts and state checks over one frozen execution",
+        "distinguishes verifier malfunction from business failure and rejects invented citations",
+        "bounds evidence queries, denies prototype traversal and keeps stable evidence digests",
+        "does not accept malformed or unrelated OTLP records as complete evidence",
+        "rejects tampered artifact contents and keeps verifier code out of runtime requests",
+        "lets the Judge investigate saved evidence, records usage, and validates its citations",
+        "advertises native process events to the execution Judge even when legacy toolCalls is empty",
+        "exposes a successful retry beyond the bounded process preview",
+        "reserves the last investigation call for the verdict",
+        "records evidence shortage as unverified rather than an invented business failure",
+        "identifies an invalid citation during correction without accepting invented evidence",
+        "preserves unknown requirement verdicts instead of converting them to failed requirements",
+        "rescores frozen evidence without mutating the original run or invoking a runtime",
+        "rescores a comparison using its frozen spec and retains the original report"
+      ]
+    },
+    {
+      "file": "tests/evaluation-run-budget.test.ts",
+      "cases": [
+        "shares a FIFO limit across accounts and does not execute cancelled waiting tasks",
+        "releases capacity after failure and rejects invalid limits"
+      ]
+    },
+    {
+      "file": "tests/evidence-labels.test.ts",
+      "cases": [
+        "distinguishes disabled collection, missing events and observed calls",
+        "never promotes a running archive snapshot or terminal outcome to cleanup evidence"
+      ]
+    },
+    {
+      "file": "tests/external-traces.test.ts",
+      "cases": [
+        "correlates standard Trace IDs without requiring platform attributes from business code",
+        "bounds received spans and does not infer complete collection from a successful export",
+        "rejects malformed input and disables ingress outside private workspaces",
+        "keeps existing runtime evidence and blocked-case semantics"
+      ]
+    },
+    {
+      "file": "tests/fact-attribution-freeze.test.ts",
+      "cases": [
+        "freezes an explicitly separate v9 cohort and refuses silently relabeling v5/v6/v7/v8, preserving baseline and cases"
+      ]
+    },
+    {
+      "file": "tests/file-store.test.ts",
+      "cases": [
+        "keeps every observed document parseable while readers poll concurrent writes"
+      ]
+    },
+    {
+      "file": "tests/historical-data.test.ts",
+      "cases": [
+        "lists all historical origins, reads analysis/evidence/files and exports unchanged originals",
+        "reports damaged records and missing snapshots instead of dropping them",
+        "never treats current records or matching IDs as historical execution targets",
+        "refuses redirected snapshot directories before disclosing their contents",
+        "requires authentication and rejects every historical mutation without model calls or data writes"
+      ]
+    },
+    {
+      "file": "tests/historical-migration-record.test.ts",
+      "cases": [
+        "reads a historical record without rewriting its original bytes",
+        "rejects malformed ids and reports missing records",
+        "rejects a persisted identity that does not match the requested file",
+        "does not upgrade or rewrite older records when resolving service bindings",
+        "validates record contents even when the version discriminator is correct"
+      ]
+    },
+    {
+      "file": "tests/http-runtime.test.ts",
+      "cases": [
+        "preflights health and maps canonical execution evidence"
+      ]
+    },
+    {
+      "file": "tests/human-review.test.ts",
+      "cases": [
+        "exposes new rescoring calibration without staling or rewriting human annotations",
+        "preserves original evidence, stores disagreements and requires every current opinion for adjudication",
+        "validates imports atomically and rejects invented or cross-case references",
+        "serializes concurrent revisions and retains old-source history without counting it",
+        "keeps human uncertainty and missing machine verdicts out of agreement without hiding their counts",
+        "enforces the private-workspace route boundary",
+        "does not treat service or runtime comparison placeholder ties as answer preferences"
+      ]
+    },
+    {
+      "file": "tests/json-response.test.ts",
+      "cases": [
+        "accepts JSON followed by model commentary",
+        "accepts a fenced object after reasoning text"
+      ]
+    },
+    {
+      "file": "tests/judge-calibration.test.ts",
+      "cases": [
+        "aligns reordered cases by semantic identity and keeps original human records untouched",
+        "retains missing outcomes and reports new unannotated items",
+        "does not compare changed outcome vocabularies, ambiguous identities or incompatible materials",
+        "keeps disputes out of agreement for every rescoring version",
+        "checks migration phase plans and source/evidence digests before reusing opinions",
+        "expands repeated comparison judgments but rejects changed execution evidence"
+      ]
+    },
+    {
+      "file": "tests/judge-case-files.test.ts",
+      "cases": [
+        "projects verified read receipts and answer offsets, never hidden file bodies or a quality verdict",
+        "does not send read file contents absent from the answer to the judge",
+        "distinguishes optional missing read receipts from malformed and conflicting receipts",
+        "counts repeated reads once per input file and preserves exact whitespace",
+        "does not invent file reading for an empty receipt list",
+        "omits this projection for cases without workspace inputs",
+        "keeps file execution receipts out of candidate and anonymous quality judges"
+      ]
+    },
+    {
+      "file": "tests/judge-runtime-evidence.test.ts",
+      "cases": [
+        "preserves native execution proof without workspace contents, paths or source digests",
+        "retains per-turn receipts without exposing host session/workspace identifiers"
+      ]
+    },
+    {
+      "file": "tests/judge.test.ts",
+      "cases": [
+        "does not turn an empty rule into a perfect professional score",
+        "retries once when the model copies the response contract",
+        "scores a migrated candidate without inventing a winning side",
+        "retries when dimension ids are duplicated"
+      ]
+    },
+    {
+      "file": "tests/launcher-compatibility.test.ts",
+      "cases": [
+        "reports missing native dependencies without substituting available tools",
+        "distinguishes auxiliary case files from required primary packages"
+      ]
+    },
+    {
+      "file": "tests/launcher-native-tools.test.ts",
+      "cases": [
+        "accepts only advertised native tools and preserves requested names for launch-time validation",
+        "does not infer tools from a ready launcher without an inventory",
+        "rejects failed preflight even when an inventory is present",
+        "passes full explicit method dependencies to both runtimes while retaining per-case requirements"
+      ]
+    },
+    {
+      "file": "tests/live-runtime.test.ts",
+      "cases": [
+        "streams deltas, handles split UTF-8, and never sends grading/replay fields to executor",
+        "rejects a truncated stream rather than calling it completed",
+        "detects target Skill contamination in the baseline",
+        "initializes MCP properly and releases its preflight session"
+      ]
+    },
+    {
+      "file": "tests/migration-activity-presentation.test.ts",
+      "cases": [
+        "reports actual file activity and model waits without inventing progress",
+        "shows only the response currently streaming, without replaying an earlier model call",
+        "distinguishes infrastructure and evidence failures from a business failure"
+      ]
+    },
+    {
+      "file": "tests/migration-activity.test.ts",
+      "cases": [
+        "isolates concurrent projects, merges response snapshots, persists terminal state and cancels",
+        "bounds activity history and restores interrupted and failed tasks"
+      ]
+    },
+    {
+      "file": "tests/migration-agent-wire.test.ts",
+      "cases": [
+        "retains the reason for a failed process result",
+        "terminates the shared entry on cancellation"
+      ]
+    },
+    {
+      "file": "tests/migration-assets.test.ts",
+      "cases": [
+        "packages the fact-check fixture deterministically and refuses overwrites",
+        "imports the reproducible no-tool fact-check sample without changing its method",
+        "imports legacy lowercase metadata without changing bytes, and rejects ambiguous roots",
+        "preserves the original Skill identity when saving an edited archive",
+        "detects changed on-disk snapshots instead of trusting metadata",
+        "reads historical asset digests and preserves the exact original line endings",
+        "freezes source and candidate separately and exports unsupported resources without executing them"
+      ]
+    },
+    {
+      "file": "tests/migration-bundle-judge.test.ts",
+      "cases": [
+        "retries incomplete IDs once and preserves existing negative verdicts",
+        "does not retry a complete business failure",
+        "rejects a format retry that changes an existing verdict",
+        "bounds malformed response retries and never retries provider failure"
+      ]
+    },
+    {
+      "file": "tests/migration-bundle.test.ts",
+      "cases": [
+        "executes and records every case in a 100-case user dataset",
+        "records service shutdown as an interrupted Agent attempt rather than user cancellation",
+        "lets Runtime-managed Agent tasks pass the former two-task local admission limit",
+        "preserves an interrupted state when Agent execution is unconfirmed after a transport failure",
+        "does not reconnect an old execution after its task goal changes",
+        "resumes the same migration attempt after an Agent question",
+        "keeps an answer retryable when Agent startup failed before delivery",
+        "does not certify a requirement when another linked case could not start",
+        "records an environment admission failure as diagnosable evidence",
+        "retains both environment observations and stops when a run changes Runtime",
+        "records a failed basic requirement even when the effect case passes",
+        "saves a diagnosis of an unavailable Runtime without attempting a candidate edit",
+        "provides frozen Runtime capabilities to diagnosis without copying configuration secrets",
+        "passes failed engineering attempts to retries without promoting unfinished work",
+        "starts evidence rescoring without holding the request open and preserves the source run",
+        "marks a rescoring interrupted after a service restart without removing history",
+        "cancels background rescoring without changing the original run",
+        "retains completed execution evidence and blocks candidate repair when Judge fails",
+        "diagnoses a failed development run, repairs its candidate and retests automatically",
+        "runs diagnosis, adjustment, retest and independent Review without activating the experimental candidate",
+        "continues migration repair on the experimental snapshot and passes its review focus to the next diagnosis",
+        "preserves an experimental adjustment but refuses another evaluation before independent review",
+        "allows an idle task to discuss without publishing a candidate and deduplicates retries",
+        "saves changes made in conversation without carrying forward review evidence",
+        "gives the main Agent development evidence with its actual version and excludes holdout data",
+        "runs a requested development evaluation on frozen work and returns its evidence to the same Agent session",
+        "binds independently submitted source reviews to the matching saved work version",
+        "supersedes an earlier approval when a later independent review cannot be validated",
+        "replays a durable goal change and makes old reviews and an active optimization stale",
+        "cancels an Agent-requested evaluation without trying to cancel an already finished Agent round",
+        "requests an independent evidence-bound review after Agent-initiated evaluation",
+        "verifies a draft only after full-scope basic review, independent effect review and required holdout",
+        "uses the reviewed goal without inventing a 100 percent target",
+        "uses the explicitly chosen effect target when evaluating formal delivery",
+        "counts the first adjustment against the chosen time budget and preserves unfinished work",
+        "excludes time waiting for an answer from the first optimization adjustment budget",
+        "keeps effect optimization running when unrelated basic requirements are unverified",
+        "resumes an interrupted review without rerunning evaluation or consuming another round",
+        "retries an incomplete evaluation within the same optimization round",
+        "retains engineering test receipts with their actual input digest",
+        "migrates the whole workspace, repairs two members, freezes history and exports only current verified inputs",
+        "validates reanalysis citations against the original source after the candidate changes",
+        "does not publish a partial candidate or alter the source when a member is removed",
+        "deduplicates operation retries, cancels agent work, and rejects stale candidate commands",
+        "does not offer holdout evidence to repair",
+        "recovers interrupted operations without promoting incomplete runs",
+        "rejects path traversal, case collisions, duplicate Skill names and nested entries",
+        "protects bundle APIs in public workspaces and exposes async operations inside private ones",
+        "accepts a standalone root SKILL.md and more than ten members, but rejects an empty set"
+      ]
+    },
+    {
+      "file": "tests/migration-case-proposals.test.ts",
+      "cases": [
+        "adds suggestions to the editable development draft without modifying holdout or assuming read-only",
+        "shares only development case summaries for coverage, never hidden cases or fixtures",
+        "includes larger development coverage summaries within the conversation limit",
+        "replaces only the untouched empty placeholder and rejects duplicate or overflowing suggestions",
+        "validates imported datasets while retaining independent cases"
+      ]
+    },
+    {
+      "file": "tests/migration-conversation-route.test.ts",
+      "cases": [
+        "passes the task and cursor to the existing task service",
+        "keeps the existing private-workspace restriction",
+        "reads a real existing task through the Python storage bridge"
+      ]
+    },
+    {
+      "file": "tests/migration-customer-workflow.test.ts",
+      "cases": [
+        "does not silently select one Skill from a multi-Skill ZIP",
+        "imports a migration ZIP without judging its layout",
+        "blocks credential-bearing candidate export through the standard task endpoint"
+      ]
+    },
+    {
+      "file": "tests/migration-entry-progress.test.ts",
+      "cases": [
+        "creates ZIP and selected-asset tasks without form text and derives descriptions from the original Skill",
+        "shows the entire initial workflow without treating later pages or saved configuration as completed work",
+        "distinguishes an Agent working draft from a verified delivery",
+        "persists startup results and invalidates them when the candidate, configuration or Builder selection changes",
+        "does not leave a passed badge after a failed retry, and marks abandoned startup checks interrupted on restart",
+        "ignores obsolete acceptance evidence and requires complete acceptance before showing deliverable readiness",
+        "rejects overlapping startup checks and allows a retry after execution ownership is released",
+        "shows missing information, cancellation and current execution without advancing unrelated stages",
+        "never treats a default or saved environment as ready before current-candidate verification"
+      ]
+    },
+    {
+      "file": "tests/migration-export-safety.test.ts",
+      "cases": [
+        "allows conspicuously synthetic test fixtures without excluding tests from scanning",
+        "allows a configuration example only when credential fields have no values"
+      ]
+    },
+    {
+      "file": "tests/migration-http.test.ts",
+      "cases": [
+        "uses independent side payloads over real HTTP and cancels the in-flight connection"
+      ]
+    },
+    {
+      "file": "tests/migration-incomplete-tool.test.ts",
+      "cases": [
+        "cannot turn a name-only incomplete tool into an executable by selecting a generator"
+      ]
+    },
+    {
+      "file": "tests/migration-language.test.ts",
+      "cases": [
+        "keeps the source language when the form can express it",
+        "falls back by form when the source language is not a target of that form",
+        "defaults on an undetermined source language",
+        "accepts a source that spans several languages, choosing the one the form can keep",
+        "names only the languages outside the supported set",
+        "warns instead of blocking when a human override forces a rewrite",
+        "stays silent when the override keeps the source language",
+        "derives the language from the chosen form, not from the platform recommendation",
+        "blocks a source language the platform cannot migrate",
+        "blocks nothing when no tool needs migrating",
+        "refuses to auto-migrate a source language outside the supported set"
+      ]
+    },
+    {
+      "file": "tests/migration-main-agent.test.ts",
+      "cases": [
+        "turns former phase entry points into one main Agent rather than phase Agents",
+        "prepares a complete project through that same main Agent without a structured stage result",
+        "loads newly registered MCP services into the actual evaluation Runtime",
+        "rejects a fabricated delivery entry without saving a runnable candidate",
+        "resumes a historical optimization wait through the main session without charging a second round"
+      ]
+    },
+    {
+      "file": "tests/migration-plan-workflow.test.ts",
+      "cases": [
+        "allows a main-Agent draft to be verified without approving an inherited structured plan",
+        "keeps unavailable and unverified historical environment requirements distinct",
+        "lets the main Agent investigate a coverage gap without forcing a code edit",
+        "renders old change items separately without inventing before/after facts or splitting code and arguments",
+        "reads old analysis without inventing missing plan fields or changing its source text"
+      ]
+    },
+    {
+      "file": "tests/migration-project-root.test.ts",
+      "cases": [
+        "separates operator-pinned migration code from the catalog asset root",
+        "retains the legacy project root when no separate code root is configured",
+        "rejects a relative deployment code override",
+        "reports missing installed entry before starting a subprocess"
+      ]
+    },
+    {
+      "file": "tests/migration-reuse-input-binding.test.ts",
+      "cases": [
+        "resolves actual authorized fields into queries with digest receipts, without changing the approved templates or criteria",
+        "reads JSON text and selected successful occurrence, not model prose or a failed result",
+        "keeps old plans without bindings unchanged",
+        "requires the source and actual consumer to be visible to the same check verification"
+      ]
+    },
+    {
+      "file": "tests/migration-reuse-plan-ui.test.ts",
+      "cases": [
+        "offers explicit clarification rather than letting unresolved proposals bypass confirmation",
+        "shows each acceptance goal and a human-readable explicit revision comparison",
+        "keeps old plans readable without inventing requirement explanations or revision history",
+        "does not label a confirmed revision as awaiting confirmation",
+        "allows clarification of an approved plan without presenting it as an in-place approved edit"
+      ]
+    },
+    {
+      "file": "tests/migration-runtime-client.test.ts",
+      "cases": [
+        "distinguishes an interrupted Runtime from confirmed execution failure and refuses contradictory status",
+        "preserves a confirmed Runtime configuration failure instead of treating it as a disconnected execution",
+        "reattaches a broken stream without submitting the Agent execution twice",
+        "recovers a persisted execution by reading its existing stream without submitting a new task",
+        "reconnects a native review without replaying a model call",
+        "keeps a native model rate limit distinct and does not reconnect a completed failure"
+      ]
+    },
+    {
+      "file": "tests/migration-runtime-context.test.ts",
+      "cases": [
+        "forwards the shared MCP context configuration through the existing Launcher contract"
+      ]
+    },
+    {
+      "file": "tests/migration-runtime-inputs.test.ts",
+      "cases": [
+        "reports a missing required MCP client as a Runtime gap rather than changing the chosen tool",
+        "allows saving incomplete configuration but blocks execution with precise missing fields",
+        "rejects undeclared config, credentials in plain fields and host execution overrides",
+        "resolves references for execution without writing secrets back to saved configuration",
+        "accepts a complete fallback group but rejects mixing incomplete alternatives",
+        "recognizes saved configuration after schema key reordering without ignoring nested edits",
+        "preserves existing runtime context bindings without saving sensitive values in the task",
+        "environment review distinguishes unused alternatives from incomplete groups"
+      ]
+    },
+    {
+      "file": "tests/migration-session-e2e.test.ts",
+      "cases": [
+        "saves an Agent question and resumes the existing migration task through HTTP after a process restart"
+      ]
+    },
+    {
+      "file": "tests/migration-solution-revision.test.ts",
+      "cases": [
+        "identifies a complete runnable solution rather than the Skill ZIP alone",
+        "pins a verified reused capabilities declaration without inventing Builder provenance"
+      ]
+    },
+    {
+      "file": "tests/migration-source-frontmatter.test.ts",
+      "cases": [
+        "preserves malformed source descriptions for diagnosis but rejects malformed generated metadata",
+        "does not infer missing or ambiguous identities from filenames"
+      ]
+    },
+    {
+      "file": "tests/migration-standardization.test.ts",
+      "cases": [
+        "reports the missing planned ID when the same-sized delivery uses a tool name instead",
+        "does not turn uncovered requirements into a request to rewrite passing code",
+        "allows completed effect evidence for optimization without upgrading incomplete acceptance",
+        "requires complete source coverage and three-way comparison without forcing conversion",
+        "accepts equivalent batched tool records without relaxing individual tool validation",
+        "preserves historical two-way plans while requiring a full CLI comparison for new plans",
+        "rejects fabricated baseline evidence, contradictory form, and missing requirement mapping",
+        "rejects unknown configuration alternatives and contradictory required fields",
+        "does not accept files-only delivery or review without actual candidate evidence",
+        "does not treat a passing case and requirement mapping as independent delivery reviews",
+        "uses the independent reviewer decision for advisory issues while keeping unresolved requirements gated"
+      ]
+    },
+    {
+      "file": "tests/migration-start-imported-task.test.ts",
+      "cases": [
+        "starts Skill migration through the main task conversation",
+        "starts complete Agent project preparation in the same conversation"
+      ]
+    },
+    {
+      "file": "tests/migration-store-coordination.test.ts",
+      "cases": [
+        "serializes independent repositories and rejects a stale direct save",
+        "a second platform startup preserves a live task and cannot run a second editor"
+      ]
+    },
+    {
+      "file": "tests/migration-suite-identity.test.ts",
+      "cases": [
+        "keeps verified old and new evaluations current only when executable inputs match"
+      ]
+    },
+    {
+      "file": "tests/migration-suite.test.ts",
+      "cases": [
+        "separates development feedback from holdout and rejects unrelated repair records"
+      ]
+    },
+    {
+      "file": "tests/migration-takeover-e2e.test.ts",
+      "cases": [
+        "replaces the whole Runtime and lets another platform instance continue the same task and workspace"
+      ]
+    },
+    {
+      "file": "tests/migration-task-activity.test.ts",
+      "cases": [
+        "shows a rejected Agent result as failed rather than completed",
+        "streams unified activity, closes SSE on shutdown and protects private activity"
+      ]
+    },
+    {
+      "file": "tests/migration-task-agent-output.test.ts",
+      "cases": [
+        "corrects redundant metadata with no second code-agent run or file changes",
+        "rejects metadata correction that changes the declared delivery",
+        "does not invent a complete proposal from a summary-only analysis",
+        "requires per-tool diagnosis instead of silently accepting only a plan",
+        "runs a combined engineering adjustment once and records the shared role"
+      ]
+    },
+    {
+      "file": "tests/migration-task-builder.test.ts",
+      "cases": [
+        "submits the frozen candidate to the Builder API and admits its completed delivery",
+        "resumes read-only basic validation after a real service shutdown",
+        "preserves actual Runtime capabilities when packaged MCP is unavailable",
+        "does not bind an automatic delivery for a different build",
+        "does not send a candidate after its saved build configuration changes",
+        "cancels an in-flight automatic build without binding a delivery",
+        "resumes a persisted Builder handle after restart without submitting another build",
+        "marks an interrupted candidate startup check honestly when recovery is unavailable",
+        "preserves the remote build on service shutdown and resumes it after restart",
+        "interrupts and resumes the standalone startup check without rebuilding",
+        "passes target Runtime protocol requirements to Builder without changing tool choices",
+        "reuses the Runtime across candidate and configuration changes but invalidates acceptance",
+        "does not accept another task receipt and never exports holdout cases in requirements",
+        "serializes duplicate deliveries and a concurrent configuration change",
+        "recovers after registry admission succeeds but the task write fails, without false success logs",
+        "requires fresh acceptance after explicitly switching from Builder to an existing environment",
+        "checks required native contracts against the actual Launcher declaration",
+        "rejects expired or credential-bearing delivery before any lifecycle call",
+        "invalidates business acceptance when Judge identity changes without invalidating Runtime delivery"
+      ]
+    },
+    {
+      "file": "tests/migration-task-compatibility.test.ts",
+      "cases": [
+        "rejects retired task APIs without modifying stored historical records",
+        "creates a task from an independent Skill and optional shared files, rejecting unsafe dependency input",
+        "imports more than ten Skills through both whole-project ZIP and existing-asset selection"
+      ]
+    },
+    {
+      "file": "tests/migration-task-control.test.ts",
+      "cases": [
+        "persists pause/resume through Python and refuses a duplicate pause before contacting Runtime",
+        "keeps a local delivery failure paused and records an unconfirmed remote control honestly"
+      ]
+    },
+    {
+      "file": "tests/migration-task-lifecycle-race.test.ts",
+      "cases": [
+        "an idempotent duplicate cannot remove the registering owner from cancellation",
+        "failed registration releases capacity and close waits for both remaining operations",
+        "cancellation during Git freezing cannot publish a new working version",
+        "keeps capability failure details in task evidence and out of operational logs"
+      ]
+    },
+    {
+      "file": "tests/migration.test.ts",
+      "cases": [
+        "persists immutable whole-workspace versions and never treats a draft as accepted",
+        "public demo cannot read, create or export standard migration tasks",
+        "does not load or rewrite historical tasks through the current service"
+      ]
+    },
+    {
+      "file": "tests/model-auth-mode.test.ts",
+      "cases": [
+        "configures every API model role, permits role overrides and rejects invalid modes"
+      ]
+    },
+    {
+      "file": "tests/model-output-correction.test.ts",
+      "cases": [
+        "extracts a fenced JSON object without calling the model again",
+        "sends only the malformed answer and structured errors to a tool-free completion",
+        "rejects a repair that changes a parseable substantive claim",
+        "does not use a workspace-capable CLI adapter for format repair"
+      ]
+    },
+    {
+      "file": "tests/model-proxy.test.ts",
+      "cases": [
+        "routes model HTTP through the configured proxy and honors NO_PROXY"
+      ]
+    },
+    {
+      "file": "tests/native-bank-fixture-pack.test.ts",
+      "cases": [
+        "pins the output-format method revision without relaxing the bank case"
+      ]
+    },
+    {
+      "file": "tests/native-launcher-comparison.test.ts",
+      "cases": [
+        "uses native batch execution with progress and finalization instead of running each side in TS",
+        "retains ordinary adapters for replay and existing non-launcher integrations",
+        "retains cleanup receipts when the native execution fails"
+      ]
+    },
+    {
+      "file": "tests/neutral-archive.test.ts",
+      "cases": [
+        "retains code bytes as inert data and matches asset digest",
+        "rejects stale digests",
+        "requires exact server configured destination, not a frontend runtime label"
+      ]
+    },
+    {
+      "file": "tests/openai-compatible-model.test.ts",
+      "cases": [
+        "forwards configured completions to Python without credentials or provider network logic",
+        "retains the trusted explicit binding contract while Python owns provider behavior",
+        "preserves structured Python failures",
+        "does not expose a malformed internal error body",
+        "cancelled requests cannot submit model work"
+      ]
+    },
+    {
+      "file": "tests/optimization-agent-live.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/optimization-asset-evidence.test.ts",
+      "cases": [
+        "includes actual tool source while preserving binary and sensitive assets outside the model input"
+      ]
+    },
+    {
+      "file": "tests/optimization-cycle.test.ts",
+      "cases": [
+        "runs independent optimization tasks concurrently without permitting concurrent use of one holdout"
+      ]
+    },
+    {
+      "file": "tests/optimization-loop.test.ts",
+      "cases": [
+        "accepts the user-selected optimization budget beyond five rounds",
+        "stops on an explicitly specified expired time budget",
+        "preserves a previously reviewed result when time runs out before resuming",
+        "treats cancellation as cancellation even if the time budget is exhausted",
+        "ends normally when the running coordinator reaches its time budget",
+        "diagnoses again after a rejected experiment, then stops at the goal with an independently reviewed candidate",
+        "requires an explained tradeoff before following a positive Review with regressions",
+        "can recommend overall improvement with an explained ordinary regression",
+        "diagnoses and edits the exploratory version, then reviews against both parent and incumbent",
+        "does not invent a pass rate for incomplete cases",
+        "does not promote an exploratory version when the budget ends, even if its pass rate reaches the target",
+        "returns to the incumbent after an exploratory branch is rejected",
+        "rejects unknown must-pass case IDs before calling any agent",
+        "does not continue an experimental candidate without a repair direction",
+        "does not send incomplete or differently configured evaluation to Review",
+        "rejects an evaluation receipt for a different candidate before Review",
+        "stops before launching work when cancelled and records the reason",
+        "cancels an active agent capability and retains the reviewed baseline",
+        "does not review or evaluate a candidate with no effective change",
+        "waits without ending the task and resumes the same round after an authorized Runtime change",
+        "resumes an input wait at the same adjustment before reevaluating",
+        "uses the Builder capability and resumes the same round after the verified delivery",
+        "resumes a waiting optimization without inventing a time budget",
+        "does not authorize changed evaluation criteria through a Builder resume"
+      ]
+    },
+    {
+      "file": "tests/optimization-state-race.test.ts",
+      "cases": [
+        "does not overwrite completion when a live task finishes during a stale read",
+        "still marks an orphaned task interrupted after a restart"
+      ]
+    },
+    {
+      "file": "tests/optimization.test.ts",
+      "cases": [
+        "rebinds both optimization sides to the target Runtime and exact current/candidate assets",
+        "preserves Runtime Launcher transport when rebinding an optimized candidate",
+        "loads holdout independently of development cases"
+      ]
+    },
+    {
+      "file": "tests/original-service-comparison.test.ts",
+      "cases": [
+        "calls a real original HTTP service with its own nested request and response formats, without claiming original Runtime identity",
+        "reports HTTP, missing mapping and timeout failures instead of using a false baseline; redacts echoed credentials",
+        "uses grounded quotes from both sides, rejects fabricated or missing PASS evidence, and separates execution failure",
+        "routes baseline calls to the original service and candidate calls only to the right Runtime",
+        "identifies the invalid quote on retry without accepting concatenated or rewritten evidence",
+        "exports two-side answers and grounded comparison results without misleading win scores"
+      ]
+    },
+    {
+      "file": "tests/pr4-hardening.test.ts",
+      "cases": [
+        "rejects MCP tool error results despite successful JSON-RPC"
+      ]
+    },
+    {
+      "file": "tests/production-logging.test.ts",
+      "cases": [
+        "logs correlation and status without headers, query, body or upstream error content",
+        "keeps safe error categories while excluding arbitrary properties and stack",
+        "extracts only the final stderr exception category"
+      ]
+    },
+    {
+      "file": "tests/production-shutdown.test.ts",
+      "cases": [
+        "finishes a live SSE response before Fastify waits for open connections"
+      ]
+    },
+    {
+      "file": "tests/project-comparison.test.ts",
+      "cases": [
+        "compares frozen project and candidate case verdicts without treating them as a pairwise judgment"
+      ]
+    },
+    {
+      "file": "tests/project-preparation.test.ts",
+      "cases": [
+        "keeps strict Skill uploads but accepts complete projects, including deep legacy and absent Skill files",
+        "preserves source, continues from preparation, and never promotes command success to a business baseline",
+        "registers the main conversation preparation for the existing baseline runner",
+        "keeps project preparation attached to the same conversation after a question",
+        "rejects invented Skill files without publishing a preparation",
+        "assembles concise preparation guidance on the existing engineering executor",
+        "connects an original project baseline to the migrated candidate on the same development cases"
+      ]
+    },
+    {
+      "file": "tests/repeated-assessment.test.ts",
+      "cases": [
+        "counts missing and failed assessments in coverage without inventing agreement",
+        "exchanges actual anonymous model inputs and maps votes back to original sides"
+      ]
+    },
+    {
+      "file": "tests/repeated-business-execution.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/replay.test.ts",
+      "cases": [
+        "reproduces the frozen two-case Skill value conclusion"
+      ]
+    },
+    {
+      "file": "tests/run-questions.test.ts",
+      "cases": [
+        "generates a larger dataset in bounded batches and carries previous cases into the next batch",
+        "rejects a repeated case across batches instead of freezing a partial dataset",
+        "does not request another batch after cancellation",
+        "accepts more than eight selected and manually supplied cases while retaining the dataset bound",
+        "resolves every selected case from a larger frozen pack and rejects missing selections",
+        "passes the complete larger selection from the run manager to the runner",
+        "reads professional references but not hidden answers; each run has a fresh request identity",
+        "does not make a repair request after cancellation",
+        "rejects dynamic replay, holdout and preselected questions at the API contract",
+        "freezes one batch for both sides and retains that batch on retry"
+      ]
+    },
+    {
+      "file": "tests/runner.test.ts",
+      "cases": [
+        "retains failure correlation without scoring or asserting successful installation",
+        "records blocked cases as not executed and excludes them from quality scoring",
+        "cleans up host resources when environment preparation fails",
+        "stops runtime execution and still cleans up when cancelled"
+      ]
+    },
+    {
+      "file": "tests/runtime-builder-contract.test.ts",
+      "cases": [
+        "implements RFC 8785 key ordering and rejects non-JSON values",
+        "round-trips strict requirements and deployed Launcher result contracts",
+        "ships parseable success, partial, failed and incomplete examples",
+        "rejects digest, duplicate, missing, contract and Launcher capability mismatches",
+        "binds an iterative rebuild to its previous solution and rejects the old deployment",
+        "ignores legacy Skill capacity while preserving file and timeout limits"
+      ]
+    },
+    {
+      "file": "tests/runtime-builder-intake.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/runtime-bundle.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/runtime-cleanup-contract.test.ts",
+      "cases": [
+        "publishes the same portable cleanup fields and statuses as the receiver",
+        "preserves actionable qualification errors without exposing upstream details"
+      ]
+    },
+    {
+      "file": "tests/runtime-comparison-report.test.ts",
+      "cases": [
+        "counts absolute outcomes on each side and never manufactures a tie",
+        "renders missing judgments and both runtime failures as unavailable, not a tie",
+        "supports historical reports without judgeId and preserves genuine pairwise ties",
+        "does not treat a failed runtime as a quality PASS even in inconsistent stored data",
+        "does not call a failed paired execution completed or diagnose its empty answer as a Skill gap",
+        "keeps model grading unavailability separate from completed execution",
+        "does not turn missing or partial token accounting into zero consumption"
+      ]
+    },
+    {
+      "file": "tests/runtime-environment.test.ts",
+      "cases": [
+        "uses declared built-in Harness tools without external MCP discovery",
+        "counts a directly inspected MCP as one service, not zero bindings",
+        "reports only tools that are not exposed by the linked MCP servers"
+      ]
+    },
+    {
+      "file": "tests/runtime-intake.test.ts",
+      "cases": [
+        "shares feature checks without requiring optional telemetry or project execution for every runtime",
+        "never treats malformed or incorrectly correlated execution as an accepted runtime",
+        "loads the common intake contract into the engineering preparation Agent"
+      ]
+    },
+    {
+      "file": "tests/runtime-launcher-descriptor-contract.test.ts",
+      "cases": [
+        "publishes optional MCP feature flags without requiring them from older Launchers",
+        "accepts a matching Builder-delivered Launcher descriptor and capabilities response",
+        "normalizes local URLs and rejects unsafe remote Launcher URLs",
+        "detects delivery drift and requires observability for new Builder deliveries",
+        "publishes strict JSON Schemas for the Launcher delivery boundary",
+        "ships one complete Runtime Launcher lifecycle example",
+        "publishes the current optional capability flags and unified process schema"
+      ]
+    },
+    {
+      "file": "tests/runtime-launcher-multi-turn.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/runtime-launcher-stream.test.ts",
+      "cases": [
+        "rejects an oversized SSE frame before JSON parsing",
+        "applies a separate serialized limit to terminal evidence",
+        "rejects a stream that ends with an unfinished frame",
+        "accepts identical retransmission but rejects conflicting or missing terminal evidence",
+        "keeps causal tool IDs and digests without persisting diagnostic messages or raw native data"
+      ]
+    },
+    {
+      "file": "tests/runtime-launcher.test.ts",
+      "cases": [
+        "waits for capacity using the same launch identity",
+        "runs a true no-Skill baseline and rejects an unexpected loaded member",
+        "retains failure and skips subsequent cases only in the controlled comparison mode",
+        "validates a complete generation contract without accepting unsupported options"
+      ]
+    },
+    {
+      "file": "tests/runtime-observation-contract.test.ts",
+      "cases": [
+        "keeps normalized semantics separate from framework-native event names",
+        "requires execution correlation and identifies synthesized events",
+        "rejects oversized and sensitive observation payloads at the receiver boundary",
+        "enforces observation profile minimums without requiring optional events for acceptance",
+        "advertises observation support without breaking legacy Launcher capabilities"
+      ]
+    },
+    {
+      "file": "tests/runtime-process.test.ts",
+      "cases": [
+        "reports tool completeness consistently and never upgrades partial process from legacy telemetry",
+        "uses saved process records for rules, scripts and Agent queries",
+        "projects real returned values into existing tools and exposes citations to judges",
+        "keeps unavailable/partial records truthful and does not fabricate missing outputs",
+        "rejects duplicate calls, oversized data and conflicting complete summaries",
+        "requires the new contract on intake but keeps historical reports readable"
+      ]
+    },
+    {
+      "file": "tests/runtime-skill-package.test.ts",
+      "cases": [
+        "preserves a nested document and sibling executable projects without synthetic aliases",
+        "omits the additive entrypoint for an existing root document",
+        "rejects a document missing from the verified archive"
+      ]
+    },
+    {
+      "file": "tests/runtime-skills.test.ts",
+      "cases": [
+        "keeps member resources and shared binary assets separate without changing frozen bytes"
+      ]
+    },
+    {
+      "file": "tests/runtime-tool-config.test.ts",
+      "cases": [
+        "accepts explicit values, environment variables and mapped provider inputs",
+        "rejects ambiguous value sources and non-context references",
+        "rejects legacy Script injection and invalid or conflicting header bindings"
+      ]
+    },
+    {
+      "file": "tests/runtime-tool-process-evidence.test.ts",
+      "cases": [
+        "correlates actual completed Script calls without exposing digests or claiming OS isolation",
+        "retains absence as unknown instead of inferring independent processes from calls",
+        "publishes an additive optional capabilities flag and portable strict receipt schema"
+      ]
+    },
+    {
+      "file": "tests/saved-run-analysis.test.ts",
+      "cases": [
+        "classifies unavailable cases and binds code to the frozen run without leaking holdout",
+        "rejects invented case references and a cancelled investigation without persisting a result"
+      ]
+    },
+    {
+      "file": "tests/script-verifier-wsl-live.test.ts",
+      "cases": []
+    },
+    {
+      "file": "tests/service-config.test.ts",
+      "cases": [
+        "gives the question writer room to reason",
+        "lets an operator pin one, because the model behind a role can change",
+        "reaches the adapter, not just the helper",
+        "normalizes operator-managed targets and rejects insecure remote prefixes",
+        "keeps the Codex default independent of the shared execution model",
+        "respects an explicitly configured Codex Judge model",
+        "does not advertise an unavailable command as configured",
+        "uses an explicit executable even when the service PATH is empty"
+      ]
+    },
+    {
+      "file": "tests/service-environment.test.ts",
+      "cases": [
+        "reads historical service bindings without rewriting records and rejects changed or unknown bindings",
+        "resolves environment values only in the trusted Runtime transport, keeping the run configuration value-free"
+      ]
+    },
+    {
+      "file": "tests/service.test.ts",
+      "cases": [
+        "keeps public demo administration and model consumption behind authenticated curated routes",
+        "lists preset packs, accepts a Skill ZIP and completes a persisted replay run"
+      ]
+    },
+    {
+      "file": "tests/shared-diagnosis.test.ts",
+      "cases": [
+        "records the shared role and injected policy without exposing task content",
+        "stops a diagnosis even if a custom model ignores cancellation"
+      ]
+    },
+    {
+      "file": "tests/shared-evaluation.test.ts",
+      "cases": [
+        "uses the exact custom runtime and retains diagnostic failure evidence in comparison mode",
+        "does not turn cancellation into a failed business result",
+        "keeps rule and state failures visible alongside a passing Agent judgement",
+        "does not accept a completed answer as proof of the requested candidate and skill group",
+        "checks project execution without claiming internally discovered Skills were injected",
+        "rejects ambiguous method identities before executing evaluators",
+        "isolates method errors and skips only their dependent judges",
+        "bounds a non-responsive evaluator and preserves subsequent checks",
+        "keeps evaluator mutations out of later judges and propagates user cancellation"
+      ]
+    },
+    {
+      "file": "tests/side-runtime.test.ts",
+      "cases": [
+        "routes independent sides and cleans both after second prepare fails",
+        "cleanup failures do not skip the other side",
+        "keeps plain runs compatible but rejects direct/replay migration and unequal models"
+      ]
+    },
+    {
+      "file": "tests/skill-engineering.test.ts",
+      "cases": [
+        "uses one task Agent to adjust Skill and tool files while preserving protected assets",
+        "aligns a standard Skill version while retaining legacy instruction bytes",
+        "does not publish a changed binary or an unrequested review",
+        "does not start a cancelled adjustment and rejects paths outside the workspace",
+        "preserves the actual clarification question when an adjustment cannot continue",
+        "passes the answer to the same engineering attempt without accepting unidentified questions"
+      ]
+    },
+    {
+      "file": "tests/skill-runtime-requirements.test.ts",
+      "cases": [
+        "keeps declared installation dependencies when only one case or tool is selected",
+        "keeps per-case auxiliary tools separate and accepts explicit no-tool methods",
+        "preserves old non-declarative input without guessing dependencies"
+      ]
+    },
+    {
+      "file": "tests/source-evidence.test.ts",
+      "cases": [
+        "matches CRLF, LF and CR in either source or citation and reports the real line",
+        "does not erase indentation, quoted spaces or invented content",
+        "keeps original data unchanged and scopes cached normalization to one snapshot"
+      ]
+    },
+    {
+      "file": "tests/stage-envelope.test.ts",
+      "cases": [
+        "refuses a product that cannot say what it was built from",
+        "refuses a stage, producer or status outside the defined sets",
+        "keeps an abstention distinct from a failure",
+        "stamps the version and the moment, and keeps the binding it was given",
+        "goes stale when the asset or an upstream product moves, and only then"
+      ]
+    },
+    {
+      "file": "tests/standalone-optimization-runtime.test.ts",
+      "cases": [
+        "runs comparison optimization through one Jiuwen Agent for Skill and tool changes"
+      ]
+    },
+    {
+      "file": "tests/wealth-replay.test.ts",
+      "cases": [
+        "reproduces the expert-calibrated professional gains without claiming Runtime identity"
+      ]
+    },
+    {
+      "file": "tests/workspace-consolidation.test.ts",
+      "cases": [
+        "places manual evidence under the project and gives repeated runs independent directories",
+        "keeps complete selected projects and matching configurations, with both originals archived",
+        "refuses conflicting immutable asset bytes before writing output",
+        "rejects missing referenced runs instead of presenting an incomplete recovered project",
+        "refuses existing destinations and overlapping source paths",
+        "selects a unified task and its snapshots from one source, including explicit selection",
+        "does not mix an older snapshot into the selected newer task",
+        "rejects a task whose saved snapshot differs from its bound digest",
+        "keeps a Git-backed task and its repository from the same selected workspace"
+      ]
+    },
+    {
+      "file": "tests/workspace-ingress.test.ts",
+      "cases": [
+        "requires both trusted ingress credential and the configured workspace subject on private reads and writes",
+        "cannot enable single-owner workspace with only a spoofable identity header"
+      ]
+    },
+    {
+      "file": "tests/workspace-request-budget.test.ts",
+      "cases": [
+        "bounds one account without consuming another account allowance",
+        "uses a rolling window and does not refill on rejected requests",
+        "recognizes only the non-executing preflight route"
+      ]
+    }
+  ],
+  "nativeCoverage": [
+    "tests/test_native_public_api.py",
+    "tests/test_native_comparison_controller.py",
+    "tests/test_native_migration_controller.py",
+    "tests/test_native_optimization_controller.py",
+    "tests/test_native_engineering.py",
+    "tests/test_native_models.py",
+    "tests/test_native_launcher.py",
+    "tests/test_environment_api.py",
+    "tests/test_backend_boundaries.py"
+  ],
+  "note": "Old SDK tests target removed classes and callback injection. Native Python tests and real HTTP verification validate the replacement; test counts are not a one-to-one parity claim.",
+  "retiredUtilities": [
+    {
+      "file": "scripts/generate-runtime-builder-examples.ts",
+      "reason": "Unreferenced generator imports retired npm contracts and emits obsolete examples; current published JSON examples and schema validation remain."
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import {mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {afterEach,expect,it} from 'vitest';
-import {openJiuwenEnvironment,projectPython,resolveOpenJiuwenPython,validateRuntimeConfiguration} from '../scripts/lib/openjiuwen-environment.mjs';
+import {openJiuwenEnvironment,projectPython,projectRoot,resolveOpenJiuwenPython,validateRuntimeConfiguration} from '../scripts/lib/openjiuwen-environment.mjs';
 
 const roots:string[]=[];
 afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
@@ -28,7 +28,8 @@ it('fails on a broken or relative operator override instead of falling back',()=
 it('isolates user site packages and inherited Python homes while preserving explicit fixture paths',()=>{
   const env=openJiuwenEnvironment({PYTHONHOME:'old-conda',PYTHONPATH:'owned-fixture',PYTHONNOUSERSITE:'0'});
   expect(env.PYTHONHOME).toBeUndefined();
-  expect(env).toMatchObject({PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1',PYTHONPATH:'owned-fixture'});
+  expect(env).toMatchObject({PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'});
+  expect(env.PYTHONPATH.split(path.delimiter)).toEqual([path.join(projectRoot,'src'),projectRoot,'owned-fixture']);
 });
 
 it('keeps startup model validation without revealing private configuration in errors',()=>{

@@ -86,7 +86,8 @@ export function liveTaskBuilder({directory, port, python, modelConfig}) {
     const response=await accepted;
     assert.equal(response.status(),200,await response.text());
     const capabilities=await fetch(baseUrl+'v1/runtime-capabilities',{headers:{authorization:'Bearer '+info.token}}).then(r=>r.json());
-    assert(capabilities.features.multiSkill);
+    assert.equal(capabilities.schemaVersion,'finance.runtime-capabilities.v1');
+    assert(capabilities.models?.length>0);
     return capabilities;
   }
   return {baseUrl,trust,builds,bind,close};

@@ -1,14 +1,14 @@
 """Trusted, versioned role guidance. Skills are loaded eagerly, not discovered in task files."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 from pathlib import Path
 import re
 
-ROLE_ROOT = Path(__file__).resolve().parents[2] / 'agent-roles'
+ROLE_ROOT = Path(__file__).resolve().parents[2] / 'src' / 'resources' / 'agents'
 MODES = {'PREPARE': 'runtime-preparation', 'ANALYZE': 'diagnosis', 'GENERATE': 'migration', 'REPAIR': 'migration', 'REVIEW': 'standardization-review'}
 READ_TOOLS = {'read_file', 'glob', 'list_files', 'grep', 'submit_result', 'record_result', 'correct_result'}
-WRITE_TOOLS = {'write_file', 'edit_file', 'compile_source', 'run_contract_test', 'run_mcp_contract_suite'}
+WRITE_TOOLS = {'write_file', 'edit_file', 'delete_file', 'compile_source', 'run_contract_test', 'run_mcp_contract_suite', 'run_project_command'}
 
 
 def digest(value):
@@ -47,6 +47,11 @@ class AgentRole:
 
 
 def load_bundle_role(mode, version='v1', adjustment_capabilities=None):
+    if mode == 'CHAT':
+        role = load_role('migration', version, mode='GENERATE')
+        definition = dict(role.definition)
+        definition['tools'] = [name for name in definition['tools'] if name not in {'submit_result', 'record_result', 'correct_result'}]
+        return replace(role, definition=definition)
     if mode not in MODES:
         raise ValueError('Unknown bundle role')
     if adjustment_capabilities is not None:
@@ -59,11 +64,11 @@ def load_bundle_role(mode, version='v1', adjustment_capabilities=None):
 
 
 def load_role(role, version='v1', *, profile=None, capabilities=None, mode=None):
-    if role not in {*MODES.values(), 'adjustment'} or not re.fullmatch(r'v[1-9][0-9]*', version):
+    if role not in {*MODES.values(), 'adjustment', 'optimization-coordinator', 'effect-review', 'improvement-diagnosis', 'criterion-judge'} or not re.fullmatch(r'v[1-9][0-9]*', version):
         raise ValueError('Unknown agent role/version')
-    if profile not in {None, 'engineering'}:
+    if profile not in {None, 'engineering', 'proposal'}:
         raise ValueError('Unknown agent execution profile')
-    if profile == 'engineering' and role != 'adjustment':
+    if profile and role != 'adjustment':
         raise ValueError('Profile does not belong to this role')
     root = (ROLE_ROOT / version).resolve(strict=True)
 
@@ -83,16 +88,26 @@ def load_role(role, version='v1', *, profile=None, capabilities=None, mode=None)
         definition.update(selected)
         definition['skills'] = (base['skills'] if role == 'adjustment' else []) + selected.get('skills', [])
     if role == 'adjustment':
-        if profile != 'engineering' or not capabilities or any(c not in base['capabilitySkills'] for c in capabilities):
+        if profile not in ('engineering', 'proposal') or not capabilities or any(c not in base['capabilitySkills'] for c in capabilities):
             raise ValueError('Invalid adjustment assembly')
+        if profile == 'proposal' and 'runtime' in capabilities:
+            raise ValueError('Proposal cannot modify runtime')
         definition['skills'] += [path for capability in capabilities for path in base['capabilitySkills'][capability]]
-    writable = role in ('runtime-preparation', 'migration', 'adjustment')
+    writable = role in ('runtime-preparation', 'migration') or (role == 'adjustment' and profile == 'engineering')
     ceiling = READ_TOOLS | (WRITE_TOOLS if writable else set())
+    if role == 'optimization-coordinator':
+        ceiling = {'diagnose_optimization', 'adjust_candidate', 'build_runtime', 'evaluate_candidate', 'review_candidate', 'finish_optimization'}
+    if role == 'effect-review':
+        ceiling = set()
+    if role in ('improvement-diagnosis', 'criterion-judge'):
+        ceiling = {'query_evidence'}
     if role == 'runtime-preparation':
-        ceiling = READ_TOOLS | {'write_file', 'edit_file', 'run_project_command'}
+        ceiling = READ_TOOLS | {'write_file', 'edit_file', 'delete_file', 'run_project_command'}
     if role == 'diagnosis':
         ceiling |= {'run_scanner'}
-    if (definition['executor'] != 'openjiuwen-bundle' or (mode and mode not in definition['modes'])
+    expected_executor = ('tool-free-model' if role == 'effect-review' or (role == 'adjustment' and profile == 'proposal') else
+                         'evidence-model' if role in ('improvement-diagnosis', 'criterion-judge') else 'openjiuwen-bundle')
+    if (definition['executor'] != expected_executor or (mode and mode not in definition['modes'])
             or definition['writeScope'] != ('candidate' if writable else 'none')
             or not set(definition['tools'] + definition['conditionalTools']) <= ceiling):
         raise ValueError('Agent definition exceeds executable permissions')

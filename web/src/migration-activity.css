@@ -53,3 +53,4 @@
 .activity-compact .activity-scroll { height:240px;padding:14px 16px; }
 .activity-compact > footer { padding:8px 16px; }
 .activity-compact .button { font-size:12px; }
+.activity-streaming-response { padding: 12px 16px; overflow-wrap: anywhere; }

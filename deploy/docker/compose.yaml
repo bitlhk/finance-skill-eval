@@ -9,6 +9,7 @@ x-common: &common
       format: raw
   environment: &environment
     FINANCE_EVAL_DATA_DIR: /app/data
+    FINANCE_EVAL_CONFIG_FROM_ENV: "1"
     FINANCE_RUNTIME_CONFIG: /run/config/runtime.json
     FINANCE_EVAL_MIGRATION_PYTHON: /app/.venv-openjiuwen/bin/python
     FINANCE_EVAL_HOST: 0.0.0.0
@@ -29,6 +30,9 @@ services:
   api:
     <<: *common
     command: [node, deploy/run.mjs, api]
+    environment:
+      <<: *environment
+      FINANCE_EVAL_AGENT_RUNTIME_URL: http://agent-runtime:56363
     ports: ["127.0.0.1:${FINANCE_EVAL_PUBLISH_PORT:-56361}:56361"]
     volumes:
       - api-data:/app/data
@@ -37,8 +41,23 @@ services:
     depends_on:
       runtime:
         condition: service_healthy
+      agent-runtime:
+        condition: service_healthy
     healthcheck:
       test: [CMD, node, -e, "fetch('http://127.0.0.1:56361/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      start_period: 90s
+      retries: 5
+  agent-runtime:
+    <<: *common
+    command: ["/app/.venv-openjiuwen/bin/python", "-m", "uvicorn", "integrations.openjiuwen.migration_runtime:app", "--host", "0.0.0.0", "--port", "56363"]
+    volumes:
+      - api-data:/app/data
+      - api-cache:/app/cache
+      - ${FINANCE_EVAL_CONFIG_DIR}/runtime.json:/run/config/runtime.json:ro
+    healthcheck:
+      test: [CMD-SHELL, "node -e \"fetch('http://127.0.0.1:56363/internal/health',{headers:{authorization:'Bearer '+process.env.FINANCE_EVAL_ACCESS_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 20s
       timeout: 5s
       start_period: 90s
@@ -51,7 +70,7 @@ services:
       - runtime-cache:/app/cache
       - ${FINANCE_EVAL_CONFIG_DIR}/runtime.json:/run/config/runtime.json:ro
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:56362/v1/runtime-capabilities').then(async r=>process.exit(r.ok&&(await r.json()).features.multiSkill?0:1)).catch(()=>process.exit(1))"]
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:56362/v1/runtime-capabilities').then(async r=>{const c=await r.json();process.exit(r.ok&&c.schemaVersion==='finance.runtime-capabilities.v1'&&Array.isArray(c.models)&&c.models.length>0?0:1)}).catch(()=>process.exit(1))"]
       interval: 20s
       timeout: 5s
       start_period: 90s

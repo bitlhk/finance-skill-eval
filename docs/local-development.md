@@ -1,8 +1,12 @@
 # 本地开发与模型配置
 
+后端已统一为 Python HTTP 服务。`pnpm serve` 和保留的 CLI 都使用项目专用解释器；Node 启动脚本不实现迁移、评测或优化业务。实际代码入口见[当前架构](current-architecture.md)。
+
+模型限流重试复用 OpenJiuwen SDK，可由服务端设置 `FINANCE_EVAL_MODEL_MAX_RETRIES`（0–12，默认 3）；主 Runtime 会传给按需拉起的实例。它只延长 SDK 的有限退避，仍受调用总超时限制，不会提高供应商的 TPM，也不能让单次超过配额的请求成功。提高此值后需重启相关服务。
+
 ## 唯一工作目录与发布来源
 
-本机 Eval 的保留目录为 `C:/Users/Administrator/Documents/code_projects/finance-skill-eval`。本次整合分支为 `feat/consolidate-eval-workspace`，包含主线统一迁移流程与原目录的本地改动。Git 工作区与运行数据目录是两回事；归档代码工作区不会自动迁移业务任务，也不会转换旧协议记录。
+本机 Eval 的保留目录为 `C:/Users/Administrator/Documents/code_projects/finance-skill-eval`。开发在当前 Git 分支上进行，不以旧整合分支名选择实现。Git 工作区与运行数据目录是两回事；归档代码工作区不会自动迁移业务任务，也不会转换旧协议记录。
 
 版本由 Git commit/tag 管理。手动启动、Windows 服务和 Linux 服务都直接运行指定项目目录的代码，读取该目录 `.env.local`。不再维护发布副本；修改源码后须构建并重启，切换 Git 版本前须停服务并备份数据。
 
@@ -26,7 +30,7 @@ OpenJiuwen Runtime 与迁移 Agent 使用 `.runtime.local.json` 中模型条目�
 
 旧 `migration-bundles`、`migrations` 及不兼容任务记录可在迁移任务页的“历史迁移任务”中只读查看；旧环境登记在“测试环境”的“历史环境登记”中展示。历史分析、候选、验收证据和可用文件快照保持原样，可下载历史留档。页面说明无法继续执行的原因，后端拒绝修改与执行；历史通过不代表当前协议验收通过。使用原始 Skill 新建任务后才能按当前协议重新验收。检查归档结果后再启用新数据目录，并重新验证 Runtime 是否在线。
 
-基础环境要求：Node.js 22 或更高版本、pnpm。使用本地 OpenJiuwen Runtime 或 Skill 迁移能力时，还需要 Python 3.11–3.13 和 `uv`。
+基础环境要求：Node.js 22 或更高版本、pnpm、Python 3.11–3.13 和 `uv`。Python 负责全部后端能力，Node 负责前端构建与启动辅助。
 
 ### 统一的 OpenJiuwen 环境
 
@@ -58,6 +62,12 @@ Copy-Item .runtime.local.example.json .runtime.local.json
 
 在 `.runtime.local.json` 中填写可用模型的 `baseUrl`、`apiKey` 和 `upstreamModelId`，并设置 `defaultModelId`（省略时使用第一个启用的模型）。该文件只属于本机运行环境，已被 Git 忽略，不应提交。
 
+迁移主 Agent 的长会话使用 OpenJiuwen 的上下文处理。建议在对应模型配置中增加 `contextWindowTokens`（正整数，不超过模型实际总上下文窗口），供大结果外置和上下文压缩计算阈值；它不是单次输出的 `maxTokens`。网关 TPM 较低时可主动设置较小的有效上下文预算，避免历史和工具定义占满单次请求额度；这不会提高网关配额，压缩本身也需要一次模型调用。未配置时框架按模型名查找内置窗口，未知模型会使用框架默认值，可能与实际窗口不一致，应由部署人员核对。上下文外置文件和会话材料保存在任务工作区，需与任务数据一同保留。
+
+模型支持原生工具调用时默认直接使用 SDK；特定角色需要使用已有文本工具兼容模式时，可设 `FINANCE_EVAL_OPTIMIZER_NATIVE_TOOLS=false`，主迁移 Agent 则使用 `FINANCE_EVAL_MIGRATION_NATIVE_TOOLS=false`。兼容模式仍通过相同 SDK 访问模型、执行相同工具与权限检查，不会新增模型 HTTP 客户端。每项配置只影响对应角色，不改变业务 Launcher；Runtime 模型绑定显式声明 `supportsTools` 时以绑定为准。
+
+若模型网关的 SSE 响应存在中途停顿或缺失最终回答，可在对应 Runtime 模型条目设置 `supportsStreaming: false`。主 Agent 和内置业务 Worker 共同使用 SDK `invoke` 获取每次完整模型响应，再交回框架继续执行；原生工具 schema、调用参数、用量和过程记录保持完整。此项只控制上游模型传输，平台 HTTP/SSE、工具事件和任务进度仍持续输出；默认仍使用原生模型流式调用。
+
 Windows 下启动本地 Runtime：
 
 ```powershell
@@ -69,6 +79,8 @@ scripts\start-openjiuwen.cmd
 Runtime 默认监听 `http://127.0.0.1:56362`，并通过 `/v1/runtime-capabilities` 向平台公布可选模型。前端展示和选择的是 Runtime 实际公布的模型，而不是一条写死在前端或平台环境变量中的模型名称。
 
 启动独立评测控制台：
+
+迁移主 Agent 和独立 Review 需要先在单独终端运行 `pnpm serve:agent-runtime`，默认地址为 `http://127.0.0.1:56363`，可用 `FINANCE_EVAL_AGENT_RUNTIME_URL` 配置。两个终端使用同一份 `.env.local` 中的角色模型配置、持久目录和访问口令。一次性出题、模型 Judge 和证据调查由 Python API 直接使用 OpenJiuwen SDK；不再通过旧 SDK 的内部模型 HTTP 代理。业务 Launcher（默认 `56362`）仍负责被评测 Agent 的实际执行。
 
 ```bash
 pnpm build
@@ -110,6 +122,16 @@ FINANCE_EVAL_JUDGE_MODEL=gpt-6-astra
 也可直接运行 `pnpm serve:codex`。Codex Judge 默认使用 `gpt-6-astra`，可通过 `FINANCE_EVAL_JUDGE_MODEL` 单独覆盖；它不继承通用的 `FINANCE_EVAL_MODEL`，出题和做题模型仍分别配置。
 
 该模式通过 Codex CLI 的临时只读任务执行匿名评审，会消耗当前 ChatGPT/Codex 账号额度。它适合个人演示和校准，不建议作为多人共享服务的生产认证方式；共享部署应使用独立 API、服务账号或企业模型网关。
+
+工程基础测试使用管理员选择的隔离执行镜像。Windows 开发环境已有 WSL Docker 时，可在本地 `.env.local` 设置：
+
+```text
+FINANCE_EVAL_PROJECT_EXECUTION_IMAGE=python:3.12-slim-bookworm
+FINANCE_EVAL_DOCKER_WSL_DISTRIBUTION=Ubuntu
+FINANCE_EVAL_DOCKER_WSL_USER=root
+```
+
+镜像需预先存在于该 Docker 中；示例只包含 Python，其他工程应选用包含其依赖的镜像。测试容器无网络、只读挂载候选，执行时复制到临时目录并降权；WSL 用户用于操作 Docker。未配置镜像时保留“未执行”的真实结果，不把它算作测试通过。`tests.live_native_platform` 的真实迁移交付验证也要求此配置。
 
 回放投资研究评测：
 

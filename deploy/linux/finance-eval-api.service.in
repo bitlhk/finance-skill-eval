@@ -1,7 +1,7 @@
 [Unit]
 Description=Finance Skill Eval API and migration coordinator
-After=network-online.target finance-eval-runtime.service
-Wants=network-online.target finance-eval-runtime.service
+After=network-online.target finance-eval-runtime.service finance-eval-agent-runtime.service
+Wants=network-online.target finance-eval-runtime.service finance-eval-agent-runtime.service
 StartLimitIntervalSec=120
 StartLimitBurst=5
 

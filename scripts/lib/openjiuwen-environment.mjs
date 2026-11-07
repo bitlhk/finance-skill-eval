@@ -9,7 +9,8 @@ export function projectPython(root=projectRoot,platform=process.platform){
 }
 export function openJiuwenEnvironment(env=process.env){
   // Child services inherit the explicitly selected interpreter, never a user-site SDK.
-  const child={...env,PYTHONUTF8:'1',PYTHONUNBUFFERED:'1',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
+  const child={...env,PYTHONUTF8:'1',PYTHONUNBUFFERED:'1',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1',
+    PYTHONPATH:[path.join(projectRoot,'src'),projectRoot,env.PYTHONPATH].filter(Boolean).join(path.delimiter)};
   delete child.PYTHONHOME;
   return child;
 }

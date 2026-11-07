@@ -1,0 +1,27 @@
+# Optional Linux host Docker access for isolated project commands and script judges.
+# The identical host/container path is required because the host daemon resolves binds.
+services:
+  api:
+    environment:
+      TMPDIR: ${FINANCE_EVAL_EXECUTION_TMPDIR:?Set an absolute shared temporary directory}
+    volumes:
+      - ${FINANCE_EVAL_EXECUTION_TMPDIR}:${FINANCE_EVAL_EXECUTION_TMPDIR}
+      - ${FINANCE_EVAL_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add:
+      - ${FINANCE_EVAL_DOCKER_GID:?Set the Docker socket group ID}
+  runtime:
+    environment:
+      TMPDIR: ${FINANCE_EVAL_EXECUTION_TMPDIR:?Set an absolute shared temporary directory}
+    volumes:
+      - ${FINANCE_EVAL_EXECUTION_TMPDIR}:${FINANCE_EVAL_EXECUTION_TMPDIR}
+      - ${FINANCE_EVAL_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add:
+      - ${FINANCE_EVAL_DOCKER_GID:?Set the Docker socket group ID}
+  agent-runtime:
+    environment:
+      TMPDIR: ${FINANCE_EVAL_EXECUTION_TMPDIR:?Set an absolute shared temporary directory}
+    volumes:
+      - ${FINANCE_EVAL_EXECUTION_TMPDIR}:${FINANCE_EVAL_EXECUTION_TMPDIR}
+      - ${FINANCE_EVAL_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add:
+      - ${FINANCE_EVAL_DOCKER_GID:?Set the Docker socket group ID}

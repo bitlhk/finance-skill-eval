@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask } from "../../../../contracts/platform/responses";
+import {activeOperationId} from './active-operation';
 export type MigrationApi = <T>(url: string, init?: RequestInit) => Promise<T>;
 export function useMigrationTask(api: MigrationApi) {
   const [tasks, setTasks] = useState<BundleTask[]>([]);
   const [pollError, setPollError] = useState('');
   const [task, setTask] = useState<BundleTask | null>(null);
   const list = useCallback(async () => { setTasks(await api<BundleTask[]>('/api/migration-tasks')); }, [api]);
-  const active = task?.attempts.find(a => a.status === 'RUNNING');
-  const operationId = active?.id ?? (task?.startupCheck?.status === 'RUNNING' ? task.startupCheck.id : undefined);
+  const operationId = activeOperationId(task);
   useEffect(() => {
     setPollError('');
     if (!task || !operationId) return;

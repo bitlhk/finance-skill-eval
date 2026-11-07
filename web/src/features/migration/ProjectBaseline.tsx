@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import type { MigrationWorkbench } from './useMigrationWorkbench';
-import type { BundleConfiguration, BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleConfiguration, BundleTask } from "../../../../contracts/platform/responses";
 import { SuiteEditor } from './SuiteEditor';
 import { MigrationRunView } from './MigrationRunView';
 import { sameConfiguration,fitRuntimeTimeout } from './presentation';
+import {requestCaseDesign} from './case-proposals';
 
 /** Original-project baseline uses the same suite editor and evidence report as acceptance. */
 export function ProjectBaseline({state}:{state:MigrationWorkbench}) {
@@ -14,7 +15,9 @@ export function ProjectBaseline({state}:{state:MigrationWorkbench}) {
   if (!task?.preparations?.length) return null;
   const runtime=catalog.executionRuntimes.find(item=>item.runtimeId===configuration.environmentId);
   const maxTimeout=runtime?.inspection?.capabilities?.limits.maxTimeoutMs;
-  const effectiveConfiguration=fitRuntimeTimeout(configuration,maxTimeout);
+  // The baseline always runs the complete project; keep the form and the
+  // recorded effective configuration identical after its first execution.
+  const effectiveConfiguration={...fitRuntimeTimeout(configuration,maxTimeout),executionMode:'agent_project' as const};
   const preparation=task.preparations.at(-1)!;
   const runs=task.runs.filter(run=>run.purpose==='baseline');
   return <section className="stage-secondary-card">
@@ -29,7 +32,10 @@ export function ProjectBaseline({state}:{state:MigrationWorkbench}) {
         <option value="">选择模型</option>{runtime?.models.map(model=><option value={model.modelId} key={model.modelId}>{model.label??model.modelId}</option>)}
       </select></label>
     </div>
-    <SuiteEditor value={suite} onChange={setSuite} disabled={disabled}/>
+    <SuiteEditor value={suite} onChange={setSuite} disabled={disabled} onSuggest={()=>void act(async()=>{
+      const next=await requestCaseDesign(api,task.id,crypto.randomUUID(),suite);if(next)setTask(next);
+      state.setMessage('已请主 Agent 设计案例，完成后可在任务对话中审阅。');
+    })}/>
     <button className="button primary" disabled={disabled || !configuration.environmentId || !configuration.modelId} onClick={()=>void act(async()=>{
       setConfiguration(effectiveConfiguration);
       setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/baseline-configuration`,{method:'PUT',body:JSON.stringify(effectiveConfiguration)}));
@@ -39,9 +45,10 @@ export function ProjectBaseline({state}:{state:MigrationWorkbench}) {
     <p>{task.currentBaselineRunId ? '当前准备版本已有完整业务基线。' : '当前准备版本尚无有效业务基线；修改工程、环境、测试集或评判配置后需重新评测。'}</p>
     {runs.map(run=><div key={run.id}>
       {run.id!==task.currentBaselineRunId&&<p>历史或未完成的基线记录，不代表当前版本的有效基线。</p>}
-      <MigrationRunView run={run} currentCandidateId={preparation.id} configurationMatches={sameConfiguration(configuration,run.configuration)} disabled={disabled} rescorings={task.rescorings}
+      <MigrationRunView run={run} currentCandidateId={preparation.id} configurationMatches={run.configurationCurrent===true} disabled={disabled||task.rescoringOperation?.status==='RUNNING'} rescorings={task.rescorings} rescoringOperation={task.rescoringOperation}
         taskId={task.id} allRuns={task.runs} analyses={task.runAnalyses} onAnalyze={()=>void act(async()=>{setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/analyze-run`,{method:'POST',body:JSON.stringify({runId:run.id})}));})}
-        onRescore={repetitions=>void act(async()=>{setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/rescore`,{method:'POST',body:JSON.stringify({runId:run.id,repetitions})}));})}/>
+        onRescore={repetitions=>void act(async()=>{setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/rescore/start`,{method:'POST',body:JSON.stringify({runId:run.id,repetitions})}));})}
+        onCancelRescore={()=>void act(async()=>{setTask(await api<BundleTask>(`/api/migration-tasks/${task.id}/cancel`,{method:'POST'}));})}/>
     </div>)}
   </section>;
 }

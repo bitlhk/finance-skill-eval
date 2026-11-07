@@ -1,5 +1,5 @@
-import type {assessmentStability} from '../../src/evaluation/application/repeated-assessment';
-export function AssessmentStability({items}:{items?:ReturnType<typeof assessmentStability>}){
+import type {AssessmentStability as AssessmentStabilityResult} from "../../contracts/platform/responses";
+export function AssessmentStability({items}:{items?:AssessmentStabilityResult}){
   if(!items?.length)return null;
   return <section><h5>Judge 重复评分一致性</h5><p>衡量固定材料的判定波动，不代表 Agent 业务运行稳定性，也不证明判定正确。</p>
     {items.map(item=><p key={item.caseId}>{item.caseId}：完成 {item.assessed}/{item.attempts} 次，无法判定或异常 {item.unavailable} 次；

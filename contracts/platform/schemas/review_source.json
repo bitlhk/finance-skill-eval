@@ -1,0 +1,49 @@
+{
+  "$ref": "#/definitions/review_source",
+  "definitions": {
+    "review_source": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "migration"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$"
+            },
+            "runId": {
+              "$ref": "#/definitions/review_source/anyOf/0/properties/id"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "runId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "comparison"
+            },
+            "id": {
+              "$ref": "#/definitions/review_source/anyOf/0/properties/id"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

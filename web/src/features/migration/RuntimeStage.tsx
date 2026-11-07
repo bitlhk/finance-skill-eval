@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import type { MigrationWorkbench } from './useMigrationWorkbench';
-import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask } from "../../../../contracts/platform/responses";
 import { BuilderPanel } from './BuilderPanel';
 import { MarkdownContent } from '../../MarkdownContent';
 import {RuntimeRequirements} from './RuntimeRequirements';
-import {runtimeInputIssues} from '../../../../src/migration/tasks/domain/task-runtime-inputs';
+import {runtimeInputIssues} from './runtime-input-form';
 import {sameConfiguration,fitRuntimeTimeout} from './presentation';
 export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
   const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled, current } = state;
@@ -16,6 +16,20 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
   return (
     <section className="migration-stage">
       <div className="migration-stage-heading"><div><h3>准备运行环境</h3><p>根据迁移结果的依赖与运行要求选择候选环境。保存选择后还需验证，环境已登记不代表满足本次迁移要求。</p></div></div>
+      {task.inputKind==='agent_project'&&<label>运行方式
+        <select value={config.executionMode??'skill_package'} onChange={event=>setConfig(current=>{
+          if(event.target.value==='agent_project'){
+            const {entryInstructionsFile: _entry,...rest}=current;
+            return {...rest,executionMode:'agent_project',harnessTools:[]};
+          }
+          const {executionMode: _mode,...rest}=current;
+          return rest;
+        })}>
+          <option value="skill_package">通过所选 Runtime 装载迁移后的 Skill</option>
+          <option value="agent_project">运行改造后的完整 Agent 工程</option>
+        </select>
+        <small>运行完整工程需要所选 Runtime 支持工程执行，并负责启动工程自身的 Agent。</small>
+      </label>}
       {current && <details className="stage-detail runtime-migration-notes"><summary>查看迁移结果说明</summary><MarkdownContent compact content={current.summary}/></details>}
       <RuntimeRequirements task={{...task,runtimeReviewCurrent:Boolean(task.runtimeReviewCurrent&&configurationSaved)}}/>
       {!!task.analysis?.standardization?.configurationInputs?.length&&<section className="stage-secondary-card"><h4>补充运行配置</h4><p>填写迁移结果实际需要的配置。缺少必填项时仍可查看方案和源码，但不能进行运行验证；填写完成也不代表调用已通过。</p>
@@ -66,7 +80,7 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             ))}
           </select>
         </label>
-        <label>
+        {config.executionMode!=='agent_project'&&<label>
           入口指令文件（可选）
           <input
             value={config.entryInstructionsFile ?? ''}
@@ -75,7 +89,7 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             }
             placeholder="现有 Agent 业务指令的相对路径"
           />
-        </label>
+        </label>}
         <label>
           每个案例超时（秒）
           <input
@@ -87,7 +101,7 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
           />
         </label>
       </div>
-      {!catalog.managedWorkspace && (
+      {!catalog.managedWorkspace && config.executionMode!=='agent_project' && (
         <label className="bundle-checkbox">
           <input
             type="checkbox"
@@ -127,8 +141,8 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
       >
         核对所选环境
       </button>
-      {configurationSaved&&task.runtimeReviewCurrent&&task.runtimeReview?.status!=='FAILED'&&<button className="button primary" disabled={disabled} onClick={()=>setStage(4)}>下一步：验证能否运行</button>}
-      <details className="stage-detail" open={showBuilder} onToggle={event => setShowBuilder(event.currentTarget.open)}><summary>接入其他运行环境</summary><BuilderPanel key={task.id} state={state} /></details>
+      {configurationSaved&&task.runtimeReviewCurrent&&task.runtimeReview?.status!=='FAILED'&&<button className="button primary" disabled={disabled} onClick={()=>setStage(4)}>下一步：基础验证</button>}
+      {config.executionMode!=='agent_project'&&<details className="stage-detail" open={showBuilder} onToggle={event => setShowBuilder(event.currentTarget.open)}><summary>接入其他运行环境</summary><BuilderPanel key={task.id} state={state} /></details>}
     </section>
   );
 }

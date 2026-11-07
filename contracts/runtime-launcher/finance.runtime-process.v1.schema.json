@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finance.runtime-process.v1",
+  "description": "Bounded execution process returned in metadata.process. Receivers additionally enforce unique record IDs and call IDs, declared scopes, and JSON serializability.",
+  "x-maxSerializedBytes": 131072,
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "scopes", "records"],
+  "properties": {
+    "schemaVersion": { "const": "finance.runtime-process.v1" },
+    "status": { "enum": ["COMPLETE", "PARTIAL", "UNAVAILABLE"] },
+    "scopes": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["messages", "models", "tools", "events"] } },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "records": {
+      "type": "array", "maxItems": 512,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "kind": { "enum": ["message", "model", "tool", "event"] },
+          "callId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "role": { "enum": ["user", "assistant", "system"] },
+          "status": { "enum": ["completed", "failed", "incomplete"] },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "durationMs": { "type": "number", "minimum": 0 },
+          "input": {}, "output": {}, "error": { "type": "string", "maxLength": 4000 }, "data": {}
+        },
+        "allOf": [
+          { "if": { "properties": { "kind": { "enum": ["model", "tool"] } }, "required": ["kind"] }, "then": { "required": ["callId", "name", "status"] } },
+          { "if": { "properties": { "kind": { "const": "message" } }, "required": ["kind"] }, "then": { "required": ["role"] } }
+        ]
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "status": { "enum": ["PARTIAL", "UNAVAILABLE"] } }, "required": ["status"] }, "then": { "required": ["reason"] } },
+    { "if": { "properties": { "status": { "const": "UNAVAILABLE" } }, "required": ["status"] }, "then": { "properties": { "records": { "maxItems": 0 } } } },
+    { "if": { "properties": { "status": { "const": "COMPLETE" } }, "required": ["status"] }, "then": { "properties": { "scopes": { "minItems": 1 }, "records": { "items": { "not": { "required": ["status"], "properties": { "status": { "const": "incomplete" } } } } } } } }
+  ]
+}

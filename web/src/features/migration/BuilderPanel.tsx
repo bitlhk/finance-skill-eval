@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { downloadApi } from '../../api-path';
-import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask } from "../../../../contracts/platform/responses";
 import type { MigrationWorkbench } from './useMigrationWorkbench';
 
 export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
@@ -12,6 +12,7 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
   const [result, setResult] = useState('');
   if (!task) return null;
   const optimization=task.attempts.find(a=>a.status==='WAITING'&&a.kind==='OPTIMIZE'),waiting=optimization?.optimization?.waiting;
+  const mainWait=task.attempts.find(item=>item.kind==='CHAT'&&item.status==='WAITING'&&item.runtimeWait);
   const buildCandidate=waiting?.kind==='BUILDER'?task.candidates.find(c=>c.id===waiting.candidate.id):current;
   const request = task.runtimeBuildRequests?.find(r => r.requirements.requestId === task.selectedRuntimeBuildRequestId);
   const status = task.builderStatus ?? 'NONE';
@@ -21,6 +22,7 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
   return <section className="stage-section" aria-label="Builder 接入">
     <h3>准备新的运行环境</h3>
     <p>现有环境不满足要求时，下载本次迁移的环境需求，交给环境维护者准备后导入交付结果。</p>
+    {mainWait?.runtimeWait&&<p role="status">{mainWait.runtimeWait.reason}。工程和任务会话已保留，交付验证完成后继续。</p>}
     {waiting?.kind==='BUILDER'&&<><p>{waiting.reason}。需求将绑定本轮实验版本，保留原任务与优化轮次。</p>
       <button className="button secondary" disabled={disabled} onClick={()=>void act(()=>downloadApi(prefix+'/optimization-workspace?attemptId='+optimization!.id,'optimization-project.zip'))}>下载待构建工程与诊断</button></>}
     <p role="status">绑定状态：{({ NONE: '使用已有环境', PENDING: '等待 Builder 交付', BOUND: 'Runtime 交付有效', STALE: 'Runtime 交付失效，需要重新接收' })[status]}</p>
@@ -39,7 +41,7 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
     </details>
     <div className="bundle-actions">
       <button className="button secondary" disabled={disabled || !buildCandidate} onClick={() => void act(async () => {
-        const { environmentId: _, modelId, ...settings } = config;
+        const { environmentId: _, modelId, runtimeToolConfig: _runtimeToolConfig, ...settings } = config;
         const next = await api<BundleTask>(prefix + '/runtime-build-requests', { method: 'POST', body: JSON.stringify({ ...settings, ...(modelId ? { modelId } : {}),
           baseCandidateId: buildCandidate!.id, runtimeType, platform:{os,arch,isolation:'trusted_local_process'}, requiredCapabilities: JSON.parse(capabilities) }) });
         setTask(next); setResult('');
@@ -54,6 +56,12 @@ export function BuilderPanel({ state }: { state: MigrationWorkbench }) {
         {trustReferences.map(t => <option key={t.reference} value={t.reference}>{t.label}</option>)}
       </select></label>
       {!trustReferences.length && <p>请在 API 服务配置 FINANCE_EVAL_LAUNCHER_TRUST_JSON 后重启服务。</p>}
+      {request.automatic&&<p role="status">自动构建：{({QUEUED:'准备中',RUNNING:'构建及验证中',SUCCEEDED:'构建与启动检查完成',FAILED:'未完成',CANCELLED:'已取消',INTERRUPTED:'已中断，等待恢复'})[request.automatic.status]} {request.automatic.error??''}</p>}
+      {request.automatic?.basicValidation&&<p role="status">基础验证：{request.automatic.basicValidation.status==='PENDING'?'准备中':request.automatic.basicValidation.status==='STARTED'?'已接入开发集验证，请查看验证记录':'等待处理'} {request.automatic.basicValidation.reason??''}</p>}
+      <button className="button secondary" disabled={disabled||!selectedTrust||Boolean(request.requirements.rebuild)||['QUEUED','RUNNING'].includes(request.automatic?.status??'')} onClick={()=>void act(async()=>{
+        setTask(await api<BundleTask>(prefix+'/runtime-build/start',{method:'POST',body:JSON.stringify({requestId:request.requirements.requestId,trustReference:selectedTrust})}));
+      })}>{mainWait&&status==='BOUND'?'验证交付并继续任务':'自动构建并验证运行'}</button>
+      {request.automatic&&['QUEUED','RUNNING'].includes(request.automatic.status)&&<button className="button secondary" onClick={()=>void act(async()=>{setTask(await api<BundleTask>(prefix+'/cancel',{method:'POST'}));})}>取消构建</button>}
       <label>导入 Builder Result JSON<input aria-label="导入 Builder Result JSON" type="file" accept=".json,application/json" disabled={disabled} onChange={e => {
         const file = e.target.files?.[0]; if (file) void act(async () => { if (file.size > 1024 * 1024) throw new Error('Builder Result 不得超过 1 MB'); setResult(await file.text()); });
       }} /></label>

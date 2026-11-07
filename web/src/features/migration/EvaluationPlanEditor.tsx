@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {evaluationPlanSchema,type EvaluationPlan} from '../../../../src/evaluation/domain/evaluation-plan';
+import {evaluationPlanSchema,type EvaluationPlan} from '../../../../contracts/platform/evaluation-plan.js';
 
 type Check=EvaluationPlan['checks'][number];
 function ExpectedValue({value,onChange,disabled}:{value:unknown;onChange(value:unknown):void;disabled:boolean}){

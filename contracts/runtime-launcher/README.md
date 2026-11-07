@@ -6,6 +6,8 @@ Member digests cover exact UTF-8 instructions and decoded resource bytes; conten
 
 Capabilities use `finance.runtime-capabilities.v1`, including instanceSchemaVersion and platform; legacy maxSkills metadata is optional. Descriptor uses `finance.runtime-launcher-descriptor.v2`. Case execution and observation versions are unchanged. Runtime evidence must contain the exact collection digest and complete loadedSkillMembers. Cleanup must return an explicit matching RELEASED receipt; empty/404 alone is not success.
 
+New Launcher integrations declare `features.processEvidence: true` and return `metadata.process` in terminal execution evidence, for both JSON and SSE. Its shape is defined by [finance.runtime-process.v1](finance.runtime-process.v1.schema.json); `PARTIAL` and `UNAVAILABLE` are valid when accompanied by a reason. Historical evidence without this field remains readable. The [public integration guide](../../src/resources/agents/v1/references/runtime-integration.md) explains the scopes, limits and interpretation; a complete process is not a business verdict.
+
 ## Lifecycle and availability
 
 ### Cleanup observations

@@ -1,5 +1,5 @@
 import { Check, CircleAlert, LoaderCircle } from 'lucide-react';
-import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask } from "../../../../contracts/platform/responses";
 import { stages } from './presentation';
 import { migrationProgress } from './progress';
 

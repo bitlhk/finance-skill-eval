@@ -93,7 +93,7 @@ async def runtime_capabilities():
             'platform':{'os':platform.system().lower(),'arch':{'amd64':'x64','x86_64':'x64','aarch64':'arm64'}.get(platform.machine().lower(),platform.machine().lower()),'isolation':'trusted_local_process'},
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
-            'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
+            'features': {'streaming': True, 'multiTurn': True, 'asyncLaunch': False, 'packagedMcp': True,
                          'externalMcp': True, 'inlineSecrets': True, 'toolEnvironment': True,
                          'processEvidence': True, 'otlpEvidence': True, 'artifactEvidence': True},
             'limits': {'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
@@ -237,6 +237,7 @@ async def execute(request: Request):
             log_event('runtime_session_started', **correlation, timeoutMs=execution_timeout)
             diagnostics = asyncio.create_task(drain_stderr(process.stderr))
             terminal = False
+            timed_out = False
             try:
                 process.stdin.write(json.dumps(body).encode())
                 await process.stdin.drain()
@@ -259,6 +260,7 @@ async def execute(request: Request):
                             terminal = True
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except TimeoutError:
+                timed_out = True
                 log_event('runtime_session_timeout', **correlation, timeoutMs=execution_timeout)
             finally:
                 # Client disconnect can cancel the generator while it is reaping.
@@ -282,17 +284,25 @@ async def execute(request: Request):
                             detail = {}
                         log_event('runtime_session_finished', **correlation, exitCode=process.returncode,
                                   terminal=terminal, elapsedMs=round((time.monotonic()-started)*1000), **detail)
+                    return detail
                 cleanup = asyncio.create_task(reap())
                 cleanup_jobs.add(cleanup)
                 cleanup.add_done_callback(cleanup_jobs.discard)
-                await asyncio.shield(cleanup)
+                detail = await asyncio.shield(cleanup)
             if not terminal:
+                error_type = (detail or {}).get('lastErrorType')
+                reason = (f"OpenJiuwen session exceeded {execution_timeout // 1000} seconds" if timed_out else
+                          f"OpenJiuwen session exited before terminal evidence (exit code {process.returncode})")
+                if error_type:
+                    reason += ': ' + error_type
                 evidence = {"runId": body["runId"], "caseId": body["case"]["caseId"], "side": body["side"],
                             "status": "failed", "modelId": body["model"]["modelId"], "skillVersion": None,
                             "output": "", "elapsedMs": round((time.monotonic() - started) * 1000),
                             "toolCalls": [], "loadedSkills": [], "usage": None,
                             "runtimeIdentityVerified": False, "streamCompleted": False,
-                            "error": f"OpenJiuwen session stopped or exceeded {execution_timeout // 1000} seconds", "metadata": {}}
+                            "error": reason, "metadata": {'runtimeFailure': {
+                                'kind': 'TIMEOUT' if timed_out else 'PROCESS_EXIT', 'exitCode': process.returncode,
+                                **({'errorType': error_type} if error_type else {})}}}
                 yield f"data: {json.dumps({'evidence': evidence})}\n\n"
 
     async def stream():

@@ -20,8 +20,9 @@ export function args(argv = process.argv.slice(2)) {
   return options;
 }
 export async function settings(file, inherited = process.env, root = projectRoot) {
-  const configFile = path.resolve(root, file || '.env.local');
-  const values = parseEnv(await readFile(configFile, 'utf8'));
+  const configFile = !file && inherited.FINANCE_EVAL_CONFIG_FROM_ENV === '1'
+    ? undefined : path.resolve(root, file || '.env.local');
+  const values = configFile ? parseEnv(await readFile(configFile, 'utf8')) : {};
   const env = { ...inherited, ...values, NODE_ENV: 'production', FINANCE_EVAL_ROOT: root,
     FINANCE_EVAL_MIGRATION_PROJECT_ROOT: root, PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' };
   const python = env.FINANCE_EVAL_MIGRATION_PYTHON || path.join(root, '.venv-openjiuwen', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
@@ -33,6 +34,9 @@ export async function settings(file, inherited = process.env, root = projectRoot
   env.FINANCE_EVAL_PORT ||= '56361';
   env.FINANCE_RUNTIME_HOST ||= '127.0.0.1';
   env.FINANCE_RUNTIME_PORT ||= '56362';
+  env.FINANCE_EVAL_AGENT_RUNTIME_HOST ||= '127.0.0.1';
+  env.FINANCE_EVAL_AGENT_RUNTIME_PORT ||= '56363';
+  env.PYTHONPATH = [path.join(root,'src'),root,env.PYTHONPATH].filter(Boolean).join(path.delimiter);
   env.PATH = [path.dirname(python), path.dirname(process.execPath), env.PATH || env.Path || ''].join(path.delimiter);
   if (process.platform === 'win32') delete env.Path;
   return { env, root, python, file: configFile };
@@ -48,11 +52,13 @@ export function validateValues(env, component = 'all') {
   for (const key of ['FINANCE_EVAL_PORT', 'FINANCE_RUNTIME_PORT']) {
     if (!/^\d+$/.test(env[key]) || Number(env[key]) < 1024 || Number(env[key]) > 65535) fail('INVALID_' + key);
   }
+  const agentPort=String(env.FINANCE_EVAL_AGENT_RUNTIME_PORT||'56363');
+  if(!/^\d+$/.test(agentPort)||Number(agentPort)<1024||Number(agentPort)>65535)fail('INVALID_FINANCE_EVAL_AGENT_RUNTIME_PORT');
   if (Number(env.FINANCE_EVAL_PORT) === Number(env.FINANCE_RUNTIME_PORT)) fail('API_RUNTIME_PORT_CONFLICT');
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(env.FINANCE_EVAL_LOG_LEVEL || 'info')) fail('INVALID_LOG_LEVEL');
   const concurrency = Number(env.FINANCE_EVAL_MAX_CONCURRENT_RUNS || 1);
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) fail('INVALID_MAX_CONCURRENT_RUNS');
-  if (component !== 'runtime') {
+  if (!['runtime','agent-runtime'].includes(component)) {
     if (required('FINANCE_EVAL_ACCESS_TOKEN').length < 32) fail('ACCESS_TOKEN_MINIMUM_32_CHARACTERS');
     const key = env.FINANCE_EVAL_JUDGE_API_KEY || env.FINANCE_EVAL_MODEL_API_KEY;
     const base = env.FINANCE_EVAL_JUDGE_BASE_URL || env.FINANCE_EVAL_MODEL_BASE_URL;
@@ -87,7 +93,7 @@ export async function portAvailable(host, port) {
 }
 export async function preflight(config, { component = 'all', ports = false } = {}) {
   const { env, root, python, file } = config;
-  if (!['api', 'runtime', 'all'].includes(component)) fail('INVALID_COMPONENT');
+  if (!['api', 'runtime', 'agent-runtime', 'all'].includes(component)) fail('INVALID_COMPONENT');
   if (Number(process.versions.node.split('.')[0]) < 22) fail('NODE_22_OR_NEWER_REQUIRED');
   validateValues(env, component);
   validateRuntime(JSON.parse(await readFile(env.FINANCE_RUNTIME_CONFIG, 'utf8')), env.FINANCE_EVAL_AGENT_MODEL_ID);
@@ -96,7 +102,7 @@ export async function preflight(config, { component = 'all', ports = false } = {
     if (process.platform !== 'win32' && (mode & 0o007)) fail('CONFIG_MUST_NOT_BE_WORLD_ACCESSIBLE');
   }
   for (const item of ['integrations/openjiuwen/uv.lock', 'integrations/openjiuwen/serve.py',
-    ...(component !== 'runtime' ? ['dist/service/server.js', 'web-dist/index.html'] : [])])
+    ...(!['runtime','agent-runtime'].includes(component) ? ['src/api/__main__.py', 'web-dist/index.html'] : [])])
     await access(path.join(root, item), constants.R_OK).catch(() => fail('BUILD_OR_RUNTIME_FILES_MISSING'));
   await mkdir(env.FINANCE_EVAL_DATA_DIR, { recursive: true, mode: 0o700 });
   await access(env.FINANCE_EVAL_DATA_DIR, constants.W_OK).catch(() => fail('DATA_DIRECTORY_NOT_WRITABLE'));
@@ -109,8 +115,9 @@ export async function preflight(config, { component = 'all', ports = false } = {
     { cwd: root, env, encoding: 'utf8', timeout: 60000, windowsHide: true, maxBuffer: 1024 * 1024 });
   if (probe.error || probe.status !== 0) fail('PYTHON_311_313_OR_LOCKED_RUNTIME_DEPENDENCIES_MISSING');
   if (ports) {
-    if (component !== 'runtime') await portAvailable(env.FINANCE_EVAL_HOST, env.FINANCE_EVAL_PORT);
-    if (component !== 'api') await portAvailable(env.FINANCE_RUNTIME_HOST, env.FINANCE_RUNTIME_PORT);
+    if (['api','all'].includes(component)) await portAvailable(env.FINANCE_EVAL_HOST, env.FINANCE_EVAL_PORT);
+    if (['runtime','all'].includes(component)) await portAvailable(env.FINANCE_RUNTIME_HOST, env.FINANCE_RUNTIME_PORT);
+    if (['agent-runtime','all'].includes(component)) await portAvailable(env.FINANCE_EVAL_AGENT_RUNTIME_HOST, env.FINANCE_EVAL_AGENT_RUNTIME_PORT);
   }
   return { status: 'PASSED', component, checks: ['configuration', 'build', 'python-imports-and-pinned-versions', 'writable-data', 'disk-space', ...(ports ? ['ports'] : [])],
     modelConnectivity: 'NOT_TESTED', windowsAcl: process.platform === 'win32' ? 'OPERATOR_MUST_VERIFY' : 'NOT_APPLICABLE' };

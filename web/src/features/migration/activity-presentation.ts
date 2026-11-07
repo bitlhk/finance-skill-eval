@@ -1,8 +1,15 @@
-import type { Activity } from '../../../../src/migration/domain/migration-activity';
+import type { Activity } from "../../../../contracts/platform/responses";
+
+/** Only show the live model response while it is actually being streamed. */
+export function streamingResponse(activity: Activity): string | null {
+  if (activity.status !== 'RUNNING') return null;
+  const event = activity.events.at(-1);
+  return event?.kind === 'text_snapshot' && event.text ? event.text : null;
+}
 
 /** Describe observed events; elapsed time is not evidence of progress. */
 export function activitySummary(activity: Activity, now: number): string {
-  if (activity.status !== 'RUNNING') return {COMPLETED:'执行结束',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'执行已中断'}[activity.status];
+  if (activity.status !== 'RUNNING') return {WAITING:'等待用户或外部条件',COMPLETED:'执行结束',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'执行已中断'}[activity.status];
   const event = activity.events.at(-1);
   if (!event) return '正在获取执行进度…';
   if (event.kind === 'model_start') {

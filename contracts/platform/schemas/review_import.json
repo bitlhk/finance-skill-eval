@@ -1,0 +1,139 @@
+{
+  "$ref": "#/definitions/review_import",
+  "definitions": {
+    "review_import": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "migration"
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$"
+                },
+                "runId": {
+                  "$ref": "#/definitions/review_import/properties/source/anyOf/0/properties/id"
+                }
+              },
+              "required": [
+                "kind",
+                "id",
+                "runId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "comparison"
+                },
+                "id": {
+                  "$ref": "#/definitions/review_import/properties/source/anyOf/0/properties/id"
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "sourceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "targetId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "reviewer": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "ANNOTATION",
+                  "ADJUDICATION"
+                ],
+                "default": "ANNOTATION"
+              },
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNVERIFIED",
+                  "left",
+                  "right",
+                  "tie"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              "evidenceRefs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "minItems": 1,
+                "maxItems": 32
+              },
+              "supersedes": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "resolves": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "maxItems": 100,
+                "default": []
+              }
+            },
+            "required": [
+              "targetId",
+              "reviewer",
+              "outcome",
+              "reason",
+              "evidenceRefs"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "required": [
+        "source",
+        "sourceDigest",
+        "entries"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

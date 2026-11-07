@@ -38,6 +38,9 @@ class InstanceManager:
         required = {'schemaVersion','runId','side','modelId','environment','configuration','secrets','limits','skills','contentDigest'}
         if not required <= set(request) or set(request) - required - {'assets','entryInstructionsFile','generation'}:
             raise ValueError('Unsupported Runtime instance fields')
+        if request.get('generation') is not None:
+            from runtime.contracts import validate
+            validate('finance.runtime-instance.v1', request['generation'], 'generation')
         from .skill_set import hydrate_skill_set
         hydrate_skill_set(request, self)
         if not isinstance(request.get('runId'), str) or not request['runId'] or request.get('side') not in ('left', 'right'):
@@ -162,6 +165,12 @@ class InstanceManager:
         request['schemaVersion'] = 'finance.skill-eval.runtime-request.v1'
         request['case'] = {'caseId': case.get('caseId'), 'prompt': case.get('query'), 'taskMode': 'single_turn',
                            'requiredTools': required, 'workspaceFiles': copy.deepcopy(workspace_files)}
-        request['model'] = {'providerId': 'runtime-launcher', 'modelId': request.pop('modelId'), 'parameters': {}}
+        if 'turns' in case:
+            from runtime.contracts import validate
+            validate('finance.skill-eval.runtime-case.v1', case['turns'], 'turns')
+            request['case'].update(taskMode='multi_turn', turns=copy.deepcopy(case['turns']))
+        generation = request.pop('generation', None)
+        request['model'] = {'providerId': 'runtime-launcher', 'modelId': request.pop('modelId'),
+            'parameters': {key: value for key, value in (generation or {}).items() if key != 'schemaVersion'}}
         environment['instanceConfigurationDigest'] = item['configurationDigest']
         return request

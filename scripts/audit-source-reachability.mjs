@@ -3,7 +3,7 @@ import path from 'node:path';
 import ts from 'typescript';
 const root=process.cwd();
 function walk(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(dir,e.name)):/\.(?:tsx?|mjs)$/.test(e.name)?[path.join(dir,e.name)]:[]);}
-const files=['src','web/src','tests','scripts','examples'].flatMap(d=>fs.existsSync(d)?walk(path.resolve(d)):[]);
+const files=['web/src','tests','scripts','examples'].flatMap(d=>fs.existsSync(d)?walk(path.resolve(d)):[]);
 const edges=new Map();
 for(const file of files){
  const ast=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true),imports=[];
@@ -16,7 +16,7 @@ for(const file of files){
  }visit(ast);edges.set(file,imports);
 }
 // Include process-spawn and documented CLI entries that do not use static imports.
-const roots=['src/index.ts','src/cli.ts','src/service/server.ts','src/promptfoo-worker.ts','scripts/stage-candidate-pack.mjs','web/src/main.tsx'].map(f=>path.join(root,f));
+const roots=['web/src/main.tsx','scripts/serve-api.mjs','scripts/run-cli.mjs','scripts/runtime-check.mjs'].map(f=>path.join(root,f));
 const used=new Set();function mark(f){if(used.has(f))return;used.add(f);for(const e of edges.get(f)??[])mark(e);}roots.forEach(mark);
 const relative=f=>path.relative(root,f).replaceAll('\\','/');
 const dead=files.filter(f=>!used.has(f)&&relative(f).startsWith('src/')).map(relative);

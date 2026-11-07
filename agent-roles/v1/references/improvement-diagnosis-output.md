@@ -1,3 +1,0 @@
-只返回 JSON：{status:"PROPOSED",hypothesis:{layer,issue,expectedBehavior,evidenceCaseIds,validation,risk,confidence,toolIds?,projectPaths?,requiredCapabilities?}} 或 {status:"ABSTAINED",reason}。HARNESS 时 requiredCapabilities 必填且非空。projectPaths 只引用输入工程中存在、需要调整的源文件。
-SKILL、TOOL 或其他不需 Builder 的层级省略 requiredCapabilities。不要输出 null、空数组、空对象或能力占位符。只有 HARNESS 填写具有源码或运行证据的非空能力合同。
-TOOL 输出示例（示例值不可复制为证据）：{"status":"PROPOSED","hypothesis":{"layer":"TOOL","issue":"边界比较符导致实际结果错误","expectedBehavior":"按明确的业务边界返回结果","evidenceCaseIds":["实际开发案例ID"],"validation":"重跑失败案例和相邻边界","risk":"注意边界修复对已有用例的影响","confidence":"HIGH","toolIds":["实际工具ID"],"projectPaths":["实际相对路径"]}}

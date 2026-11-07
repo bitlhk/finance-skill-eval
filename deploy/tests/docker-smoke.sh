@@ -19,6 +19,8 @@ chown 1000:1000 "$FINANCE_EVAL_CONFIG_DIR/runtime.json"
 compose=(docker compose -f deploy/docker/compose.yaml)
 upgrade_image="finance-skill-eval:audit-upgrade-${COMPOSE_PROJECT_NAME#finance-audit-}"
 cleanup() {
+  local result=$?
+  if [[ "$result" -ne 0 ]]; then "${compose[@]}" logs --no-color --tail 100 || true; fi
   case "$COMPOSE_PROJECT_NAME" in finance-audit-*) "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true ;; *) return 1 ;; esac
   docker image rm "$upgrade_image" >/dev/null 2>&1 || true
   case "$directory" in /tmp/finance-docker-audit-*) rm -rf -- "$directory" ;; *) return 1 ;; esac
@@ -26,8 +28,26 @@ cleanup() {
 trap cleanup EXIT
 bash deploy/docker/manage.sh preflight
 "${compose[@]}" run --rm --no-deps api /app/.venv-openjiuwen/bin/python -c "from integrations.openjiuwen.operational_logging import configure_sdk_logging; configure_sdk_logging(); from openjiuwen.harness.deep_agent import DeepAgent; from openjiuwen.harness.subagents.code_agent import create_code_agent; print('PASS real Linux Agent SDK imports')"
+"${compose[@]}" run --rm --no-deps api sh -c 'command -v docker >/dev/null && command -v uv >/dev/null && printf "%s" '\''{"action":"check_refs","references":["/output"],"resources":{"output":"ok"}}'\'' | /app/.venv-openjiuwen/bin/python -m evaluation.checks | grep -q '\''"available": true'\'''
+echo 'PASS packaged Python evaluator and Docker CLI'
 bash deploy/docker/manage.sh start
 bash deploy/docker/manage.sh health
+"${compose[@]}" exec -T api /app/.venv-openjiuwen/bin/python - <<'PY'
+import asyncio, json
+from uuid import uuid4
+from runtime.agent_client import AgentRuntimeClient
+identifier = 'docker-runtime-' + uuid4().hex
+body = {'checkpointRoot': '/app/data', 'taskSession': {'executionId': str(uuid4())},
+    'correlation': {'taskId': identifier, 'attemptId': 'attempt-' + str(uuid4())},
+    'roleCall': {'role': 'effect-review', 'version': 'v1', 'model': {'providerId': 'service-judge', 'modelId': 'verification-only'},
+        'timeoutMs': 30000, 'payload': {'goal': 'Verify missing-evidence guard without a model call',
+            'baselineDigest': 'a' * 64, 'candidateDigest': 'b' * 64, 'changes': [],
+            'evidence': [{'evidenceId': 'missing-case', 'evaluationDigest': 'c' * 64,
+                'completed': False, 'comparable': True, 'summary': 'Deliberately incomplete evidence'}]}}}
+result = asyncio.run(AgentRuntimeClient().execute(body, identifier))
+assert json.loads(result['content'])['status'] == 'ABSTAINED', result
+print('PASS real Runtime instance scheduling and isolated reviewer guard; no model call')
+PY
 "${compose[@]}" exec -T api node -e "require('fs').writeFileSync('/app/data/deploy-audit-marker','persistent-audit')"
 container=$("${compose[@]}" ps -q api)
 # Kill only this disposable project's recorded supervisor, allowing restart policy
@@ -56,4 +76,4 @@ export FINANCE_EVAL_IMAGE="$original_image"
 bash deploy/docker/manage.sh health
 "${compose[@]}" exec -T api node -e "if(require('fs').readFileSync('/app/data/deploy-audit-marker','utf8')!=='persistent-audit')process.exit(1)"
 bash deploy/docker/manage.sh stop
-echo 'PASS Compose start/stop, authentication, multi-skill capabilities, persistence, backup/restore and same-artifact tag upgrade/rollback. Model execution NOT_TESTED.'
+echo 'PASS Compose start/stop, authentication, Runtime capability contract, persistence, backup/restore and same-artifact tag upgrade/rollback. Model execution NOT_TESTED.'

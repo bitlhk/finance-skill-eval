@@ -39,6 +39,18 @@ def request(secret='token-value'):
 
 
 class InstanceManagerTests(unittest.TestCase):
+    def test_generation_survives_instance_hydration_and_invalid_requests_are_rejected(self):
+        manager = InstanceManager()
+        body = request()
+        body['generation'] = {'schemaVersion': 'finance.eval-generation.v1', 'temperature': 0, 'top_p': 1, 'max_tokens': 1400}
+        item = manager.create(body, 'generation')
+        execution = manager.execution(item['instanceId'], {'schemaVersion': 'finance.skill-eval.runtime-case.v1', 'caseId': 'generation', 'query': 'check'})
+        self.assertEqual(execution['model']['parameters'], {'temperature': 0, 'top_p': 1, 'max_tokens': 1400})
+        self.assertNotIn('generation', execution)
+        body['generation']['temperature'] = 9
+        with self.assertRaises(ValueError):
+            manager.create(body, 'invalid-generation')
+
     def test_tool_configuration_is_instance_local_and_secrets_stay_private(self):
         manager = InstanceManager()
         configured = request()

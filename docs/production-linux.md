@@ -42,3 +42,5 @@ sudo bash deploy/linux/manage.sh start
 从旧部署迁移时先用旧入口停机并备份，把旧数据路径、访问令牌及其他必要设置写入项目 `.env.local`，把 Runtime 配置保存到项目 `.runtime.local.json`，随后构建、安装、启动并检查健康。旧目录仅保留作迁移前留档，服务不再引用。
 
 反向代理、TLS 和日志保留按实际主机配置，示例见 `deploy/examples/nginx.conf.example` 和 `deploy/linux/journald.conf.example`。仅开放所需入口，56361/56362 默认绑定本机。WSL 测试应保持该发行版运行；无需修改或关闭其他 WSL 服务。
+
+主 Agent Runtime 现在由独立的 `agent-runtime` 组件管理（默认 56363），与 Python API 及业务 Launcher 分开。Windows/Linux 安装或重新配置服务后应同时启动 `finance-eval-agent-runtime`；Docker Compose 已显式包含该服务。主 Agent Runtime 与 API 共用持久数据目录和访问口令。

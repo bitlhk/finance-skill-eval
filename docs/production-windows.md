@@ -42,3 +42,5 @@ powershell -NoProfile -File deploy/windows/manage.ps1 -Action start
 ## 从旧的 releases 安装迁移
 
 先停旧服务并备份原配置和数据，再把原数据绝对路径及所需配置写入项目 `.env.local`。将旧 Runtime 配置保存到项目 `.runtime.local.json`，在项目内完成构建和预检。保持原 Base，重新执行 `install`（服务须已停止），然后 `start`、`health`。已有业务数据不移动。旧发布目录和配置只作为迁移前留档，不再被服务读取或维护；确认无其他依赖后可另行清理。
+
+主 Agent Runtime 现在由独立的 `agent-runtime` 组件管理（默认 56363），与 Python API 及业务 Launcher 分开。Windows/Linux 安装或重新配置服务后应同时启动 `finance-eval-agent-runtime`；Docker Compose 已显式包含该服务。主 Agent Runtime 与 API 共用持久数据目录和访问口令。

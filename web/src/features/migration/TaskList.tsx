@@ -1,5 +1,5 @@
 import type { MigrationWorkbench } from './useMigrationWorkbench';
-import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask } from "../../../../contracts/platform/responses";
 import { HistoryPanel } from '../history/HistoryPanel';
 export function TaskEntry({ state }: { state: MigrationWorkbench; }) {
   const { catalog, api, name, setName, goal, setGoal, creationOptions, selected, setSelected, busy, zipInput, list, select, act, uploadZip, uploadingFile, uploadFileName, error } = state;
@@ -65,7 +65,7 @@ export function TaskEntry({ state }: { state: MigrationWorkbench; }) {
           disabled={busy || !selected.length}
           onClick={() =>
             void act(async () => {
-              select(
+              await state.beginImportedTask(
                 await api<BundleTask>('/api/migration-tasks', {
                   method: 'POST',
                   body: JSON.stringify({ ...creationOptions(), sourceAssetIds: selected }),
@@ -75,7 +75,7 @@ export function TaskEntry({ state }: { state: MigrationWorkbench; }) {
             })
           }
         >
-          继续诊断
+          开始迁移
         </button>
         </details>
       </section>

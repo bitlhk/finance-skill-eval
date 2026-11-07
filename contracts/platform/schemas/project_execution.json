@@ -1,0 +1,58 @@
+{
+  "$ref": "#/definitions/project_execution",
+  "definitions": {
+    "project_execution": {
+      "type": "object",
+      "properties": {
+        "receiptId": {
+          "type": "string",
+          "pattern": "^project-check-[a-f0-9]{32}$"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "COMPLETED",
+            "FAILED",
+            "UNAVAILABLE",
+            "TIMEOUT"
+          ]
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output": {
+          "type": "string"
+        },
+        "snapshotDigest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "cwd",
+        "status",
+        "exitCode",
+        "output",
+        "snapshotDigest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

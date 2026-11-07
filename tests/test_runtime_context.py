@@ -1,4 +1,5 @@
 import asyncio
+from contextvars import ContextVar
 import json
 import sys
 import types
@@ -57,6 +58,29 @@ class RuntimeContextTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(sys.modules, {'test_sdk': module}):
             runtime = RuntimeContext(config, {'enterprise': {'entrypoint': 'test_sdk:authenticate'}}, {'TEST_TOKEN': 'secret'})
             self.assertEqual(await runtime.auth('lookup'), {'Authorization': 'signed-u1'})
+
+    async def test_registered_provider_reads_current_request_without_caching_identity(self):
+        caller = ContextVar('runtime_test_caller')
+        module = types.ModuleType('request_identity_sdk')
+        async def authenticate():
+            await asyncio.sleep(0)
+            return {'X-User-Id': caller.get()}
+        module.authenticate = authenticate
+        config = {'providers': {'identity': {'implementation': 'enterprise', 'inputs': {}}},
+                  'tools': {'lookup': {'authProvider': 'identity'}}}
+        async def request_as(runtime, identity):
+            token = caller.set(identity)
+            try:
+                return await runtime.request_headers('lookup')
+            finally:
+                caller.reset(token)
+        with patch.dict(sys.modules, {'request_identity_sdk': module}):
+            runtime = RuntimeContext(config, {'enterprise': {'entrypoint': 'request_identity_sdk:authenticate'}})
+            results = await asyncio.gather(*(request_as(runtime, user) for user in ('U001', 'U003', 'U001', 'U003')))
+            self.assertEqual([item['X-User-Id'] for item in results], ['U001', 'U003', 'U001', 'U003'])
+            self.assertEqual(await request_as(runtime, 'U003'), {'X-User-Id': 'U003'})
+            with self.assertRaisesRegex(RuntimeError, 'Auth provider failed'):
+                await runtime.request_headers('lookup')
 
     async def test_invalid_data_and_unregistered_provider_fail_before_execution(self):
         with self.assertRaises(ValueError): RuntimeContext(configuration(), environ={})

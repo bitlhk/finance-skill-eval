@@ -30,6 +30,14 @@ class LoggingTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 timeout_ms({'limits': {'timeoutMs': value}})
 
+    async def test_nested_exception_group_retains_only_exception_class(self):
+        stream = asyncio.StreamReader()
+        payload = b'  | ExceptionGroup: private-task-data\n  | TimeoutError: bearer-secret\n'
+        stream.feed_data(payload)
+        stream.feed_eof()
+        result = await drain_stderr(stream)
+        self.assertEqual(result, {'stderrBytes': len(payload), 'lastErrorType': 'TimeoutError'})
+
     def test_server_exception_does_not_emit_request_or_traceback(self):
         error = ValueError('private-error')
         record = logging.LogRecord('uvicorn.error', logging.ERROR, '', 1,
@@ -42,6 +50,8 @@ class LoggingTests(unittest.IsolatedAsyncioTestCase):
     def test_production_sdk_has_no_file_sinks(self):
         with patch.dict(os.environ, {'NODE_ENV': 'production'}):
             configure_sdk_logging()
+            from pathlib import Path
+            self.assertTrue(Path(os.environ['OPENJIUWEN_RUNTIME_LOG_CONFIG']).is_file())
         from openjiuwen.core.common.logging.log_config import get_log_config_snapshot
         config = get_log_config_snapshot()
         for key in ['output', 'interface_output', 'performance_output']:

@@ -1,0 +1,154 @@
+{
+  "$ref": "#/definitions/case_state",
+  "definitions": {
+    "case_state": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "const": "1"
+        },
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "fixture": {
+          "type": "object",
+          "properties": {
+            "fixtureId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "initialStateDigest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "fixtureId",
+            "version",
+            "initialStateDigest"
+          ],
+          "additionalProperties": false
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "COMPLETE",
+            "INCOMPLETE"
+          ]
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "string",
+                "const": "finance.case-state.v1"
+              },
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "runId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "caseId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "side": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "right"
+                ]
+              },
+              "fixture": {
+                "$ref": "#/definitions/case_state/properties/fixture"
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "prepare",
+                  "capture",
+                  "restore"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "SUCCEEDED",
+                  "FAILED",
+                  "UNAVAILABLE"
+                ]
+              },
+              "stateDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "state": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "operationId",
+              "runId",
+              "caseId",
+              "side",
+              "fixture",
+              "phase",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 3
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "phase": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "phase",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "version",
+        "operationId",
+        "fixture",
+        "status",
+        "receipts",
+        "errors"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

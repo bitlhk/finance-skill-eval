@@ -1,0 +1,81 @@
+{
+  "$ref": "#/definitions/prepare_skill",
+  "definitions": {
+    "prepare_skill": {
+      "type": "object",
+      "properties": {
+        "domainContext": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "maximumCases": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 4
+        },
+        "model": {
+          "type": "object",
+          "properties": {
+            "providerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "modelId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "credentialRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "disabled"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "default": {}
+            }
+          },
+          "required": [
+            "providerId",
+            "modelId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

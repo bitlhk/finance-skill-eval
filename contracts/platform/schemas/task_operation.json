@@ -1,0 +1,99 @@
+{
+  "$ref": "#/definitions/task_operation",
+  "definitions": {
+    "task_operation": {
+      "type": "object",
+      "properties": {
+        "resumeAttemptId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resumePaused": {
+          "type": "boolean"
+        },
+        "recoverCheckpoint": {
+          "type": "boolean"
+        },
+        "resumeOptimizationOwnerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "additionalOptimizationRounds": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "additionalOptimizationSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 7200
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "baseCandidateId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runId": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "development",
+            "holdout"
+          ],
+          "default": "development"
+        },
+        "clarification": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "sessionAnswer": {
+          "type": "object",
+          "properties": {
+            "interactionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "answers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 16000
+              },
+              "propertyNames": {
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "interactionId",
+            "answers"
+          ],
+          "additionalProperties": false
+        },
+        "optimization": {},
+        "autoRetest": {
+          "type": "boolean"
+        },
+        "prepareProject": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "key",
+        "baseCandidateId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

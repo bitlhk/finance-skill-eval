@@ -1,0 +1,60 @@
+{
+  "$ref": "#/definitions/project_preparation",
+  "definitions": {
+    "project_preparation": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "usage": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path",
+              "usage"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "entrypoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "baselinePlan": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "summary",
+        "skills",
+        "entrypoints",
+        "missing",
+        "baselinePlan"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

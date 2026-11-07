@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { HistoryDetail, HistoryKind, HistorySnapshot, HistorySummary } from '../../../../src/shared/contracts/history';
+import type { HistoryDetail, HistoryKind, HistorySnapshot, HistorySummary } from "../../../../contracts/platform/responses";
 import { downloadApi } from '../../api-path';
 import './history.css';
 

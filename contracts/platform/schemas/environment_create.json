@@ -1,0 +1,136 @@
+{
+  "$ref": "#/definitions/environment_create",
+  "definitions": {
+    "environment_create": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "credentialEnv": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "mcp_streamable_http"
+            },
+            "runtimeType": {
+              "type": "null"
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri"
+            },
+            "mcpEnvironmentIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxItems": 0,
+              "default": []
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "endpoint"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/definitions/environment_create/anyOf/0/properties/name"
+            },
+            "credentialEnv": {
+              "$ref": "#/definitions/environment_create/anyOf/0/properties/credentialEnv"
+            },
+            "type": {
+              "type": "string",
+              "const": "runtime_launcher"
+            },
+            "runtimeType": {
+              "type": "string",
+              "enum": [
+                "openjiuwen",
+                "agentscope",
+                "ea",
+                "generic_http"
+              ]
+            },
+            "baseUrl": {
+              "$ref": "#/definitions/environment_create/anyOf/0/properties/endpoint"
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "runtimeType",
+            "baseUrl"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "type": {
+              "type": "string",
+              "const": "execution_environment"
+            },
+            "launcherEnvironmentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mcpEnvironmentIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "maxItems": 12,
+              "default": []
+            },
+            "defaultModelId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "launcherEnvironmentId"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

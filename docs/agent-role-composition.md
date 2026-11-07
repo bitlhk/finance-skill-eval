@@ -1,27 +1,26 @@
 # Agent 角色与统一执行底座
 
-当前实现只保留一个迁移任务编排、一个优化轮次执行器和一个平台工程 Agent 进程入口。旧迁移路由原本未注册，本次删除其实现、旧服务集合、旧 A2/A4 Agent、旧逐工具优化编排和对应的停用页面；当前页面布局与入口继续使用。
+当前业务后端已统一到 Python。迁移通过 Jiuwen Runtime 中的持久主 Agent 会话推进；对比评测保持固定程序，用户选择优化时调用现有优化协调 Agent。旧 npm 编程接口和 TS 后端已撤掉，HTTP 与 CLI 保留。完整调用关系见[当前架构](current-architecture.md)。
 
 ## 当前代码分工
 
 | 位置 | 职责 |
 | --- | --- |
 | `web/src/features/migration/` | 现有迁移页面：输入、诊断、方案、候选、运行准备、验收、交付 |
-| `src/migration/tasks/application/task-service.ts` | 唯一迁移任务流程；经端口组织 Agent、Builder、评测与候选版本 |
-| `src/migration/tasks/application/task-optimization.ts` | 将迁移任务的目标、快照和评测证据接到公共优化循环 |
-| `src/service/optimization-manager.ts` | 对比评测后的优化入口、候选文档装配、留出集复核及人工采纳 |
-| `src/improvement/application/optimization-loop.ts` | 通用优化状态：工作版本、推荐版本、目标、预算和等待恢复 |
-| `src/improvement/application/round-workflow.ts` | 唯一轮次调度：诊断、调整、复测、Review、选择下一轮起点 |
+| `src/migration/service.py`、`execution.py`、`execution_ports.py` | 唯一迁移任务控制链；接入主 Agent、Builder、评测和 Git 版本 |
+| `src/migration/optimization.py`、`src/improvement/policy.py` | 迁移优化状态与公共目标、预算、取舍规则 |
+| `src/improvement/service.py`、`engineering.py` | 对比评测后的独立优化；修改 Skill 与随包工具、复测、留出复核和人工采纳 |
+| `integrations/openjiuwen/optimization_agent.py`、`optimization_coordinator.py` | 优化协调 Agent 与其原子工具的公共状态核验 |
 | `src/evaluation/` | 案例执行与证据边界、评估方法接口 |
 | `src/agents/` | 公共角色、指导加载、模型调用、输出校验和取消超时 |
-| `agent-roles/v1/` | 版本化 Prompt、指导 Skill、输出合同、工具权限及交付模板 |
-| `integrations/openjiuwen/platform_agent.py` | 唯一平台工程 Agent 进程入口，首先检查项目 SDK 环境 |
+| `src/resources/agents/v1/` | 版本化 Prompt、指导 Skill、输出合同、工具权限及交付模板 |
+| `src/runtime/agent_client.py`、`integrations/openjiuwen/migration_runtime.py` | 通过 HTTP/SSE 调用 Jiuwen Runtime，复用其实例调度与会话恢复 |
 | `integrations/openjiuwen/bundle_agent.py` | 统一工程任务合同、隔离工作区、受限文件工具、结构提交和候选冻结 |
 | `integrations/openjiuwen/agent_execution.py` | 模型初始化、SDK Agent 装配、轨迹与实际权限核验 |
-| `src/service/history-store.ts` | 原格式历史记录与快照的只读展示、下载 |
-| `src/execution-configuration/historical-service-environment.ts` | 读取历史评测配置中的服务环境引用；不启动旧任务、不改写记录 |
+| `src/storage/history.py`、`src/api/history_routes.py` | 原格式历史记录与快照的只读展示、下载 |
+| `src/runtime/service_environment.py` | 读取历史评测配置中的服务环境引用；不启动旧任务、不改写记录 |
 
-`src/migration/domain/` 中仍被历史记录和当前任务共同引用的数据类型、规范规则继续保留。这些类型不构成第二套执行流程。历史记录中的 A1/A2/A3/A4 阶段编号仍可读取；新执行使用角色名称。
+历史记录中的 A1/A2/A3/A4 阶段编号仍可只读展示，不对应另一套可执行 Agent。公开数据合同在 `contracts/platform/`，运行规则在所属 Python 模块。
 
 ## 迁移和优化到底是什么关系
 
@@ -47,30 +46,30 @@
 
 | 角色 | 目标 | 执行方式 |
 | --- | --- | --- |
-| diagnosis | 识别源码、依赖、工具边界与标准化问题 | 只读工程 Agent，扫描器与文件工具 |
-| migration | 按已确认方案完成标准化交付 | 工程 Agent，受限写入、编译、契约测试 |
-| improvement-diagnosis | 根据冻结评测证据定位效果问题 | 无工具模型角色，不读取留出集 |
-| adjustment | 按诊断联合调整文档、工具或 Runtime 工程 | 按入口使用提案或工程执行配置 |
-| criterion-judge | 根据真实执行证据逐项判断验收标准 | 无工具模型角色 |
-| standardization-review | 独立审查迁移规范与交付边界 | 只读工程 Agent |
-| effect-review | 判断候选收益、回退及继续修复的价值 | 独立无工具模型角色 |
+| migration 主会话 | 围绕用户目标调查、交流、修改、验证和交付 | DeepAgent / NativeHarness，按需读取 Skill，受限文件、工程执行、评测请求和工作产物工具 |
+| migration_investigator | 独立调查复杂源码和证据 | 框架内只读子 Agent，不单独部署 |
+| migration_delivery_reviewer | 独立核查交付范围、源码和基础验证缺口 | 框架内只读子 Agent，使用已配置 JUDGE 模型；读取冻结的工具登记和运行证据 |
+| improvement-diagnosis | 根据冻结评测证据定位效果问题 | 独立 Agent，只有 query_evidence，不读取留出集 |
+| adjustment | 联合修改 Skill、随包工具和授权工程源码 | 独立优化复用主工程 Agent；不让诊断者直接改文件 |
+| criterion-judge | 根据真实执行证据逐项判断验收标准 | 独立 Agent，通过 query_evidence 查询冻结材料 |
+| effect-review | 判断目标是否达成，或比较收益、回退及继续修复的价值 | 独立上下文，通过共享 Runtime 执行；单次目标模式不要求或虚构基线，不执行业务工具或改文件 |
 
 角色表达不同职责；业务入口不再各自复制执行器。文档、工具、Runtime 是 adjustment 的可组合指导与权限，不是三个独立修改者。
 
-角色清单声明 Prompt、Skill、参考文件和工具集合。TS/Python 加载器只读取平台安装的可信版本，检查目录边界和代码内权限上限，创建 Agent 前完整加载指导并记录资源摘要。上传工程不能替换平台指导。
+角色清单声明 Prompt、Skill、参考文件和工具权限上限。Python 加载器只读取平台安装的可信资源并记录摘要。主会话使用 `migration-main.md`，SkillUseRail 暴露可信指导目录，由 Agent 自行选择和读取；不会按页面阶段强制替换 Skill。上传工程不能替换平台指导。
 
-proposal 配置由模型返回一份 changes，程序验证并冻结候选；engineering 配置让同一个角色通过受限文件工具实际改代码。模型调用底层统一使用 `model-role.ts`；工程装配统一使用 `agent_execution.py`。格式修正只整理已有判断，不得改判业务结论或重复执行工具。
+模型访问统一复用 `model_config.py` 的 OpenJiuwen SDK 装配；工程 Agent 装配在 `agent_execution.py`。角色注册表也保留当前底层消费者使用的只读分析、运行准备与提案配置，它们不构成第二条公开迁移流程。自然语言承接任务，真正需要程序执行的请求、文件和证据引用才做边界校验。格式修正不得改判业务结论或重复执行业务工具。
 
 被测企业 Skill 的加载仍由其 Runtime 负责。平台的指导 Skill 与正在评测的业务 Skill 是不同资产。
 
-## 从旧实现迁入的能力
+## 公共能力的归属
 
-- 源码扫描：`run_scanner` 已接入统一 diagnosis，只扫描 source 目录，不执行上传代码。
+- 源码扫描与只读调查只读取指定工程，不执行上传代码。
 - 编译和工具验证：统一工程 Agent 提供 `compile_source`、单工具 `run_contract_test` 及联合 `run_mcp_contract_suite`，继续复用实际契约测试工具。
-- 服务和脚本交付模板：迁入 `agent-roles/v1/references/service-templates.md`，标准化迁移和工程调整共同加载。
-- 历史服务环境解析：抽出只读解析器和 `historical-migration-record.ts` 读取器，继续核对候选摘要、配置版本、配置摘要及工具归属，分别返回普通配置和敏感配置。旧迁移仓库的写入、任务锁和列表接口一并删除；历史展示仍由 HistoryStore 负责。
-- 模型输出修正：所有当前调用直接引用 `src/agents/model-output-correction.ts`，删除旧转发入口。
-- 当前页面和测试直接接入 `MigrationTaskService`，删除旧 Bundle 构造兼容类。
+- 服务和脚本交付模板：迁入 `src/resources/agents/v1/references/service-templates.md`，标准化迁移和工程调整共同加载。
+- 历史服务环境解析在 `runtime/service_environment.py`，继续核对候选摘要、配置版本、配置摘要及工具归属，区分普通配置和敏感配置；历史记录只读。
+- Judge、诊断复用已有的宽容 JSON 解析，随后核对字段和冻结证据；不将 Markdown 代码块包装误判为业务失败。
+- 页面通过 HTTP 接入 Python 服务，CLI 也调用同一套评测能力，不再保留 SDK 回调桥。
 
 业务 Script/MCP 的实现仍独立于 Agent 框架。框架只绑定通用执行工具，不把企业业务逻辑重新写成框架私有工具。
 
@@ -92,4 +91,4 @@ proposal 配置由模型返回一份 changes，程序验证并冻结候选；eng
 
 离线模型替身和真实 SDK 接线测试只能验证执行链路，不能证明生产模型下的业务效果提升。
 
-本次验证：类型检查、前后端构建、Vitest 全量回归、44 项 Python 测试、迁移页面及 Builder 页面回归均通过。最后将历史仓库收窄为只读读取器后，另行通过 10 项历史读取、服务配置及架构边界测试，并重新进行类型检查和后端构建。
+验证范围与旧 SDK 测试退役记录见[五步改造记录](backend-five-step-migration.md)及 `verification/python-backend-cutover.json`。完整工程上传通过、离线测试通过与真实业务迁移通过是不同的验收结果，应分别记录。

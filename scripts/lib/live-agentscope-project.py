@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
+from live_project_process import process_evidence
 
 sys.path.insert(0, str(Path.cwd()))
 
@@ -50,22 +51,12 @@ try:
         response.raise_for_status()
         value = response.json()
         client.delete('/v1/sessions/' + sid).raise_for_status()
-    records = [{'id': 'runtime-context', 'kind': 'event', 'name': 'runtime_context',
-                'data': {'userId': headers['X-User-Id'], 'agentEndpoint': '/v1/chat',
-                         'businessBaseUrl': settings.MEETINGROOM_BASE_URL,
-                         'businessCredentialConfigured': bool(settings.MEETINGROOM_API_KEY)}}]
-    for index, event in enumerate(value.get('tool_calls', [])):
-        # The existing API omits inputs and explicit failure state. Do not infer them.
-        records.append({'id': f'event-{index}', 'kind': 'event', 'name': event['name'],
-                        'durationMs': event.get('duration_ms', 0),
-                        'data': {'toolName': event['name'], 'content': event.get('content', [])}})
+    context = {'userId': headers['X-User-Id'], 'agentEndpoint': '/v1/chat',
+               'businessBaseUrl': settings.MEETINGROOM_BASE_URL,
+               'businessCredentialConfigured': bool(settings.MEETINGROOM_API_KEY)}
     result = {'output': value['reply'], 'modelId': settings.OPENAI_MODEL,
               'loadedSkillPaths': [str(item['path'].resolve().relative_to(Path.cwd())).replace('\\', '/') for item in skill_catalog(settings)],
-              'process': {'schemaVersion': 'finance.runtime-process.v1',
-                          'status': 'PARTIAL' if records else 'UNAVAILABLE',
-                          'scopes': ['events'] if records else [],
-                          'reason': 'Original API returns tool events without inputs, call IDs or explicit status',
-                          'records': records}}
+              'process': process_evidence(value.get('tool_calls', []), context)}
     print(json.dumps(result, ensure_ascii=False))
 finally:
     agent.should_exit = True

@@ -51,3 +51,15 @@ test('defaults loopback and prepends runtime interpreter without shell evaluatio
     await assert.rejects(settings('missing.env', {}, root), /ENOENT/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+test('accepts container-injected configuration without a local file and honors explicit files', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'finance-container-settings-'));
+  try {
+    const inherited = { PATH: 'original-path', FINANCE_EVAL_CONFIG_FROM_ENV: '1', FINANCE_EVAL_MODEL: 'injected-model' };
+    const config = await settings(undefined, inherited, root);
+    assert.equal(config.file, undefined);
+    assert.equal(config.env.FINANCE_EVAL_MODEL, 'injected-model');
+    await writeFile(path.join(root, 'explicit.env'), 'FINANCE_EVAL_MODEL=explicit-model\n');
+    assert.equal((await settings('explicit.env', inherited, root)).env.FINANCE_EVAL_MODEL, 'explicit-model');
+    await assert.rejects(settings('missing.env', inherited, root), /ENOENT/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

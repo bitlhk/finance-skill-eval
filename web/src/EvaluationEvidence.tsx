@@ -1,5 +1,5 @@
-import type {EvaluationMethodResult} from '../../src/evaluation/application/evaluation-method';
-import type {RuntimeExecutionEvidence} from '../../src/contracts';
+import type {EvaluationMethodResult} from "../../contracts/platform/responses";
+import type {RuntimeExecutionEvidence} from "../../contracts/platform/responses";
 const labels:Record<string,string>={PASS:'通过',FAIL:'未通过',UNVERIFIED:'证据不足',ERROR:'评判异常',SKIP:'未执行'};
 export function EvaluationEvidence({methods,evidence}:{methods?:EvaluationMethodResult[];evidence?:Partial<Pick<RuntimeExecutionEvidence,'metadata'>>}){
   const telemetry=evidence?.metadata?.telemetry as {status?:string;otlp?:unknown}|undefined;

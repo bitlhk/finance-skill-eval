@@ -88,6 +88,28 @@
   gap: 12px;
 }
 .bundle-panel code { overflow-wrap: anywhere; }
+.task-workbench { display: grid; gap: 16px; margin: 18px 0; }
+.task-current-plan, .task-dialogue, .task-products {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #e3e7ed;
+  border-radius: 10px;
+  background: #fff;
+}
+.task-current-plan h3, .task-dialogue h3, .task-products h3 { margin: 0 0 12px; }
+.task-current-plan ol { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.task-current-plan li { padding: 7px 10px; border-radius: 6px; background: #f3f6f9; }
+.task-current-plan p, .task-products > p { color: #68717b; margin: 0; }
+.task-workbench-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 16px; align-items: start; }
+.task-dialogue-events { display: grid; gap: 12px; margin-bottom: 16px; }
+.task-dialogue-events > div { padding: 10px 12px; background: #f6f8fa; border-radius: 8px; overflow-wrap: anywhere; }
+.task-dialogue-events p { margin: 6px 0; }
+.task-dialogue textarea { width: 100%; min-height: 80px; }
+.task-question { padding: 12px; margin-bottom: 14px; border: 1px solid #d5e3f4; border-radius: 8px; background: #f7faff; }
+.task-product { padding: 12px 0; border-top: 1px solid #e3e7ed; overflow-wrap: anywhere; }
+.task-product h4 { margin: 0 0 8px; }
+.task-manual-controls > summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 850px) { .task-workbench-columns { grid-template-columns: 1fr; } }
 .bundle-checkbox {
   display: flex;
   gap: 8px;

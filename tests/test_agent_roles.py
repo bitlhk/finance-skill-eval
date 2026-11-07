@@ -14,6 +14,17 @@ from integrations.openjiuwen.bundle_agent import run_bundle
 
 
 class RolePermissionTests(unittest.TestCase):
+    def test_discussion_can_edit_and_test_without_a_structured_submission_tool(self):
+        role = load_bundle_role('CHAT')
+        role.validate_tools(role.definition['tools'])
+        self.assertIn('read_file', role.definition['tools'])
+        self.assertIn('write_file', role.definition['tools'])
+        self.assertIn('run_project_command', role.definition['conditionalTools'])
+        for name in ('submit_result', 'record_result', 'correct_result'):
+            self.assertNotIn(name, role.definition['tools'])
+            with self.assertRaises(ValueError):
+                role.validate_tools(role.definition['tools'] + [name])
+
     def test_unified_roles_keep_scanner_and_contract_suite(self):
         diagnosis = load_bundle_role('ANALYZE')
         migration = load_bundle_role('GENERATE')
@@ -74,7 +85,7 @@ class ReviewCompositionTests(unittest.IsolatedAsyncioTestCase):
             names = [tool.card.name for tool in options['tools']]
             self.assertIn('write_file', names)
             self.assertIn('run_project_command', names)
-            self.assertNotIn('compile_source', names)
+            self.assertIn('compile_source', names)
             self.assertNotIn('run_scanner', names)
             async def stream(_):
                 yield {'type': 'answer', 'payload': {'output': json.dumps(expected), 'result_type': 'answer'}}
@@ -85,9 +96,9 @@ class ReviewCompositionTests(unittest.IsolatedAsyncioTestCase):
             config.write_text('{}', encoding='utf-8')
             protocol = io.StringIO()
             body = {'runId': 'preparation-fixture', 'assetDigest': 'base', 'files': encoded,
-                    'model': {'modelId': 'model'}, 'bundle': {'mode': 'PREPARE', 'source': {'files': encoded}}}
+                    'model': {'modelId': 'model'}, 'bundle': {'mode': 'CHAT', 'source': {'files': encoded}}}
             with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
-                    patch('model_config.resolve_model', return_value={'apiKey': 'TEST_SECRET', 'baseUrl': 'http://unused'}), \
+                    patch('model_config.resolve_model', return_value={'apiKey': 'TEST_SECRET', 'baseUrl': 'http://unused', 'supportsTools':True}), \
                     patch('model_config.request_settings', return_value={'model_name': 'model'}), \
                     patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
                     patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
@@ -97,44 +108,13 @@ class ReviewCompositionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['status'], 'PRODUCED', result)
             self.assertEqual(result['files'], encoded)
             self.assertEqual(result['payload']['executions'], [])
-            self.assertEqual(result['composition']['role'], 'runtime-preparation')
+            self.assertEqual(result['composition']['role'], 'migration')
 
-    async def test_independent_review_loads_its_guidance_and_never_offers_write_tools(self):
+    async def test_retired_phase_review_cannot_bypass_the_main_conversation(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integrations' / 'openjiuwen'))
         self.addCleanup(sys.path.pop, 0)
-        encoded = {'SKILL.md': base64.b64encode(b'Original business behavior').decode()}
-        expected = {'status': 'ABSTAINED', 'reason': 'Missing requirement evidence'}
-
-        def explorer(**options):
-            names = [tool.card.name for tool in options['tools']]
-            self.assertNotIn('write_file', names)
-            self.assertNotIn('edit_file', names)
-            self.assertNotIn('compile_source', names)
-            self.assertNotIn('bash', names)
-            self.assertIn('独立只读审查', options['system_prompt'])
-            self.assertIn('CONFORMING', options['system_prompt'])
-            async def stream(_):
-                yield {'type': 'answer', 'payload': {'output': json.dumps(expected), 'result_type': 'answer'}}
-            return SimpleNamespace(stream=stream)
-
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / 'config.json'
-            config.write_text('{}', encoding='utf-8')
-            protocol = io.StringIO()
-            body = {'runId': 'role-review-fixture', 'assetDigest': 'base', 'files': encoded,
-                    'model': {'modelId': 'model'}, 'bundle': {'mode': 'REVIEW', 'source': {'files': encoded}}}
-            with patch.dict(os.environ, {'FINANCE_RUNTIME_CONFIG': str(config)}), \
-                    patch('model_config.resolve_model', return_value={'apiKey': 'TEST_SECRET', 'baseUrl': 'http://unused'}), \
-                    patch('model_config.request_settings', return_value={'model_name': 'model'}), \
-                    patch('model_config.bind_agent_request_extensions', side_effect=lambda model, *_: model), \
-                    patch('openjiuwen.core.foundation.llm.init_model', return_value=object()), \
-                    patch('openjiuwen.harness.subagents.explore_agent.create_explore_agent', side_effect=explorer), \
-                    patch('openjiuwen.harness.factory.create_deep_agent') as writer:
-                await run_bundle(body, protocol)
-                writer.assert_not_called()
-            result = next(json.loads(line)['result'] for line in protocol.getvalue().splitlines() if 'result' in json.loads(line))
-            self.assertEqual(result['status'], 'ABSTAINED', result)
-            self.assertEqual(result['files'], {})
-            self.assertEqual(result['composition']['role'], 'standardization-review')
-            self.assertNotIn('TEST_SECRET', json.dumps(result['composition']))
-            self.assertNotIn('Original business behavior', json.dumps(result['composition']))
+        body = {'runId': 'retired-review', 'files': {}, 'bundle': {'mode': 'REVIEW', 'source': {'files': {}}}}
+        with patch('openjiuwen.harness.factory.create_deep_agent') as factory:
+            with self.assertRaisesRegex(ValueError, 'main Agent conversation'):
+                await run_bundle(body, io.StringIO())
+            factory.assert_not_called()

@@ -42,7 +42,10 @@ for(const scenario of scenarios){
     }else archive=await fs.readFile(scenario.source);
     let task=await api('/api/migration-tasks/upload?'+query,archive,'application/zip');
     record.taskId=task.id;await save();
-    task=await api('/api/migration-tasks/'+task.id+'/analysis',{key:randomUUID(),baseCandidateId:null});
+    const started=await api('/api/migration-tasks/'+task.id+'/conversation/message',{key:randomUUID(),text:
+      '请结合任务目标调查现有 Skill、工具和工程，按需读取迁移指导，说明业务边界、工具方案、运行条件和验证思路，并将迁移方案保存为工作产物。此轮先调查和沟通，不修改交付文件；只有确实需要我决定或补充时才询问。'});
+    task=started.task;
+    if(!task)throw Error('Main Agent did not return the started task');
     const deadline=Date.now()+30*60*1000;let lastProgress=0;
     while(task.attempts.at(-1)?.status==='RUNNING'){
       if(Date.now()>deadline)throw Error('Timed out waiting; task retained for inspection, not cancelled');
@@ -51,7 +54,14 @@ for(const scenario of scenarios){
       if(Date.now()-lastProgress>30000){console.log(JSON.stringify({scenario:scenario.id,taskId:task.id,status:task.attempts.at(-1)?.status}));lastProgress=Date.now();}
     }
     record.status=task.attempts.at(-1)?.status==='COMPLETED'?'AWAITING_SEMANTIC_REVIEW':'FAILED';
-    record.analysis=task.analysis;record.attempt=task.attempts.at(-1);
+    let after=0,events=[],conversation;
+    do {
+      conversation=await api('/api/migration-tasks/'+task.id+'/conversation?after='+after+'&limit=500');
+      events.push(...conversation.events);
+      if(conversation.events.length)after=conversation.events.at(-1).sequence;
+    } while(conversation.events.length===500);
+    record.conversation={...conversation,events};
+    record.attempt=task.attempts.at(-1);
   }catch(error){record.status='ERROR';record.error=error.message;}
   record.finishedAt=new Date().toISOString();await save();
   console.log(JSON.stringify({scenario:scenario.id,status:record.status,taskId:record.taskId}));

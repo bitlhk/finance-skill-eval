@@ -14,6 +14,12 @@
   "streamCompleted": true,
   "error": null,
   "metadata": {
+    "process": {
+      "schemaVersion": "finance.runtime-process.v1",
+      "status": "COMPLETE",
+      "scopes": ["tools"],
+      "records": [{ "id": "record-1", "kind": "tool", "callId": "call-1", "name": "read_document", "status": "completed" }]
+    },
     "skillArtifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "instanceConfigurationDigest": "7a10cf1d49c508220aaf2f048268821941dd46931c81f49b59aa36dfefc0f97a"
   }

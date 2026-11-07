@@ -1,4 +1,4 @@
-import type {RuntimeLauncherCapabilities} from '../../src/shared/contracts/runtime-launcher';
+import type {RuntimeLauncherCapabilities} from "../../contracts/platform/responses";
 
 export function launcherCompatibility(capabilities:RuntimeLauncherCapabilities|undefined,requiredTools:string[]):string[]{
   if(!capabilities)return ['环境尚未返回能力声明'];

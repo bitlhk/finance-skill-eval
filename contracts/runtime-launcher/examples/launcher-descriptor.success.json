@@ -17,6 +17,6 @@
     "audience": "finance-skill-eval"
   },
   "artifactSha256": "8cf0d0a4a1d6de50c0768606ae7d4179a64ac42190d7a2c12517d88b101ad79d",
-  "capabilitiesDigest": "6b033faec036c105e18407c1f8518af5cbc048a51c2a54aa943cfbc68c9799b1",
+  "capabilitiesDigest": "f1e5eb6789b432f64a0cd631dc5cbb61dcc4caf380565f023f2ea541bf569880",
   "expiresAt": "2026-10-01T12:00:00.000Z"
 }

@@ -3,6 +3,10 @@ import {createHash} from 'node:crypto';
 import {copyFile, lstat, mkdir, readFile, readdir, realpath, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+
+const execFileAsync=promisify(execFile);
 
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const inside=(parent,child)=>{const relative=path.relative(parent,child);return relative===''||(!relative.startsWith(`..${path.sep}`)&&relative!=='..'&&!path.isAbsolute(relative));};
@@ -69,7 +73,8 @@ export async function consolidateWorkspace(plan){
   }
   for(const source of sources)for(const row of inventory.get(source)){
     const relative=row.path,parts=relative.split(path.sep),previous=selected.get(relative);
-    const taskId=parts[0]==='migration-tasks'?(parts[1]==='tasks'?path.basename(parts[2]??'','.json'):parts[1]==='snapshots'?parts[2]:null)
+    const taskId=parts[0]==='migration-tasks'?(parts[1]==='tasks'?path.basename(parts[2]??'','.json'):parts[1]==='snapshots'?parts[2]
+      :parts[1]==='git'&&parts[2]?.endsWith('.git')?parts[2].slice(0,-4):null)
       :parts[0]==='migration-activity'?path.basename(relative,'.json'):null;
     if(taskId&&taskSources.has(taskId)&&taskSources.get(taskId)!==source)continue;
     const projectId=['migrations','migration-runtime-config'].includes(parts[0])?path.basename(relative,'.json'):null;
@@ -85,13 +90,36 @@ export async function consolidateWorkspace(plan){
   for(const [relative,row] of selected){
     if(relative.startsWith(`migration-tasks${path.sep}tasks${path.sep}`)&&relative.endsWith('.json')){
       const task=JSON.parse(await readFile(path.join(row.source,relative),'utf8'));
-      if(task.schemaVersion!=='finance.skill-migration.task.v1')throw new Error(`Unsupported task protocol: ${relative}`);
+      if(!['finance.skill-migration.task.v1','finance.skill-migration.task.v2','finance.skill-migration.task.v3'].includes(task.schemaVersion))throw new Error(`Unsupported task protocol: ${relative}`);
       if(path.basename(relative,'.json')!==task.id)throw new Error(`Task ID mismatch: ${relative}`);
       for(const reference of [{id:'source',digest:task.source?.digest},...(task.candidates??[])]){
+        if(task.schemaVersion==='finance.skill-migration.task.v3'){
+          if(typeof reference.id!=='string'||!/^(source|candidate-[a-f0-9-]+)$/u.test(reference.id))throw new Error(`Invalid task revision: ${task.id}`);
+          const repository=path.join(row.source,'migration-tasks','git',`${task.id}.git`);
+          const head=selected.get(path.join('migration-tasks','git',`${task.id}.git`,'HEAD'));
+          if(!head||head.source!==row.source)throw new Error(`Missing task Git repository: ${task.id}`);
+          try{
+            const ref=`refs/finance/snapshots/${reference.id}`;
+            const {stdout}=await execFileAsync('git',['--git-dir='+repository,'show','-s','--format=%B',ref]);
+            if(!reference.digest||JSON.parse(stdout).digest!==reference.digest)throw new Error('digest');
+            await execFileAsync('git',['--git-dir='+repository,'fsck','--connectivity-only','--no-dangling',ref]);
+          }catch{throw new Error(`Incomplete or mismatched task Git version: ${task.id}/${reference.id}`);}
+          continue;
+        }
         const snapshot=selected.get(path.join('migration-tasks','snapshots',task.id,`${reference.id}.json`));
         if(!snapshot||snapshot.source!==row.source)throw new Error(`Missing task snapshot: ${task.id}/${reference.id}`);
         const saved=JSON.parse(await readFile(path.join(snapshot.source,snapshot.path),'utf8'));
-        if(!reference.digest||saved.digest!==reference.digest)throw new Error(`Task snapshot digest mismatch: ${task.id}/${reference.id}`);
+        const digest=task.schemaVersion==='finance.skill-migration.task.v2'?saved.snapshot?.digest:saved.digest;
+        if(!reference.digest||digest!==reference.digest)throw new Error(`Task snapshot digest mismatch: ${task.id}/${reference.id}`);
+        if(task.schemaVersion==='finance.skill-migration.task.v2'){
+          if(saved.storage!=='git-v1'||typeof saved.commit!=='string'||!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(saved.commit))
+            throw new Error(`Invalid Git snapshot: ${task.id}/${reference.id}`);
+          const repository=path.join(row.source,'migration-tasks','git',`${task.id}.git`);
+          const head=selected.get(path.join('migration-tasks','git',`${task.id}.git`,'HEAD'));
+          if(!head||head.source!==row.source)throw new Error(`Missing task Git repository: ${task.id}`);
+          try{await execFileAsync('git',['--git-dir='+repository,'fsck','--connectivity-only','--no-dangling',saved.commit]);}
+          catch{throw new Error(`Incomplete task Git snapshot: ${task.id}/${reference.id}`);}
+        }
       }
       if(task.currentCandidateId&&!(task.candidates??[]).some(candidate=>candidate.id===task.currentCandidateId))throw new Error(`Missing current candidate: ${task.id}`);
       continue;
