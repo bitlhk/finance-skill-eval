@@ -4,12 +4,13 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createServer} from 'node:net';
 import {createServer as createGateway,request as proxyRequest} from 'node:http';
-import {mkdtemp,writeFile} from 'node:fs/promises';
+import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {zipSync} from 'fflate';
 
+await mkdir(path.resolve('artifacts'),{recursive:true});
 const directory=await mkdtemp(path.resolve('artifacts/native-http-'));
 const probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');
 const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
@@ -90,8 +91,10 @@ try{
     try{
       const context=await browser.newContext({viewport:{width:1440,height:960}});
       await context.addInitScript(({token,prefix})=>localStorage.setItem(prefix?'finance-eval-token:'+prefix+'/':'finance-eval-token',token),{token,prefix});
-      const page=await context.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
+      const page=await context.newPage();const errors=[];page.on('pageerror',error=>{errors.push(error.message);console.error('Browser error:',error.message);});
+      const bootstrap=Promise.all(['/api/catalog','/api/runs'].map(route=>page.waitForResponse(response=>new URL(response.url()).pathname.endsWith(route),{timeout:30000})));
       await page.goto(browserUrl,{waitUntil:'domcontentloaded'});
+      for(const response of await bootstrap)assert(response.ok(),`UI bootstrap ${new URL(response.url()).pathname} HTTP ${response.status()}`);
       await expect(page.getByRole('button',{name:'Skill 迁移',exact:true})).toBeVisible();
       await page.getByRole('button',{name:'Skill 迁移',exact:true}).click();
       await expect(page.getByText(task.name,{exact:true}).first()).toBeVisible();
