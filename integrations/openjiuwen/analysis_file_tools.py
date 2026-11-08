@@ -10,30 +10,19 @@ except ImportError:
     from harness_tools import AbsoluteLineReadFileTool
 
 
-def analysis_path(root: Path, value: str = "") -> Path:
-    if not isinstance(value, str) or "\x00" in value:
-        raise ValueError("ANALYSIS_PATH_INVALID")
-    candidate = Path(value) if value else root
-    if not candidate.is_absolute():
-        candidate = root / candidate
-    target = candidate.resolve()
-    if target != root and root not in target.parents:
-        raise ValueError("ANALYSIS_PATH_OUTSIDE_WORKSPACE")
-    return target
-
-
-def check_analysis_tree(root: Path) -> None:
-    # Uploaded archives cannot create links. Fail closed if another writer has
-    # nevertheless introduced one before SDK traversal; never follow it.
-    for item in root.rglob("*"):
-        if item.is_symlink() or not (item.is_file() or item.is_dir()):
-            raise ValueError("ANALYSIS_WORKSPACE_SPECIAL_FILE")
+try:
+    from .workspace_paths import analysis_path, check_analysis_tree
+except ImportError:
+    from workspace_paths import analysis_path, check_analysis_tree
 
 
 class WorkspaceReadFileTool(AbsoluteLineReadFileTool):
     def __init__(self, workspace, *args, **kwargs):
         self.workspace = Path(workspace).resolve()
         super().__init__(*args, **kwargs)
+        self.card.description = ('读取当前任务工作区中的文件，优先使用 source/...、candidate/...、task/... 相对路径；'
+            '也接受工作区内绝对路径，不需要拼接 Windows 长路径。返回内容保留原始行号，大文件可用 offset/limit 分段读取。只能读取文件，目录请用 list_files 或 glob。')
+        self.card.input_params['properties']['file_path']['description'] = '工作区相对文件路径（推荐），或工作区内的绝对文件路径'
 
     async def invoke(self, inputs, **kwargs):
         try:

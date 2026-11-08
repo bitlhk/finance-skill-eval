@@ -1,0 +1,348 @@
+{
+  "$ref": "#/definitions/environment_record",
+  "definitions": {
+    "environment_record": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "archived": {
+              "type": "boolean",
+              "default": false
+            },
+            "credentialEnv": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "type": {
+              "type": "string",
+              "const": "mcp_streamable_http"
+            },
+            "runtimeType": {
+              "type": "null",
+              "default": null
+            },
+            "endpoint": {
+              "type": "string",
+              "format": "uri"
+            },
+            "mcpEnvironmentIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            }
+          },
+          "required": [
+            "environmentId",
+            "name",
+            "createdAt",
+            "updatedAt",
+            "type",
+            "endpoint"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "$ref": "#/definitions/environment_record/anyOf/0/properties/environmentId"
+            },
+            "name": {
+              "$ref": "#/definitions/environment_record/anyOf/0/properties/name"
+            },
+            "archived": {
+              "$ref": "#/definitions/environment_record/anyOf/0/properties/archived"
+            },
+            "credentialEnv": {
+              "$ref": "#/definitions/environment_record/anyOf/0/properties/credentialEnv"
+            },
+            "createdAt": {
+              "$ref": "#/definitions/environment_record/anyOf/0/properties/createdAt"
+            },
+            "updatedAt": {
+              "$ref": "#/definitions/environment_record/anyOf/0/properties/updatedAt"
+            },
+            "type": {
+              "type": "string",
+              "const": "runtime_launcher"
+            },
+            "runtimeType": {
+              "type": "string",
+              "enum": [
+                "openjiuwen",
+                "agentscope",
+                "ea",
+                "generic_http"
+              ]
+            },
+            "baseUrl": {
+              "type": "string",
+              "format": "uri"
+            },
+            "delivery": {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "string",
+                  "const": "finance.runtime-launcher-delivery-record.v1"
+                },
+                "buildId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "requirementsDigest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "deploymentId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "artifactSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "capabilitiesDigest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "resultDigest": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "builder": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                "acceptedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "expiresAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "evalConformance": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "PASSED"
+                    },
+                    "testedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "instanceSchemaVersion": {
+                      "type": "string",
+                      "const": "finance.runtime-instance.v1"
+                    },
+                    "probeDigest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "minItems": 6,
+                      "maxItems": 6,
+                      "items": [
+                        {
+                          "type": "string",
+                          "const": "capabilities"
+                        },
+                        {
+                          "type": "string",
+                          "const": "create"
+                        },
+                        {
+                          "type": "string",
+                          "const": "status"
+                        },
+                        {
+                          "type": "string",
+                          "const": "execute"
+                        },
+                        {
+                          "type": "string",
+                          "const": "evidence"
+                        },
+                        {
+                          "type": "string",
+                          "const": "delete"
+                        }
+                      ]
+                    },
+                    "probeKind": {
+                      "type": "string",
+                      "enum": [
+                        "WORKSPACE_FILE_READ",
+                        "MANAGED_METHOD_INSTRUCTION_NONCE"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "testedAt",
+                    "runId",
+                    "instanceSchemaVersion",
+                    "probeDigest",
+                    "checks"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "buildId",
+                "requestId",
+                "deploymentId",
+                "artifactSha256",
+                "capabilitiesDigest",
+                "resultDigest",
+                "builder",
+                "acceptedAt",
+                "expiresAt",
+                "evalConformance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "environmentId",
+            "name",
+            "createdAt",
+            "updatedAt",
+            "type",
+            "runtimeType",
+            "baseUrl"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "archived": {
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "type": "string",
+              "const": "execution_environment"
+            },
+            "runtimeType": {
+              "type": "null",
+              "default": null
+            },
+            "launcherEnvironmentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mcpEnvironmentIds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": []
+            },
+            "defaultModelId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "environmentId",
+            "name",
+            "type",
+            "launcherEnvironmentId",
+            "createdAt",
+            "updatedAt"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

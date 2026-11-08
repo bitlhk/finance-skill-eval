@@ -24,7 +24,7 @@ const steps = [
 ] as const;
 const links = [
   ['Agent Skills', '技能制品与渐进加载', 'https://agentskills.io/specification'],
-  ['Promptfoo', 'A/B 运行编排与报告基础', 'https://www.promptfoo.dev/docs/intro/'],
+  ['Promptfoo', '评测设计参考', 'https://www.promptfoo.dev/docs/intro/'],
   ['OpenJiuwen', '实际执行 Agent 与工具', 'https://github.com/openjiuwen/agent-core'],
   ['MCP', '标准工具发现与调用', 'https://modelcontextprotocol.io/'],
 ];

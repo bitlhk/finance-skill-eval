@@ -1,0 +1,292 @@
+{
+  "$ref": "#/definitions/task_build_input",
+  "definitions": {
+    "task_build_input": {
+      "type": "object",
+      "properties": {
+        "executionMode": {
+          "type": "string",
+          "enum": [
+            "agent_project"
+          ]
+        },
+        "runtimeInputs": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "maxLength": 8000
+                  }
+                },
+                "required": [
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "secretEnv": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Z0-9_]{0,99}$"
+                  }
+                },
+                "required": [
+                  "secretEnv"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 900000,
+          "default": 310000
+        },
+        "entryInstructionsFile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "harnessTools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read_file",
+              "glob",
+              "list_files",
+              "bash"
+            ]
+          },
+          "maxItems": 4,
+          "default": [
+            "read_file",
+            "glob",
+            "list_files"
+          ]
+        },
+        "baseCandidateId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeType": {
+          "type": "string",
+          "enum": [
+            "openjiuwen",
+            "agentscope",
+            "ea",
+            "generic_http"
+          ]
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contract": {
+                "type": "object",
+                "properties": {
+                  "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "errorSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "semantics": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "inputSchema",
+                  "outputSchema",
+                  "errorSchema",
+                  "semantics"
+                ],
+                "additionalProperties": false
+              },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "sideEffects": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "read",
+                      "write"
+                    ]
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "permissions",
+                  "sideEffects",
+                  "isolation"
+                ],
+                "additionalProperties": false
+              },
+              "preferredTargetCapability": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "consumerTools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "line": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "line",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "required",
+              "reason",
+              "contract",
+              "constraints",
+              "preferredTargetCapability",
+              "consumerTools",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100,
+          "default": []
+        },
+        "requiredFeatures": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "processEvidence",
+              "streaming",
+              "packagedMcp",
+              "externalMcp",
+              "inlineSecrets",
+              "multiTurn",
+              "toolProcessEvidence",
+              "mcpResultChannels",
+              "mcpPrepare",
+              "otlpEvidence",
+              "otlpExport",
+              "projectExecution",
+              "artifactEvidence",
+              "caseStateLifecycle"
+            ]
+          },
+          "maxItems": 30,
+          "default": []
+        },
+        "platform": {
+          "type": "object",
+          "properties": {
+            "os": {
+              "type": "string",
+              "enum": [
+                "linux",
+                "windows",
+                "darwin"
+              ]
+            },
+            "arch": {
+              "type": "string",
+              "minLength": 1
+            },
+            "isolation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "os",
+            "arch",
+            "isolation"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "baseCandidateId",
+        "runtimeType",
+        "platform"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

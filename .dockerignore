@@ -4,8 +4,13 @@
 **/__pycache__/
 deploy/private/
 node_modules
+.pnpm-store/
+.tmp/
+.claude/
+logs/
 dist
 web-dist
+web-dist-private/
 data
 reports
 artifacts

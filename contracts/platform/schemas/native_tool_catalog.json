@@ -1,0 +1,144 @@
+{
+  "$ref": "#/definitions/native_tool_catalog",
+  "definitions": {
+    "native_tool_catalog": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "finance.native-tool-catalog.v1"
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "openjiuwen",
+                "agentscope"
+              ]
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "type",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "deploymentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifactSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "capabilityId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "nativeToolNames": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "verificationSha256": {
+                "$ref": "#/definitions/native_tool_catalog/properties/artifactSha256"
+              },
+              "contract": {
+                "type": "object",
+                "properties": {
+                  "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "errorSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "semantics": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "inputSchema",
+                  "outputSchema",
+                  "errorSchema",
+                  "semantics"
+                ],
+                "additionalProperties": false
+              },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sideEffects": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "read"
+                    ]
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "permissions",
+                  "sideEffects",
+                  "isolation"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "capabilityId",
+              "nativeToolNames",
+              "verificationSha256",
+              "contract",
+              "constraints"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 64
+        },
+        "catalogDigest": {
+          "$ref": "#/definitions/native_tool_catalog/properties/artifactSha256"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "runtime",
+        "deploymentId",
+        "artifactSha256",
+        "contracts",
+        "catalogDigest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -78,7 +78,10 @@
     "managedMethodProbeToolNames": {
       "type": "array",
       "maxItems": 64,
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "nativeToolNames": {
       "type": "array",
@@ -86,6 +89,10 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "auxiliaryToolNames": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
     },
     "nativeCapabilities": {
       "type": "array",
@@ -227,6 +234,15 @@
         "inlineSecrets": {
           "type": "boolean"
         },
+        "processEvidence": {
+          "type": "boolean",
+          "description": "Returns the unified process in terminal evidence metadata.process; required for newly connected Launchers."
+        },
+        "projectExecution": { "type": "boolean" },
+        "otlpEvidence": { "type": "boolean" },
+        "otlpExport": { "type": "boolean" },
+        "artifactEvidence": { "type": "boolean" },
+        "caseStateLifecycle": { "type": "boolean" },
         "multiTurn": {
           "type": "boolean",
           "description": "Distinct native Agent invocations in one isolated case, retaining session, workspace and MCP lifecycle; omitted means unsupported."
@@ -246,6 +262,10 @@
         "managedMethodProbe": {
           "type": "boolean",
           "description": "Explicit support for an independently installed, tool-free managed method nonce probe. Does not claim native file-tool access or grant business permissions."
+        },
+        "toolEnvironment": {
+          "type": "boolean",
+          "description": "Supports instance-local tool.env configuration and inline secret bindings; never model arguments."
         }
       }
     },
@@ -256,8 +276,7 @@
         "maxArchiveBytes",
         "maxFiles",
         "maxTimeoutMs",
-        "maxConcurrentInstances",
-        "maxSkills"
+        "maxConcurrentInstances"
       ],
       "properties": {
         "maxArchiveBytes": {
@@ -279,6 +298,10 @@
         "maxSkills": {
           "type": "integer",
           "minimum": 1
+        },
+        "minPrimaryTools": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

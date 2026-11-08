@@ -9,10 +9,13 @@ import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager, suppress
 
+from .environment_check import check_environment
+check_environment()
+
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from importlib.metadata import PackageNotFoundError, version
-from .instance_manager import InstanceManager
+from .instance_manager import InstanceCapacityError, InstanceManager
 from .model_config import resolve_model
 from .runtime_context import RuntimeContext
 from .package_runtime import service_environment
@@ -90,9 +93,10 @@ async def runtime_capabilities():
             'platform':{'os':platform.system().lower(),'arch':{'amd64':'x64','x86_64':'x64','aarch64':'arm64'}.get(platform.machine().lower(),platform.machine().lower()),'isolation':'trusted_local_process'},
             'runtime': {'type': 'openjiuwen', 'version': runtime_version()},
             'models': models, 'defaultModelId': default_model,
-            'features': {'streaming': True, 'asyncLaunch': False, 'packagedMcp': True,
-                         'externalMcp': True, 'inlineSecrets': True},
-            'limits': {'maxSkills':10, 'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
+            'features': {'streaming': True, 'multiTurn': True, 'asyncLaunch': False, 'packagedMcp': True,
+                         'externalMcp': True, 'inlineSecrets': True, 'toolEnvironment': True,
+                         'processEvidence': True, 'otlpEvidence': True, 'artifactEvidence': True},
+            'limits': {'maxArchiveBytes': min(instances.max_archive_bytes,instances.max_uncompressed_bytes), 'maxFiles': instances.max_files,
                        'maxTimeoutMs': 900000, 'maxConcurrentInstances': 2}}
 
 
@@ -108,6 +112,8 @@ async def create_runtime_instance(request: Request):
         raise HTTPException(400, 'Requested model is not configured in this Runtime')
     try:
         item = instances.create(body, idempotency_key)
+    except InstanceCapacityError:
+        return JSONResponse(status_code=409, content={'error': 'RUNTIME_INSTANCE_CAPACITY'})
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     except (ValueError, TypeError, KeyError) as exc:
@@ -159,6 +165,8 @@ async def execute_runtime_instance(instance_id: str, request: Request):
         raise HTTPException(400, str(exc)) from exc
     model = config().get('models', {}).get(body['model']['modelId'], {})
     body['model']['providerId'] = model.get('providerId', 'service-execution')
+    if request.headers.get('traceparent'):
+        body['traceparent'] = request.headers['traceparent']
     return await execute(InstanceExecutionRequest(body, request, instance_id))
 
 
@@ -229,6 +237,7 @@ async def execute(request: Request):
             log_event('runtime_session_started', **correlation, timeoutMs=execution_timeout)
             diagnostics = asyncio.create_task(drain_stderr(process.stderr))
             terminal = False
+            timed_out = False
             try:
                 process.stdin.write(json.dumps(body).encode())
                 await process.stdin.drain()
@@ -251,6 +260,7 @@ async def execute(request: Request):
                             terminal = True
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except TimeoutError:
+                timed_out = True
                 log_event('runtime_session_timeout', **correlation, timeoutMs=execution_timeout)
             finally:
                 # Client disconnect can cancel the generator while it is reaping.
@@ -274,17 +284,25 @@ async def execute(request: Request):
                             detail = {}
                         log_event('runtime_session_finished', **correlation, exitCode=process.returncode,
                                   terminal=terminal, elapsedMs=round((time.monotonic()-started)*1000), **detail)
+                    return detail
                 cleanup = asyncio.create_task(reap())
                 cleanup_jobs.add(cleanup)
                 cleanup.add_done_callback(cleanup_jobs.discard)
-                await asyncio.shield(cleanup)
+                detail = await asyncio.shield(cleanup)
             if not terminal:
+                error_type = (detail or {}).get('lastErrorType')
+                reason = (f"OpenJiuwen session exceeded {execution_timeout // 1000} seconds" if timed_out else
+                          f"OpenJiuwen session exited before terminal evidence (exit code {process.returncode})")
+                if error_type:
+                    reason += ': ' + error_type
                 evidence = {"runId": body["runId"], "caseId": body["case"]["caseId"], "side": body["side"],
                             "status": "failed", "modelId": body["model"]["modelId"], "skillVersion": None,
                             "output": "", "elapsedMs": round((time.monotonic() - started) * 1000),
                             "toolCalls": [], "loadedSkills": [], "usage": None,
                             "runtimeIdentityVerified": False, "streamCompleted": False,
-                            "error": f"OpenJiuwen session stopped or exceeded {execution_timeout // 1000} seconds", "metadata": {}}
+                            "error": reason, "metadata": {'runtimeFailure': {
+                                'kind': 'TIMEOUT' if timed_out else 'PROCESS_EXIT', 'exitCode': process.returncode,
+                                **({'errorType': error_type} if error_type else {})}}}
                 yield f"data: {json.dumps({'evidence': evidence})}\n\n"
 
     async def stream():

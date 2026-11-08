@@ -1,0 +1,1010 @@
+{
+  "$ref": "#/definitions/task_analysis",
+  "definitions": {
+    "task_analysis": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "minItems": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "paths",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50
+        },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "preservedBehavior": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+              },
+              "minItems": 1
+            },
+            "sourceCouplings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                        },
+                        "snippet": {
+                          "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "snippet"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1
+                  },
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "default": []
+                  }
+                },
+                "required": [
+                  "description",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "title": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "implementation": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "toolNames": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                    }
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/plan/properties/sourceCouplings/items/properties/evidence/items"
+                    },
+                    "minItems": 1
+                  },
+                  "memberIds": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/sourceCouplings/items/properties/memberIds"
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "implementation",
+                  "toolNames",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "dependencies": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "name": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "contract": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "configuration": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "memberIds": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/sourceCouplings/items/properties/memberIds"
+                  }
+                },
+                "required": [
+                  "key",
+                  "name",
+                  "contract",
+                  "configuration"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+              }
+            },
+            "unresolvedQuestions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+              }
+            },
+            "acceptanceChecks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "purpose": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "requirement": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "procedure": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "expectedResult": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/scope"
+                  },
+                  "memberIds": {
+                    "$ref": "#/definitions/task_analysis/properties/plan/properties/sourceCouplings/items/properties/memberIds"
+                  }
+                },
+                "required": [
+                  "id",
+                  "purpose",
+                  "procedure",
+                  "expectedResult"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "requiredCapabilities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contract": {
+                    "type": "object",
+                    "properties": {
+                      "inputSchema": {
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "outputSchema": {
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "errorSchema": {
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "semantics": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "inputSchema",
+                      "outputSchema",
+                      "errorSchema",
+                      "semantics"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "constraints": {
+                    "type": "object",
+                    "properties": {
+                      "permissions": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "sideEffects": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "read",
+                          "write"
+                        ]
+                      },
+                      "isolation": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "permissions",
+                      "sideEffects",
+                      "isolation"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "preferredTargetCapability": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "consumerTools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "line": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "detail": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "line",
+                        "detail"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "required",
+                  "reason",
+                  "contract",
+                  "constraints",
+                  "preferredTargetCapability",
+                  "consumerTools",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "default": []
+            },
+            "runtimeFeatures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "feature": {
+                    "type": "string",
+                    "enum": [
+                      "processEvidence",
+                      "streaming",
+                      "packagedMcp",
+                      "externalMcp",
+                      "inlineSecrets",
+                      "multiTurn",
+                      "toolProcessEvidence",
+                      "mcpResultChannels",
+                      "mcpPrepare",
+                      "otlpEvidence",
+                      "otlpExport",
+                      "projectExecution",
+                      "artifactEvidence",
+                      "caseStateLifecycle"
+                    ]
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "feature",
+                  "required",
+                  "reason"
+                ],
+                "additionalProperties": false
+              },
+              "default": []
+            }
+          },
+          "required": [
+            "scope",
+            "preservedBehavior",
+            "sourceCouplings",
+            "changes",
+            "dependencies",
+            "conditions",
+            "unresolvedQuestions",
+            "acceptanceChecks"
+          ],
+          "additionalProperties": false
+        },
+        "diagnosis": {
+          "type": "object",
+          "properties": {
+            "skillChanges": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "paths": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                    },
+                    "minItems": 1
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "KEEP",
+                      "UPDATE"
+                    ]
+                  },
+                  "reason": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  }
+                },
+                "required": [
+                  "memberIds",
+                  "paths",
+                  "action",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "memberIds": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds"
+                  },
+                  "id": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "name": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "sourcePaths": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                    },
+                    "minItems": 1
+                  },
+                  "currentBehavior": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "problem": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "targetForm": {
+                    "type": "string",
+                    "enum": [
+                      "MCP",
+                      "SCRIPT",
+                      "CLI",
+                      "KEEP",
+                      "UNCONFIRMED"
+                    ]
+                  },
+                  "language": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "reason": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                        },
+                        "before": {
+                          "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                        },
+                        "after": {
+                          "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                          },
+                          "minItems": 1
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "before",
+                        "after",
+                        "steps"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "preservedBehavior": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                    }
+                  },
+                  "callChain": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                        },
+                        "detail": {
+                          "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                        },
+                        "evidence": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                              },
+                              "snippet": {
+                                "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "snippet"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "minItems": 1
+                        }
+                      },
+                      "required": [
+                        "title",
+                        "detail",
+                        "evidence"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/tools/items/properties/callChain/items/properties/evidence/items"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "memberIds",
+                  "id",
+                  "name",
+                  "sourcePaths",
+                  "currentBehavior",
+                  "problem",
+                  "targetForm",
+                  "language",
+                  "reason",
+                  "changes",
+                  "preservedBehavior",
+                  "callChain",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "dependencies": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "name": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "toolIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                    }
+                  },
+                  "owner": {
+                    "type": "string",
+                    "enum": [
+                      "RUNTIME",
+                      "TOOL",
+                      "UNKNOWN"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "INJECT",
+                      "PACKAGE",
+                      "MOVE_TO_RUNTIME",
+                      "KEEP",
+                      "CONFIRM"
+                    ]
+                  },
+                  "purpose": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "configuration": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "verification": {
+                    "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/skillChanges/items/properties/memberIds/items"
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/diagnosis/properties/tools/items/properties/callChain/items/properties/evidence/items"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "toolIds",
+                  "owner",
+                  "action",
+                  "purpose",
+                  "configuration",
+                  "verification",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "skillChanges",
+            "tools",
+            "dependencies"
+          ],
+          "additionalProperties": false
+        },
+        "standardization": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "enum": [
+                "enterprise-standardization.v1",
+                "enterprise-standardization.v2"
+              ]
+            },
+            "configurationInputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "sensitive": {
+                    "type": "boolean"
+                  },
+                  "toolIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "name",
+                  "label",
+                  "description",
+                  "required",
+                  "sensitive",
+                  "toolIds"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "configurationGroups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "alternatives": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/configurationInputs/items/properties/name"
+                      },
+                      "minItems": 1
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "label",
+                  "alternatives"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "coverage": {
+              "type": "object",
+              "properties": {
+                "readPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "gaps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      },
+                      "reason": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      },
+                      "blocking": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "reason",
+                      "blocking"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "readPaths",
+                "gaps"
+              ],
+              "additionalProperties": false
+            },
+            "requirements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "BUSINESS",
+                      "RUNTIME"
+                    ]
+                  },
+                  "statement": {
+                    "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                  },
+                  "toolIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                    }
+                  },
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                    }
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                        },
+                        "snippet": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "snippet"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "statement",
+                  "toolIds",
+                  "memberIds",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "toolId": {
+                    "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                  },
+                  "form": {
+                    "type": "string",
+                    "enum": [
+                      "SCRIPT",
+                      "MCP",
+                      "CLI"
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "KEEP",
+                      "ADAPT",
+                      "CONVERT"
+                    ]
+                  },
+                  "alternatives": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "form": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/tools/items/properties/form"
+                        },
+                        "feasible": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                        },
+                        "changeCost": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                        },
+                        "deploymentCost": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                        },
+                        "maintenanceCost": {
+                          "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                        }
+                      },
+                      "required": [
+                        "form",
+                        "feasible",
+                        "reason",
+                        "changeCost",
+                        "deploymentCost",
+                        "maintenanceCost"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 2,
+                    "maxItems": 3
+                  },
+                  "recommendation": {
+                    "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                  },
+                  "assumptions": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                    }
+                  },
+                  "contract": {
+                    "type": "object",
+                    "properties": {
+                      "inputSchema": {
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "outputSchema": {
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "errors": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      },
+                      "state": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      },
+                      "configuration": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      },
+                      "invocation": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      },
+                      "sampleInput": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "additionalProperties": {}
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "sampleReason": {
+                        "$ref": "#/definitions/task_analysis/properties/standardization/properties/coverage/properties/readPaths/items"
+                      }
+                    },
+                    "required": [
+                      "inputSchema",
+                      "outputSchema",
+                      "errors",
+                      "state",
+                      "configuration",
+                      "invocation",
+                      "sampleInput",
+                      "sampleReason"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "toolId",
+                  "form",
+                  "action",
+                  "alternatives",
+                  "recommendation",
+                  "assumptions",
+                  "contract"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "version",
+            "coverage",
+            "requirements",
+            "tools"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "summary",
+        "changes",
+        "missing"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

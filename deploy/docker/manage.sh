@@ -4,6 +4,9 @@ umask 077
 script=$(realpath -- "${BASH_SOURCE[0]}")
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 compose=(docker compose -f compose.yaml)
+if [[ "${FINANCE_EVAL_ENABLE_ISOLATED_EXECUTION:-0}" == 1 ]]; then
+  compose+=(-f compose.execution.yaml)
+fi
 : "${FINANCE_EVAL_IMAGE:?Set FINANCE_EVAL_IMAGE to an immutable version tag}"
 : "${FINANCE_EVAL_CONFIG_DIR:?Set FINANCE_EVAL_CONFIG_DIR to an absolute private directory}"
 [[ "$FINANCE_EVAL_CONFIG_DIR" == /* ]] || { echo 'Configuration directory must be absolute.' >&2; exit 1; }
@@ -14,14 +17,14 @@ case "${1:-help}" in
     "${compose[@]}" run --rm --no-deps api node deploy/preflight.mjs
     ;;
   start) "${compose[@]}" up -d --wait --wait-timeout 180 ;;
-  stop) "${compose[@]}" stop -t 75 api; "${compose[@]}" stop -t 75 runtime ;;
+  stop) "${compose[@]}" stop -t 75 api; "${compose[@]}" stop -t 75 agent-runtime; "${compose[@]}" stop -t 75 runtime ;;
   status) "${compose[@]}" ps ;;
   logs) "${compose[@]}" logs --since 1h --tail 500 ;;
   health) "${compose[@]}" exec -T api node deploy/health.mjs --runtime http://runtime:56362 ;;
   backup)
     archive=${2:?Absolute backup archive path required}
     [[ "$archive" == /* && ! -e "$archive" ]] || { echo 'Use a new absolute archive path.' >&2; exit 1; }
-    [[ -z "$("${compose[@]}" ps --status running -q)" ]] || { echo 'Stop both services before backup.' >&2; exit 1; }
+    [[ -z "$("${compose[@]}" ps --status running -q)" ]] || { echo 'Stop all three services before backup.' >&2; exit 1; }
     mkdir -p -- "$(dirname -- "$archive")"
     "${compose[@]}" run --rm --no-deps --user 0 \
       -v "$FINANCE_EVAL_CONFIG_DIR:/backup-config:ro" -v "$(dirname -- "$archive"):/backup" \

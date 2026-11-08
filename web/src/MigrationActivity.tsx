@@ -1,0 +1,54 @@
+import {useEffect,useRef,useState} from 'react';
+import {ArrowDown,Check,LoaderCircle,AlertCircle,Square} from 'lucide-react';
+import {apiPath,authHeaders} from './api-path';
+import type {Activity} from "../../contracts/platform/responses";
+import type {BundleAttempt} from "../../contracts/platform/responses";
+import {activitySummary,streamingResponse} from './features/migration/activity-presentation';
+import {MarkdownContent} from './MarkdownContent';
+import './migration-activity.css';
+
+export function MigrationActivity({projectId,attempt}:{projectId:string;attempt?:BundleAttempt}){
+  const apiPrefix='/api/migration-tasks';
+  const [activity,setActivity]=useState<Activity|null>(null),[connected,setConnected]=useState(false),[clock,setClock]=useState(Date.now()),[following,setFollowing]=useState(true),[unseen,setUnseen]=useState(false),[error,setError]=useState('');
+  const viewport=useRef<HTMLDivElement>(null),follow=useRef(true),version=useRef('');
+  useEffect(()=>{let stopped=false;const controller=new AbortController();setActivity(null);setConnected(false);version.current='';follow.current=true;setFollowing(true);setUnseen(false);
+    const run=async()=>{while(!stopped){const attempt=new AbortController();let watchdog=setTimeout(()=>attempt.abort(),20000);try{
+      const response=await fetch(apiPath(`${apiPrefix}/${projectId}/activity/events`),{headers:authHeaders(),signal:AbortSignal.any([controller.signal,attempt.signal])});
+      if(!response.ok||!response.body)throw new Error('连接失败');
+      const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';setConnected(true);
+      while(!stopped){const chunk=await reader.read();if(chunk.done)break;clearTimeout(watchdog);watchdog=setTimeout(()=>attempt.abort(),20000);pending+=decoder.decode(chunk.value,{stream:true});let end:number;
+        while((end=pending.indexOf('\n\n'))>=0){const packet=pending.slice(0,end);pending=pending.slice(end+2);const line=packet.split('\n').find(value=>value.startsWith('data: '));if(!line)continue;
+          const next=JSON.parse(line.slice(6)) as Activity|null;const key=next?`${next.taskId}:${next.updatedAt}:${next.status}`:'';
+          if(key!==version.current){version.current=key;setActivity(next);if(!follow.current)setUnseen(true);}
+        }
+      }
+    }catch{/* A network disconnect does not change the task status. */}finally{clearTimeout(watchdog);}
+    if(!stopped){setConnected(false);await new Promise(resolve=>setTimeout(resolve,1500));}}
+    };void run();const tick=setInterval(()=>setClock(Date.now()),1000);
+    return ()=>{stopped=true;controller.abort();clearInterval(tick);};
+  },[projectId,apiPrefix]);
+  useEffect(()=>{if(follow.current&&viewport.current)viewport.current.scrollTop=viewport.current.scrollHeight;},[activity]);
+  const current = activity && (!attempt || activity.taskId === attempt.id) ? activity : null;
+  if(!current && !attempt)return null;
+  const shown: Activity = current ?? {taskId:attempt!.id,status:attempt!.status,startedAt:attempt!.startedAt,updatedAt:attempt!.startedAt,events:[]};
+  const running=shown.status==='RUNNING';
+  const response=attempt?.kind==='CHAT'?streamingResponse(shown):null;
+  const labels={RUNNING:'正在运行',WAITING:'等待用户或外部条件',COMPLETED:'执行结束',FAILED:'执行失败',CANCELLED:'已取消',INTERRUPTED:'执行已中断'};
+  const duration=Math.max(0,Math.floor(((running?clock:Date.parse(shown.updatedAt))-Date.parse(shown.startedAt))/1000));
+  const cancel=async()=>{setError('');try{const result=await fetch(apiPath(`${apiPrefix}/${projectId}/cancel`),{method:'POST',headers:authHeaders()});if(!result.ok)throw new Error();}catch{setError('取消请求未成功，请重试');}};
+  const timeline = <div className="activity-scroll" ref={viewport} tabIndex={0} aria-label="活动记录" onScroll={()=>{const el=viewport.current;if(!el)return;const near=el.scrollHeight-el.scrollTop-el.clientHeight<36;follow.current=near;setFollowing(near);if(near)setUnseen(false);}}>
+      <ol>{shown.events.map((event,index)=>{const failed=event.kind.includes('error')||event.kind==='failed';const active=running&&index===shown.events.length-1;return <li key={`${shown.taskId}:${event.id}`} className={failed?'activity-error':''}>
+        <span className="activity-icon">{failed?<AlertCircle size={15}/>:active?<LoaderCircle size={15} className="activity-spinner"/>:<Check size={15}/>}</span>
+        <div><div className="activity-row"><strong>{event.label}</strong><time>{new Date(event.at).toLocaleTimeString('zh-CN',{hour12:false})}</time></div>
+        {event.text&&<details><summary>查看响应内容</summary><pre>{event.text}</pre></details>}</div>
+      </li>;})}</ol>
+    </div>;
+  return <section className={`agent-activity${attempt ? " activity-compact" : ""}`} aria-label="Agent 实时活动">
+    <header className="activity-heading"><div><span className={`activity-dot ${running?'active':''}`}/><strong>{running && attempt ? {BASELINE:'原工程基线评测',PREPARE:'正在理解工程与准备运行',ANALYZE:'正在诊断',GENERATE:'正在生成迁移结果',REPAIR:'正在修复',ACCEPT:'正在验证实际效果',OPTIMIZE:'正在优化',CHAT:'正在回复'}[attempt.kind] : labels[shown.status]}</strong><span className="activity-duration">已用时 {Math.floor(duration/60)}分{duration%60}秒</span></div><p role="status">{activitySummary(shown, clock)}</p></header>
+    {response&&<div className="activity-streaming-response" aria-label="Agent 正在回复"><MarkdownContent content={response} streaming/></div>}
+    {attempt ? <details className="activity-details"><summary>执行过程（{shown.events.length} 条）</summary>{timeline}</details> : timeline}
+    {!following&&<button className="button secondary compact activity-latest" onClick={()=>{follow.current=true;setFollowing(true);setUnseen(false);if(viewport.current)viewport.current.scrollTop=viewport.current.scrollHeight;}}><ArrowDown size={14}/>{unseen?'有新活动 · 回到最新':'回到最新'}</button>}
+    <footer><span>{connected && current?`最近活动：${Math.max(0,Math.floor((clock-Date.parse(shown.updatedAt))/1000))} 秒前`:'正在连接执行进度，任务状态以实际结果为准…'}</span>{running&&<button className="button secondary compact" onClick={()=>void cancel()}><Square size={12}/>取消当前操作</button>}</footer>
+    {error&&<p role="alert">{error}</p>}
+  </section>;
+}

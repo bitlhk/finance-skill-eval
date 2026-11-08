@@ -10,6 +10,10 @@ import uuid
 import zipfile
 
 
+class InstanceCapacityError(RuntimeError):
+    pass
+
+
 class InstanceManager:
     def __init__(self, ttl_seconds=900, max_archive_bytes=8 * 1024 * 1024, max_files=200,
                  max_uncompressed_bytes=16 * 1024 * 1024):
@@ -34,6 +38,9 @@ class InstanceManager:
         required = {'schemaVersion','runId','side','modelId','environment','configuration','secrets','limits','skills','contentDigest'}
         if not required <= set(request) or set(request) - required - {'assets','entryInstructionsFile','generation'}:
             raise ValueError('Unsupported Runtime instance fields')
+        if request.get('generation') is not None:
+            from runtime.contracts import validate
+            validate('finance.runtime-instance.v1', request['generation'], 'generation')
         from .skill_set import hydrate_skill_set
         hydrate_skill_set(request, self)
         if not isinstance(request.get('runId'), str) or not request['runId'] or request.get('side') not in ('left', 'right'):
@@ -55,6 +62,8 @@ class InstanceManager:
             raise ValueError('Only inline Runtime secrets are supported')
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in secrets.get('values', {}).items()):
             raise ValueError('Runtime secrets must be string values')
+        from .package_runtime import declared_tool_environment
+        declared_tool_environment(request.get('configuration'), secrets.get('values'))
         request = copy.deepcopy(request)
         digest = self._digest(request)
         request_digest = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
@@ -65,7 +74,7 @@ class InstanceManager:
                 raise RuntimeError('Idempotency key was reused with different configuration')
             return item
         if len(self.instances) >= 2:
-            raise RuntimeError('Runtime instance capacity exceeded')
+            raise InstanceCapacityError('Runtime instance capacity exceeded')
         instance_id = 'runtime-instance-' + uuid.uuid4().hex[:16]
         now = time.time()
         item = {'schemaVersion': 'finance.skill-eval.runtime-instance-state.v1', 'instanceId': instance_id,
@@ -131,6 +140,9 @@ class InstanceManager:
         request = copy.deepcopy(item['_request'])
         values = request.pop('secrets', {}).get('values', {})
         environment = request.get('environment') or {}
+        from .package_runtime import declared_tool_environment
+        # Hydrate into this execution copy only. Stored/public state never contains secret values.
+        environment['_toolEnvironment'] = declared_tool_environment(request.get('configuration'), values)
         for service in environment.get('mcpServers', []):
             if not isinstance(service, dict) or not isinstance(service.get('endpoint'), str) or not service['endpoint'].startswith(('http://', 'https://')):
                 raise ValueError('Invalid external MCP service')
@@ -153,6 +165,12 @@ class InstanceManager:
         request['schemaVersion'] = 'finance.skill-eval.runtime-request.v1'
         request['case'] = {'caseId': case.get('caseId'), 'prompt': case.get('query'), 'taskMode': 'single_turn',
                            'requiredTools': required, 'workspaceFiles': copy.deepcopy(workspace_files)}
-        request['model'] = {'providerId': 'runtime-launcher', 'modelId': request.pop('modelId'), 'parameters': {}}
+        if 'turns' in case:
+            from runtime.contracts import validate
+            validate('finance.skill-eval.runtime-case.v1', case['turns'], 'turns')
+            request['case'].update(taskMode='multi_turn', turns=copy.deepcopy(case['turns']))
+        generation = request.pop('generation', None)
+        request['model'] = {'providerId': 'runtime-launcher', 'modelId': request.pop('modelId'),
+            'parameters': {key: value for key, value in (generation or {}).items() if key != 'schemaVersion'}}
         environment['instanceConfigurationDigest'] = item['configurationDigest']
         return request

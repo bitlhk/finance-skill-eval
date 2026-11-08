@@ -1,0 +1,384 @@
+{
+  "$ref": "#/definitions/build_requirements",
+  "definitions": {
+    "build_requirements": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "finance.runtime-build-requirements.v3"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "runtimeType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "protocols": {
+              "type": "object",
+              "properties": {
+                "capabilities": {
+                  "type": "string",
+                  "const": "finance.runtime-capabilities.v1"
+                },
+                "instance": {
+                  "type": "string",
+                  "const": "finance.runtime-instance.v1"
+                },
+                "execution": {
+                  "type": "string",
+                  "const": "finance.skill-eval.runtime-case.v1"
+                },
+                "observation": {
+                  "type": "string",
+                  "const": "finance.runtime-observation.v1"
+                }
+              },
+              "required": [
+                "capabilities",
+                "instance",
+                "execution",
+                "observation"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "runtimeType",
+            "protocols"
+          ],
+          "additionalProperties": false
+        },
+        "executionRequirements": {
+          "type": "object",
+          "properties": {
+            "platform": {
+              "type": "object",
+              "properties": {
+                "os": {
+                  "type": "string",
+                  "enum": [
+                    "linux",
+                    "windows",
+                    "darwin"
+                  ]
+                },
+                "arch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "isolation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "os",
+                "arch",
+                "isolation"
+              ],
+              "additionalProperties": false
+            },
+            "features": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "processEvidence",
+                  "streaming",
+                  "packagedMcp",
+                  "externalMcp",
+                  "inlineSecrets",
+                  "multiTurn",
+                  "toolProcessEvidence",
+                  "mcpResultChannels",
+                  "mcpPrepare",
+                  "otlpEvidence",
+                  "otlpExport",
+                  "projectExecution",
+                  "artifactEvidence",
+                  "caseStateLifecycle"
+                ]
+              }
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "maxSkills": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxFiles": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxArchiveBytes": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "maxTimeoutMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [
+                "maxSkills",
+                "maxFiles",
+                "maxArchiveBytes",
+                "maxTimeoutMs"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "platform",
+            "features",
+            "limits"
+          ],
+          "additionalProperties": false
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contract": {
+                "type": "object",
+                "properties": {
+                  "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "errorSchema": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "semantics": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "inputSchema",
+                  "outputSchema",
+                  "errorSchema",
+                  "semantics"
+                ],
+                "additionalProperties": false
+              },
+              "constraints": {
+                "type": "object",
+                "properties": {
+                  "permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "sideEffects": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "read",
+                      "write"
+                    ]
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "permissions",
+                  "sideEffects",
+                  "isolation"
+                ],
+                "additionalProperties": false
+              },
+              "preferredTargetCapability": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "consumerTools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "line": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "line",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "required",
+              "reason",
+              "contract",
+              "constraints",
+              "preferredTargetCapability",
+              "consumerTools",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "rebuild": {
+          "type": "object",
+          "properties": {
+            "baseline": {
+              "type": "object",
+              "properties": {
+                "deploymentId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "artifactSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "capabilitiesDigest": {
+                  "$ref": "#/definitions/build_requirements/properties/rebuild/properties/baseline/properties/artifactSha256"
+                }
+              },
+              "required": [
+                "deploymentId",
+                "artifactSha256",
+                "capabilitiesDigest"
+              ],
+              "additionalProperties": false
+            },
+            "hypothesis": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "issue": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "expectedBehavior": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "id",
+                "issue",
+                "expectedBehavior"
+              ],
+              "additionalProperties": false
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "evidenceRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "probeRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "evidenceRef",
+                  "summary"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1,
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "baseline",
+            "hypothesis",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "requirementsDigest": {
+          "$ref": "#/definitions/build_requirements/properties/rebuild/properties/baseline/properties/artifactSha256"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "target",
+        "executionRequirements",
+        "requiredCapabilities",
+        "requirementsDigest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

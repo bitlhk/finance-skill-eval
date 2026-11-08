@@ -1,0 +1,41 @@
+{
+  "$ref": "#/definitions/optimization_goal",
+  "definitions": {
+    "optimization_goal": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "default": "提高整体任务效果，结合业务目标权衡改善与回退"
+        },
+        "maxRounds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "targetPassRate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        },
+        "maxDurationSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 7200
+        },
+        "protectedCaseIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,1 @@
+最终返回 JSON：{"criteria":[{"id":"原 criterionId 或 requirement:id","passed":true或false或null,"reason":"具体证据和原因；材料不足说明缺口","evidenceRefs":["/output"]}]}。逐条覆盖全部标准。true/false 必须引用实际存在的 JSON pointer；null 表示无法验证，可使用空引用数组。调查时直接调用已提供的 query_evidence 工具；不要将查询请求当作最终判定返回。

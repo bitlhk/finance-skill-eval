@@ -6,6 +6,7 @@ doing it at import time in a shared module breaks as soon as one entry imports a
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import re
 import sys
@@ -18,6 +19,7 @@ def emit(protocol, value: dict) -> None:
     protocol.flush()
 
 
+
 ANALYSIS_TEXT_EXTENSIONS = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".css", ".sql", ".sh", ".ps1", ".ini", ".cfg", ".rst"}
 
 
@@ -28,6 +30,13 @@ def build_workspace(files: dict[str, str | bytes], *, normalize_text: bool = Fal
     the workspace, so this must never point at the source tree.
     """
     root = Path(tempfile.mkdtemp(prefix="finance-migration-ws-")).resolve()
+    populate_workspace(root, files, normalize_text=normalize_text)
+    return root
+
+
+def populate_workspace(root: Path, files: dict[str, str | bytes], *, normalize_text: bool = False) -> None:
+    """Materialise workspace files under an existing isolated directory."""
+    root = Path(root).resolve(strict=True)
     for name, content in files.items():
         target = (root / name.replace("\\", "/")).resolve()
         if root not in target.parents:
@@ -51,7 +60,6 @@ def build_workspace(files: dict[str, str | bytes], *, normalize_text: bool = Fal
             target.write_bytes(content)
         else:
             target.write_text(content, encoding="utf-8", newline="")
-    return root
 
 
 MAX_ITERATION_SENTINEL = "Max iterations reached without completion"
@@ -192,7 +200,7 @@ def _balanced_objects(text: str):
         index = end + 1
 
 
-def parse_structured(output: str) -> dict:
+def parse_structured(output: str, *, required_key: str | None = None) -> dict:
     """Extract the agent's result object.
 
     The answer routinely arrives as prose that itself contains braces (e.g. the
@@ -216,6 +224,11 @@ def parse_structured(output: str) -> dict:
         if isinstance(value, dict):
             parsed.append(value)
 
+    if required_key is not None:
+        for value in parsed:
+            if required_key in value:
+                return value
+        raise ValueError('JSON_MISSING_RESULT_FIELD: ' + required_key)
     for value in parsed:
         if str(value.get("status", "")).upper() in {"PRODUCED", "ABSTAINED"}:
             return value

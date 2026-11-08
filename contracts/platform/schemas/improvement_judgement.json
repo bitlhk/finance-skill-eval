@@ -1,0 +1,286 @@
+{
+  "$ref": "#/definitions/improvement_judgement",
+  "definitions": {
+    "improvement_judgement": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "PROPOSED"
+            },
+            "hypothesis": {
+              "type": "object",
+              "properties": {
+                "layer": {
+                  "type": "string",
+                  "enum": [
+                    "SKILL",
+                    "TOOL",
+                    "CONFIGURATION",
+                    "HARNESS",
+                    "EVALUATION",
+                    "UNKNOWN"
+                  ]
+                },
+                "issue": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "expectedBehavior": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "evidenceCaseIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 20
+                },
+                "validation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "risk": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                },
+                "confidence": {
+                  "type": "string",
+                  "enum": [
+                    "LOW",
+                    "MEDIUM",
+                    "HIGH"
+                  ]
+                },
+                "toolIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "maxItems": 5
+                },
+                "projectPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "maxItems": 20
+                },
+                "requiredRuntimeFeatures": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "processEvidence",
+                      "streaming",
+                      "packagedMcp",
+                      "externalMcp",
+                      "inlineSecrets",
+                      "multiTurn",
+                      "toolProcessEvidence",
+                      "mcpResultChannels",
+                      "mcpPrepare",
+                      "otlpEvidence",
+                      "otlpExport",
+                      "projectExecution",
+                      "artifactEvidence",
+                      "caseStateLifecycle"
+                    ]
+                  },
+                  "minItems": 1,
+                  "maxItems": 16
+                },
+                "requiredCapabilities": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "required": {
+                        "type": "boolean"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "contract": {
+                        "type": "object",
+                        "properties": {
+                          "inputSchema": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          },
+                          "outputSchema": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          },
+                          "errorSchema": {
+                            "type": "object",
+                            "additionalProperties": {}
+                          },
+                          "semantics": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "inputSchema",
+                          "outputSchema",
+                          "errorSchema",
+                          "semantics"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "constraints": {
+                        "type": "object",
+                        "properties": {
+                          "permissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "sideEffects": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "read",
+                              "write"
+                            ]
+                          },
+                          "isolation": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "permissions",
+                          "sideEffects",
+                          "isolation"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "preferredTargetCapability": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "consumerTools": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "line": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0
+                            },
+                            "detail": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "line",
+                            "detail"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "required",
+                      "reason",
+                      "contract",
+                      "constraints",
+                      "preferredTargetCapability",
+                      "consumerTools",
+                      "evidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 8
+                }
+              },
+              "required": [
+                "layer",
+                "issue",
+                "expectedBehavior",
+                "evidenceCaseIds",
+                "validation",
+                "risk",
+                "confidence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "status",
+            "hypothesis"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "ABSTAINED"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "status",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

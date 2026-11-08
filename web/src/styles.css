@@ -224,6 +224,7 @@ button { cursor: pointer; }
 .markdown-content th { background: #f5f6f7; }
 .markdown-content a { color: #a71925; text-decoration: none; }
 .markdown-content a:hover { text-decoration: underline; }
+.work-product-diagram { display:block; width:100%; height:auto; min-height:96px; max-height:600px; border:0; background:#fff; }
 .score-strip { display: grid; grid-template-columns: repeat(4, 110px) minmax(220px,1fr); border-bottom: 1px solid #dfe2e5; }
 .score-strip > div { padding: 14px 16px; border-right: 1px solid #e4e6e8; }
 .score-strip span { display: block; color: #747c83; font-size: 11px; }

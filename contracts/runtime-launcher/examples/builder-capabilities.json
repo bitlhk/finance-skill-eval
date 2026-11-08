@@ -37,6 +37,7 @@
     "streaming": true,
     "asyncLaunch": true,
     "packagedMcp": true,
+    "processEvidence": true,
     "externalMcp": false,
     "inlineSecrets": true
   },

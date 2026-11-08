@@ -1,0 +1,323 @@
+{
+  "$ref": "#/definitions/build_result",
+  "definitions": {
+    "build_result": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "finance.runtime-build-result.v3"
+        },
+        "buildId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirementsDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "SUCCEEDED",
+            "PARTIAL",
+            "FAILED",
+            "CANCELLED"
+          ]
+        },
+        "builder": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "launcher": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "string",
+                  "const": "finance.runtime-launcher-descriptor.v2"
+                },
+                "deploymentId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "baseUrl": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "runtime": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                "protocols": {
+                  "type": "object",
+                  "properties": {
+                    "capabilities": {
+                      "type": "string",
+                      "const": "finance.runtime-capabilities.v1"
+                    },
+                    "instance": {
+                      "type": "string",
+                      "const": "finance.runtime-instance.v1"
+                    },
+                    "execution": {
+                      "type": "string",
+                      "const": "finance.skill-eval.runtime-case.v1"
+                    },
+                    "observation": {
+                      "type": "string",
+                      "const": "finance.runtime-observation.v1"
+                    }
+                  },
+                  "required": [
+                    "capabilities",
+                    "instance",
+                    "execution",
+                    "observation"
+                  ],
+                  "additionalProperties": false
+                },
+                "authentication": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "none"
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "bearer"
+                        },
+                        "audience": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "artifactSha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "capabilitiesDigest": {
+                  "$ref": "#/definitions/build_result/properties/launcher/anyOf/0/properties/artifactSha256"
+                },
+                "expiresAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "schemaVersion",
+                "deploymentId",
+                "baseUrl",
+                "runtime",
+                "protocols",
+                "authentication",
+                "artifactSha256",
+                "capabilitiesDigest",
+                "expiresAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilityResults": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "requirementId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "IMPLEMENTED",
+                  "UNSUPPORTED",
+                  "FAILED"
+                ]
+              },
+              "capabilityId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contractDigest": {
+                "$ref": "#/definitions/build_result/properties/requirementsDigest"
+              },
+              "verificationIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "requirementId",
+              "status",
+              "verificationIds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "verifications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "PASSED",
+                  "FAILED",
+                  "NOT_RUN"
+                ]
+              },
+              "evidenceSha256": {
+                "$ref": "#/definitions/build_result/properties/requirementsDigest"
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "INVALID_REQUIREMENTS",
+                  "UNSUPPORTED_SCHEMA_VERSION",
+                  "UNSUPPORTED_TARGET_PROTOCOL",
+                  "CAPABILITY_UNSUPPORTED",
+                  "CONTRACT_INCOMPATIBLE",
+                  "BUILD_FAILED",
+                  "VERIFICATION_FAILED",
+                  "DEPLOYMENT_FAILED",
+                  "LAUNCHER_UNAVAILABLE",
+                  "INTERNAL_ERROR"
+                ]
+              },
+              "requirementId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "retryable"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "builtAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "resultDigest": {
+          "$ref": "#/definitions/build_result/properties/requirementsDigest"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "buildId",
+        "requestId",
+        "requirementsDigest",
+        "status",
+        "builder",
+        "launcher",
+        "capabilityResults",
+        "verifications",
+        "errors",
+        "builtAt",
+        "resultDigest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

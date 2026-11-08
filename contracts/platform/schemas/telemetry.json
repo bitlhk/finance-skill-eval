@@ -1,0 +1,135 @@
+{
+  "$ref": "#/definitions/telemetry",
+  "definitions": {
+    "telemetry": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "COMPLETE",
+            "PARTIAL",
+            "UNAVAILABLE"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "scope": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "exportStatus": {
+          "type": "string"
+        },
+        "otlp": {
+          "type": "object",
+          "properties": {
+            "resourceSpans": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "resource": {},
+                  "scopeSpans": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "scope": {},
+                        "spans": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "traceId": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{32}$"
+                              },
+                              "spanId": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{16}$"
+                              },
+                              "parentSpanId": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{16}$"
+                              },
+                              "name": {
+                                "type": "string",
+                                "maxLength": 500
+                              },
+                              "startTimeUnixNano": {
+                                "type": "string",
+                                "pattern": "^\\d+$"
+                              },
+                              "endTimeUnixNano": {
+                                "type": "string",
+                                "pattern": "^\\d+$"
+                              },
+                              "attributes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "object",
+                                      "additionalProperties": {}
+                                    }
+                                  },
+                                  "required": [
+                                    "key",
+                                    "value"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "traceId",
+                              "spanId",
+                              "name",
+                              "startTimeUnixNano",
+                              "endTimeUnixNano"
+                            ],
+                            "additionalProperties": true
+                          },
+                          "maxItems": 256
+                        }
+                      },
+                      "required": [
+                        "spans"
+                      ],
+                      "additionalProperties": true
+                    },
+                    "maxItems": 64
+                  }
+                },
+                "required": [
+                  "scopeSpans"
+                ],
+                "additionalProperties": true
+              },
+              "maxItems": 64
+            }
+          },
+          "required": [
+            "resourceSpans"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "status",
+        "source",
+        "scope",
+        "otlp"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

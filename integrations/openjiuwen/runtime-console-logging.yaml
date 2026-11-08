@@ -1,0 +1,13 @@
+version: 1
+disable_existing_loggers: false
+formatters:
+  safe:
+    (): integrations.openjiuwen.operational_logging.SafeFormatter
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: safe
+    stream: ext://sys.stderr
+root:
+  level: WARNING
+  handlers: [console]

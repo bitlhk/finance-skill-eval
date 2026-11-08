@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "policy": "Expected outcomes are evaluator-only. Never include them in Agent inputs. Offline/reference checks do not count as live end-to-end passes.",
+  "diagnosisScenarios": [
+    {
+      "id": "local-script-keep",
+      "source": "acceptance/enterprise-migration-examples/01-expense/source.zip",
+      "goal": "标准化现有报销 Skill，保留业务语义和本地工作区文件读取。当前使用场景是个人隔离工作区的本地执行，不需要共享服务，只做必要改造。",
+      "target": "框架无关、可独立运行；避免无收益的服务部署。",
+      "expectation": "保留可行的独立 Script；不把 Runtime 提供的业务文件当成缺失源码。"
+    },
+    {
+      "id": "local-script-to-mcp",
+      "source": "acceptance/enterprise-migration-examples/01-expense/source.zip",
+      "goal": "将报销检查迁移为供多个企业 Agent 统一接入的 MCP 工具；保留原有规则、精度和文件缺失语义。",
+      "target": "明确要求 MCP；工作区由可信 Runtime 提供，不允许模型选择任意文件路径。",
+      "expectation": "遵守用户明确的 MCP 目标，说明工作区隔离，不能仍交付 Script。"
+    },
+    {
+      "id": "missing-auth-sdk",
+      "source": "acceptance/enterprise-migration-examples/02-balance/source.zip",
+      "goal": "解除余额查询工具的框架耦合，保留鉴权和按用户访问控制。共享业务服务继续运行，供多个 Agent 复用。",
+      "target": "框架无关；不得伪造缺失依赖或让模型选择执行身份。",
+      "expectation": "识别缺失 auth_sdk，保留越权和账户缺失语义；后续补充依赖后继续同一任务。"
+    },
+    {
+      "id": "shared-procurement",
+      "source": "acceptance/enterprise-migration-examples/03-procurement/source.zip",
+      "goal": "迁移采购审批 Skill 与三个共享工具，保留预算、供应商校验和失败短路。企业共享服务继续运行，多个 Agent 复用，身份和部门规则由可信运行环境提供。",
+      "target": "统一业务工具边界；不得将身份、凭据和部门配置变成模型业务参数。",
+      "expectation": "识别共享及独有依赖，保留真实调用链；不因为三个工具常一起调用而机械合并。"
+    },
+    {
+      "id": "async-refund",
+      "source": "acceptance/enterprise-migration-examples/04-refund/source.zip",
+      "goal": "迁移异步退款资格查询，保持原错误、金额精度和订单不存在时停止后续查询的语义。",
+      "target": "框架无关工具，保留原异步调用和执行身份隔离。",
+      "expectation": "识别 async 注册、context 与返回对象边界，不能改为固定工作流应答。"
+    },
+    {
+      "id": "existing-cli-keep",
+      "sourceDirectory": "acceptance/platform-e2e/fixtures/git-object-check",
+      "goal": "企业执行环境已有 Git CLI。标准化文件对象检查 Skill，保留成熟命令及只读语义，供开发者、Agent 和 CI 共用。",
+      "target": "分析 MCP、CLI、Script 的实际收益和代价；不为标准化重新实现 Git 算法，不新增无价值的服务。",
+      "expectation": "识别已有 CLI 并保留其版本、参数、输出、退出码与只读契约；不机械转换成 Script 或 MCP。"
+    }
+  ],
+  "requiredCoverage": [
+    {
+      "id": "project-ingestion",
+      "cases": [
+        "深层 Skill",
+        "没有 Skill 的完整工程",
+        "缺依赖可补充",
+        "原工程不修改",
+        "真实原版基线"
+      ]
+    },
+    {
+      "id": "runtime-intake",
+      "cases": [
+        "自定义 Launcher",
+        "真实 Builder 交付",
+        "完整工程适配",
+        "返回契约不满足",
+        "环境变化导致证据过期"
+      ]
+    },
+    {
+      "id": "business",
+      "cases": [
+        "正常",
+        "拒绝",
+        "不存在",
+        "金额边界",
+        "提示覆盖身份",
+        "多轮确认后写入",
+        "拒绝确认不得写入",
+        "隔离状态恢复"
+      ]
+    },
+    {
+      "id": "evidence",
+      "cases": [
+        "有答案无过程",
+        "部分过程",
+        "完整声明与实际矛盾",
+        "流式正常结束",
+        "流式中断",
+        "错误身份或候选摘要"
+      ]
+    },
+    {
+      "id": "judgement",
+      "cases": [
+        "规则",
+        "模型",
+        "脚本",
+        "业务状态验证",
+        "答案与执行分离",
+        "超时",
+        "格式错误",
+        "证据不足",
+        "保存证据重评",
+        "人工标注"
+      ]
+    },
+    {
+      "id": "comparison",
+      "cases": [
+        "原版与候选",
+        "测试集目标准确率",
+        "业务重复运行",
+        "重复评分",
+        "失败或缺证据不计通过"
+      ]
+    },
+    {
+      "id": "optimization",
+      "cases": [
+        "目标已达无需改动",
+        "Skill 和工具联合调整",
+        "整体提升局部回退",
+        "新候选继续修复",
+        "等待 Runtime 改造再恢复",
+        "轮次耗尽",
+        "留出验收",
+        "拒绝无收益改动"
+      ]
+    },
+    {
+      "id": "delivery",
+      "cases": [
+        "独立方案审查",
+        "独立效果 Review",
+        "下载候选",
+        "未覆盖要求禁止验收交付",
+        "历史证据保持",
+        "产物与实际执行一致"
+      ]
+    }
+  ]
+}

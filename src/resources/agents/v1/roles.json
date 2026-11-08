@@ -1,0 +1,294 @@
+{
+  "schemaVersion": "finance.agent-roles.v1",
+  "version": "v1",
+  "roles": {
+    "optimization-coordinator": {
+      "executor": "openjiuwen-bundle",
+      "modes": [],
+      "prompt": "prompts/optimization-coordinator.md",
+      "skills": ["skills/skill-optimization/SKILL.md", "skills/tool-optimization/SKILL.md"],
+      "references": [],
+      "tools": ["diagnose_optimization", "adjust_candidate", "build_runtime", "evaluate_candidate", "review_candidate", "finish_optimization"],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "inputContract": "OptimizationLoop",
+      "outputContract": "OptimizationLoop",
+      "modelRole": "OPTIMIZER",
+      "budgetKind": "agentIterations"
+    },
+    "diagnosis": {
+      "executor": "openjiuwen-bundle",
+      "modes": [
+        "ANALYZE"
+      ],
+      "prompt": "prompts/diagnosis.md",
+      "skills": [
+        "skills/enterprise-standardization/SKILL.md"
+      ],
+      "references": [
+        "references/diagnosis-output.md",
+        "references/submission.md",
+        "references/tool-form-selection.md"
+      ],
+      "tools": [
+        "read_file",
+        "glob",
+        "list_files",
+        "grep",
+        "submit_result",
+        "record_result",
+        "correct_result",
+        "run_scanner"
+      ],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "inputContract": "BundleAgentInput",
+      "outputContract": "BundleAnalysis",
+      "modelRole": "MIGRATION",
+      "budgetKind": "agentIterations"
+    },
+    "migration": {
+      "executor": "openjiuwen-bundle",
+      "modes": [
+        "GENERATE",
+        "REPAIR"
+      ],
+      "prompt": "prompts/migration.md",
+      "skills": [
+        "skills/enterprise-standardization/SKILL.md",
+        "references/service-templates.md"
+      ],
+      "references": [
+        "references/migration-output.md",
+        "references/submission.md",
+        "references/tool-form-selection.md"
+      ],
+      "tools": [
+        "read_file",
+        "glob",
+        "list_files",
+        "grep",
+        "submit_result",
+        "record_result",
+        "correct_result",
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "compile_source"
+      ],
+      "conditionalTools": [
+        "run_contract_test",
+        "run_mcp_contract_suite",
+        "run_project_command"
+      ],
+      "writeScope": "candidate",
+      "inputContract": "BundleAgentInput",
+      "outputContract": "BundleDelivery",
+      "modelRole": "MIGRATION",
+      "budgetKind": "agentIterations"
+    },
+    "standardization-review": {
+      "executor": "openjiuwen-bundle",
+      "modes": [
+        "REVIEW"
+      ],
+      "prompt": "prompts/standardization-review.md",
+      "skills": [
+        "skills/enterprise-standardization/SKILL.md"
+      ],
+      "references": [
+        "references/standardization-review-output.md",
+        "references/submission.md",
+        "references/tool-form-selection.md"
+      ],
+      "tools": [
+        "read_file",
+        "glob",
+        "list_files",
+        "grep",
+        "submit_result",
+        "record_result",
+        "correct_result"
+      ],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "inputContract": "BundleReviewInput",
+      "outputContract": "Conformance",
+      "modelRole": "MIGRATION",
+      "budgetKind": "agentIterations"
+    },
+    "effect-review": {
+      "executor": "tool-free-model",
+      "modes": [],
+      "prompt": "prompts/effect-review.md",
+      "skills": [
+        "skills/effect-review/SKILL.md"
+      ],
+      "references": [
+        "references/effect-review-output.md"
+      ],
+      "tools": [],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "inputContract": "EffectReviewInput",
+      "outputContract": "EffectReviewResult",
+      "modelRole": "JUDGE",
+      "budgetKind": "singleCompletion"
+    },
+    "improvement-diagnosis": {
+      "executor": "evidence-model",
+      "modes": [],
+      "prompt": "prompts/improvement-diagnosis.md",
+      "skills": [
+        "skills/improvement-diagnosis/SKILL.md"
+      ],
+      "references": [
+        "references/improvement-diagnosis-output.md"
+      ],
+      "tools": [
+        "query_evidence"
+      ],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "inputContract": "ImprovementDiagnosisInput",
+      "outputContract": "ImprovementDiagnosisResult",
+      "modelRole": "OPTIMIZER",
+      "budgetKind": "agentIterations"
+    },
+    "criterion-judge": {
+      "executor": "evidence-model",
+      "modes": [],
+      "prompt": "prompts/criterion-judge.md",
+      "skills": [
+        "skills/criterion-evaluation/SKILL.md"
+      ],
+      "references": [
+        "references/criterion-judge-output.md"
+      ],
+      "tools": [
+        "query_evidence"
+      ],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "inputContract": "CriterionJudgeInput",
+      "outputContract": "CriterionVerdict",
+      "modelRole": "JUDGE",
+      "budgetKind": "agentIterations"
+    },
+    "adjustment": {
+      "executor": "tool-free-model",
+      "modes": [],
+      "tools": [],
+      "conditionalTools": [],
+      "writeScope": "none",
+      "references": [
+        "references/adjustment-output.md"
+      ],
+      "inputContract": "AdjustmentInput",
+      "outputContract": "AdjustmentResult",
+      "modelRole": "OPTIMIZER",
+      "budgetKind": "singleCompletion",
+      "prompt": "prompts/adjustment.md",
+      "skills": [],
+      "capabilitySkills": {
+        "document": [
+          "skills/skill-optimization/SKILL.md"
+        ],
+        "tool": [
+          "skills/tool-optimization/SKILL.md"
+        ],
+        "runtime": [
+          "skills/runtime-adjustment/SKILL.md"
+        ]
+      },
+      "executionProfiles": {
+        "proposal": {
+          "executor": "tool-free-model",
+          "modes": [],
+          "tools": [],
+          "conditionalTools": [],
+          "writeScope": "none",
+          "references": [
+            "references/adjustment-output.md"
+          ],
+          "inputContract": "AdjustmentInput",
+          "outputContract": "AdjustmentResult",
+          "modelRole": "OPTIMIZER",
+          "budgetKind": "singleCompletion"
+        },
+        "engineering": {
+          "executor": "openjiuwen-bundle",
+          "modes": [
+            "REPAIR"
+          ],
+          "tools": [
+            "read_file",
+            "glob",
+            "list_files",
+            "grep",
+            "submit_result",
+            "record_result",
+            "correct_result",
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "compile_source"
+          ],
+          "conditionalTools": [
+            "run_contract_test",
+            "run_mcp_contract_suite",
+            "run_project_command"
+          ],
+          "writeScope": "candidate",
+          "references": [
+            "references/migration-output.md",
+            "references/submission.md",
+            "references/tool-form-selection.md"
+          ],
+          "inputContract": "BundleAgentInput",
+          "outputContract": "BundleDelivery",
+          "modelRole": "MIGRATION",
+          "budgetKind": "agentIterations",
+          "skills": [
+            "skills/enterprise-standardization/SKILL.md",
+            "references/service-templates.md"
+          ]
+        }
+      }
+    },
+    "runtime-preparation": {
+      "executor": "openjiuwen-bundle",
+      "modes": [
+        "PREPARE"
+      ],
+      "prompt": "prompts/runtime-preparation.md",
+      "skills": [
+        "skills/runtime-preparation/SKILL.md"
+      ],
+      "references": [
+        "references/runtime-preparation-output.md",
+        "references/submission.md",
+        "references/runtime-integration.md"
+      ],
+      "tools": [
+        "read_file",
+        "glob",
+        "list_files",
+        "grep",
+        "submit_result",
+        "record_result",
+        "correct_result",
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "run_project_command"
+      ],
+      "conditionalTools": [],
+      "writeScope": "candidate",
+      "inputContract": "BundleAgentInput",
+      "outputContract": "ProjectPreparation",
+      "modelRole": "MIGRATION",
+      "budgetKind": "agentIterations"
+    }
+  }
+}

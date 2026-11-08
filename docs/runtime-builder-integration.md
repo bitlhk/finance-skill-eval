@@ -11,7 +11,11 @@ Builder 只接收 Runtime 能力需求。业务 Skill、入口指令和业务配
 5. 进行启动检查，随后运行开发和留出用例。每个案例的新实例装载完整 Skill 集合。
 6. 联合验收通过后导出交付包。
 
-需求导出和回填 API：`/api/migration-tasks/:id/runtime-build-requests`、`runtime-requirements.yaml`、`runtime-deliveries`。Builder 本身不调用 Eval 的任务 API，也不接收 taskId、candidateId、Skill 源码或留出集。
+手工需求导出和回填 API：`/api/migration-tasks/:id/runtime-build-requests`、`runtime-requirements.yaml`、`runtime-deliveries`。手工需求不包含 Skill 源码或留出集；Builder 不调用 Eval 的任务 API。
+
+自动交付接口支持通过 `/api/migration-tasks/:id/runtime-build/start` 提交已选择的需求。服务端需配置 `FINANCE_EVAL_BUILDER_BASE_URL`、`FINANCE_EVAL_BUILDER_TOKEN`，并在 `FINANCE_EVAL_LAUNCHER_TRUST_JSON` 中配置可验证交付地址的信任引用。自动接口按 Builder 现有协议提交冻结的 Skill 集合作为实例输入，不提交留出案例；构建结果仍需经过独立准入及当前候选启动检查。服务重启后，对仍属当前候选且保留信任引用的未完成构建，服务会在 Builder 配置可用时使用原构建编号自动续查；旧记录缺少信任引用时保留中断状态。当前 Builder 接口不支持重建，相关诊断和候选保留等待外部交付，见[遗留项](issue-27-migration-evaluation-improvement-plan.md#遗留项builder-异步接口不支持重建)。
+
+优化 Agent 的构建回调还需要服务端设置 `FINANCE_EVAL_BUILDER_TRUST_REFERENCE`，值必须是上述已配置的信任引用。该回调仅接收当前轮次的匹配需求；不自动更换用户所选 Runtime。当前可用的优化触发点主要要求重建，因 Builder 接口限制会保留等待状态；初次构建使用已有页面入口。
 
 ## 版本与失效
 

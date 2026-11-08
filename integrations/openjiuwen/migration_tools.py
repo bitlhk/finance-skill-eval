@@ -45,7 +45,7 @@ def _tool(name: str, description: str, params: dict[str, Any], fn: Callable[...,
 
 
 # --------------------------------------------------------------------------
-# A2: run_scanner
+# Diagnosis: read-only static scanner
 # --------------------------------------------------------------------------
 
 async def _scan(workspace: Path) -> dict[str, Any]:
@@ -117,7 +117,7 @@ def build_run_scanner(workspace: Path, capture: list[dict[str, Any]] | None = No
 
 
 # --------------------------------------------------------------------------
-# A4: compile and contract test
+# Engineering: compile and contract tests
 # --------------------------------------------------------------------------
 
 async def _run_process(workspace: Path, argv: list[str], timeout: float, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -129,8 +129,7 @@ async def _run_process(workspace: Path, argv: list[str], timeout: float, env: di
         )
     except OSError as exc:
         # A command that cannot be executed at all -- the toolchain is missing -- arrives as an
-        # exception, not an exit code. `service-launch.ts` reports the same case the same way; an
-        # exception here would leave the agent with a tool error instead of something to act on.
+        # exception, not an exit code. Return actionable evidence instead of an opaque tool error.
         return {"exitCode": None, "stdout": "", "stderr": f"PROGRAM_NOT_RUNNABLE: {argv[0]}: {exc}",
                 "timedOut": False}
     try:
@@ -160,7 +159,8 @@ def build_compile_tool(workspace: Path, capture: list[dict[str, Any]] | None = N
         "compile_source",
         "Compile the current workspace sources with the server-approved toolchain for the given "
         "language (java | python | node). `paths` accepts source files only, never a directory or "
-        "build descriptor such as pom.xml; omit it to discover all source files. Java is the "
+        "build descriptor such as pom.xml; omit it to discover all source files. Paths are relative "
+        "to the candidate root; do not prefix them with candidate/ or source/. Java is the "
         "current pure-JDK-17 delivery path and third-party classpaths are not available. Returns "
         "the exit code and compiler output.",
         {
@@ -193,12 +193,26 @@ async def _compile_source(workspace: Path, language: str, paths: list[str] | Non
                 f"omit paths for automatic discovery. Invalid: {', '.join(invalid)}"}
     if not targets:
         suffix = {"java": ".java", "python": ".py", "node": ".js"}[str(language).lower()]
-        targets = [p.relative_to(workspace).as_posix()
-                   for p in sorted(workspace.rglob(f"*{suffix}"))
-                   if "memory" not in p.parts and "agents" not in p.parts]
+        skipped = {'.venv', 'node_modules', '__pycache__', '.git', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
+        targets = []
+        for directory, directories, filenames in os.walk(workspace, followlinks=False):
+            directories[:] = sorted(name for name in directories if name not in skipped and not (Path(directory) / name).is_symlink())
+            targets.extend((Path(directory) / name).relative_to(workspace).as_posix() for name in sorted(filenames)
+                           if name.endswith(suffix) and not (Path(directory) / name).is_symlink())
     if not targets:
         return {"passed": False, "error": "NO_SOURCE_FILES"}
-    result = await _run_process(workspace, [program, *prefix, *targets], 120)
+    root = workspace.resolve()
+    if any(root not in (root / target).resolve().parents or not (root / target).is_file() for target in targets):
+        return {"passed": False, "error": "INVALID_SOURCE_PATHS: paths must be existing files inside the candidate"}
+    if str(language).lower() == 'python':
+        # Compile without importing or executing project code and without writing
+        # __pycache__ into the candidate (including on long Windows paths).
+        argv = [sys.executable, '-B', '-c',
+                'import pathlib,sys\nfor name in sys.argv[1:]:\n compile(pathlib.Path(name).read_bytes(), name, "exec", dont_inherit=True)',
+                *targets]
+    else:
+        argv = [program, *prefix, *targets]
+    result = await _run_process(workspace, argv, 120)
     return {
         "passed": result["exitCode"] == 0,
         "language": language,
@@ -237,6 +251,27 @@ def _shape_ok(value: Any, schema: Any) -> tuple[bool, str]:
     return True, ""
 
 
+def _declared_shape_ok(value: Any, schema: Any) -> tuple[bool, str]:
+    """Validate the declared delivery boundary without resolving external schemas."""
+    from jsonschema import Draft202012Validator
+    def local_refs(node):
+        if isinstance(node, dict):
+            if any(key in node and not str(node[key]).startswith('#') for key in ('$ref', '$dynamicRef')):
+                raise ValueError('External schema references are not supported')
+            for item in node.values():
+                local_refs(item)
+        elif isinstance(node, list):
+            for item in node:
+                local_refs(item)
+    try:
+        local_refs(schema)
+        Draft202012Validator.check_schema(schema)
+        error = next(Draft202012Validator(schema).iter_errors(value), None)
+        return (False, error.message) if error else (True, '')
+    except Exception as error:
+        return False, 'Invalid declared schema: ' + str(error)[:300]
+
+
 _PEP723 = re.compile(r"^#\s*///\s*script\s*$", re.MULTILINE)
 _LAUNCH_TIMEOUT = 180.0
 
@@ -248,8 +283,7 @@ def _relative(workspace: Path, path: Path) -> str:
 def _python_argv(workspace: Path, entry: Path, *, isolated: bool) -> list[str]:
     """Launch in the Skill package's own environment -- never the agent's interpreter.
 
-    Mirrors `pythonCommand` in src/service/technical-validation.ts. `sys.executable` is the
-    platform's environment; testing the deliverable in it would validate an environment the
+    `sys.executable` is the platform's environment; testing the deliverable in it would validate an environment the
     deliverable will never run in.
 
     Two things about this are easy to get wrong, and both were verified against uv directly:
@@ -267,7 +301,7 @@ def _python_argv(workspace: Path, entry: Path, *, isolated: bool) -> list[str]:
             args = ["run", "--project", _relative(workspace, directory)]
             if (directory / "uv.lock").is_file():
                 args.append("--locked")
-            guard = ["-I"] if isolated else []
+            guard = ["-I", "-X", "utf8"] if isolated else ["-X", "utf8"]
             return ["uv", *args, "python", *guard, _relative(workspace, entry)]
         if directory == workspace:
             break
@@ -275,7 +309,7 @@ def _python_argv(workspace: Path, entry: Path, *, isolated: bool) -> list[str]:
     relative = _relative(workspace, entry)
     if _PEP723.search(entry.read_text(encoding="utf-8", errors="replace")):
         return ["uv", "run", "--no-project", relative]
-    guard = ["-I"] if isolated else []
+    guard = ["-I", "-X", "utf8"] if isolated else ["-X", "utf8"]
     return ["uv", "run", "--no-project", "python", *guard, relative]
 
 
@@ -338,9 +372,10 @@ async def _terminate(proc: Any) -> None:
         return
     try:
         if os.name == "nt":
-            await asyncio.create_subprocess_exec(
+            killer = await asyncio.create_subprocess_exec(
                 "taskkill", "/PID", str(proc.pid), "/T", "/F",
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await killer.wait()
         else:
             proc.kill()
     except OSError:
@@ -351,17 +386,32 @@ async def _terminate(proc: Any) -> None:
         pass
 
 
-async def _wait_for_port(port: int, timeout: float) -> bool:
+async def _wait_for_port(port: int, timeout: float, proc: Any = None) -> bool:
     import socket
 
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
+        if proc is not None and proc.returncode is not None:
+            return False
         try:
             with socket.create_connection(("127.0.0.1", port), 0.5):
                 return True
         except OSError:
             await asyncio.sleep(0.4)
     return False
+
+
+async def _service_start_error(proc: Any, start: list[str], port: int) -> dict[str, Any]:
+    exited = proc.returncode is not None
+    await _terminate(proc)
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), 3)
+    except (TimeoutError, OSError):
+        stderr = b''
+    detail = stderr.decode('utf-8', 'replace')[-1200:].strip() if isinstance(stderr, bytes) else ''
+    return {'passed': False, 'error': 'SERVICE_DID_NOT_START',
+            'stderr': detail or (f"启动命令 {' '.join(start)} " +
+                ('提前退出' if exited else f'在 {int(_LAUNCH_TIMEOUT)}s 内没有监听 PORT={port}'))}
 
 
 def _is_implicit_script_context(dependency: dict[str, Any]) -> bool:
@@ -374,15 +424,6 @@ def _is_implicit_script_context(dependency: dict[str, Any]) -> bool:
         and binding.get("kind") == "SCRIPT_CONTEXT"
         and str(binding.get("name") or "").strip().lower() in {"workspace", "cwd"}
     )
-
-
-def _unsupported_script_injections(dependencies: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        dependency for dependency in dependencies
-        if dependency.get("owner") == "RUNTIME"
-        and dependency.get("action") == "INJECT"
-        and not _is_implicit_script_context(dependency)
-    ]
 
 
 async def _script_contract(workspace: Path, entry: dict[str, Any], source: Path, sample: Any) -> dict[str, Any]:
@@ -459,10 +500,8 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any, exe
         if fixture_directory.is_dir():
             shutil.copytree(fixture_directory, Path(execution_workspace.name) / "workspace", dirs_exist_ok=True)
         post = partial(_mcp_post, request_headers={"X-Workspace-Root": str(Path(execution_workspace.name).resolve())})
-        if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
-            await _terminate(proc)
-            return {"passed": False, "error": "SERVICE_DID_NOT_START",
-                    "stderr": f"启动命令 {' '.join(start)} 在 {int(_LAUNCH_TIMEOUT)}s 内没有监听 PORT={port}"}
+        if not await _wait_for_port(port, _LAUNCH_TIMEOUT, proc):
+            return await _service_start_error(proc, start, port)
         url = f"http://127.0.0.1:{port}/mcp"
         session, _ = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -485,6 +524,8 @@ async def _mcp_contract(workspace: Path, entry: dict[str, Any], sample: Any, exe
         _, called = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": name, "arguments": sample}}, session)
+        if not isinstance(called, dict) or called.get('error') is not None or not isinstance(called.get('result'), dict):
+            return {"passed": False, "callExecuted": True, "error": "TOOL_CALL_RPC_ERROR: MCP 工具调用未返回有效结果"}
         result = ((called or {}).get("result") or {})
         texts = [item.get("text", "") for item in (result.get("content") or []) if item.get("type") == "text"]
         if result.get("isError"):
@@ -531,8 +572,8 @@ async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], star
         if fixture_directory.is_dir():
             shutil.copytree(fixture_directory, Path(execution_workspace.name) / "workspace", dirs_exist_ok=True)
         post = partial(_mcp_post, request_headers={"X-Workspace-Root": str(Path(execution_workspace.name).resolve())})
-        if not await _wait_for_port(port, _LAUNCH_TIMEOUT):
-            return {"passed": False, "error": "SERVICE_DID_NOT_START", "results": []}
+        if not await _wait_for_port(port, _LAUNCH_TIMEOUT, proc):
+            return {**await _service_start_error(proc, start, port), 'results': []}
         url = f"http://127.0.0.1:{port}/mcp"
         session, _ = await asyncio.to_thread(post, url, {
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -562,6 +603,10 @@ async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], star
             _, called = await asyncio.to_thread(post, url, {
                 "jsonrpc": "2.0", "id": index, "method": "tools/call",
                 "params": {"name": entry.get("toolName"), "arguments": sample}}, session)
+            if not isinstance(called, dict) or called.get('error') is not None or not isinstance(called.get('result'), dict):
+                results.append({"passed": False, "toolId": case["toolId"], "callExecuted": True,
+                                "error": "TOOL_CALL_RPC_ERROR: MCP 工具调用未返回有效结果"})
+                continue
             result = ((called or {}).get("result") or {})
             texts = [item.get("text", "") for item in (result.get("content") or []) if item.get("type") == "text"]
             if result.get("isError"):
@@ -587,26 +632,52 @@ async def _mcp_contract_suite(workspace: Path, cases: list[dict[str, Any]], star
         execution_workspace.cleanup()
 
 
+def _contract_selector(contract: dict[str, Any], selector: str) -> str:
+    """Accept a unique tool name as well as its stable plan ID."""
+    if selector in contract:
+        return selector
+    matches = [tool_id for tool_id, entry in contract.items() if entry.get('toolName') == selector]
+    return matches[0] if len(matches) == 1 else selector
+
+
+def _unknown_contract(contract: dict[str, Any], selector: str) -> str:
+    available = ', '.join(f"{tool_id} ({entry.get('toolName', '')})" for tool_id, entry in contract.items())
+    return f"UNKNOWN_TOOL_CONTRACT: {selector}; available IDs and names: {available}"[:1600]
+
+
 async def _contract_suite(workspace: Path, contract: dict[str, Any], tool_ids: list[str],
                           start: list[str], prepare: list[str] | None = None) -> dict[str, Any]:
+    tool_ids = [_contract_selector(contract, tool_id) for tool_id in tool_ids]
     cases = []
+    rejected = {}
     for tool_id in tool_ids:
         entry = contract.get(tool_id)
         if not entry:
-            return {"passed": False, "error": f"UNKNOWN_TOOL_CONTRACT: {tool_id}", "results": []}
+            rejected[tool_id] = _unknown_contract(contract, tool_id)
+            continue
         if str(entry.get("form", "")).upper() != "MCP":
-            return {"passed": False, "error": f"NOT_MCP_TOOL: {tool_id}", "results": []}
+            rejected[tool_id] = f"NOT_MCP_TOOL: {tool_id}"
+            continue
         sample_missing = bool(entry.get("sampleMissing")) and "sampleInput" not in entry
         sample = entry.get("sampleInput") or {}
-        shape_ok, detail = _shape_ok(sample, entry.get("inputSchema"))
+        shape_check = _declared_shape_ok if entry.get('strictContract') else _shape_ok
+        shape_ok, detail = shape_check(sample, entry.get("inputSchema"))
         if not shape_ok and not sample_missing:
-            return {"passed": False, "error": f"SAMPLE_INPUT_SHAPE: {tool_id}: {detail}", "results": []}
+            rejected[tool_id] = f"SAMPLE_INPUT_SHAPE: {tool_id}: {detail}"
+            continue
         runtime_pending = [d.get("name") or d.get("key") for d in entry.get("dependencies", [])
-                           if d.get("owner") == "RUNTIME" and d.get("action") == "INJECT"]
+                           if d.get("owner") == "RUNTIME" and d.get("action") in ("INJECT", "MOVE_TO_RUNTIME")]
         cases.append({"toolId": tool_id, "entry": entry, "sample": sample,
                       "executeCall": not runtime_pending and not sample_missing,
                       "runtimePending": runtime_pending})
-    return await _mcp_contract_suite(workspace, cases, start, prepare)
+    if not rejected:
+        return await _mcp_contract_suite(workspace, cases, start, prepare)
+    checked = await _mcp_contract_suite(workspace, cases, start, prepare) if cases else {'results': []}
+    indexed = {item.get('toolId'): item for item in checked.get('results', [])}
+    results = [{'toolId': tool_id, 'passed': False, 'error': rejected[tool_id]} if tool_id in rejected else
+               indexed.get(tool_id, {'toolId': tool_id, 'passed': False, 'error': checked.get('error') or '未完成该工具检查'})
+               for tool_id in tool_ids]
+    return {'passed': False, 'error': next(iter(rejected.values())), 'results': results}
 
 
 def build_contract_suite_tool(workspace: Path, contract: dict[str, Any],
@@ -654,12 +725,13 @@ def build_contract_test_tool(workspace: Path, contract: dict[str, Any],
 
     return _tool(
         "run_contract_test",
-        "Run the interface contract test for one migrated tool. The gate is only that it works: for "
-        "SCRIPT the entrypoint runs with the sample on stdin; for MCP the service starts and answers "
-        "tools/list and tools/call. Worth preserving is the baseline the analysis read out of the "
-        "source; how far the interface drifted from it is REPORTED in `drift`, not passed or failed "
-        "-- migration adapts on purpose. It never judges whether the business values are right. "
-        "Either way the code runs in the Skill package's own declared environment, not the agent's.",
+        "Check an interface contract for one migrated tool. With a usable sample and dependencies, "
+        "SCRIPT runs the entrypoint with the sample on stdin, while MCP starts the service and checks "
+        "tools/list and tools/call. For CLI, or when a sample or runtime dependency is missing, "
+        "the result can report callExecuted=false: no business call was verified, even if passed=true "
+        "for checks that were possible. Verify the CLI through the target Runtime instead. Interface "
+        "drift from the source is reported in `drift`; it is not a business correctness verdict. "
+        "These checks do not establish business correctness or replace evaluation in the target Runtime.",
         {
             "type": "object",
             "properties": {
@@ -685,55 +757,64 @@ def build_contract_test_tool(workspace: Path, contract: dict[str, Any],
 async def _contract_test(workspace: Path, contract: dict[str, Any], tool_id: str,
                          entrypoint: str, start: list[str] | None = None,
                          prepare: list[str] | None = None) -> dict[str, Any]:
+    tool_id = _contract_selector(contract, tool_id)
     entry = contract.get(tool_id)
     if not entry:
-        return {"passed": False, "error": f"UNKNOWN_TOOL_CONTRACT: {tool_id}"}
+        return {"passed": False, "error": _unknown_contract(contract, tool_id)}
     if start or prepare:
         entry = {**entry,
                  **({"start": start} if start else {}),
                  **({"prepare": prepare} if prepare else {})}
 
     form = str(entry.get("form", "SCRIPT")).upper()
-    dependencies=entry.get('dependencies', [])
+    if form == 'CLI':
+        # Never reinterpret a command's argv as a JSON-stdin Script or use the platform's
+        # installed executable as proof of availability in the user's actual Runtime.
+        return {'passed': True, 'toolId': tool_id, 'callExecuted': False,
+                'note': 'WAIT_RUNTIME_CLI: CLI 需在目标 Runtime 核验安装版本、非交互参数、输出和退出码；未执行命令，不是调用通过证据'}
+    shape_check = _declared_shape_ok if entry.get('strictContract') else _shape_ok
     if form=='SCRIPT':
         source=(workspace / str(entrypoint or '')).resolve()
         if workspace.resolve() not in source.parents or not source.is_file():
             return {"passed":False,"toolId":tool_id,"error":f"ENTRYPOINT_MISSING: {entrypoint}"}
-        if _unsupported_script_injections(dependencies):
-            return {"passed":False,"toolId":tool_id,"error":"SCRIPT_RUNTIME_INJECTION_UNSUPPORTED: 需要运行依赖时请使用 MCP"}
     sample_missing=bool(entry.get('sampleMissing')) and 'sampleInput' not in entry
     if sample_missing and form=='SCRIPT':
         return {"passed":True,"toolId":tool_id,"callExecuted":False,"note":f"NO_SAMPLE: {entry['sampleMissing']}"}
     sample = entry.get("sampleInput") or {}
-    ok, detail = _shape_ok(sample, entry.get("inputSchema"))
+    ok, detail = shape_check(sample, entry.get("inputSchema", {}))
     if not ok and not sample_missing:
         return {"passed": False, "toolId": tool_id, "inputShapeOk": False, "error": f"SAMPLE_INPUT_SHAPE: {detail}"}
 
     form = str(entry.get("form", "SCRIPT")).upper()
     # `blocking` answers whether a missing contract prevents migration. It does not mean an actual
-    # invocation can run without the dependency value. A4 receives declarations, never credentials
+    # invocation can run without the dependency value. The engineering agent receives declarations, never credentials
     # or tenant data, so every Runtime injection remains pending until technical validation.
     runtime_pending = [d.get("name") or d.get("key") for d in entry.get("dependencies", [])
-                       if d.get("owner") == "RUNTIME" and d.get("action") == "INJECT"
+                       if d.get("owner") == "RUNTIME" and d.get("action") in ("INJECT", "MOVE_TO_RUNTIME")
                        and not (form == "SCRIPT" and _is_implicit_script_context(d))]
     if form == "MCP":
         outcome = await _mcp_contract(workspace, entry, sample, execute_call=not runtime_pending and not sample_missing)
     else:
+        if runtime_pending:
+            return {'passed': True, 'toolId': tool_id, 'callExecuted': False,
+                    'runtimeDependenciesPending': runtime_pending,
+                    'note': 'WAIT_RUNTIME_INPUTS: 独立脚本需要使用者提供运行配置，未执行业务调用：' + '、'.join(runtime_pending)}
         chosen = str(entrypoint or "")
         source = (workspace / chosen).resolve()
         if workspace.resolve() not in source.parents or not source.is_file():
             return {"passed": False, "toolId": tool_id, "error": f"ENTRYPOINT_MISSING: {chosen}"}
-        if _unsupported_script_injections(entry.get('dependencies', [])):
-            return {"passed":False,"toolId":tool_id,"error":"SCRIPT_RUNTIME_INJECTION_UNSUPPORTED: 需要运行依赖时请使用 MCP"}
         outcome = await _script_contract(workspace, entry, source, sample)
     if not outcome.get("passed"):
         return {"passed": False, "toolId": tool_id, **{k: v for k, v in outcome.items() if k != "passed"}}
     # Drift from the baseline is reported, never a stop: migration adapts on purpose. The
     # reasons for what changed come from the agent's own delivery notes.
     drift = outcome.get("drift") or []
-    if form != "MCP" and outcome.get("callExecuted", True):
-        shape_ok, shape_detail = _shape_ok(outcome.get("produced"), entry.get("outputSchema"))
+    if (form != "MCP" or entry.get('strictContract')) and outcome.get("callExecuted", True):
+        shape_ok, shape_detail = shape_check(outcome.get("produced"), entry.get("outputSchema", {}))
         if not shape_ok:
+            if entry.get('strictContract'):
+                return {'passed': False, 'toolId': tool_id, 'callExecuted': True,
+                        'error': 'OUTPUT_SHAPE: ' + shape_detail}
             drift.append({"where": "outputShape", "baseline": entry.get("outputSchema"), "observed": shape_detail})
     return {
         "passed": True,

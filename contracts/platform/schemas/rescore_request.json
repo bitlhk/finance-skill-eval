@@ -1,0 +1,247 @@
+{
+  "$ref": "#/definitions/rescore_request",
+  "definitions": {
+    "rescore_request": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repetitions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 1
+        },
+        "evaluationPlan": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "answerEvidence": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+                  },
+                  "reference": {
+                    "type": "string",
+                    "maxLength": 300,
+                    "pattern": "^\\/(state\\/.+|toolEvidence\\/\\d+\\/result\\/.+)$"
+                  }
+                },
+                "required": [
+                  "id",
+                  "reference"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 32
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "RULE",
+                      "SCRIPT",
+                      "STATE"
+                    ]
+                  },
+                  "required": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "evidenceRefs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "maxItems": 32,
+                    "default": []
+                  },
+                  "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 120000,
+                    "default": 60000
+                  },
+                  "rule": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "operation": {
+                            "type": "string",
+                            "const": "equals"
+                          },
+                          "reference": {
+                            "$ref": "#/definitions/rescore_request/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                          },
+                          "expected": {}
+                        },
+                        "required": [
+                          "operation",
+                          "reference"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "operation": {
+                            "type": "string",
+                            "const": "contains"
+                          },
+                          "reference": {
+                            "$ref": "#/definitions/rescore_request/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                          },
+                          "expected": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "operation",
+                          "reference",
+                          "expected"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "operation": {
+                            "type": "string",
+                            "const": "exists"
+                          },
+                          "reference": {
+                            "$ref": "#/definitions/rescore_request/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                          }
+                        },
+                        "required": [
+                          "operation",
+                          "reference"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "operation": {
+                            "type": "string",
+                            "const": "numeric_tolerance"
+                          },
+                          "reference": {
+                            "$ref": "#/definitions/rescore_request/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                          },
+                          "expected": {
+                            "type": "number"
+                          },
+                          "absoluteTolerance": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "relativeTolerance": {
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 0
+                          }
+                        },
+                        "required": [
+                          "operation",
+                          "reference",
+                          "expected",
+                          "absoluteTolerance"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "operation": {
+                            "type": "string",
+                            "const": "set_equals"
+                          },
+                          "reference": {
+                            "$ref": "#/definitions/rescore_request/properties/evaluationPlan/properties/checks/items/properties/evidenceRefs/items"
+                          },
+                          "expected": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "boolean"
+                                }
+                              ]
+                            },
+                            "maxItems": 1000
+                          }
+                        },
+                        "required": [
+                          "operation",
+                          "reference",
+                          "expected"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "script": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32000
+                  }
+                },
+                "required": [
+                  "id",
+                  "version",
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 20
+            }
+          },
+          "required": [
+            "version",
+            "checks"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "runId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -2,18 +2,31 @@
 name = "finance-skill-eval-openjiuwen-runtime"
 version = "1.0.0"
 description = "Local OpenJiuwen runtime for Skill evaluation and Tool migration"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11.4,<3.14"
 dependencies = [
   "openjiuwen==0.1.17.post1",
+  "openjiuwen-agent-runtime==0.1.0",
+  "openjiuwen-runtime-management==0.1.0",
+  "openjiuwen-runtime-foundation==0.1.0",
+  "aiosqlite==0.21.0",
+  "filelock==3.32.6",
   "fastapi==0.141.1",
   "uvicorn==0.52.4",
   "fastmcp==2.14.7",
+  "jsonschema==4.26.0",
+  "pyyaml==6.0.3",
   "opentelemetry-sdk==1.44.0",
   "opentelemetry-exporter-otlp==1.44.0",
   "uv==0.12.13",
+  "rfc8785==0.1.4",
 ]
 
 # 这是一个依赖清单，不是要构建安装的包。声明 false 后 `uv sync` 只装依赖，
 # 不会尝试构建/安装本项目自身。
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+openjiuwen-agent-runtime = { git = "https://gitcode.com/openJiuwen/agent-solution.git", rev = "bf702bc95064d3491cf8b374f54d271363d84230", subdirectory = "common/agent-runtime-ext-python" }
+openjiuwen-runtime-management = { git = "https://gitcode.com/openJiuwen/agent-runtime.git", rev = "34ed6e86b99fab9b3f07d9f063efc1692ab365d2", subdirectory = "management" }
+openjiuwen-runtime-foundation = { git = "https://gitcode.com/openJiuwen/agent-runtime.git", rev = "34ed6e86b99fab9b3f07d9f063efc1692ab365d2", subdirectory = "foundation" }

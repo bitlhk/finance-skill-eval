@@ -1,0 +1,125 @@
+{
+  "$ref": "#/definitions/delivery_review",
+  "definitions": {
+    "delivery_review": {
+      "type": "object",
+      "properties": {
+        "workspaceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "RECOMMEND",
+            "REVISE",
+            "INCONCLUSIVE"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "maxItems": 20
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "quote": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": [
+              "path",
+              "quote"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 12
+        },
+        "basicReview": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "SUFFICIENT",
+                "INCOMPLETE"
+              ]
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "coversTaskScope": {
+              "type": "boolean"
+            },
+            "references": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "project_check",
+                      "development_run"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 30
+            }
+          },
+          "required": [
+            "status",
+            "scope",
+            "reason",
+            "references"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspaceDigest",
+        "decision",
+        "summary",
+        "issues",
+        "citations"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

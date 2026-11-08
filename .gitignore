@@ -15,6 +15,9 @@ reports/
 artifacts/
 .DS_Store
 *.log
+/logs/
+*.log.*
+.pytest_cache/
 .venv*/
 __pycache__/
 .runtime.local.json

@@ -1,6 +1,9 @@
+import {ComparisonExecutions} from './ComparisonExecutions';
+import {EvaluationEvidence} from './EvaluationEvidence';
+import {ComparisonRescoring} from './ComparisonRescoring';
 import { api } from "./api-client";
 import {commonRuntimeModels} from './runtime-models';
-import {evidenceLabels} from '../../src/evidence-labels';
+import {evidenceLabels} from './evidence-labels';
 import {selectedVersion,versionSelectionKey} from './skill-version-selection';
 import {matchEnvironments,chooseEnvironment,inspectionIssues,type EnvironmentMatch} from './environment-matching';
 import {dualRuntimeConfiguration} from './dual-runtime-configuration';
@@ -125,6 +128,7 @@ export function App() {
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
   const [includeHoldout, setIncludeHoldout] = useState(false);
   const [caseSource, setCaseSource] = useState<"fixed" | "ai_generated">("ai_generated");
+  const [generatedCaseCount, setGeneratedCaseCount] = useState(3);
   const [leftVariantSelection, setLeftVariantSelection] = useState("without_target_skill");
   const [rightVariantSelection, setRightVariantSelection] = useState("");
   const [leftModelKey, setLeftModelKey] = useState("");
@@ -140,6 +144,8 @@ export function App() {
   const [environmentInspection, setEnvironmentInspection] = useState<EnvironmentInspection | null>(null);
   const [environmentChecking, setEnvironmentChecking] = useState(false);
   const inspectionSequence = useRef(0);
+  const [executionRepetitions,setExecutionRepetitions]=useState(1);
+  const [repeatReadOnly,setRepeatReadOnly]=useState(false);
   const [judgeMode, setJudgeMode] = useState<"deterministic" | "model">("deterministic");
   const [activeJob, setActiveJob] = useState<EvaluationJob | null>(null);
   const [retrySnapshot, setRetrySnapshot] = useState(false);
@@ -481,7 +487,7 @@ export function App() {
   };
 
   const startRun = async () => {
-    if (!selection || (!dynamicQuestions && selectedCases.length === 0)) return;
+    if (!selection || (!dynamicQuestions && selectedCases.length === 0) || (dynamicQuestions && (generatedCaseCount<1||generatedCaseCount>100))) return;
     setBusy(true);
     setError("");
     try {
@@ -500,6 +506,8 @@ export function App() {
               ? { type: runtime, environmentId: runtimeEnvironmentId }
             : { type: runtime },
           judgeMode,
+          executionRepetitions:runtime==="replay"?1:executionRepetitions,
+          repeatSafety:repeatReadOnly?"read_only":undefined,
           leftVariant: resolveVariant(leftVariantSelection),
           rightVariant: resolveVariant(rightVariantSelection),
           ...(dualRuntime ? {...dualRuntimeConfiguration(executionReference(selectedLeftModel!),generation,executionReference(pairedRightModel!)),
@@ -507,6 +515,7 @@ export function App() {
             : {...(selectedLeftModel ? { leftExecutionModel: executionReference(selectedLeftModel) } : {}),
                ...(selectedRightModel ? { rightExecutionModel: executionReference(selectedRightModel) } : {})}),
           caseSource: dynamicQuestions ? "ai_generated" : "fixed",
+          ...(dynamicQuestions?{generatedCaseCount}:{}),
           selectedCaseIds: dynamicQuestions ? [] : selectedCases,
           includeHoldout: useHoldout,
           ...(selectedUploadedSkill ? { skillAssetId: selectedUploadedSkill.assetId } : {}),
@@ -531,6 +540,7 @@ export function App() {
   const retryRun = async (job: EvaluationJob) => {
     setBusy(true);
     setCaseSource(job.configuration.caseSource ?? "fixed");
+    setGeneratedCaseCount(job.configuration.generatedCaseCount ?? 3);
     try {
       const packId = job.configuration.packId;
       const pack = packId ? catalog?.evalPacks.find(item => item.packId === packId) : null;
@@ -634,6 +644,8 @@ export function App() {
             cases={cases}
             caseSource={dynamicQuestions ? "ai_generated" : "fixed"}
             setCaseSource={setCaseSource}
+            generatedCaseCount={generatedCaseCount}
+            setGeneratedCaseCount={setGeneratedCaseCount}
             selectedCases={selectedCases}
             setSelectedCases={setSelectedCases}
             holdoutCaseCount={holdoutEnabled ? selectedPack?.holdoutCaseCount ?? 0 : 0}
@@ -653,6 +665,8 @@ export function App() {
             environmentInspection={environmentInspection}
             environmentChecking={environmentChecking}
             onInspectEnvironment={() => void inspectEnvironment(runtimeEnvironmentId)}
+            executionRepetitions={executionRepetitions} setExecutionRepetitions={setExecutionRepetitions}
+            repeatReadOnly={repeatReadOnly} setRepeatReadOnly={setRepeatReadOnly}
             judgeMode={judgeMode}
             setJudgeMode={setJudgeMode}
             leftVariantSelection={leftVariantSelection}
@@ -764,6 +778,8 @@ function EvaluationView(props: {
   cases: EvalCaseSummary[];
   caseSource: "fixed" | "ai_generated";
   setCaseSource(value: "fixed" | "ai_generated"): void;
+  generatedCaseCount:number;
+  setGeneratedCaseCount(value:number):void;
   selectedCases: string[];
   setSelectedCases(value: string[]): void;
   holdoutCaseCount: number;
@@ -782,6 +798,8 @@ function EvaluationView(props: {
   environmentInspection: EnvironmentInspection | null;
   environmentChecking: boolean;
   onInspectEnvironment(): void;
+  executionRepetitions:number;setExecutionRepetitions(value:number):void;
+  repeatReadOnly:boolean;setRepeatReadOnly(value:boolean):void;
   judgeMode: "deterministic" | "model";
   setJudgeMode(value: "deterministic" | "model"): void;
   leftVariantSelection: string;
@@ -879,6 +897,8 @@ function EvaluationView(props: {
             <option value="model" disabled={!props.catalog.modelRoles.judge.configured}>匿名模型 Judge{props.catalog.modelRoles.judge.configured ? ` · ${props.catalog.modelRoles.judge.model.modelId}` : " · 未配置"}</option>
           </select></label>
         </div>
+        <label className="field"><span>业务运行次数</span><select aria-label="对比业务运行次数" disabled={Boolean(active)||props.runtime==='replay'} value={props.runtime==='replay'?1:props.executionRepetitions} onChange={event=>props.setExecutionRepetitions(Number(event.target.value))}>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n} 次</option>)}</select></label>
+        {props.runtime!=='replay'&&props.executionRepetitions>1&&<><p>每次实际调用左右业务 Agent，复用同一题集；不是重复评分。案例须配置可核验的状态恢复，或确认全部案例只读。</p><label><input type="checkbox" disabled={Boolean(active)} checked={props.repeatReadOnly} onChange={event=>props.setRepeatReadOnly(event.target.checked)}/>我确认本轮全部案例只读，不修改外部业务状态</label></>}
         {props.runtime==="dual_runtime"?<><div className="environment-controls">
           {(["left","right"] as const).map((side,index)=><label className="field" key={side}><span>{index===0?"对照组 Runtime":"目标组 Runtime"}</span><select aria-label={index===0?'对照组 Runtime':'目标组 Runtime'} disabled={Boolean(active)} value={props.launcherPair[side]} onChange={event=>props.setLauncherPair({...props.launcherPair,[side]:event.target.value})}><option value="">请选择兼容环境</option>{props.environmentMatches.map(({runtime:item,issues})=><option disabled={issues.length>0} key={item.runtimeId} value={item.runtimeId}>{item.name}{issues.length?` · ${issues.join('；')}`:''}</option>)}</select></label>)}
           {(["temperature","top_p","max_tokens"] as const).map(name=><label className="field" key={name}><span>{name}</span><input type="number" disabled={Boolean(active)} min={name==="top_p"?0.01:name==="max_tokens"?1:0} max={name==="temperature"?2:name==="top_p"?1:32768} step={name==="max_tokens"?1:0.01} value={Number.isFinite(props.generation[name])?props.generation[name]:""} onChange={event=>props.setGeneration({...props.generation,[name]:event.target.value===""?NaN:Number(event.target.value)})}/></label>)}
@@ -912,7 +932,8 @@ function EvaluationView(props: {
           <button aria-pressed={dynamic} disabled={Boolean(active)} onClick={() => { props.setCaseSource("ai_generated"); props.setJudgeMode("model"); }}><Sparkles size={15} />AI 动态出题</button>
           <button aria-pressed={!dynamic} disabled={Boolean(active)} onClick={() => props.setCaseSource("fixed")}><Archive size={15} />固定回归题</button>
         </div> : <span>{props.selectedCases.length}/{props.cases.length} 题</span>}</div>
-        {dynamic ? <div className="question-source"><Sparkles size={16} /><span>{props.job?.questionSet ? `本轮 ${questions.length} 题 · ${props.job.questionSet.model.modelId} · 题集 ${props.job.questionSet.fingerprint.slice(0, 12)}` : active ? props.job?.stageLabel : `待开始 · ${props.catalog.modelRoles.analyzer.model.modelId} · 最多 3 题`}</span></div> : null}
+        {dynamic ? <div className="question-source"><Sparkles size={16} /><span>{props.job?.questionSet ? `本轮 ${questions.length} 题 · ${props.job.questionSet.model.modelId} · 题集 ${props.job.questionSet.fingerprint.slice(0, 12)}` : active ? props.job?.stageLabel : `待开始 · ${props.catalog.modelRoles.analyzer.model.modelId}`}</span>
+          {!active&&<label>生成数量 <input type="number" aria-label="生成案例数量" min={1} max={100} value={props.generatedCaseCount||''} onChange={e=>{const value=Number(e.target.value);if(Number.isInteger(value)&&value>=0)props.setGeneratedCaseCount(Math.min(100,value));}} onBlur={()=>{if(props.generatedCaseCount<1)props.setGeneratedCaseCount(1);}} />（每批最多 8 条，数量越多耗时越长）</label>}</div> : null}
         {dynamic && !props.catalog.modelRoles.analyzer.configured ? <div className="run-error">出题模型未配置，请在服务端配置 Analyzer 或选择固定回归题。</div> : null}
         {props.holdoutCaseCount > 0 ? <label className="holdout-option">
           <input type="checkbox" checked={props.includeHoldout} disabled={Boolean(active)}
@@ -976,13 +997,14 @@ function RunEvidence({ job }: { job: EvaluationJob }) {
   const progress = job.progress.totalRuns ? Math.round(job.progress.completedRuns / job.progress.totalRuns * 100) : 0;
   return <section className="run-section">
     <div className="run-head">
-      <div><span className={`run-status ${job.status}`}>{statusText(job.status)}</span><h2>{job.report?.summary.headline ?? job.stageLabel}</h2><p className="mono">{job.jobId}</p></div>
+      <div><span className={`run-status ${job.assessmentIncomplete||job.executionRepetitionsStopped?'failed':job.status}`}>{job.assessmentIncomplete||job.executionRepetitionsStopped?'评测不完整':statusText(job.status)}</span><h2>{job.assessmentIncomplete||job.executionRepetitionsStopped?job.stageLabel:job.report?.summary.headline ?? job.stageLabel}</h2><p className="mono">{job.jobId}</p></div>
       <div className="progress-block"><strong>{progress}%</strong><div><span style={{ width: `${progress}%` }} /></div><small>{job.progress.completedRuns}/{job.progress.totalRuns || "-"} 项案例处理</small></div>
     </div>
     {job.configuration.runtime.type === "replay" ? <div className="evidence-notice"><Archive size={16} /><span><strong>冻结证据回放</strong>：本轮复核已固化输出和评分，不代表刚刚重新调用了 Agent。</span></div> : <div className="evidence-notice live"><Activity size={16} /><span><strong>在线评测</strong>：各题执行结果分别核对；评测结束不代表所有案例执行或质量验收通过。</span></div>}
     {job.error ? <div className="run-error"><CircleAlert size={17} /><div><strong>{job.error.code}</strong><p>{job.error.message}</p></div></div> : null}
     <details className="question-receipt"><summary>冻结配置与执行环境</summary><p>providerId 是模型配置引用；实际执行环境由左右 Runtime 绑定选择，执行版本以各案例证据为准。</p><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(job.configuration,null,2)}</pre></details>
     {job.questionSet ? <details className="question-receipt"><summary>本轮 AI 题集 · {job.questionSet.cases.length} 题 · {job.questionSet.fingerprint.slice(0, 12)}</summary><p>出题模型：{job.questionSet.model.modelId} · 已读取：{job.questionSet.sourceFiles.join("、")}</p>{job.questionSet.cases.map(item => <div key={item.caseId}><strong>{item.name}</strong><MarkdownContent content={item.prompt} /></div>)}</details> : null}
+    <ComparisonExecutions job={job}/>
     {job.report ? <ReportResult job={job} /> : <LiveEvidence job={job} />}
     {!job.report && (job.status==='cancelled'||job.finalization) ? <details className="question-receipt" open><summary>取消与回收证据</summary>
       <p>{job.cancellation?.workerSettledAt?'评测执行控制已返回；不单独证明远端模型请求或操作系统进程已停止。':job.cancellation?'取消已请求，执行停止尚未取得确认。':'旧记录标记已取消；执行停止状态未记录。'}</p>
@@ -1040,13 +1062,15 @@ function ReportResult({ job }: { job: EvaluationJob }) {
     {report.cases.map(item => <section className="result-case" key={item.caseId}>
       <header><div><span>{item.caseId}</span><h3>{item.name}</h3></div><strong className={`winner winner-${item.judge?.winner ?? "none"}`}>{runtimeComparison ? '逐侧验收' : item.judge?.winner === "right" ? "B 更优" : item.judge?.winner === "left" ? "A 更优" : item.judge ? "持平" : "未评阅"}</strong></header>
       <div className="answer-grid"><article><span>A · {item.left.skillVersion ? `v${item.left.skillVersion}` : '不装配当前 Skill'} · {item.left.modelId}</span><MarkdownContent content={item.left.output} /><ExecutionIdentity evidence={item.left}/></article><article><span>B · {item.right.skillVersion ? `v${item.right.skillVersion}` : '不装配当前 Skill'} · {item.right.modelId}</span><MarkdownContent content={item.right.output} /><ExecutionIdentity evidence={item.right}/></article></div>
+      <div className="answer-grid"><EvaluationEvidence methods={item.methodResults?.left} evidence={item.left}/><EvaluationEvidence methods={item.methodResults?.right} evidence={item.right}/></div>
       {runtimeComparison ? <RuntimeGoalResults item={item}/> : <div className="judge-summary"><Sparkles size={17} /><div><strong>金融专业评价</strong><MarkdownContent compact content={item.judge?.summary ?? item.judgeError ?? "未形成评价"} />{item.judge ? <div className="dimension-grid">{item.judge.dimensions.map(dimension => <div key={dimension.id}><span>{dimension.label}</span><b>{dimension.leftScore} / {dimension.rightScore}</b><small>{dimension.reason}</small></div>)}</div> : null}</div></div>}
     </section>)}
     <details className="question-receipt"><summary>运行结束与回收证据</summary>
       <p>这是运行结束后的 Launcher 观察，不是操作系统全资源审计。RELEASED 表示管理器已释放句柄；构建退休、案例工作区和临时候选须分别核对。</p>
       {report.finalization?<pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify(report.finalization,null,2)}</pre>:<p>旧记录没有最终回收观察，状态未知；不能从完成或取消推断。</p>}
     </details>
-    {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" ? <OptimizationPanel key={job.jobId} job={job} /> : null}
+    {!publicDemo && job.configuration.runtime.type === "runtime_launcher" && job.status === "completed" && !job.assessmentIncomplete && !job.executionRepetitionsStopped ? <OptimizationPanel key={job.jobId} job={job} /> : null}
+    {!publicDemo&&job.status==='completed'&&<ComparisonRescoring jobId={job.jobId} records={job.rescorings} initialOperation={job.rescoringOperation}/>}
     <footer className="report-footer"><span>Runtime: {report.runtimeAdapterId}</span><span>Judge: {report.judgeId}</span><span className="mono">报告 {report.reportFingerprint.slice(0, 16)}</span><span>执行服务提交：{report.codeRevision?`${report.codeRevision.commit} (${report.codeRevision.workingTree})`:'旧记录未记录'}</span></footer>
   </div>;
 }
@@ -1060,6 +1084,7 @@ function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation
   const [suiteAsset,setSuiteAsset] = useState('');
   const [suiteId,setSuiteId] = useState('');
   const [importingSuite,setImportingSuite] = useState(false);
+  const [preparationCaseCount,setPreparationCaseCount]=useState(4);
   const selectedAsset = catalog.uploadedSkills.find(a=>a.assetId===suiteAsset)
     ?? catalog.uploadedSkills.find(a=>a.assetId===focusedAsset) ?? catalog.uploadedSkills[0];
   const historicalSuites = catalog.preparations.filter(p=>p.skillAssetId===selectedAsset?.assetId);
@@ -1084,10 +1109,11 @@ function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation
     finally { setUploading(false); }
   };
   const prepare = async (assetId: string) => {
+    if(preparationCaseCount<1||preparationCaseCount>100)return;
     setPreparing(assetId); setMessage("");
     try {
-      const preparation = await api<Preparation>(`/api/skills/${assetId}/prepare`, { method: "POST", body: JSON.stringify({ maximumCases: 4 }) });
-      await onChanged(); setMessage(`已生成 ${preparation.cases.length} 道高区分度测试题。`);
+      const preparation = await api<Preparation>(`/api/skills/${assetId}/prepare`, { method: "POST", body: JSON.stringify({ maximumCases: preparationCaseCount }) });
+      await onChanged(); setMessage(`已生成 ${preparation.cases.length} 道测试题，请检查场景和评分要求。`);
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : String(cause)); }
     finally { setPreparing(""); }
   };
@@ -1102,6 +1128,7 @@ function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation
       <input hidden ref={suiteInput} type="file" accept=".json,application/json" onChange={e=>{const file=e.target.files?.[0];if(file)void importSuite(file);e.target.value='';}}/>
     </section>}
     <section className="asset-section"><div className="section-title"><div><h2>用户上传</h2><p>上传资产只用于当前评测服务，不会发布到 Skill 市场。</p></div><span>{catalog.uploadedSkills.length} 个</span></div>
+      <label>AI 生成案例数量 <input type="number" aria-label="资产生成案例数量" min={1} max={100} value={preparationCaseCount||''} onChange={e=>{const value=Number(e.target.value);if(Number.isInteger(value)&&value>=0)setPreparationCaseCount(Math.min(100,value));}} onBlur={()=>{if(preparationCaseCount<1)setPreparationCaseCount(1);}} />（每批最多 8 条，数量越多耗时越长）</label>
       <div className="asset-table">{catalog.uploadedSkills.length ? catalog.uploadedSkills.map(skill => {
         const preps = catalog.preparations.filter(item => item.skillAssetId === skill.assetId);
         return <div className="asset-row" id={`asset-${skill.assetId}`} tabIndex={-1} key={skill.assetId}><div className="asset-icon"><FileArchive size={20} /></div><div><strong>{skill.displayName}</strong>{focusedAsset===skill.assetId&&<span className="state-tag">本次迁移候选 · 待执行验证</span>}<small>{skill.skillId}@{skill.version} · {skill.fileCount} 个文件</small><p>{skill.description}</p><em className="mono">SHA {skill.artifactSha256.slice(0, 16)}</em></div><div className="asset-actions"><button className="button secondary" onClick={()=>onMigrate(skill)}><ArrowRightLeft size={16}/>发起迁移</button><button className="button secondary" onClick={() => prepare(skill.assetId)} disabled={preparing === skill.assetId || !catalog.modelRoles.analyzer.configured}><Sparkles size={16} />{preparing === skill.assetId ? "出题中" : "AI 生成试题"}</button>{preps[0] ? <button className="icon-button" title="进入评测" onClick={() => onSelectPreparation(preps[0].preparationId)}><ChevronRight size={18} /></button> : null}</div></div>;
@@ -1114,5 +1141,5 @@ function SkillAssetsView({ catalog, focusedAsset, onChanged, onSelectPreparation
 
 function HistoryView({ jobs, selected, onSelect, onRetry }: { jobs: EvaluationJob[]; selected: EvaluationJob | null; onSelect(job: EvaluationJob): void; onRetry(job: EvaluationJob): void }) {
   const current = selected ?? jobs[0] ?? null;
-  return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">RUN HISTORY</span><h1>真实运行记录</h1><p>保留运行配置、左右证据、失败原因和可导出报告。</p></div></section><div className="history-layout"><div className="history-list">{jobs.map(job => <button key={job.jobId} className={current?.jobId === job.jobId ? "history-item active" : "history-item"} onClick={() => onSelect(job)}><div><strong>{job.pack?.targetSkillId ?? "准备中"}</strong><span className={`run-status ${job.status}`}>{statusText(job.status)}</span></div><small>{formatTime(job.updatedAt)} · {job.pack?.caseCount ?? 0} 题</small><p>{job.report?.summary.headline ?? job.error?.message ?? job.stageLabel}</p></button>)}</div><div>{current ? <><RunEvidence job={current} />{["failed", "cancelled", "interrupted"].includes(current.status) ? <button className="button secondary history-retry" onClick={() => onRetry(current)}><RotateCcw size={16} />重试这一轮</button> : null}</> : <EmptyRun />}</div></div></div>;
+  return <div className="workspace"><section className="workspace-header"><div><span className="eyebrow">RUN HISTORY</span><h1>真实运行记录</h1><p>保留运行配置、左右证据、失败原因和可导出报告。</p></div></section><div className="history-layout"><div className="history-list">{jobs.map(job => <button key={job.jobId} className={current?.jobId === job.jobId ? "history-item active" : "history-item"} onClick={() => onSelect(job)}><div><strong>{job.pack?.targetSkillId ?? "准备中"}</strong><span className={`run-status ${job.assessmentIncomplete||job.executionRepetitionsStopped?'failed':job.status}`}>{job.assessmentIncomplete||job.executionRepetitionsStopped?'评测不完整':statusText(job.status)}</span></div><small>{formatTime(job.updatedAt)} · {job.pack?.caseCount ?? 0} 题</small><p>{job.report?.summary.headline ?? job.error?.message ?? job.stageLabel}</p></button>)}</div><div>{current ? <><RunEvidence job={current} />{["failed", "cancelled", "interrupted"].includes(current.status) ? <button className="button secondary history-retry" onClick={() => onRetry(current)}><RotateCcw size={16} />重试这一轮</button> : null}</> : <EmptyRun />}</div></div></div>;
 }

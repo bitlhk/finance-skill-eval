@@ -1,26 +1,57 @@
+import { useState } from 'react';
 import type { MigrationWorkbench } from './useMigrationWorkbench';
-import type { BundleTask } from '../../../../src/migration/tasks/domain/task-model';
+import type { BundleTask } from "../../../../contracts/platform/responses";
 import { BuilderPanel } from './BuilderPanel';
+import { MarkdownContent } from '../../MarkdownContent';
+import {RuntimeRequirements} from './RuntimeRequirements';
+import {runtimeInputIssues} from './runtime-input-form';
+import {sameConfiguration,fitRuntimeTimeout} from './presentation';
 export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
-  const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled } = state;
+  const { catalog, api, task, setTask, setStage, config, setConfig, runtime, act, disabled, current } = state;
+  const [showBuilder, setShowBuilder] = useState(["PENDING", "STALE"].includes(task?.builderStatus ?? ""));
   if (!task) return null;
+  const effectiveConfig=fitRuntimeTimeout(config,runtime?.inspection?.capabilities?.limits.maxTimeoutMs);
+  const configurationSaved=sameConfiguration(config,task.configuration);
+  const inputIssues=runtimeInputIssues(task,config,true);
   return (
-    <section className="stage-section">
-      <h3>已选 Runtime 与实例配置</h3>
-      <p>当前 Skill 集合在启动时一次性注入，成员数量不改变 Runtime 执行流程。修改启动输入后需重新联合验收。</p>
+    <section className="migration-stage">
+      <div className="migration-stage-heading"><div><h3>准备运行环境</h3><p>根据迁移结果的依赖与运行要求选择候选环境。保存选择后还需验证，环境已登记不代表满足本次迁移要求。</p></div></div>
+      {task.inputKind==='agent_project'&&<label>运行方式
+        <select value={config.executionMode??'skill_package'} onChange={event=>setConfig(current=>{
+          if(event.target.value==='agent_project'){
+            const {entryInstructionsFile: _entry,...rest}=current;
+            return {...rest,executionMode:'agent_project',harnessTools:[]};
+          }
+          const {executionMode: _mode,...rest}=current;
+          return rest;
+        })}>
+          <option value="skill_package">通过所选 Runtime 装载迁移后的 Skill</option>
+          <option value="agent_project">运行改造后的完整 Agent 工程</option>
+        </select>
+        <small>运行完整工程需要所选 Runtime 支持工程执行，并负责启动工程自身的 Agent。</small>
+      </label>}
+      {current && <details className="stage-detail runtime-migration-notes"><summary>查看迁移结果说明</summary><MarkdownContent compact content={current.summary}/></details>}
+      <RuntimeRequirements task={{...task,runtimeReviewCurrent:Boolean(task.runtimeReviewCurrent&&configurationSaved)}}/>
+      {!!task.analysis?.standardization?.configurationInputs?.length&&<section className="stage-secondary-card"><h4>补充运行配置</h4><p>填写迁移结果实际需要的配置。缺少必填项时仍可查看方案和源码，但不能进行运行验证；填写完成也不代表调用已通过。</p>
+        {task.analysis.standardization.configurationGroups?.map((group,index)=><p key={index}>{group.label}：任选一组填写。{group.alternatives.map(option=>option.map(name=>task.analysis!.standardization!.configurationInputs!.find(field=>field.name===name)?.label??name).join('、')).join('；或 ')}</p>)}
+        <div className="bundle-fields">{task.analysis.standardization.configurationInputs.map(field=>{const input=config.runtimeInputs?.[field.name];return <label key={field.name}>{field.label}{field.required?'（必填）':task.analysis?.standardization?.configurationGroups?.some(group=>group.alternatives.some(option=>option.includes(field.name)))?'（按配置组选填）':'（可选）'}
+          <input disabled={disabled} value={input?('value' in input?input.value:input.secretEnv):''} autoComplete="off" placeholder={field.sensitive?'填写环境中已有的凭证配置名称，不填密钥':field.label} onChange={e=>setConfig(c=>{const values={...c.runtimeInputs};if(!e.target.value.trim())delete values[field.name];else values[field.name]=field.sensitive?{secretEnv:e.target.value}:{value:e.target.value};return {...c,runtimeInputs:values};})}/>
+          <small>{field.description}{field.sensitive?'。实际凭证由环境维护者配置，不会写入迁移源码。':''}</small></label>;})}</div>
+        {!!inputIssues.length&&<p role="status">{inputIssues.join('；')}</p>}
+      </section>}
       <div className="bundle-fields">
         <label>
-          已登记执行环境
+          候选运行环境
           <select
             aria-label="已登记执行环境"
             value={config.environmentId}
             onChange={(e) => {
               const runtime = catalog.executionRuntimes.find((r) => r.runtimeId === e.target.value);
-              setConfig((c) => ({
+              setConfig((c) => fitRuntimeTimeout({
                 ...c,
                 environmentId: e.target.value,
                 modelId: runtime?.defaultModelId ?? '',
-              }));
+              },runtime?.inspection?.capabilities?.limits.maxTimeoutMs));
             }}
           >
             <option value="">选择任务执行环境</option>
@@ -31,6 +62,9 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             ))}
           </select>
         </label>
+      </div>
+      <details className="stage-detail" open={Boolean(config.environmentId && !config.modelId)}><summary>高级运行设置</summary>
+      <div className="bundle-fields">
         <label>
           执行模型
           <select
@@ -46,7 +80,7 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             ))}
           </select>
         </label>
-        <label>
+        {config.executionMode!=='agent_project'&&<label>
           入口指令文件（可选）
           <input
             value={config.entryInstructionsFile ?? ''}
@@ -55,19 +89,19 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
             }
             placeholder="现有 Agent 业务指令的相对路径"
           />
-        </label>
+        </label>}
         <label>
           每个案例超时（秒）
           <input
             type="number"
             min={10}
-            max={900}
-            value={config.timeoutMs / 1000}
+            max={(runtime?.inspection?.capabilities?.limits.maxTimeoutMs??900000)/1000}
+            value={effectiveConfig.timeoutMs / 1000}
             onChange={(e) => setConfig((c) => ({ ...c, timeoutMs: Number(e.target.value) * 1000 }))}
           />
         </label>
       </div>
-      {!catalog.managedWorkspace && (
+      {!catalog.managedWorkspace && config.executionMode!=='agent_project' && (
         <label className="bundle-checkbox">
           <input
             type="checkbox"
@@ -88,24 +122,27 @@ export function RuntimeStage({ state }: { state: MigrationWorkbench; }) {
         已有的共享外部 MCP 通过执行环境绑定；包内 MCP
         按迁移产物启动。入口指令仅支持文本业务指令，不执行工作流配置。
       </p>
+      </details>
       <button
         className="button primary"
-        disabled={disabled || !config.environmentId || !config.modelId}
+        disabled={disabled || !config.environmentId || !config.modelId || task.candidatePlanCurrent === false}
         onClick={() =>
           void act(async () => {
+            setConfig(effectiveConfig);
             setTask(
               await api<BundleTask>('/api/migration-tasks/' + task.id + '/configuration', {
                 method: 'PUT',
-                body: JSON.stringify(config),
+                body: JSON.stringify(effectiveConfig),
               }),
             );
-            setStage(4);
+            setTask(await api<BundleTask>('/api/migration-tasks/'+task.id+'/runtime-review',{method:'POST',body:'{}'}));
           })
         }
       >
-        保存运行配置
+        核对所选环境
       </button>
-      <BuilderPanel key={task.id} state={state} />
+      {configurationSaved&&task.runtimeReviewCurrent&&task.runtimeReview?.status!=='FAILED'&&<button className="button primary" disabled={disabled} onClick={()=>setStage(4)}>下一步：基础验证</button>}
+      {config.executionMode!=='agent_project'&&<details className="stage-detail" open={showBuilder} onToggle={event => setShowBuilder(event.currentTarget.open)}><summary>接入其他运行环境</summary><BuilderPanel key={task.id} state={state} /></details>}
     </section>
   );
 }

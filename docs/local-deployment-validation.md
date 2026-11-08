@@ -1,8 +1,6 @@
 # 本机 Windows / WSL 历史部署验收（2026-10-19）
 
-本页保留旧发布 `1d50d37` 的验收记录。当前发布以 Windows 的 `C:/ProgramData/FinanceSkillEval/current.txt`、
-WSL 的 `/opt/finance-skill-eval/current` 及发布目录内 `DEPLOYED_REVISION` 为准。
-新版操作见[生产部署](production-deployment.md)与[Builder 接入](runtime-builder-integration.md)，本机最新测试证据保存在忽略提交的 `reports/`。
+本页是 2026-10-19 旧发布部署的历史验收记录，不代表当前运行入口。2026-10-30 起 Windows/Linux 管理脚本改为直接使用 Git 项目和 `.env.local`；操作方式见 [Windows 指南](production-windows.md) 和 [Linux 指南](production-linux.md)。以下 releases、current 和 production.env 路径仅用于记录历史，不应作为当前启动指令。
 
 结果：两套系统均已实际安装 API 与 Runtime 服务，使用低权限服务账户运行，真实三 Skill 整体迁移与联合验收均通过。服务保留运行，数据、配置、日志及备份独立。
 

@@ -35,7 +35,7 @@ environment and qualification. The startup does not learn or approve a source
 identity automatically. Test-only capture is in `test_bounded_reference_mcp.py`.
 
 ```sh
-python -m unittest integrations.openjiuwen.test_bounded_reference_mcp \
+pnpm python:openjiuwen -m unittest integrations.openjiuwen.test_bounded_reference_mcp \
   integrations.openjiuwen.test_reference_mcp
 ```
 
